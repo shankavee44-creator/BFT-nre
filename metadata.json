@@ -1,0 +1,6 @@
+{
+  "name": "Binary Funded Trader (BFT)",
+  "description": "Institutional binary options prop trading platform featuring 3-minute guaranteed instant withdrawals, multi-tier evaluation challenges, and a real-time trading terminal.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

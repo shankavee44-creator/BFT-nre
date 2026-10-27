@@ -1,0 +1,150 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    background-color: #0a0a0a;
+    color: #f8fafc;
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    overflow-x: hidden;
+  }
+
+  code, pre, .font-mono {
+    font-family: 'JetBrains Mono', monospace;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0a0a0a;
+}
+::-webkit-scrollbar-thumb {
+  background: #262626;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #ff8800;
+}
+
+/* BFT Institutional Zero-Glow Solid Accent Utilities */
+.glow-gold {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+}
+
+.glow-gold-intense {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.55);
+}
+
+.glow-mint {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+}
+
+.glow-mint-intense {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.55);
+}
+
+.glow-red {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+}
+
+.text-glow-gold {
+  text-shadow: none;
+}
+
+.text-glow-mint {
+  text-shadow: none;
+}
+
+.text-glow-red {
+  text-shadow: none;
+}
+
+/* BFT Institutional Dark Charcoal Grid */
+.bg-cyber-grid {
+  background-size: 36px 36px;
+  background-image: 
+    linear-gradient(to right, rgba(255, 136, 0, 0.03) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+}
+
+/* Glassmorphism Panel — Clean Crisp Institutional Surface */
+.glass-panel {
+  background: rgba(16, 16, 20, 0.92);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 136, 0, 0.22);
+}
+
+.glass-panel-hover {
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.glass-panel-hover:hover {
+  border-color: rgba(255, 136, 0, 0.55);
+  background: rgba(22, 20, 18, 0.96);
+  transform: translateY(-2px);
+}
+
+/* High-End 60fps Micro-Interactions & Entry Animations */
+@keyframes bftFadeSlideUp {
+  0% {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes bftModalScaleIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.96) translateY(6px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.animate-bft-entry {
+  animation: bftFadeSlideUp 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-bft-modal {
+  animation: bftModalScaleIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Interactive Button & Card Micro-Elevation */
+button,
+[role="button"] {
+  transition: transform 0.16s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease, opacity 0.16s ease;
+}
+
+button:active:not(:disabled),
+[role="button"]:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+/* Marquee Animation for Live Ticker */
+@keyframes marquee {
+  0% {
+    transform: translateX(0%);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+.animate-marquee {
+  display: flex;
+  width: max-content;
+  animation: marquee 32s linear infinite;
+}
+
+.animate-marquee:hover {
+  animation-play-state: paused;
+}
