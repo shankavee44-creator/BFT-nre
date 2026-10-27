@@ -35,7 +35,12 @@ import {
   saveWithdrawals,
   loadTrades,
   saveTrades,
+  clearAuthSession,
 } from './utils/storage';
+import {
+  isRouteProtected,
+  resolveTargetRoute,
+} from './utils/authRouting';
 import {
   loadAffiliateUsers,
   saveAffiliateUsers,
@@ -50,7 +55,7 @@ import {
   processWithdrawalCommission,
 } from './utils/affiliateEngine';
 import { PACKAGES, advanceChallengeAccountPhase } from './utils/propRules';
-import { Gift, X, UserPlus } from 'lucide-react';
+import { Gift, X, UserPlus, ShieldAlert, LogIn } from 'lucide-react';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<string>('home');
@@ -59,6 +64,7 @@ export default function App() {
   const [userProfile, setUserProfile] = useState<UserProfile>(loadProfile());
   const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>([]);
   const [trades, setTrades] = useState<BinaryTrade[]>([]);
+  const [protectedRouteNotice, setProtectedRouteNotice] = useState<string | null>(null);
 
   // Active BFT Promo Code ('SPOOKY40' = 40% OFF New Users, 'SPOOKY20' = 20% OFF Existing Users)
   const [activePromoCode, setActivePromoCode] = useState<PromoCodeType>('SPOOKY40');
@@ -241,12 +247,49 @@ export default function App() {
     setActiveAccountId(newAccount.id);
     saveActiveAccountId(newAccount.id);
     setSelectedPackageToBuy(null);
+    handleUpdateProfile({
+      ...userProfile,
+      activeAccountId: newAccount.id,
+      isLoggedIn: true,
+    });
+    setProtectedRouteNotice(null);
     setCurrentTab('terminal');
   };
 
   const handleOpenAuthModal = (mode: 'login' | 'register') => {
     setAuthModalMode(mode);
     setIsAuthModalOpen(true);
+  };
+
+  const handleNavigateTab = (tabId: string) => {
+    const routeCheck = resolveTargetRoute(tabId, Boolean(userProfile?.isLoggedIn));
+    if (!routeCheck.allowed) {
+      setProtectedRouteNotice(routeCheck.securityNotice || 'Authentication required to access this portal.');
+      setCurrentTab('home');
+      setAuthModalMode('login');
+      setIsAuthModalOpen(true);
+      return;
+    }
+    setProtectedRouteNotice(null);
+    setCurrentTab(tabId);
+  };
+
+  // Route protection guard: redirect immediately if on a protected route while unauthenticated
+  useEffect(() => {
+    if (isRouteProtected(currentTab) && !userProfile.isLoggedIn) {
+      const routeCheck = resolveTargetRoute(currentTab, false);
+      setProtectedRouteNotice(routeCheck.securityNotice || 'Authentication required to access this portal.');
+      setCurrentTab('home');
+      setAuthModalMode('login');
+      setIsAuthModalOpen(true);
+    }
+  }, [currentTab, userProfile.isLoggedIn]);
+
+  const handleLogout = () => {
+    clearAuthSession();
+    handleUpdateProfile({ ...userProfile, isLoggedIn: false });
+    setProtectedRouteNotice(null);
+    setCurrentTab('home');
   };
 
   const handleSimulateReferralUrl = (refCode: string) => {
@@ -271,22 +314,46 @@ export default function App() {
       {currentTab !== 'terminal' && (
         <Header
           currentTab={currentTab}
-          setCurrentTab={setCurrentTab}
+          setCurrentTab={handleNavigateTab}
           accounts={accounts}
           activeAccount={activeAccount}
           onSelectAccount={handleSelectAccount}
           userProfile={userProfile}
           activePromoCode={activePromoCode}
           onSelectPromoCode={setActivePromoCode}
-          onOpenWithdrawalModal={() => setIsWithdrawalModalOpen(true)}
+          onOpenWithdrawalModal={() => handleNavigateTab('withdrawals')}
           onOpenDepositModal={() => setIsDepositModalOpen(true)}
           onOpenAuthModal={handleOpenAuthModal}
           onSimulateReferralUrl={handleSimulateReferralUrl}
-          onLogout={() => {
-            handleUpdateProfile({ ...userProfile, isLoggedIn: false });
-          }}
+          onLogout={handleLogout}
           onOpenChallengeModal={() => setSelectedPackageToBuy(PACKAGES[2])}
         />
+      )}
+
+      {/* Security Protected Route Notice Banner */}
+      {protectedRouteNotice && (
+        <div className="bg-[#1c1208] border-b border-[#ff8800]/50 px-4 py-2.5 flex items-center justify-between text-xs text-amber-200">
+          <div className="flex flex-wrap items-center gap-3 max-w-5xl mx-auto flex-1 justify-center">
+            <ShieldAlert className="w-4 h-4 text-[#ffaa00] shrink-0" />
+            <span className="font-medium font-sans">
+              <strong className="text-white font-mono uppercase tracking-wider mr-1">Protected Area:</strong>
+              {protectedRouteNotice}
+            </span>
+            <button
+              onClick={() => handleOpenAuthModal('login')}
+              className="px-3 py-1 rounded-lg bg-[#ff8800] hover:bg-[#ffaa00] text-slate-950 font-black text-xs flex items-center gap-1 cursor-pointer font-mono"
+            >
+              <LogIn className="w-3.5 h-3.5 stroke-[2.5]" />
+              <span>Sign In</span>
+            </button>
+          </div>
+          <button
+            onClick={() => setProtectedRouteNotice(null)}
+            className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-white transition cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
       )}
 
       {/* Active Referral Notification Banner with Direct Sign-Up Trigger */}
@@ -329,8 +396,8 @@ export default function App() {
                 const el = document.getElementById('pricing');
                 if (el) el.scrollIntoView({ behavior: 'smooth' });
               }}
-              onOpenTerminal={() => setCurrentTab('terminal')}
-              onOpenWithdrawals={() => setIsWithdrawalModalOpen(true)}
+              onOpenTerminal={() => handleNavigateTab('terminal')}
+              onOpenWithdrawals={() => handleNavigateTab('withdrawals')}
               onOpenAuthModal={handleOpenAuthModal}
             />
             <PricingTiers
@@ -361,7 +428,7 @@ export default function App() {
             onOpenWithdrawalModal={() => setIsWithdrawalModalOpen(true)}
             onOpenDepositModal={() => setIsDepositModalOpen(true)}
             onOpenChallengeModal={() => setSelectedPackageToBuy(PACKAGES[2])}
-            onNavigateTab={setCurrentTab}
+            onNavigateTab={handleNavigateTab}
             userProfile={userProfile}
             onPassChallengePhase={handlePassChallengePhase}
           />
@@ -375,7 +442,7 @@ export default function App() {
               account={activeAccount}
               accounts={accounts}
               onSelectAccount={handleSelectAccount}
-              onClose={() => setCurrentTab('terminal')}
+              onClose={() => handleNavigateTab('terminal')}
               onUpdateAccount={handleUpdateSingleAccount}
               withdrawals={withdrawals}
               onAddWithdrawal={handleAddWithdrawal}
@@ -396,7 +463,7 @@ export default function App() {
             payouts={affiliatePayouts}
             onAddPayout={handleAddAffiliatePayout}
             onSelectAccount={handleSelectAccount}
-            onOpenTerminal={() => setCurrentTab('terminal')}
+            onOpenTerminal={() => handleNavigateTab('terminal')}
             onOpenChallengeModal={() => setSelectedPackageToBuy(PACKAGES[2])}
             onPassChallengePhase={handlePassChallengePhase}
             initialTab={currentTab === 'affiliate' ? 'affiliate' : 'accounts'}
@@ -468,10 +535,13 @@ export default function App() {
             email,
             fullName,
             referralCode,
-            referredBy,
+            referredBy: referredBy || undefined,
             rememberMe,
             isLoggedIn: true,
           });
+          setProtectedRouteNotice(null);
+          setIsAuthModalOpen(false);
+          setCurrentTab('terminal');
         }}
       />
 
@@ -494,7 +564,7 @@ export default function App() {
       <LiveChatWidget />
 
       {/* Institutional Footer */}
-      {currentTab !== 'terminal' && <Footer onNavigate={setCurrentTab} />}
+      {currentTab !== 'terminal' && <Footer onNavigate={handleNavigateTab} />}
     </div>
   );
 }

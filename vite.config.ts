@@ -22,7 +22,7 @@ export default defineConfig(() => {
       },
       rollupOptions: {
         output: {
-          format: 'es',
+          format: 'es' as const,
           entryFileNames: 'assets/[name]-[hash].js',
           chunkFileNames: 'assets/[name]-[hash].js',
           assetFileNames: 'assets/[name]-[hash].[ext]',

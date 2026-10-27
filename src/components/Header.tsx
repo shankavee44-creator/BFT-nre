@@ -10,11 +10,13 @@ import {
   LogIn,
   UserPlus,
   LogOut,
+  Lock,
 } from 'lucide-react';
 import { TradingAccount, UserProfile, PromoCodeType } from '../types';
 import { CryptoTickerBar } from './CryptoTickerBar';
 import { soundEngine } from '../utils/soundEffects';
 import { getAccountStatusBadgeLabel, isLiveFundedAccount } from '../utils/propRules';
+import { isRouteProtected } from '../utils/authRouting';
 
 interface HeaderProps {
   currentTab: string;
@@ -67,6 +69,10 @@ export const Header: React.FC<HeaderProps> = ({
 
   const handleNavClick = (tabId: string) => {
     soundEngine.playUiClick();
+    if (isRouteProtected(tabId) && !userProfile.isLoggedIn) {
+      onOpenAuthModal('login');
+      return;
+    }
     setCurrentTab(tabId);
   };
 
@@ -182,25 +188,30 @@ export const Header: React.FC<HeaderProps> = ({
             { id: 'withdrawals', label: 'Withdrawals' },
             { id: 'dashboard', label: 'Trader Hub & KYC' },
             { id: 'faq', label: 'FAQ' },
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => handleNavClick(tab.id)}
-              className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 cursor-pointer whitespace-nowrap shrink-0 ${
-                currentTab === tab.id
-                  ? 'bg-[#ff8800] text-slate-950 font-black'
-                  : 'text-slate-300 hover:text-white hover:bg-white/5'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
+          ].map((tab) => {
+            const isProtected = isRouteProtected(tab.id);
+            const isLocked = isProtected && !userProfile.isLoggedIn;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => handleNavClick(tab.id)}
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                  currentTab === tab.id
+                    ? 'bg-[#ff8800] text-slate-950 font-black'
+                    : 'text-slate-300 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <span>{tab.label}</span>
+                {isLocked && <Lock className="w-2.5 h-2.5 text-slate-500 shrink-0" />}
+              </button>
+            );
+          })}
         </nav>
 
         {/* Right Action Bar */}
         <div className="flex items-center gap-1.5 shrink-0">
-          {/* Active Account Switcher */}
-          {activeAccount && (
+          {/* Active Account Switcher (Only visible when user is authenticated) */}
+          {userProfile.isLoggedIn && activeAccount && (
             <div className="relative">
               <button
                 onClick={() => setAccountDropdownOpen(!accountDropdownOpen)}
@@ -305,8 +316,8 @@ export const Header: React.FC<HeaderProps> = ({
             {soundActive ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
           </button>
 
-          {/* Cryptomus USDT (TRC-20) Deposit Button */}
-          {onOpenDepositModal && (
+          {/* Cryptomus USDT (TRC-20) Deposit Button (Only visible when user is authenticated) */}
+          {userProfile.isLoggedIn && onOpenDepositModal && (
             <button
               type="button"
               data-testid="header-deposit-btn"
@@ -317,14 +328,16 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           )}
 
-          {/* Instant Withdraw Button */}
-          <button
-            onClick={onOpenWithdrawalModal}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-[#1a1c24] hover:bg-[#242834] border border-white/15 text-slate-100 text-xs font-bold transition-all cursor-pointer whitespace-nowrap"
-          >
-            <Zap className="w-3.5 h-3.5 text-[#ff8800] fill-[#ff8800]" />
-            <span className="hidden sm:inline">Payout</span>
-          </button>
+          {/* Instant Withdraw Button (Only visible when user is authenticated) */}
+          {userProfile.isLoggedIn && (
+            <button
+              onClick={onOpenWithdrawalModal}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-[#1a1c24] hover:bg-[#242834] border border-white/15 text-slate-100 text-xs font-bold transition-all cursor-pointer whitespace-nowrap"
+            >
+              <Zap className="w-3.5 h-3.5 text-[#ff8800] fill-[#ff8800]" />
+              <span className="hidden sm:inline">Payout</span>
+            </button>
+          )}
 
           {/* Auth Buttons (Login / Sign Up) OR Logged-in Profile */}
           {userProfile.isLoggedIn ? (
@@ -372,20 +385,24 @@ export const Header: React.FC<HeaderProps> = ({
               )}
             </div>
           ) : (
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-2">
               <button
+                type="button"
+                data-testid="header-login-btn"
                 onClick={() => onOpenAuthModal('login')}
-                className="px-2.5 py-1.5 rounded-xl bg-[#141418] hover:bg-white/10 border border-white/15 text-xs font-bold text-white flex items-center gap-1.5 cursor-pointer font-mono whitespace-nowrap"
+                className="px-3.5 py-1.5 rounded-xl bg-[#141418] hover:bg-white/10 border border-white/20 hover:border-[#ff8800]/60 text-xs font-bold text-white flex items-center gap-1.5 cursor-pointer font-mono whitespace-nowrap shadow-sm transition-all"
               >
                 <LogIn className="w-3.5 h-3.5 text-[#ff8800]" />
                 <span>Login</span>
               </button>
               <button
+                type="button"
+                data-testid="header-register-btn"
                 onClick={() => onOpenAuthModal('register')}
-                className="px-2.5 py-1.5 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] text-slate-950 text-xs font-black flex items-center gap-1.5 cursor-pointer font-mono whitespace-nowrap"
+                className="px-4 py-1.5 rounded-xl bg-[#ff8800] hover:bg-[#ffaa00] text-slate-950 text-xs font-black flex items-center gap-1.5 cursor-pointer font-mono whitespace-nowrap shadow-md transition-all"
               >
-                <UserPlus className="w-3.5 h-3.5" />
-                <span>Sign Up</span>
+                <UserPlus className="w-3.5 h-3.5 stroke-[2.5]" />
+                <span>Register</span>
               </button>
             </div>
           )}

@@ -165,7 +165,7 @@ const INITIAL_PROFILE: UserProfile = {
   activeAccountId: 'BFT-91823',
   referralCode: 'BFT-ALEX77',
   referredBy: undefined,
-  isLoggedIn: true,
+  isLoggedIn: false,
 };
 
 const INITIAL_ACCOUNTS: TradingAccount[] = [
@@ -388,7 +388,7 @@ const INITIAL_WITHDRAWALS: WithdrawalRequest[] = [
   },
 ];
 
-const STORAGE_KEYS = {
+export const STORAGE_KEYS = {
   PROFILE: 'bft_user_profile_v2',
   ACCOUNTS: 'bft_accounts_v2',
   ACTIVE_ACCOUNT: 'bft_active_account_id_v2',
@@ -396,6 +396,20 @@ const STORAGE_KEYS = {
   TRADES: 'bft_trades_v2',
   AUTH_TOKEN: 'bft_auth_token_v2',
 };
+
+export function clearAuthSession(): void {
+  try {
+    localStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
+    const existing = loadProfile();
+    const loggedOut: UserProfile = {
+      ...existing,
+      isLoggedIn: false,
+    };
+    saveProfile(loggedOut);
+  } catch (e) {
+    console.error('Failed to clear auth session', e);
+  }
+}
 
 export function loadProfile(): UserProfile {
   try {
@@ -410,7 +424,7 @@ export function loadProfile(): UserProfile {
   } catch {
     // fallback
   }
-  return INITIAL_PROFILE;
+  return { ...INITIAL_PROFILE, isLoggedIn: false };
 }
 
 export function saveProfile(profile: UserProfile): void {
