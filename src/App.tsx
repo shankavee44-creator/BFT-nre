@@ -36,11 +36,16 @@ import {
   loadTrades,
   saveTrades,
   clearAuthSession,
+  loadOrCreateUserProfileByEmail,
 } from './utils/storage';
 import {
   isRouteProtected,
   resolveTargetRoute,
 } from './utils/authRouting';
+import {
+  checkKycTimerCompletion,
+  filterAccountsForUser,
+} from './utils/kycVerification';
 import {
   loadAffiliateUsers,
   saveAffiliateUsers,
@@ -155,6 +160,19 @@ export default function App() {
     saveProfile(updated);
   };
 
+  // Global 1-second ticker to automatically complete the 2-minute KYC verification timer
+  useEffect(() => {
+    if (userProfile.kycStatus !== 'pending' || !userProfile.kycVerificationEndsAt) return;
+    const interval = setInterval(() => {
+      const check = checkKycTimerCompletion(userProfile, Date.now());
+      if (check.completed) {
+        setUserProfile(check.updatedProfile);
+        saveProfile(check.updatedProfile);
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [userProfile]);
+
   const handleAddWithdrawal = (req: WithdrawalRequest) => {
     const updated = [req, ...withdrawals];
     setWithdrawals(updated);
@@ -241,15 +259,20 @@ export default function App() {
   };
 
   const handleNewAccountPurchased = (newAccount: TradingAccount) => {
-    const updated = [newAccount, ...accounts];
+    const ownedAccount: TradingAccount = {
+      ...newAccount,
+      ownerId: userProfile.id,
+      ownerEmail: userProfile.email,
+    };
+    const updated = [ownedAccount, ...accounts];
     setAccounts(updated);
     saveAccounts(updated);
-    setActiveAccountId(newAccount.id);
-    saveActiveAccountId(newAccount.id);
+    setActiveAccountId(ownedAccount.id);
+    saveActiveAccountId(ownedAccount.id);
     setSelectedPackageToBuy(null);
     handleUpdateProfile({
       ...userProfile,
-      activeAccountId: newAccount.id,
+      activeAccountId: ownedAccount.id,
       isLoggedIn: true,
     });
     setProtectedRouteNotice(null);
@@ -306,7 +329,9 @@ export default function App() {
     setIsAuthModalOpen(true);
   };
 
-  const activeAccount = accounts.find((acc) => acc.id === activeAccountId) || accounts[0];
+  const userAccounts = filterAccountsForUser(accounts, userProfile);
+  const activeAccount =
+    userAccounts.find((acc) => acc.id === activeAccountId) || userAccounts[0] || undefined;
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-slate-100 flex flex-col selection:bg-[#ff8800] selection:text-slate-950">
@@ -315,7 +340,7 @@ export default function App() {
         <Header
           currentTab={currentTab}
           setCurrentTab={handleNavigateTab}
-          accounts={accounts}
+          accounts={userAccounts}
           activeAccount={activeAccount}
           onSelectAccount={handleSelectAccount}
           userProfile={userProfile}
@@ -418,8 +443,8 @@ export default function App() {
 
         {currentTab === 'terminal' && (
           <TradingTerminal
-            account={activeAccount || accounts[0]}
-            accounts={accounts}
+            account={activeAccount || null}
+            accounts={userAccounts}
             onSelectAccount={handleSelectAccount}
             onUpdateAccount={handleUpdateSingleAccount}
             trades={activeAccount ? trades.filter((t) => t.accountId === activeAccount.id) : []}
@@ -436,19 +461,22 @@ export default function App() {
 
         {currentTab === 'rules' && <TradingRules />}
 
-        {currentTab === 'withdrawals' && activeAccount && (
+        {currentTab === 'withdrawals' && (
           <div className="py-8 max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
             <WithdrawalModal
-              account={activeAccount}
-              accounts={accounts}
+              account={activeAccount || null}
+              accounts={userAccounts}
               onSelectAccount={handleSelectAccount}
-              onClose={() => handleNavigateTab('terminal')}
+              onClose={() => handleNavigateTab('dashboard')}
               onUpdateAccount={handleUpdateSingleAccount}
               withdrawals={withdrawals}
               onAddWithdrawal={handleAddWithdrawal}
               onUpdateWithdrawal={handleUpdateWithdrawal}
               onWithdrawalCommissionTriggered={handleWithdrawalCommission}
               inlineMode={true}
+              userProfile={userProfile}
+              onNavigateToKyc={() => setCurrentTab('dashboard')}
+              onOpenChallengeModal={() => setSelectedPackageToBuy(PACKAGES[2])}
             />
           </div>
         )}
@@ -457,7 +485,7 @@ export default function App() {
           <UserDashboard
             userProfile={userProfile}
             onUpdateProfile={handleUpdateProfile}
-            accounts={accounts}
+            accounts={userAccounts}
             trades={trades}
             referrals={affiliateReferrals}
             payouts={affiliatePayouts}
@@ -465,6 +493,13 @@ export default function App() {
             onSelectAccount={handleSelectAccount}
             onOpenTerminal={() => handleNavigateTab('terminal')}
             onOpenChallengeModal={() => setSelectedPackageToBuy(PACKAGES[2])}
+            onOpenWithdrawalModal={() => handleNavigateTab('withdrawals')}
+            onNavigateToPricing={() => {
+              setCurrentTab('home');
+              setTimeout(() => {
+                document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' });
+              }, 100);
+            }}
             onPassChallengePhase={handlePassChallengePhase}
             initialTab={currentTab === 'affiliate' ? 'affiliate' : 'accounts'}
           />
@@ -490,15 +525,15 @@ export default function App() {
         isOpen={isDepositModalOpen}
         onClose={() => setIsDepositModalOpen(false)}
         activeAccount={activeAccount || null}
-        accounts={accounts}
+        accounts={userAccounts}
         onSelectAccount={handleSelectAccount}
         onCreditAccountDeposit={handleCreditAccountDeposit}
       />
 
-      {isWithdrawalModalOpen && activeAccount && currentTab !== 'withdrawals' && (
+      {isWithdrawalModalOpen && currentTab !== 'withdrawals' && (
         <WithdrawalModal
-          account={activeAccount}
-          accounts={accounts}
+          account={activeAccount || null}
+          accounts={userAccounts}
           onSelectAccount={handleSelectAccount}
           onClose={() => setIsWithdrawalModalOpen(false)}
           onUpdateAccount={handleUpdateSingleAccount}
@@ -506,6 +541,15 @@ export default function App() {
           onAddWithdrawal={handleAddWithdrawal}
           onUpdateWithdrawal={handleUpdateWithdrawal}
           onWithdrawalCommissionTriggered={handleWithdrawalCommission}
+          userProfile={userProfile}
+          onNavigateToKyc={() => {
+            setIsWithdrawalModalOpen(false);
+            setCurrentTab('dashboard');
+          }}
+          onOpenChallengeModal={() => {
+            setIsWithdrawalModalOpen(false);
+            setSelectedPackageToBuy(PACKAGES[2]);
+          }}
         />
       )}
 
@@ -523,25 +567,36 @@ export default function App() {
           referralCode,
           referredBy,
           rememberMe,
+          isNewRegistration,
           updatedAffiliateUsers,
         }) => {
           if (updatedAffiliateUsers) {
             setAffiliateUsers(updatedAffiliateUsers);
             saveAffiliateUsers(updatedAffiliateUsers);
           }
-          handleUpdateProfile({
-            ...userProfile,
-            id: userId,
+          const loadedOrCreatedProfile = loadOrCreateUserProfileByEmail({
+            userId,
             email,
             fullName,
             referralCode,
             referredBy: referredBy || undefined,
             rememberMe,
-            isLoggedIn: true,
+            isNewRegistration,
           });
+          setUserProfile(loadedOrCreatedProfile);
+
+          const ownedAccounts = filterAccountsForUser(accounts, loadedOrCreatedProfile);
+          if (ownedAccounts.length > 0) {
+            setActiveAccountId(ownedAccounts[0].id);
+            saveActiveAccountId(ownedAccounts[0].id);
+          } else {
+            setActiveAccountId('');
+            saveActiveAccountId('');
+          }
+
           setProtectedRouteNotice(null);
           setIsAuthModalOpen(false);
-          setCurrentTab('terminal');
+          setCurrentTab('dashboard');
         }}
       />
 

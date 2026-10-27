@@ -11,6 +11,8 @@ import {
   UserPlus,
   LogOut,
   Lock,
+  Menu,
+  X,
 } from 'lucide-react';
 import { TradingAccount, UserProfile, PromoCodeType } from '../types';
 import { CryptoTickerBar } from './CryptoTickerBar';
@@ -52,6 +54,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenChallengeModal,
 }) => {
   const [accountDropdownOpen, setAccountDropdownOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [soundActive, setSoundActive] = useState(soundEngine.isEnabled());
 
   useEffect(() => {
@@ -210,97 +213,114 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Right Action Bar */}
         <div className="flex items-center gap-1.5 shrink-0">
-          {/* Active Account Switcher (Only visible when user is authenticated) */}
-          {userProfile.isLoggedIn && activeAccount && (
-            <div className="relative">
-              <button
-                onClick={() => setAccountDropdownOpen(!accountDropdownOpen)}
-                data-testid="header-account-switcher"
-                className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[#121216] border border-white/10 hover:border-[#ff8800]/50 transition-all text-left cursor-pointer whitespace-nowrap"
-              >
-                <div
-                  className={`w-2 h-2 rounded-full shrink-0 ${
-                    isLiveFundedAccount(activeAccount) ? 'bg-[#00e676]' : 'bg-[#ff8800]'
-                  }`}
-                />
-                <div>
-                  <div className="flex items-center gap-1.5 text-[11px] font-bold text-white font-mono leading-tight">
-                    <span>{activeAccount.id}</span>
-                    <span
-                      data-testid="header-account-status-badge"
-                      className={`text-[9px] px-1.5 py-0.5 rounded font-black uppercase tracking-wider border ${
-                        isLiveFundedAccount(activeAccount)
-                          ? 'bg-[#00c853]/20 text-[#00e676] border-[#00e676]/50'
-                          : 'bg-[#ff8800]/20 text-[#ff8800] border-[#ff8800]/50'
-                      }`}
-                    >
-                      {getAccountStatusBadgeLabel(activeAccount)}
-                    </span>
-                  </div>
-                  <div className="text-[10px] font-mono text-emerald-400 font-bold leading-tight">
-                    ${activeAccount.currentBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                  </div>
-                </div>
-                <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
-              </button>
-
-              {accountDropdownOpen && (
-                <div className="absolute right-0 mt-2 w-72 rounded-xl bg-[#111115] border border-white/15 shadow-2xl p-2 z-50">
-                  <div className="text-[11px] font-bold text-slate-400 uppercase px-2 py-1 tracking-wider">
-                    Select Trading Account
-                  </div>
-                  {accounts.map((acc) => {
-                    const isLive = isLiveFundedAccount(acc);
-                    return (
-                      <button
-                        key={acc.id}
-                        onClick={() => {
-                          onSelectAccount(acc.id);
-                          setAccountDropdownOpen(false);
-                        }}
-                        className={`w-full flex items-center justify-between p-2 rounded-lg text-left transition-colors cursor-pointer ${
-                          acc.id === activeAccount.id
-                            ? 'bg-[#ff8800]/15 border border-[#ff8800]/40'
-                            : 'hover:bg-white/5'
+          {/* Active Account Switcher OR No Active Account Prompt (Only visible when user is authenticated) */}
+          {userProfile.isLoggedIn && (
+            activeAccount ? (
+              <div className="relative">
+                <button
+                  onClick={() => setAccountDropdownOpen(!accountDropdownOpen)}
+                  data-testid="header-account-switcher"
+                  className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[#121216] border border-white/10 hover:border-[#ff8800]/50 transition-all text-left cursor-pointer whitespace-nowrap"
+                >
+                  <div
+                    className={`w-2 h-2 rounded-full shrink-0 ${
+                      isLiveFundedAccount(activeAccount) ? 'bg-[#00e676]' : 'bg-[#ff8800]'
+                    }`}
+                  />
+                  <div>
+                    <div className="flex items-center gap-1.5 text-[11px] font-bold text-white font-mono leading-tight">
+                      <span>{activeAccount.id}</span>
+                      <span
+                        data-testid="header-account-status-badge"
+                        className={`text-[9px] px-1.5 py-0.5 rounded font-black uppercase tracking-wider border ${
+                          isLiveFundedAccount(activeAccount)
+                            ? 'bg-[#00c853]/20 text-[#00e676] border-[#00e676]/50'
+                            : 'bg-[#ff8800]/20 text-[#ff8800] border-[#ff8800]/50'
                         }`}
                       >
-                        <div>
-                          <div className="text-xs font-bold text-white font-mono flex items-center gap-1.5">
-                            <span>{acc.id}</span>
-                            <span
-                              className={`text-[9px] px-1.5 py-0.5 rounded font-black uppercase tracking-wider border ${
-                                isLive
-                                  ? 'bg-[#00c853]/20 text-[#00e676] border-[#00e676]/50'
-                                  : 'bg-[#ff8800]/20 text-[#ff8800] border-[#ff8800]/50'
-                              }`}
-                            >
-                              {getAccountStatusBadgeLabel(acc)}
-                            </span>
-                          </div>
-                          <div className="text-[11px] font-mono text-emerald-400 font-semibold mt-0.5">
-                            ${acc.currentBalance.toFixed(2)} • {acc.tierName}
-                          </div>
-                        </div>
-                        {acc.id === activeAccount.id && (
-                          <CheckCircle2 className="w-4 h-4 text-[#ff8800]" />
-                        )}
-                      </button>
-                    );
-                  })}
-                  <div className="border-t border-white/10 mt-2 pt-2">
-                    <button
-                      onClick={() => {
-                        setAccountDropdownOpen(false);
-                        onOpenChallengeModal();
-                      }}
-                      className="w-full py-1.5 text-xs text-center font-bold text-[#ffaa00] hover:text-white rounded bg-white/5 border border-[#ff8800]/30 transition-colors cursor-pointer"
-                    >
-                      + Buy New Evaluation Account
-                    </button>
+                        {getAccountStatusBadgeLabel(activeAccount)}
+                      </span>
+                    </div>
+                    <div className="text-[10px] font-mono text-emerald-400 font-bold leading-tight">
+                      ${activeAccount.currentBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    </div>
                   </div>
-                </div>
-              )}
-            </div>
+                  <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+                </button>
+
+                {accountDropdownOpen && (
+                  <div className="absolute right-0 mt-2 w-72 rounded-xl bg-[#111115] border border-white/15 shadow-2xl p-2 z-50">
+                    <div className="text-[11px] font-bold text-slate-400 uppercase px-2 py-1 tracking-wider">
+                      Select Trading Account
+                    </div>
+                    {accounts.map((acc) => {
+                      const isLive = isLiveFundedAccount(acc);
+                      return (
+                        <button
+                          key={acc.id}
+                          onClick={() => {
+                            onSelectAccount(acc.id);
+                            setAccountDropdownOpen(false);
+                          }}
+                          className={`w-full flex items-center justify-between p-2 rounded-lg text-left transition-colors cursor-pointer ${
+                            acc.id === activeAccount.id
+                              ? 'bg-[#ff8800]/15 border border-[#ff8800]/40'
+                              : 'hover:bg-white/5'
+                          }`}
+                        >
+                          <div>
+                            <div className="text-xs font-bold text-white font-mono flex items-center gap-1.5">
+                              <span>{acc.id}</span>
+                              <span
+                                className={`text-[9px] px-1.5 py-0.5 rounded font-black uppercase tracking-wider border ${
+                                  isLive
+                                    ? 'bg-[#00c853]/20 text-[#00e676] border-[#00e676]/50'
+                                    : 'bg-[#ff8800]/20 text-[#ff8800] border-[#ff8800]/50'
+                                }`}
+                              >
+                                {getAccountStatusBadgeLabel(acc)}
+                              </span>
+                            </div>
+                            <div className="text-[11px] font-mono text-emerald-400 font-semibold mt-0.5">
+                              ${acc.currentBalance.toFixed(2)} • {acc.tierName}
+                            </div>
+                          </div>
+                          {acc.id === activeAccount.id && (
+                            <CheckCircle2 className="w-4 h-4 text-[#ff8800]" />
+                          )}
+                        </button>
+                      );
+                    })}
+                    <div className="border-t border-white/10 mt-2 pt-2">
+                      <button
+                        onClick={() => {
+                          setAccountDropdownOpen(false);
+                          onOpenChallengeModal();
+                        }}
+                        className="w-full py-1.5 text-xs text-center font-bold text-[#ffaa00] hover:text-white rounded bg-white/5 border border-[#ff8800]/30 transition-colors cursor-pointer"
+                      >
+                        + Buy New Evaluation Account
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <button
+                type="button"
+                data-testid="header-no-account-badge"
+                onClick={onOpenChallengeModal}
+                className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#121216] border border-[#ff8800]/40 hover:border-[#ff8800] transition-colors cursor-pointer whitespace-nowrap"
+              >
+                <span className="w-2 h-2 rounded-full bg-amber-400" />
+                <span className="text-[11px] font-mono font-bold text-slate-200">
+                  No Active Account
+                </span>
+                <span className="text-[10px] font-mono font-black px-2 py-0.5 rounded bg-[#ff8800] text-slate-950 uppercase">
+                  Buy Challenge
+                </span>
+              </button>
+            )
           )}
 
           {/* Audio Toggle */}
@@ -407,6 +427,17 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           )}
 
+          {/* Mobile Hamburger Toggle Button */}
+          <button
+            type="button"
+            data-testid="mobile-menu-toggle-btn"
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className="lg:hidden p-2 rounded-xl bg-[#141418] hover:bg-white/10 border border-white/15 text-slate-200 cursor-pointer flex items-center justify-center transition-all"
+            aria-label="Toggle Navigation Menu"
+          >
+            {mobileMenuOpen ? <X className="w-4 h-4 text-[#ff8800]" /> : <Menu className="w-4 h-4 text-white" />}
+          </button>
+
           {/* Get Funded Button */}
           <button
             onClick={onOpenChallengeModal}
@@ -418,8 +449,148 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </div>
 
-      {/* Mobile Submenu Bar */}
-      <div className="lg:hidden flex items-center justify-around border-t border-white/10 bg-[#0d0d10] py-2 px-1 text-xs overflow-x-auto">
+      {/* Slide-Down Mobile Drawer Menu */}
+      {mobileMenuOpen && (
+        <div className="lg:hidden border-t border-white/10 bg-[#0d0d12]/98 backdrop-blur-2xl px-4 py-4 space-y-4 animate-in slide-in-from-top-4 duration-200">
+          {/* User Status / Auth Quick Actions */}
+          {userProfile.isLoggedIn ? (
+            <div className="p-3 rounded-2xl bg-[#14141a] border border-white/10 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <img
+                  src={userProfile.avatarUrl}
+                  alt={userProfile.fullName || 'Trader'}
+                  className="w-9 h-9 rounded-xl object-cover ring-1 ring-[#ff8800]/50"
+                />
+                <div>
+                  <div className="text-xs font-bold text-white font-mono flex items-center gap-1.5">
+                    <span>{userProfile.fullName || userProfile.email}</span>
+                    <span
+                      className={`text-[9px] px-1.5 py-0.2 rounded font-black uppercase ${
+                        userProfile.kycStatus === 'verified'
+                          ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                          : 'bg-[#ff8800]/20 text-[#ff8800] border border-[#ff8800]/40'
+                      }`}
+                    >
+                      {userProfile.kycStatus}
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-slate-400 font-mono">
+                    Account:{' '}
+                    <span className={activeAccount ? 'text-[#00e676] font-bold' : 'text-amber-400 font-bold'}>
+                      {activeAccount?.id || 'No Active Account'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              {onLogout && (
+                <button
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    onLogout();
+                  }}
+                  className="px-2.5 py-1 rounded-lg bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[11px] font-bold font-mono cursor-pointer"
+                >
+                  Sign Out
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  onOpenAuthModal('login');
+                }}
+                className="py-2.5 px-3 rounded-xl bg-[#141418] border border-white/20 text-xs font-bold text-white font-mono flex items-center justify-center gap-1.5"
+              >
+                <LogIn className="w-3.5 h-3.5 text-[#ff8800]" />
+                <span>Login</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  onOpenAuthModal('register');
+                }}
+                className="py-2.5 px-3 rounded-xl bg-[#ff8800] text-slate-950 text-xs font-black font-mono flex items-center justify-center gap-1.5"
+              >
+                <UserPlus className="w-3.5 h-3.5 stroke-[2.5]" />
+                <span>Register</span>
+              </button>
+            </div>
+          )}
+
+          {/* Navigation Links */}
+          <div className="grid grid-cols-1 gap-1 font-mono text-xs">
+            {[
+              { id: 'home', label: 'Challenges & Pricing' },
+              { id: 'terminal', label: 'Trading Terminal' },
+              { id: 'rules', label: 'Prop Rules & Objectives' },
+              { id: 'affiliate', label: 'Affiliates (17%+8%)' },
+              { id: 'withdrawals', label: 'Withdrawal Portal' },
+              { id: 'dashboard', label: 'Trader Hub & KYC' },
+              { id: 'faq', label: 'FAQ & Support' },
+            ].map((tab) => {
+              const isProtected = isRouteProtected(tab.id);
+              const isLocked = isProtected && !userProfile.isLoggedIn;
+              const isActive = currentTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    handleNavClick(tab.id);
+                  }}
+                  className={`flex items-center justify-between p-2.5 rounded-xl text-left transition-all cursor-pointer ${
+                    isActive
+                      ? 'bg-[#ff8800] text-slate-950 font-black'
+                      : 'text-slate-200 hover:bg-white/5'
+                  }`}
+                >
+                  <span className="font-bold">{tab.label}</span>
+                  {isLocked ? (
+                    <span className="flex items-center gap-1 text-[10px] text-slate-400 bg-white/5 px-2 py-0.5 rounded">
+                      <Lock className="w-2.5 h-2.5" /> Required
+                    </span>
+                  ) : isActive ? (
+                    <span className="text-[10px] uppercase font-mono font-black">Active</span>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Bottom Action inside Drawer */}
+          <div className="pt-2 border-t border-white/10 flex items-center justify-between gap-2">
+            <button
+              onClick={() => {
+                setMobileMenuOpen(false);
+                onOpenChallengeModal();
+              }}
+              className="flex-1 py-2.5 px-4 rounded-xl bg-gradient-to-r from-[#ff8800] to-[#ffaa00] text-slate-950 text-xs font-black font-mono flex items-center justify-center gap-1.5 cursor-pointer shadow-md"
+            >
+              <span>Get Funded Evaluation</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </button>
+
+            <button
+              onClick={handleToggleSound}
+              className={`p-2.5 rounded-xl border flex items-center justify-center cursor-pointer ${
+                soundActive
+                  ? 'bg-[#1a130a] border-[#ff8800]/40 text-[#ffaa00]'
+                  : 'bg-[#121216] border-white/10 text-slate-500'
+              }`}
+              title={soundActive ? 'Mute' : 'Enable Sound'}
+            >
+              {soundActive ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Mobile Submenu Bar (Scrollable Quick Strip) */}
+      <div className="lg:hidden flex items-center gap-1 border-t border-white/10 bg-[#0d0d10] py-2 px-2 text-xs overflow-x-auto no-scrollbar">
         {[
           { id: 'home', label: 'Challenges' },
           { id: 'terminal', label: 'Terminal' },
@@ -431,13 +602,13 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             key={tab.id}
             onClick={() => handleNavClick(tab.id)}
-            className={`px-2.5 py-1 rounded-md font-semibold whitespace-nowrap ${
+            className={`px-3 py-1.5 rounded-lg font-bold text-xs whitespace-nowrap cursor-pointer flex items-center gap-1 transition-all ${
               currentTab === tab.id
-                ? 'bg-gradient-to-r from-[#ff8800] to-[#ffaa00] text-slate-950 font-bold'
-                : 'text-slate-300 hover:text-white'
+                ? 'bg-[#ff8800] text-slate-950 font-black'
+                : 'text-slate-300 hover:text-white bg-white/5'
             }`}
           >
-            {tab.label}
+            <span>{tab.label}</span>
           </button>
         ))}
       </div>

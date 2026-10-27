@@ -44,6 +44,7 @@ interface AuthModalProps {
     referredBy: string | null;
     rememberMe: boolean;
     jwtToken: string;
+    isNewRegistration?: boolean;
     updatedAffiliateUsers?: UserAccount[];
   }) => void;
 }
@@ -232,6 +233,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         referredBy: regResult.newUser.referredBy || null,
         rememberMe,
         jwtToken,
+        isNewRegistration: true,
         updatedAffiliateUsers: regResult.updatedUsers,
       });
       onClose();
@@ -242,7 +244,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     const existing = affiliateUsers.find(
       (u) => u.email.toLowerCase() === email.trim().toLowerCase()
     );
-    const resolvedUserId = existing ? existing.id : 'usr_bft_001';
+    const resolvedUserId = existing ? existing.id : `usr_${email.trim().toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
     const resolvedName = existing ? existing.name : fullName.trim() || 'Alex Mercer';
     const resolvedRefCode = existing ? existing.referralCode : 'BFT-ALEX77';
     const resolvedReferredBy = existing?.referredBy || null;
@@ -272,6 +274,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       referredBy: resolvedReferredBy,
       rememberMe,
       jwtToken,
+      isNewRegistration: false,
     });
     onClose();
   };
@@ -280,7 +283,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     <div
       className={`relative w-full ${
         isPageView ? 'max-w-xl mx-auto' : 'max-w-lg'
-      } rounded-3xl bg-[#0e0e11] border border-[#ff8800]/35 shadow-[0_0_55px_rgba(255,136,0,0.18)] p-5 sm:p-6 my-auto animate-in fade-in zoom-in-95 duration-200`}
+      } rounded-3xl bg-[#0a0a0a] border border-[#ff8800]/40 p-5 sm:p-6 my-auto animate-in fade-in zoom-in-95 duration-200`}
     >
       {!isPageView && (
         <button
@@ -294,7 +297,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
       {/* Top Header */}
       <div className="text-center mb-3">
-        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#ff8800]/20 to-[#ffaa00]/10 border border-[#ff8800]/40 flex items-center justify-center text-[#ff8800] mx-auto mb-2 glow-gold">
+        <div className="w-10 h-10 rounded-xl bg-[#141418] border border-[#ff8800] flex items-center justify-center text-[#ff8800] mx-auto mb-2">
           <Lock className="w-5 h-5" />
         </div>
         <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#ff8800]/15 border border-[#ff8800]/30 text-[#ffaa00] text-[10px] font-mono font-bold uppercase tracking-wider mb-1">
@@ -690,7 +693,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
         <button
           type="submit"
-          className="w-full py-3 rounded-xl bg-gradient-to-r from-[#ff8800] to-[#ffaa00] hover:brightness-110 text-slate-950 font-black text-xs shadow-lg shadow-[#ff8800]/25 glow-gold cursor-pointer transition-all flex items-center justify-center gap-1.5 font-mono uppercase tracking-wider"
+          data-testid="auth-submit-btn"
+          className="w-full py-3 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] text-slate-950 font-black text-xs cursor-pointer transition-colors flex items-center justify-center gap-1.5 font-mono uppercase tracking-wider"
         >
           <span>
             {mode === 'register'

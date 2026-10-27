@@ -16,8 +16,10 @@ import {
   ArrowUpRight,
   Ban,
   RefreshCw,
+  Lock,
+  ShieldAlert,
 } from 'lucide-react';
-import { TradingAccount, WithdrawalRequest, WithdrawalPaymentMethod } from '../types';
+import { TradingAccount, WithdrawalRequest, WithdrawalPaymentMethod, UserProfile } from '../types';
 import {
   validateWithdrawalRequest,
   evaluateWithdrawalGuarantee,
@@ -26,10 +28,11 @@ import {
   isLiveFundedAccount,
   getAccountStatusBadgeLabel,
 } from '../utils/propRules';
+import { canUserWithdraw, KYC_WITHDRAWAL_LOCK_MESSAGE } from '../utils/kycVerification';
 import { soundEngine } from '../utils/soundEffects';
 
 interface WithdrawalModalProps {
-  account: TradingAccount;
+  account?: TradingAccount | null;
   accounts?: TradingAccount[];
   onSelectAccount?: (accountId: string) => void;
   onClose: () => void;
@@ -39,6 +42,9 @@ interface WithdrawalModalProps {
   onUpdateWithdrawal: (req: WithdrawalRequest) => void;
   onWithdrawalCommissionTriggered?: (payoutAmount: number) => void;
   inlineMode?: boolean;
+  userProfile?: UserProfile;
+  onNavigateToKyc?: () => void;
+  onOpenChallengeModal?: () => void;
 }
 
 export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
@@ -52,16 +58,22 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
   onUpdateWithdrawal,
   onWithdrawalCommissionTriggered,
   inlineMode = false,
+  userProfile,
+  onNavigateToKyc,
+  onOpenChallengeModal,
 }) => {
-  const netProfit = Math.max(0, Number((account.currentBalance - account.initialBalance).toFixed(2)));
+  const kycCheck = canUserWithdraw(userProfile);
+  const netProfit = account
+    ? Math.max(0, Number((account.currentBalance - account.initialBalance).toFixed(2)))
+    : 0;
   const [amount, setAmount] = useState<number>(
     netProfit >= MIN_WITHDRAWAL_PROFIT ? Math.min(200, netProfit) : MIN_WITHDRAWAL_PROFIT
   );
-  const [monthsActive, setMonthsActive] = useState<number>(account.monthsCompleted || 1);
+  const [monthsActive, setMonthsActive] = useState<number>(account?.monthsCompleted || 1);
   const [paymentMethod, setPaymentMethod] = useState<WithdrawalPaymentMethod>('crypto_trc20');
   const [trc20Address, setTrc20Address] = useState<string>('TYsDj4BmVp8QW8r6F32Xnm9ZkE4G1A7L2');
   const [bankName, setBankName] = useState<string>('Barclays Bank UK PLC');
-  const [accountHolder, setAccountHolder] = useState<string>('Alex Mercer');
+  const [accountHolder, setAccountHolder] = useState<string>(userProfile?.fullName || 'Alex Mercer');
   const [accountNumber, setAccountNumber] = useState<string>('GB29NWBK60161331926819');
   const [swiftCode, setSwiftCode] = useState<string>('BARCGB22XXX');
 
@@ -83,11 +95,12 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
   }, []);
 
   useEffect(() => {
+    if (!account) return;
     const updatedProfit = Math.max(0, Number((account.currentBalance - account.initialBalance).toFixed(2)));
     setAmount(updatedProfit >= MIN_WITHDRAWAL_PROFIT ? Math.min(200, updatedProfit) : MIN_WITHDRAWAL_PROFIT);
     setMonthsActive(account.monthsCompleted || 1);
     setError(null);
-  }, [account.id]);
+  }, [account?.id]);
 
   // Real-time auto-calculation of 10% Withdrawal Fee & Net Receivable Amount
   const breakdown = useMemo(
@@ -118,7 +131,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
 
   // Active processing request on current account for 3-minute SLA tracker
   const activeRequest = withdrawals.find(
-    (w) => w.status === 'processing' && w.accountId === account.id
+    (w) => w.status === 'processing' && account && w.accountId === account.id
   );
 
   const [secondsElapsed, setSecondsElapsed] = useState<number>(0);
@@ -160,6 +173,14 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
 
   // Validation state for Minimum Threshold ($50) & Balance
   const thresholdValidation = useMemo(() => {
+    if (!account) {
+      return {
+        isValid: false,
+        level: 'warning' as const,
+        title: 'No Active Account Selected',
+        message: 'Purchase a Challenge or Instant Funded account to generate withdrawable trading profits.',
+      };
+    }
     if (netProfit < MIN_WITHDRAWAL_PROFIT) {
       return {
         isValid: false,
@@ -192,9 +213,10 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
       title: `Minimum Threshold ($${MIN_WITHDRAWAL_PROFIT}.00) Satisfied`,
       message: `Your $${amount.toFixed(2)} payout request meets all BFT institutional compliance requirements.`,
     };
-  }, [amount, netProfit, account.id]);
+  }, [amount, netProfit, account]);
 
   const handleToggleDailyAddon = () => {
+    if (!account) return;
     soundEngine.playUiClick();
     onUpdateAccount({
       ...account,
@@ -206,6 +228,18 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
     e.preventDefault();
     setError(null);
     setSuccessBanner(null);
+
+    if (!kycCheck.allowed) {
+      setError(KYC_WITHDRAWAL_LOCK_MESSAGE);
+      soundEngine.playErrorAlert();
+      return;
+    }
+
+    if (!account) {
+      setError('No Active Account available for withdrawal.');
+      soundEngine.playErrorAlert();
+      return;
+    }
 
     const validation = validateWithdrawalRequest(account, amount);
     if (!validation.valid) {
@@ -320,25 +354,54 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
               BFT Institutional Payout Desk
             </span>
 
-            {/* Account Status Badge (LIVE ACCOUNT vs CHALLENGE) */}
+            {/* Account Status Badge (LIVE ACCOUNT vs CHALLENGE vs NO ACTIVE ACCOUNT) */}
+            {account ? (
+              <span
+                data-testid="withdrawal-account-badge"
+                className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded text-[11px] font-mono font-black uppercase border ${
+                  isLiveFundedAccount(account)
+                    ? 'bg-[#00c853]/20 text-[#00e676] border-[#00e676]/50'
+                    : 'bg-[#ff8800]/20 text-[#ff8800] border-[#ff8800]/50'
+                }`}
+              >
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    isLiveFundedAccount(account) ? 'bg-[#00e676]' : 'bg-[#ff8800]'
+                  }`}
+                />
+                {account.id} • {getAccountStatusBadgeLabel(account)}
+              </span>
+            ) : (
+              <span
+                data-testid="withdrawal-no-account-badge"
+                className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded text-[11px] font-mono font-black uppercase border bg-[#16161c] text-[#ff8800] border-[#ff8800]/50"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-[#ff8800]" />
+                No Active Account
+              </span>
+            )}
+
+            {/* KYC Compliance Badge */}
             <span
-              data-testid="withdrawal-account-badge"
+              data-testid="withdrawal-kyc-badge"
               className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded text-[11px] font-mono font-black uppercase border ${
-                isLiveFundedAccount(account)
+                userProfile?.kycStatus === 'verified'
                   ? 'bg-[#00c853]/20 text-[#00e676] border-[#00e676]/50'
-                  : 'bg-[#ff8800]/20 text-[#ff8800] border-[#ff8800]/50'
+                  : userProfile?.kycStatus === 'pending'
+                  ? 'bg-[#ff8800]/20 text-[#ff8800] border-[#ff8800]/50'
+                  : 'bg-rose-500/20 text-rose-400 border-rose-500/50'
               }`}
             >
-              <span
-                className={`w-1.5 h-1.5 rounded-full ${
-                  isLiveFundedAccount(account) ? 'bg-[#00e676]' : 'bg-[#ff8800]'
-                }`}
-              />
-              {account.id} • {getAccountStatusBadgeLabel(account)}
+              {userProfile?.kycStatus === 'verified' ? (
+                <ShieldCheck className="w-3.5 h-3.5 text-[#00e676]" />
+              ) : (
+                <Lock className="w-3.5 h-3.5" />
+              )}
+              KYC: {userProfile?.kycStatus ? userProfile.kycStatus.toUpperCase() : 'UNVERIFIED'}
             </span>
 
             {/* Optional Daily Withdrawal Add-on Verified Badge */}
-            {account.dailyWithdrawalsUnlocked ? (
+            {account?.dailyWithdrawalsUnlocked ? (
               <span
                 data-testid="daily-payouts-enabled-badge"
                 className="inline-flex items-center gap-1.5 bg-[#00c853]/20 border border-[#00e676]/50 text-[#00e676] px-3 py-0.5 rounded text-[11px] font-mono font-black"
@@ -366,7 +429,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
 
         <div className="flex flex-wrap items-center gap-2 self-start lg:self-center">
           {/* Account selector if multiple accounts exist */}
-          {accounts.length > 1 && onSelectAccount && (
+          {accounts.length > 1 && onSelectAccount && account && (
             <select
               aria-label="Select Account for Withdrawal"
               value={account.id}
@@ -385,20 +448,22 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
           )}
 
           {/* Toggle +15% Daily Withdrawal Add-on for instant verification */}
-          <button
-            type="button"
-            onClick={handleToggleDailyAddon}
-            data-testid="toggle-daily-addon-btn"
-            className={`px-3 py-2 rounded-xl text-xs font-mono font-bold border transition-colors cursor-pointer flex items-center gap-1.5 ${
-              account.dailyWithdrawalsUnlocked
-                ? 'bg-[#00c853]/15 border-[#00e676]/50 text-[#00e676]'
-                : 'bg-[#121216] border-white/15 text-slate-300 hover:border-[#ff8800]'
-            }`}
-            title="Toggle +15% Daily Withdrawal Package Add-on"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            <span>{account.dailyWithdrawalsUnlocked ? 'Daily Add-on: ON' : 'Enable Daily Add-on (+15%)'}</span>
-          </button>
+          {account && (
+            <button
+              type="button"
+              onClick={handleToggleDailyAddon}
+              data-testid="toggle-daily-addon-btn"
+              className={`px-3 py-2 rounded-xl text-xs font-mono font-bold border transition-colors cursor-pointer flex items-center gap-1.5 ${
+                account.dailyWithdrawalsUnlocked
+                  ? 'bg-[#00c853]/15 border-[#00e676]/50 text-[#00e676]'
+                  : 'bg-[#121216] border-white/15 text-slate-300 hover:border-[#ff8800]'
+              }`}
+              title="Toggle +15% Daily Withdrawal Package Add-on"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>{account.dailyWithdrawalsUnlocked ? 'Daily Add-on: ON' : 'Enable Daily Add-on (+15%)'}</span>
+            </button>
+          )}
 
           <button
             type="button"
@@ -413,6 +478,86 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
           </button>
         </div>
       </div>
+
+      {/* STRICT KYC VERIFICATION RESTRICTION BANNER */}
+      {!kycCheck.allowed && (
+        <div
+          data-testid="kyc-withdrawal-lock-banner"
+          className="mt-6 p-4 sm:p-5 rounded-2xl bg-[#121216] border-2 border-[#ff8800] flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+        >
+          <div className="flex items-start gap-3.5">
+            <div className="w-11 h-11 rounded-xl bg-[#ff8800]/15 border border-[#ff8800]/40 flex items-center justify-center shrink-0 text-[#ff8800]">
+              <ShieldAlert className="w-6 h-6" />
+            </div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-mono font-black uppercase tracking-wider text-[#ff8800]">
+                  Withdrawal Access Restricted • KYC Verification Required
+                </span>
+                <span className="px-2 py-0.5 rounded bg-rose-500/20 border border-rose-500/40 text-rose-300 font-mono text-[10px] font-black uppercase">
+                  Status: {userProfile?.kycStatus ? userProfile.kycStatus.toUpperCase() : 'UNVERIFIED'}
+                </span>
+              </div>
+              <p
+                data-testid="kyc-withdrawal-lock-text"
+                className="text-sm sm:text-base font-black text-white mt-1"
+              >
+                {KYC_WITHDRAWAL_LOCK_MESSAGE}
+              </p>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Complete your immutable personal profile details (Full Name, Address, Date of Birth) and upload your official government ID to unlock payouts.
+              </p>
+            </div>
+          </div>
+
+          {onNavigateToKyc && (
+            <button
+              type="button"
+              data-testid="complete-kyc-from-withdrawal-btn"
+              onClick={() => {
+                soundEngine.playUiClick();
+                onNavigateToKyc();
+              }}
+              className="px-4 py-3 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] text-slate-950 font-black font-mono text-xs uppercase tracking-wider shrink-0 cursor-pointer transition-colors min-h-[44px]"
+            >
+              Complete KYC Verification →
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* NO ACTIVE ACCOUNT BANNER WHEN USER HAS NOT YET PURCHASED A PLAN */}
+      {!account && (
+        <div
+          data-testid="withdrawal-no-account-banner"
+          className="mt-4 p-4 sm:p-5 rounded-2xl bg-[#111114] border border-white/15 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+        >
+          <div>
+            <span className="text-xs font-mono font-black uppercase tracking-wider text-[#ff8800]">
+              No Active Account
+            </span>
+            <h3 className="text-base font-black text-white mt-0.5">
+              You have not purchased a Challenge or Instant Funded account yet
+            </h3>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Choose an evaluation plan or Instant Funded account to start trading and generating withdrawable profits.
+            </p>
+          </div>
+          {onOpenChallengeModal && (
+            <button
+              type="button"
+              data-testid="withdrawal-choose-plan-btn"
+              onClick={() => {
+                soundEngine.playUiClick();
+                onOpenChallengeModal();
+              }}
+              className="px-4 py-3 rounded-xl bg-[#16161c] hover:bg-[#1f1f27] text-[#ff8800] border border-[#ff8800] font-black font-mono text-xs uppercase tracking-wider shrink-0 cursor-pointer transition-colors min-h-[44px]"
+            >
+              Choose a Plan / Buy Challenge
+            </button>
+          )}
+        </div>
+      )}
 
       {/* 1. FOUR BALANCE & ELIGIBILITY SUMMARY CARDS */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 my-6">
@@ -434,7 +579,9 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
           </div>
           <div className="mt-2 pt-2 border-t border-white/5 flex items-center justify-between text-[11px] font-mono text-slate-400">
             <span>Account Equity:</span>
-            <span className="text-slate-200 font-bold">${account.currentBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+            <span className="text-slate-200 font-bold">
+              ${(account?.currentBalance ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+            </span>
           </div>
         </div>
 
@@ -495,7 +642,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
               <CalendarClock className="w-4 h-4" />
             </span>
           </div>
-          {account.dailyWithdrawalsUnlocked ? (
+          {account?.dailyWithdrawalsUnlocked ? (
             <>
               <div className="text-lg font-black font-mono text-[#00e676] tracking-tight">
                 00d : 00h : 00m : 00s
@@ -512,7 +659,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
               </div>
               <div className="mt-2 pt-2 border-t border-white/5 flex items-center justify-between text-[11px] font-mono text-slate-400">
                 <span>7-Day Cycle Window:</span>
-                <span className="text-[#ff8800] font-bold">Eligible Now</span>
+                <span className="text-[#ff8800] font-bold">{account ? 'Eligible Now' : 'No Account'}</span>
               </div>
             </>
           )}
@@ -520,7 +667,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
       </div>
 
       {/* Optional Daily Withdrawal Add-on Banner */}
-      {account.dailyWithdrawalsUnlocked && (
+      {account?.dailyWithdrawalsUnlocked && (
         <div className="mb-6 p-3.5 rounded-xl bg-[#071a12] border border-[#00e676]/40 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div className="flex items-center gap-2.5">
             <CheckCircle2 className="w-5 h-5 text-[#00e676] shrink-0" />
@@ -831,21 +978,32 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
           <button
             type="submit"
             data-testid="submit-withdrawal-btn"
-            disabled={!thresholdValidation.isValid}
-            className={`w-full py-4 rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition-colors font-mono uppercase tracking-wider ${
-              thresholdValidation.isValid
+            disabled={!kycCheck.allowed || !account || !thresholdValidation.isValid}
+            className={`w-full py-4 rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition-colors font-mono uppercase tracking-wider min-h-[48px] ${
+              kycCheck.allowed && account && thresholdValidation.isValid
                 ? 'bg-[#ff8800] hover:bg-[#ff9900] text-slate-950 cursor-pointer'
-                : 'bg-white/5 text-slate-500 cursor-not-allowed border border-white/10'
+                : 'bg-white/5 text-slate-400 cursor-not-allowed border border-white/10'
             }`}
           >
-            <Zap className="w-4 h-4 fill-current" />
-            <span>
-              {thresholdValidation.isValid
-                ? `Submit Withdrawal • Receive $${breakdown.netAmountReceived.toFixed(2)} Net (${
-                    paymentMethod === 'crypto_trc20' ? 'USDT TRC-20' : 'Bank Wire'
-                  })`
-                : `Minimum $${MIN_WITHDRAWAL_PROFIT}.00 Profit Required to Withdraw`}
-            </span>
+            {!kycCheck.allowed ? (
+              <>
+                <Lock className="w-4 h-4 text-[#ff8800]" />
+                <span>{KYC_WITHDRAWAL_LOCK_MESSAGE}</span>
+              </>
+            ) : (
+              <>
+                <Zap className="w-4 h-4 fill-current" />
+                <span>
+                  {!account
+                    ? 'No Active Account — Choose a Plan to Unlock Withdrawals'
+                    : thresholdValidation.isValid
+                    ? `Submit Withdrawal • Receive $${breakdown.netAmountReceived.toFixed(2)} Net (${
+                        paymentMethod === 'crypto_trc20' ? 'USDT TRC-20' : 'Bank Wire'
+                      })`
+                    : `Minimum $${MIN_WITHDRAWAL_PROFIT}.00 Profit Required to Withdraw`}
+                </span>
+              </>
+            )}
           </button>
         </form>
 

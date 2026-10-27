@@ -350,7 +350,7 @@ export const AccountBreachModal: React.FC<AccountBreachModalProps> = ({
                     className="px-3 py-1.5 rounded-xl bg-[#0f182d] hover:bg-[#162340] border border-emerald-500/40 text-emerald-300 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
                   >
                     <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                    <span>{act.id} (${act.currentBalance.toLocaleString()})</span>
+                    <span>{act.id} (${(act?.currentBalance ?? 0).toLocaleString()})</span>
                   </button>
                 ))}
               </div>

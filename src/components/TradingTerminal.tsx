@@ -37,6 +37,10 @@ import {
   Minus,
   Sparkles,
   Users,
+  ChevronLeft,
+  ChevronUp,
+  MoreHorizontal,
+  Target,
 } from 'lucide-react';
 import {
   TradingAccount,
@@ -90,11 +94,13 @@ import { AccountBreachModal } from './AccountBreachModal';
 import { QuotexAssetModal } from './QuotexAssetModal';
 import { QuotexSignalsDrawer } from './QuotexSignalsDrawer';
 import { QuotexLeaderboardModal } from './QuotexLeaderboardModal';
+import { QuotexMobileDock } from './QuotexMobileDock';
+import { QuotexMobileNav } from './QuotexMobileNav';
 import { PriceAlertModal, PriceAlert } from './PriceAlertModal';
 import { soundEngine } from '../utils/soundEffects';
 
 interface TradingTerminalProps {
-  account: TradingAccount;
+  account?: TradingAccount | null;
   accounts?: TradingAccount[];
   onSelectAccount?: (id: string) => void;
   onUpdateAccount: (updated: TradingAccount) => void;
@@ -197,6 +203,13 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   const [chartType, setChartType] = useState<ChartType>('candles');
   const [indicators, setIndicators] = useState<IndicatorSettings>(DEFAULT_INDICATOR_SETTINGS);
   const [zoomLevel, setZoomLevel] = useState<number>(1);
+
+  // Mobile Responsiveness & Drawer States
+  const [isMobileMoreMenuOpen, setIsMobileMoreMenuOpen] = useState<boolean>(false);
+  const [mobileNavTab, setMobileNavTab] = useState<'chart' | 'signals' | 'chat' | 'hub'>('chart');
+  const [isMobileQuickToolsOpen, setIsMobileQuickToolsOpen] = useState<boolean>(false);
+  const touchStartDistRef = useRef<number | null>(null);
+  const initialTouchZoomRef = useRef<number>(1);
 
   // Technical Drawing Suite State
   const [activeDrawingTool, setActiveDrawingTool] = useState<DrawingTool>('none');
@@ -346,13 +359,14 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         }
   );
 
-  // Dual-Breach System: Hard Breach vs Soft Breach
+  // Dual-Breach System vs No Active Account State
+  const hasNoAccount = !account;
   const isSoftBreached = Boolean(account && (account.status === 'soft-breached' || account.breachType === 'soft'));
   const isHardBreached = Boolean(
-    !account ||
-    account.status === 'hard-breached' ||
-    account.status === 'breached' ||
-    (!isSoftBreached && account.status !== 'active' && account.status !== 'passed')
+    account &&
+      (account.status === 'hard-breached' ||
+        account.status === 'breached' ||
+        (!isSoftBreached && account.status !== 'active' && account.status !== 'passed'))
   );
   const isBreached = isSoftBreached || isHardBreached;
   const otherActiveAccounts = accounts.filter((a) => a.id !== account?.id && a.status === 'active');
@@ -619,7 +633,12 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     targetDuration?: number,
     customInvestment?: number
   ) => {
-    if (!account || account.status === 'breached') {
+    if (!account) {
+      soundEngine.playTradeLoss();
+      setTradeError('No Active Account. Please choose a plan or buy a challenge to start trading.');
+      return;
+    }
+    if (account.status === 'breached' || account.status === 'hard-breached') {
       soundEngine.playTradeLoss();
       setTradeError('Account is locked due to rule breach. Trading is disabled.');
       setIsBreachModalOpen(true);
@@ -952,6 +971,76 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     setHoveredCandle(null);
     setCrosshairPos(null);
     setIsInteracting(false);
+  };
+
+  // 6. Seamless Mobile Touch Gestures (Single-Finger Pan & Two-Finger Pinch-to-Zoom)
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length === 1) {
+      const touch = e.touches[0];
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      const x = touch.clientX - rect.left;
+      const y = touch.clientY - rect.top;
+
+      dragStartXRef.current = touch.clientX;
+      initialPanOffsetRef.current = panOffset;
+      setIsInteracting(true);
+
+      if (showHistoryOverlay && activeDrawingTool === 'none') {
+        const hitMarker = findHoveredTradeMarker(x, y, tradeMarkersRef.current, 18);
+        if (hitMarker) {
+          soundEngine.playUiClick();
+          setSelectedTradeMarker((prev) => (prev?.id === hitMarker.id ? null : hitMarker));
+        }
+      }
+    } else if (e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      touchStartDistRef.current = Math.hypot(dx, dy);
+      initialTouchZoomRef.current = zoomLevel;
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (e.touches.length === 1 && isInteracting) {
+      const touch = e.touches[0];
+      const deltaX = touch.clientX - dragStartXRef.current;
+      const candleWidthEst = 12 * zoomLevel;
+      const offsetDiff = Math.round(deltaX / candleWidthEst);
+      const newOffset = Math.max(0, Math.min(candles.length - 20, initialPanOffsetRef.current + offsetDiff));
+      setPanOffset(newOffset);
+
+      const canvas = canvasRef.current;
+      if (canvas && candles.length > 0) {
+        const rect = canvas.getBoundingClientRect();
+        const coords = { x: touch.clientX - rect.left, y: touch.clientY - rect.top };
+        const width = canvas.width;
+        const maxVisibleCandles = Math.max(18, Math.floor((width - 75) / (11 * zoomLevel)));
+        const endIndex = Math.max(maxVisibleCandles, candles.length - newOffset);
+        const startIndex = Math.max(0, endIndex - maxVisibleCandles);
+        const visibleSlice = candles.slice(startIndex, endIndex);
+        const slotWidth = (width - 78) / Math.max(1, visibleSlice.length);
+        const idx = Math.min(
+          visibleSlice.length - 1,
+          Math.max(0, Math.floor((coords.x - 10) / Math.max(1, slotWidth)))
+        );
+        setHoveredCandle(visibleSlice[idx] || null);
+        setCrosshairPos(coords);
+      }
+    } else if (e.touches.length === 2 && touchStartDistRef.current !== null) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.hypot(dx, dy);
+      const scale = dist / touchStartDistRef.current;
+      const newZoom = Number(Math.max(0.35, Math.min(3.5, initialTouchZoomRef.current * scale)).toFixed(2));
+      setZoomLevel(newZoom);
+    }
+  };
+
+  const handleTouchEnd = () => {
+    setIsInteracting(false);
+    touchStartDistRef.current = null;
   };
 
   // 6. High-Performance Hardware-Accelerated Canvas Chart Renderer with Drawing Suite & MACD
@@ -1658,9 +1747,147 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   }, []);
 
   return (
-    <div className="flex flex-col h-[calc(100vh-60px)] min-h-[720px] bg-[#131722] text-slate-100 overflow-hidden font-sans select-none">
+    <div className="flex flex-col h-[100dvh] md:h-[calc(100vh-60px)] md:min-h-[720px] bg-[#131722] text-slate-100 overflow-hidden font-sans select-none">
+            {/* 0. COMPACT MOBILE TOP NAVIGATION HEADER (Quotex Mobile View) */}
+      <div
+        data-testid="quotex-mobile-top-header"
+        className="flex md:hidden h-11 bg-[#131722] border-b border-[#1e222d] items-center justify-between px-2 shrink-0 z-30"
+      >
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => {
+              soundEngine.playUiClick();
+              onNavigateTab?.('home');
+            }}
+            className="flex items-center gap-1 px-2 py-1 rounded-lg bg-[#181b25] border border-[#2a2e39] text-xs font-mono font-bold text-slate-300"
+            title="Return to BFT Portal"
+          >
+            <span className="font-black text-[#ff8800]">BFT</span>
+            <span className="text-[9px] px-1 py-0.2 rounded bg-[#ff8800]/20 text-[#ff8800] font-bold">OTC</span>
+          </button>
+
+          {/* Mobile Account Switcher Dropdown */}
+          <div className="relative">
+            <button
+              onClick={() => setAccountDropdownOpen(!accountDropdownOpen)}
+              data-testid="mobile-account-switcher"
+              className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[#181b25] border border-[#2a2e39] text-xs font-mono"
+            >
+              <div
+                className={`w-2 h-2 rounded-full ${
+                  !account
+                    ? 'bg-[#ff8800]'
+                    : isBreached
+                    ? 'bg-rose-500 animate-pulse'
+                    : isLiveFundedAccount(account)
+                    ? 'bg-[#00e676]'
+                    : 'bg-[#ff8800]'
+                }`}
+              />
+              <span className="font-bold text-white text-[11px] max-w-[95px] truncate">
+                {account ? account.id : 'No Active Account'}
+              </span>
+              {account && (
+                <span className="text-[11px] font-black font-mono text-[#00e676]">
+                  ${(account.currentBalance ?? 0).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
+                </span>
+              )}
+              <ChevronDown className="w-3 h-3 text-slate-400" />
+            </button>
+
+            {/* Account Switcher Dropdown Modal */}
+            {accountDropdownOpen && (
+              <div className="absolute top-full left-0 mt-1.5 w-64 bg-[#141824] border border-[#2a2e39] rounded-xl shadow-2xl p-2 z-50 font-mono">
+                <div className="text-[10px] text-slate-400 font-bold px-2 py-1 uppercase tracking-wider">
+                  Select Trading Account
+                </div>
+                {accounts && accounts.map((acc) => (
+                  <button
+                    key={acc.id}
+                    onClick={() => {
+                      onSelectAccount?.(acc.id);
+                      setAccountDropdownOpen(false);
+                    }}
+                    className={`w-full flex items-center justify-between p-2 rounded-lg text-left transition-colors mb-1 ${
+                      acc.id === account?.id
+                        ? 'bg-[#252b3b] border border-[#ff8800]/50 text-white'
+                        : 'hover:bg-[#1b1f2b] text-slate-300'
+                    }`}
+                  >
+                    <div>
+                      <div className="font-bold text-xs">{acc.id}</div>
+                      <div className="text-[10px] text-[#00e676] font-mono">
+                        ${(acc?.currentBalance ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                      </div>
+                    </div>
+                    <span
+                      className={`text-[9px] px-1.5 py-0.5 rounded font-black uppercase ${
+                        isLiveFundedAccount(acc)
+                          ? 'bg-[#00c853]/25 text-[#00e676]'
+                          : 'bg-[#ff8800]/20 text-[#ff8800]'
+                      }`}
+                    >
+                      {getAccountStatusBadgeLabel(acc)}
+                    </span>
+                  </button>
+                ))}
+                {onOpenChallengeModal && (
+                  <div className="border-t border-[#2a2e39] mt-2 pt-2">
+                    <button
+                      onClick={() => {
+                        setAccountDropdownOpen(false);
+                        onOpenChallengeModal();
+                      }}
+                      className="w-full py-1.5 text-xs text-center font-bold text-[#ff8800] hover:text-amber-300 rounded bg-[#131722] border border-[#ff8800]/30"
+                    >
+                      + Buy New Evaluation Account
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Right Action Buttons */}
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            data-testid="mobile-alerts-btn"
+            onClick={() => {
+              soundEngine.playUiClick();
+              setIsPriceAlertModalOpen(true);
+            }}
+            className="p-1.5 rounded-lg bg-[#181b25] border border-[#2a2e39] text-amber-400 relative"
+            title="Price Alerts"
+          >
+            <BellRing className="w-4 h-4" />
+            {alerts.filter((a) => a.active && !a.triggered).length > 0 && (
+              <span className="w-2 h-2 rounded-full bg-amber-400 absolute top-1 right-1 animate-ping" />
+            )}
+          </button>
+
+          <button
+            type="button"
+            data-testid="mobile-deposit-btn"
+            onClick={() => {
+              soundEngine.playUiClick();
+              if (onOpenDepositModal) {
+                onOpenDepositModal();
+              } else if (onOpenChallengeModal) {
+                onOpenChallengeModal();
+              }
+            }}
+            className="px-2.5 py-1 rounded-lg bg-[#00e676] hover:bg-[#00c853] text-black font-black text-xs font-mono flex items-center gap-1 shadow-md"
+          >
+            <Plus className="w-3.5 h-3.5 stroke-[3]" />
+            <span>Deposit</span>
+          </button>
+        </div>
+      </div>
+
       {/* 1. TOP SCROLLABLE ASSET & PAYOUT BAR (Quotex Exact OTC Ticker) */}
-      <div className="h-12 bg-[#1e222d] border-b border-[#2a2e39] flex items-center justify-between px-3 shrink-0 z-20">
+      <div className="hidden md:flex h-12 bg-[#1e222d] border-b border-[#2a2e39] flex items-center justify-between px-3 shrink-0 z-20">
         {/* Left: Brand Badge & Horizontal OTC Asset Tabs with Green Payout Badges */}
         <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1">
           <button
@@ -1747,7 +1974,9 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             >
               <div
                 className={`w-2 h-2 rounded-full ${
-                  isBreached
+                  !account
+                    ? 'bg-[#ff8800]'
+                    : isBreached
                     ? 'bg-rose-500 animate-pulse'
                     : isLiveFundedAccount(account)
                     ? 'bg-[#00e676]'
@@ -1757,21 +1986,25 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               <div className="text-left">
                 <div className="flex items-center gap-1.5">
                   <span className="font-bold text-white text-[11px]">
-                    {account ? account.id : 'No Account'}
+                    {account ? account.id : 'No Active Account'}
                   </span>
-                  <span
-                    data-testid="terminal-account-status-badge"
-                    className={`text-[9px] px-1.5 py-0.5 rounded font-black uppercase tracking-wider border ${
-                      isLiveFundedAccount(account)
-                        ? 'bg-[#00c853]/25 text-[#00e676] border-[#00e676]/60'
-                        : 'bg-[#ff8800]/20 text-[#ff8800] border-[#ff8800]/50'
-                    }`}
-                  >
-                    {getAccountStatusBadgeLabel(account)}
-                  </span>
+                  {account && (
+                    <span
+                      data-testid="terminal-account-status-badge"
+                      className={`text-[9px] px-1.5 py-0.5 rounded font-black uppercase tracking-wider border ${
+                        isLiveFundedAccount(account)
+                          ? 'bg-[#00c853]/25 text-[#00e676] border-[#00e676]/60'
+                          : 'bg-[#ff8800]/20 text-[#ff8800] border-[#ff8800]/50'
+                      }`}
+                    >
+                      {getAccountStatusBadgeLabel(account)}
+                    </span>
+                  )}
                 </div>
-                <div className={`text-xs font-black ${isBreached ? 'text-rose-400' : 'text-[#00e676]'}`}>
-                  ${(account?.currentBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                <div className={`text-xs font-black ${!account ? 'text-[#ff8800]' : isBreached ? 'text-rose-400' : 'text-[#00e676]'}`}>
+                  {account
+                    ? `$${account.currentBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                    : 'Choose a Plan'}
                 </div>
               </div>
               <ChevronDown className="w-3.5 h-3.5 text-slate-400 ml-1" />
@@ -1903,9 +2136,9 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       </div>
 
       {/* Main Trading Stage: Left Sidebar + Central Chart + Right Execution Panel */}
-      <div className="flex-1 flex overflow-hidden relative">
+      <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative">
         {/* 2. LEFT-SIDE ICON NAVIGATION BAR */}
-        <div className="w-14 bg-[#1e222d] border-r border-[#2a2e39] flex flex-col items-center justify-between py-3 shrink-0 z-10">
+        <div className="hidden md:flex w-14 bg-[#1e222d] border-r border-[#2a2e39] flex flex-col items-center justify-between py-3 shrink-0 z-10">
           <div className="flex flex-col items-center gap-3">
             {/* Trade / Terminal Icon (Active) */}
             <button
@@ -2411,8 +2644,24 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseLeave}
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
           >
             <canvas ref={canvasRef} className="w-full h-full block" />
+            {/* Mobile Floating Action Button: Reset Pan / Center Chart */}
+            <button
+              type="button"
+              data-testid="mobile-center-chart-btn"
+              onClick={() => {
+                soundEngine.playUiClick();
+                setPanOffset(0);
+              }}
+              className="md:hidden absolute top-12 right-2 z-20 w-8 h-8 rounded-full bg-[#181b25]/90 border border-[#2a2e39] flex items-center justify-center text-emerald-400 shadow-lg active:scale-95"
+              title="Center Chart to Latest Price"
+            >
+              <Target className="w-4 h-4" />
+            </button>
 
             {/* Interactive Chart Trade History Marker Tooltip (Hover / Click on Green/Red Execution & Settlement Dots) */}
             {showHistoryOverlay && activeInspectedMarker && (
@@ -2676,8 +2925,46 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               </div>
             )}
 
-            {/* ABSOLUTE CHART & TERMINAL LOCKING OVERLAY (DUAL BREACH SYSTEM) */}
-            {isSoftBreached ? (
+            {/* ABSOLUTE CHART & TERMINAL LOCKING OVERLAY (NO ACTIVE ACCOUNT vs DUAL BREACH SYSTEM) */}
+            {hasNoAccount ? (
+              <div
+                data-testid="terminal-no-active-account-overlay"
+                className="absolute inset-0 z-30 flex items-center justify-center bg-black/85 backdrop-blur-xl p-4"
+              >
+                <div className="max-w-md w-full rounded-2xl bg-[#0a0a0a] border-2 border-[#ff8800] p-6 sm:p-8 text-center font-mono">
+                  <div className="w-14 h-14 rounded-2xl bg-[#ff8800]/15 border border-[#ff8800]/40 flex items-center justify-center mx-auto mb-4 text-[#ff8800]">
+                    <Zap className="w-7 h-7" />
+                  </div>
+                  <span className="px-3 py-1 rounded bg-[#ff8800]/15 text-[#ff8800] border border-[#ff8800]/40 text-[10px] font-black uppercase tracking-wider">
+                    No Active Account
+                  </span>
+                  <h3 className="text-xl font-black text-white font-sans mt-3">
+                    No Active Account Purchased Yet
+                  </h3>
+                  <p className="text-xs text-slate-300 mt-2 font-sans leading-relaxed">
+                    Your trader profile is registered, but you do not currently have an active Challenge or Instant Funded account. Choose a plan to deploy your live OTC trading account immediately.
+                  </p>
+                  <div className="mt-6 space-y-2.5">
+                    <button
+                      type="button"
+                      data-testid="terminal-choose-plan-btn"
+                      onClick={() => onOpenChallengeModal?.()}
+                      className="w-full py-3.5 px-6 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] text-slate-950 font-black text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer uppercase font-mono tracking-wider transition-colors min-h-[48px]"
+                    >
+                      <Zap className="w-4 h-4 fill-slate-950" />
+                      <span>Choose a Plan / Buy Challenge</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onNavigateTab?.('dashboard')}
+                      className="w-full py-3 px-4 rounded-xl bg-[#141418] hover:bg-[#1c1c22] text-slate-200 border border-white/15 text-xs font-bold transition-colors cursor-pointer min-h-[44px]"
+                    >
+                      Open Account & KYC Dashboard
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : isSoftBreached ? (
               <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/85 backdrop-blur-xl p-4 animate-in fade-in duration-200">
                 <div className="max-w-md w-full rounded-3xl bg-[#1e222d]/95 border-2 border-amber-500/80 p-8 shadow-[0_0_80px_rgba(245,158,11,0.35)] text-center font-mono">
                   <div className="w-16 h-16 rounded-2xl bg-amber-500/20 border border-amber-500/50 flex items-center justify-center mx-auto mb-4 text-amber-400">
@@ -2730,7 +3017,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                               className="px-3 py-1.5 rounded-xl bg-[#131722] hover:bg-[#252b3b] border border-[#00e676]/40 text-[#00e676] text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
                             >
                               <span className="w-2 h-2 rounded-full bg-[#00e676]" />
-                              <span>{act.id} (${act.currentBalance.toLocaleString()})</span>
+                              <span>{act.id} (${(act?.currentBalance ?? 0).toLocaleString()})</span>
                             </button>
                           ))}
                         </div>
@@ -2797,7 +3084,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                               className="px-3 py-1.5 rounded-xl bg-[#131722] hover:bg-[#252b3b] border border-[#00e676]/40 text-[#00e676] text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
                             >
                               <span className="w-2 h-2 rounded-full bg-[#00e676]" />
-                              <span>{act.id} (${act.currentBalance.toLocaleString()})</span>
+                              <span>{act.id} (${(act?.currentBalance ?? 0).toLocaleString()})</span>
                             </button>
                           ))}
                         </div>
@@ -2822,10 +3109,34 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
           )}
         </div>
 
+                {/* Mobile Quotex Bottom Trade Execution Dock */}
+        <QuotexMobileDock
+          selectedAsset={selectedAsset}
+          currentPrice={currentPrice}
+          effectiveInvestment={effectiveInvestment}
+          duration={duration}
+          investment={investment}
+          investmentMode={investmentMode}
+          pendingOrderEnabled={pendingOrderEnabled}
+          isSoftBreached={isSoftBreached}
+          isHardBreached={isHardBreached}
+          riskBarricaded={riskBarricade.barricaded}
+          activeTradesCount={activeTrades.length}
+          closedTradesCount={closedTrades.length}
+          dailyDrawdownPercent={metrics.dailyDrawdownPercent}
+          isTradesDrawerOpen={isTradesDrawerOpen}
+          onOpenAssetModal={() => setIsAssetModalOpen(true)}
+          onTogglePendingTrade={() => setPendingOrderEnabled(!pendingOrderEnabled)}
+          onChangeDuration={(d) => setDuration(d)}
+          onChangeInvestment={(inv) => setInvestment(inv)}
+          onToggleInvestmentMode={() => setInvestmentMode(investmentMode === 'usd' ? 'percent' : 'usd')}
+          onTriggerTrade={(dir) => handleTriggerTrade(dir)}
+          onToggleTradesDrawer={() => setIsTradesDrawerOpen(!isTradesDrawerOpen)}
+        />
         {/* 4. RIGHT-SIDE QUOTEX TRADE EXECUTION & ACTIVE POSITIONS / HISTORY PANEL */}
         <div
           data-testid="quotex-right-panel"
-          className="w-80 sm:w-[336px] bg-[#1c202e] border-l border-[#2a2e39] flex flex-col justify-between p-3.5 shrink-0 z-10 overflow-y-auto"
+          className="hidden md:flex w-80 sm:w-[336px] bg-[#1c202e] border-l border-[#2a2e39] flex flex-col justify-between p-3.5 shrink-0 z-10 overflow-y-auto"
         >
           <div className="space-y-3">
             {/* Top Row: Selected Asset | Payout % + PENDING TRADE Toggle Switch */}
@@ -3479,6 +3790,24 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         </div>
       </div>
 
+            {/* Quotex Mobile Bottom Navigation Bar */}
+      <QuotexMobileNav
+        activeTab={mobileNavTab}
+        onChangeTab={setMobileNavTab}
+        onOpenSignalsDrawer={() => setIsSignalsDrawerOpen(true)}
+        onOpenLeaderboard={() => setIsLeaderboardOpen(true)}
+        onOpenRules={() => {
+          setIsLeaderboardOpen(false);
+          setIsAssetModalOpen(false);
+          const rulesBtn = document.querySelector('[data-testid="rules-btn"]') as HTMLButtonElement | null;
+          if (rulesBtn) rulesBtn.click();
+        }}
+        onNavigateToHub={() => onNavigateTab?.('dashboard')}
+        onResetChartPan={() => setPanOffset(0)}
+        isSoundMuted={!soundEnabled}
+        onToggleSound={handleToggleSound}
+        signalsCount={3}
+      />
       {/* Confirmation Modal (only if One-Click is disabled) */}
       {pendingTradeDirection && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">

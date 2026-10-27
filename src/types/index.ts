@@ -42,6 +42,8 @@ export type BreachType = 'none' | 'soft' | 'hard';
 
 export interface TradingAccount {
   id: string; // e.g. BFT-78291
+  ownerId?: string;
+  ownerEmail?: string;
   loginId: string;
   passwordHash: string;
   tier: ChallengeTier;
@@ -157,16 +159,28 @@ export interface WithdrawalRequest {
 
 export type KYCStatus = 'unverified' | 'pending' | 'verified';
 
+export type KYCDocumentType = 'ID Card' | 'Passport' | 'Driving License';
+
 export interface UserProfile {
   id: string;
   email: string;
   fullName: string;
+  address?: string;
+  dateOfBirth?: string;
+  profileLocked?: boolean;
+  profileLockedAt?: string;
   country: string;
   avatarUrl: string;
   telegramHandle: string;
   kycStatus: KYCStatus;
-  kycDocumentType?: string;
+  kycDocumentType?: KYCDocumentType | string;
+  kycDocumentNumber?: string;
+  kycDocumentFileName?: string;
+  kycExtractedName?: string;
+  kycExtractedDob?: string;
   kycSubmittedAt?: string;
+  kycVerificationEndsAt?: number; // ms timestamp when 2-minute auto-verification completes
+  kycRejectionReason?: string;
   twoFactorEnabled: boolean;
   activeAccountId: string;
   referralCode?: string;

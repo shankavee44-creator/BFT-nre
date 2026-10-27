@@ -154,21 +154,23 @@ export const BUILTIN_AVATARS: string[] = [
 const INITIAL_PROFILE: UserProfile = {
   id: 'usr_bft_001',
   email: 'trader.pro@bft-capital.com',
-  fullName: 'Alex Mercer',
+  fullName: '',
+  address: '',
+  dateOfBirth: '',
+  profileLocked: false,
   country: 'United Kingdom',
   avatarUrl: BUILTIN_AVATARS[0],
-  telegramHandle: '@alex_bft_pro',
-  kycStatus: 'verified',
+  telegramHandle: '',
+  kycStatus: 'unverified',
   kycDocumentType: 'Passport',
-  kycSubmittedAt: '2026-10-15',
-  twoFactorEnabled: true,
-  activeAccountId: 'BFT-91823',
+  twoFactorEnabled: false,
+  activeAccountId: '',
   referralCode: 'BFT-ALEX77',
   referredBy: undefined,
   isLoggedIn: false,
 };
 
-const INITIAL_ACCOUNTS: TradingAccount[] = [
+export const DEMO_FUNDED_ACCOUNTS: TradingAccount[] = [
   {
     id: 'BFT-91823',
     loginId: 'BFT-91823',
@@ -389,12 +391,13 @@ const INITIAL_WITHDRAWALS: WithdrawalRequest[] = [
 ];
 
 export const STORAGE_KEYS = {
-  PROFILE: 'bft_user_profile_v2',
-  ACCOUNTS: 'bft_accounts_v2',
-  ACTIVE_ACCOUNT: 'bft_active_account_id_v2',
+  PROFILE: 'bft_user_profile_v3',
+  PROFILES_BY_EMAIL: 'bft_profiles_by_email_v3',
+  ACCOUNTS: 'bft_accounts_v3',
+  ACTIVE_ACCOUNT: 'bft_active_account_id_v3',
   WITHDRAWALS: 'bft_withdrawals_v3',
   TRADES: 'bft_trades_v2',
-  AUTH_TOKEN: 'bft_auth_token_v2',
+  AUTH_TOKEN: 'bft_auth_token_v3',
 };
 
 export function clearAuthSession(): void {
@@ -419,7 +422,12 @@ export function loadProfile(): UserProfile {
       if (parsed.avatarUrl && parsed.avatarUrl.includes('unsplash.com')) {
         parsed.avatarUrl = BUILTIN_AVATARS[0];
       }
-      return parsed;
+      return {
+        ...INITIAL_PROFILE,
+        ...parsed,
+        kycStatus: parsed.kycStatus || 'unverified',
+        profileLocked: Boolean(parsed.profileLocked),
+      };
     }
   } catch {
     // fallback
@@ -430,9 +438,70 @@ export function loadProfile(): UserProfile {
 export function saveProfile(profile: UserProfile): void {
   try {
     localStorage.setItem(STORAGE_KEYS.PROFILE, JSON.stringify(profile));
+    if (profile.email) {
+      const key = profile.email.trim().toLowerCase();
+      const mapRaw = localStorage.getItem(STORAGE_KEYS.PROFILES_BY_EMAIL);
+      const map: Record<string, UserProfile> = mapRaw ? JSON.parse(mapRaw) : {};
+      map[key] = profile;
+      localStorage.setItem(STORAGE_KEYS.PROFILES_BY_EMAIL, JSON.stringify(map));
+    }
   } catch (e) {
     console.error('Failed to save profile', e);
   }
+}
+
+export function loadOrCreateUserProfileByEmail(params: {
+  userId: string;
+  email: string;
+  fullName: string;
+  referralCode: string;
+  referredBy?: string;
+  rememberMe?: boolean;
+  isNewRegistration?: boolean;
+}): UserProfile {
+  const emailKey = params.email.trim().toLowerCase();
+  try {
+    if (!params.isNewRegistration) {
+      const mapRaw = localStorage.getItem(STORAGE_KEYS.PROFILES_BY_EMAIL);
+      if (mapRaw) {
+        const map: Record<string, UserProfile> = JSON.parse(mapRaw);
+        const existing = map[emailKey];
+        if (existing) {
+          const updated: UserProfile = {
+            ...existing,
+            isLoggedIn: true,
+            rememberMe: params.rememberMe,
+          };
+          saveProfile(updated);
+          return updated;
+        }
+      }
+    }
+  } catch {
+    // fallback to creating fresh unverified profile
+  }
+
+  const freshProfile: UserProfile = {
+    id: params.userId,
+    email: params.email.trim(),
+    fullName: params.fullName.trim(),
+    address: '',
+    dateOfBirth: '',
+    profileLocked: false,
+    country: 'United States',
+    avatarUrl: BUILTIN_AVATARS[0],
+    telegramHandle: '',
+    kycStatus: 'unverified',
+    kycDocumentType: 'Passport',
+    twoFactorEnabled: false,
+    activeAccountId: '',
+    referralCode: params.referralCode,
+    referredBy: params.referredBy,
+    isLoggedIn: true,
+    rememberMe: params.rememberMe,
+  };
+  saveProfile(freshProfile);
+  return freshProfile;
 }
 
 export function loadAccounts(): TradingAccount[] {
@@ -444,16 +513,12 @@ export function loadAccounts(): TradingAccount[] {
           ? { ...a, dailyLossLimitPercent: 6, maxOverallLossPercent: 12 }
           : a
       );
-      const existingIds = new Set(parsed.map((a) => a.id));
-      const missingDefaults = INITIAL_ACCOUNTS.filter((a) => !existingIds.has(a.id));
-      const merged = missingDefaults.length > 0 ? [...parsed, ...missingDefaults] : parsed;
-      localStorage.setItem(STORAGE_KEYS.ACCOUNTS, JSON.stringify(merged));
-      return merged;
+      return parsed;
     }
   } catch {
     // fallback
   }
-  return INITIAL_ACCOUNTS;
+  return [];
 }
 
 export function saveAccounts(accounts: TradingAccount[]): void {
@@ -471,7 +536,7 @@ export function loadActiveAccountId(): string {
   } catch {
     // fallback
   }
-  return INITIAL_ACCOUNTS[0].id;
+  return '';
 }
 
 export function saveActiveAccountId(id: string): void {

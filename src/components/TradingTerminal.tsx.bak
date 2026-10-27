@@ -1,0 +1,3653 @@
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  TrendingUp,
+  TrendingDown,
+  Clock,
+  AlertCircle,
+  CheckCircle2,
+  Zap,
+  Activity,
+  ChevronDown,
+  Sliders,
+  ToggleLeft,
+  ToggleRight,
+  AlertOctagon,
+  ShieldAlert,
+  Volume2,
+  VolumeX,
+  X,
+  Plus,
+  Radio,
+  Trophy,
+  Layers,
+  ZoomIn,
+  ZoomOut,
+  HelpCircle,
+  ShieldCheck,
+  BellRing,
+  Lock,
+  Keyboard,
+  RotateCcw,
+  Globe,
+  Headphones,
+  User,
+  PenTool,
+  Move,
+  Trash2,
+  Minus,
+  Sparkles,
+  Users,
+  ChevronLeft,
+  ChevronUp,
+  MoreHorizontal,
+  Target,
+} from 'lucide-react';
+import {
+  TradingAccount,
+  BinaryTrade,
+  BinaryOptionDirection,
+  AssetInfo,
+  Candle,
+  UserProfile,
+} from '../types';
+import { DEFAULT_ASSETS, getLivePayoutPercentage } from '../utils/storage';
+import {
+  isValidTradeDuration,
+  isPositionSizeSpike,
+  calculateDrawdownMetrics,
+  isMartingalePattern,
+  isHedgingViolation,
+  isRiskBarricadeActive,
+  evaluateAccountBreach,
+  getNextDailyResetTimestamp,
+  resetSoftBreachedAccount,
+  isDuringRestrictedNewsWindow,
+  checkMaxRiskPerTradeViolation,
+  isLiveFundedAccount,
+  getAccountStatusBadgeLabel,
+} from '../utils/propRules';
+import {
+  calculateHeikinAshi,
+  calculateSMA,
+  calculateEMA,
+  calculateBollingerBands,
+  calculateRSI,
+  calculateMACD,
+  calculateFibonacciLevels,
+  IndicatorSettings,
+  DEFAULT_INDICATOR_SETTINGS,
+} from '../utils/technicalIndicators';
+import {
+  getOrCreateMasterHistory,
+  stepOrganicLiveTick,
+  aggregateCandlesForTimeframe,
+} from '../utils/priceFeedEngine';
+import {
+  computeTradeHistoryChartMarkers,
+  findHoveredTradeMarker,
+  generateSeededPastTradesForCandles,
+  TradeChartMarkerPoint,
+} from '../utils/tradeChartOverlay';
+import { IndicatorSettingsModal } from './IndicatorSettingsModal';
+import { TradingDrawer } from './TradingDrawer';
+import { AccountBreachModal } from './AccountBreachModal';
+import { QuotexAssetModal } from './QuotexAssetModal';
+import { QuotexSignalsDrawer } from './QuotexSignalsDrawer';
+import { QuotexLeaderboardModal } from './QuotexLeaderboardModal';
+import { PriceAlertModal, PriceAlert } from './PriceAlertModal';
+import { soundEngine } from '../utils/soundEffects';
+
+interface TradingTerminalProps {
+  account: TradingAccount;
+  accounts?: TradingAccount[];
+  onSelectAccount?: (id: string) => void;
+  onUpdateAccount: (updated: TradingAccount) => void;
+  trades: BinaryTrade[];
+  onAddTrade: (trade: BinaryTrade) => void;
+  onUpdateTrade: (trade: BinaryTrade) => void;
+  onOpenWithdrawalModal: () => void;
+  onOpenDepositModal?: () => void;
+  onOpenChallengeModal?: () => void;
+  onNavigateTab?: (tab: string) => void;
+  userProfile?: UserProfile;
+  onPassChallengePhase?: (account: TradingAccount) => void;
+}
+
+export type ChartType = 'candles' | 'heikin-ashi' | 'line' | 'bars';
+export type Timeframe = '5s' | '15s' | '30s' | '1m' | '5m' | '15m' | '1h' | '4h' | '1D';
+export type DrawingTool =
+  | 'none'
+  | 'trendline'
+  | 'horizontal-ray'
+  | 'support-resistance'
+  | 'vertical-ray'
+  | 'fibonacci'
+  | 'brush';
+
+export interface ChartDrawing {
+  id: string;
+  type: DrawingTool;
+  startX: number;
+  startY: number;
+  endX?: number;
+  endY?: number;
+  color: string;
+  width: number;
+  points?: { x: number; y: number }[];
+}
+
+const TIMEFRAME_SECONDS: Record<Timeframe, number> = {
+  '5s': 5,
+  '15s': 15,
+  '30s': 30,
+  '1m': 60,
+  '5m': 300,
+  '15m': 900,
+  '1h': 3600,
+  '4h': 14400,
+  '1D': 86400,
+};
+
+const EXPIRY_PRESETS = [5, 15, 30, 60, 120, 300, 900, 1800, 3600, 14400];
+
+function formatTimerDisplay(seconds: number): string {
+  if (seconds < 60) {
+    return `00:00:${seconds < 10 ? '0' : ''}${seconds}`;
+  }
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+  if (hours > 0) {
+    return `${hours < 10 ? '0' : ''}${hours}:${minutes < 10 ? '0' : ''}${minutes}:${secs < 10 ? '0' : ''}${secs}`;
+  }
+  return `00:${minutes < 10 ? '0' : ''}${minutes}:${secs < 10 ? '0' : ''}${secs}`;
+}
+
+function getClockExpiry(seconds: number): string {
+  const d = new Date(Date.now() + seconds * 1000);
+  return d.toTimeString().split(' ')[0];
+}
+
+export const TradingTerminal: React.FC<TradingTerminalProps> = ({
+  account,
+  accounts = [],
+  onSelectAccount,
+  onUpdateAccount,
+  trades,
+  onAddTrade,
+  onUpdateTrade,
+  onOpenWithdrawalModal,
+  onOpenDepositModal,
+  onOpenChallengeModal,
+  onNavigateTab,
+  userProfile,
+}) => {
+  // Quotex Open OTC Asset Tabs across Forex, Crypto, Commodities & Stocks
+  const [openTabs, setOpenTabs] = useState<AssetInfo[]>(() => [
+    DEFAULT_ASSETS[0], // EUR/USD (OTC) - Forex (OTC)
+    DEFAULT_ASSETS[1], // GBP/JPY (OTC) - Forex (OTC)
+    DEFAULT_ASSETS.find((a) => a.symbol === 'BTC/USD (OTC)') || DEFAULT_ASSETS[26], // Crypto (OTC)
+    DEFAULT_ASSETS.find((a) => a.symbol === 'ETH/USD (OTC)') || DEFAULT_ASSETS[27], // Crypto (OTC)
+    DEFAULT_ASSETS.find((a) => a.symbol === 'XAU/USD (OTC)') || DEFAULT_ASSETS[52], // Commodities (OTC)
+    DEFAULT_ASSETS.find((a) => a.symbol === 'TSLA (OTC)') || DEFAULT_ASSETS[78], // Stocks (OTC)
+  ]);
+  const [selectedAsset, setSelectedAsset] = useState<AssetInfo>(DEFAULT_ASSETS[0]);
+  const [currentPrice, setCurrentPrice] = useState<number>(DEFAULT_ASSETS[0].basePrice);
+  const [candles, setCandles] = useState<Candle[]>([]);
+  const [payoutSeed, setPayoutSeed] = useState<number>(() => Math.floor(Date.now() / 3000));
+
+  // Charting controls
+  const [timeframe, setTimeframe] = useState<Timeframe>('1m');
+  const [chartType, setChartType] = useState<ChartType>('candles');
+  const [indicators, setIndicators] = useState<IndicatorSettings>(DEFAULT_INDICATOR_SETTINGS);
+  const [zoomLevel, setZoomLevel] = useState<number>(1);
+
+  // Mobile Responsiveness & Drawer States
+  const [isMobileMoreMenuOpen, setIsMobileMoreMenuOpen] = useState<boolean>(false);
+  const [isMobileQuickToolsOpen, setIsMobileQuickToolsOpen] = useState<boolean>(false);
+  const touchStartDistRef = useRef<number | null>(null);
+  const initialTouchZoomRef = useRef<number>(1);
+
+  // Technical Drawing Suite State
+  const [activeDrawingTool, setActiveDrawingTool] = useState<DrawingTool>('none');
+  const [drawingColor, setDrawingColor] = useState<string>('#00e5ff');
+  const [drawings, setDrawings] = useState<ChartDrawing[]>([]);
+  const [currentDrawing, setCurrentDrawing] = useState<ChartDrawing | null>(null);
+
+  // Chart Navigation, Panning & TradingView Crosshair / OHLC Inspector
+  const [panOffset, setPanOffset] = useState<number>(0);
+  const [isInteracting, setIsInteracting] = useState<boolean>(false);
+  const [crosshairPos, setCrosshairPos] = useState<{ x: number; y: number } | null>(null);
+  const [hoveredCandle, setHoveredCandle] = useState<Candle | null>(null);
+  const dragStartXRef = useRef<number>(0);
+  const initialPanOffsetRef = useRef<number>(0);
+
+  // Dual-Mode Expiry: 'timer' (duration) vs 'time' (clock expiry)
+  const [expiryMode, setExpiryMode] = useState<'timer' | 'time'>('timer');
+  const [duration, setDuration] = useState<number>(60);
+
+  // Investment parameters & Quotex Right-Panel controls
+  const [investment, setInvestment] = useState<number>(50);
+  const [investmentMode, setInvestmentMode] = useState<'usd' | 'percent'>('usd');
+  const [pendingOrderEnabled, setPendingOrderEnabled] = useState<boolean>(false);
+  const [pendingTriggerPrice, setPendingTriggerPrice] = useState<string>('');
+  const [rightPanelTab, setRightPanelTab] = useState<'trades' | 'history'>('trades');
+  const [oneClickTrading, setOneClickTrading] = useState<boolean>(true);
+  const [pendingTradeDirection, setPendingTradeDirection] = useState<BinaryOptionDirection | null>(null);
+
+  // Notifications & Modals
+  const [tradeError, setTradeError] = useState<string | null>(null);
+  const [tradeSuccess, setTradeSuccess] = useState<string | null>(null);
+  const [isAssetModalOpen, setIsAssetModalOpen] = useState(false);
+  const [isSignalsDrawerOpen, setIsSignalsDrawerOpen] = useState(false);
+  const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(false);
+  const [isRulesModalOpen, setIsRulesModalOpen] = useState(false);
+  const [isBreachModalOpen, setIsBreachModalOpen] = useState(false);
+  const [isIndicatorModalOpen, setIsIndicatorModalOpen] = useState(false);
+  const [isPriceAlertModalOpen, setIsPriceAlertModalOpen] = useState(false);
+  const [accountDropdownOpen, setAccountDropdownOpen] = useState(false);
+  const [isTradesDrawerOpen, setIsTradesDrawerOpen] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(soundEngine.isEnabled());
+
+  // Real-time Price Alerts state
+  const [alerts, setAlerts] = useState<PriceAlert[]>([
+    {
+      id: 'ALT-EURUSD-UP',
+      symbol: 'EUR/USD (OTC)',
+      targetPrice: 1.0865,
+      condition: 'ABOVE',
+      createdAt: Date.now() - 3600000,
+      triggered: false,
+      active: true,
+    },
+    {
+      id: 'ALT-EURUSD-DN',
+      symbol: 'EUR/USD (OTC)',
+      targetPrice: 1.0825,
+      condition: 'BELOW',
+      createdAt: Date.now() - 1800000,
+      triggered: false,
+      active: true,
+    },
+  ]);
+  const [activeAlertToast, setActiveAlertToast] = useState<string | null>(null);
+
+  // Celebratory On-Chart Trade Result Notification Overlay State
+  const [tradeResultOverlay, setTradeResultOverlay] = useState<{
+    id: string;
+    isWin: boolean;
+    profitAmount: number;
+    investment: number;
+    asset: string;
+    direction: BinaryOptionDirection;
+    strikePrice: number;
+    closePrice: number;
+    payoutPercentage: number;
+  } | null>(null);
+
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  // Interactive Chart Trade History Overlay State (Green/Red Execution & Settlement Dots)
+  const [showHistoryOverlay, setShowHistoryOverlay] = useState<boolean>(true);
+  const [hoveredTradeMarker, setHoveredTradeMarker] = useState<TradeChartMarkerPoint | null>(null);
+  const [selectedTradeMarker, setSelectedTradeMarker] = useState<TradeChartMarkerPoint | null>(null);
+  const tradeMarkersRef = useRef<TradeChartMarkerPoint[]>([]);
+
+  // Active and closed trades for this account + deterministic candle-anchored past trades
+  const activeTrades = trades.filter((t) => t.status === 'active');
+  const userClosedTrades = trades.filter((t) => t.status === 'won' || t.status === 'lost');
+  const seededAssetPastTrades = React.useMemo(
+    () => generateSeededPastTradesForCandles(selectedAsset, candles, account?.id || 'BFT-91823'),
+    [selectedAsset, candles, account?.id]
+  );
+  const closedTrades = React.useMemo(() => {
+    const existingIds = new Set(userClosedTrades.map((t) => t.id));
+    const merged = [
+      ...userClosedTrades,
+      ...seededAssetPastTrades.filter((t) => !existingIds.has(t.id)),
+    ];
+    return merged.sort((a, b) => b.endTime - a.endTime);
+  }, [userClosedTrades, seededAssetPastTrades]);
+
+  const activeInspectedMarker = hoveredTradeMarker || selectedTradeMarker;
+  const effectiveInvestment =
+    investmentMode === 'percent' && account
+      ? Math.max(1, Number(((account.currentBalance * investment) / 100).toFixed(2)))
+      : investment;
+
+  // Calculate live unrealized P&L on every tick
+  const liveUnrealizedPnL = activeTrades.reduce((sum, t) => {
+    let inTheMoney = false;
+    if (t.direction === 'CALL' && currentPrice > t.strikePrice) inTheMoney = true;
+    if (t.direction === 'PUT' && currentPrice < t.strikePrice) inTheMoney = true;
+    const itemPnL = inTheMoney ? (t.investment * t.payoutPercentage) / 100 : -t.investment;
+    return sum + itemPnL;
+  }, 0);
+
+  const liveEquity = Number(((account?.currentBalance || 0) + liveUnrealizedPnL).toFixed(2));
+
+  // Real-time drawdown & barricade calculations synchronized with liveEquity on every tick
+  const metrics = calculateDrawdownMetrics(
+    account
+      ? {
+          ...account,
+          equity: liveEquity,
+        }
+      : {
+          id: 'BFT-DEMO',
+          loginId: 'BFT-DEMO',
+          passwordHash: '',
+          tier: 'instant',
+          tierName: 'Instant Funded',
+          size: 10000,
+          initialBalance: 10000,
+          currentBalance: 10000,
+          startingDayEquity: 10000,
+          equity: 10000,
+          dailyLossLimitPercent: 6,
+          maxOverallLossPercent: 12,
+          status: 'active',
+          createdDate: '',
+          lastActiveDate: '',
+          phase: 'funded',
+          tradingDaysCompleted: 0,
+          tradesCount: 0,
+          winRate: 0,
+        }
+  );
+
+  // Dual-Breach System: Hard Breach vs Soft Breach
+  const isSoftBreached = Boolean(account && (account.status === 'soft-breached' || account.breachType === 'soft'));
+  const isHardBreached = Boolean(
+    !account ||
+    account.status === 'hard-breached' ||
+    account.status === 'breached' ||
+    (!isSoftBreached && account.status !== 'active' && account.status !== 'passed')
+  );
+  const isBreached = isSoftBreached || isHardBreached;
+  const otherActiveAccounts = accounts.filter((a) => a.id !== account?.id && a.status === 'active');
+
+  // Live countdown timer for soft breach daily reset
+  const [softResetSecondsRemaining, setSoftResetSecondsRemaining] = useState<number>(() => {
+    if (!account?.softBreachResetTime) return 0;
+    return Math.max(0, Math.floor((account.softBreachResetTime - Date.now()) / 1000));
+  });
+
+  const handleResetSoftBreach = () => {
+    if (!account) return;
+    const unbreached = resetSoftBreachedAccount(account);
+    onUpdateAccount(unbreached);
+    soundEngine.playTradeWin();
+  };
+
+  useEffect(() => {
+    if (!isSoftBreached) return;
+    const interval = setInterval(() => {
+      const target = account?.softBreachResetTime || Date.now() + 5 * 3600 * 1000;
+      const left = Math.max(0, Math.floor((target - Date.now()) / 1000));
+      setSoftResetSecondsRemaining(left);
+      if (left === 0 && account) {
+        handleResetSoftBreach();
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isSoftBreached, account]);
+
+  const riskBarricade = isRiskBarricadeActive(
+    metrics.dailyDrawdownPercent,
+    account?.dailyLossLimitPercent || 6,
+    metrics.overallLossPercent,
+    account?.maxOverallLossPercent || 12,
+    0.8
+  );
+
+  // Auto-Breach check on equity fluctuation
+  useEffect(() => {
+    if (!account || account.status === 'breached' || account.status === 'hard-breached' || account.status === 'soft-breached') return;
+    const evaluatedAccount: TradingAccount = {
+      ...account,
+      equity: liveEquity,
+    };
+    const breachEval = evaluateAccountBreach(evaluatedAccount);
+    if (breachEval.isBreached) {
+      soundEngine.playTradeLoss();
+      if (breachEval.breachCategory === 'soft') {
+        const nextReset = breachEval.autoUnlockTimestamp || getNextDailyResetTimestamp();
+        const breachLog = {
+          id: `VIO-DAILY-${Date.now()}`,
+          rule: 'DAILY_LOSS' as const,
+          ruleName: 'Daily Loss Limit (Soft Breach)',
+          severity: 'warning' as const,
+          message: breachEval.reason || 'Daily drawdown threshold reached.',
+          timestamp: Date.now(),
+          details: `Equity dropped to $${liveEquity.toFixed(2)} (Auto-resets next trading day)`,
+        };
+        const updated: TradingAccount = {
+          ...account,
+          status: 'soft-breached',
+          breachType: 'soft',
+          softBreachResetTime: nextReset,
+          equity: liveEquity,
+          breachReason: breachEval.reason,
+          breachedAt: Date.now(),
+          violationLogs: [...(account.violationLogs || []), breachLog],
+        };
+        onUpdateAccount(updated);
+        setIsBreachModalOpen(true);
+      } else {
+        const breachLog = {
+          id: `VIO-OVERALL-${Date.now()}`,
+          rule: 'OVERALL_LOSS' as const,
+          ruleName: 'Max Overall Loss (Hard Breach)',
+          severity: 'critical' as const,
+          message: breachEval.reason || 'Maximum overall loss limit breached.',
+          timestamp: Date.now(),
+          details: `Equity dropped to $${liveEquity.toFixed(2)} (Permanent Hard Breach)`,
+        };
+        const updated: TradingAccount = {
+          ...account,
+          status: 'hard-breached',
+          breachType: 'hard',
+          discountEligible: true,
+          equity: liveEquity,
+          breachReason: breachEval.reason,
+          breachedAt: Date.now(),
+          violationLogs: [...(account.violationLogs || []), breachLog],
+        };
+        onUpdateAccount(updated);
+        setIsBreachModalOpen(true);
+      }
+    }
+  }, [liveEquity, account, onUpdateAccount]);
+
+  // Sound toggle handler
+  const handleToggleSound = () => {
+    const newState = soundEngine.toggle();
+    setSoundEnabled(newState);
+  };
+
+  // 1. Centralized Deterministic Candle Engine
+  useEffect(() => {
+    const store = getOrCreateMasterHistory(selectedAsset);
+    const aggregated = aggregateCandlesForTimeframe(selectedAsset, TIMEFRAME_SECONDS[timeframe]);
+    setCandles(aggregated);
+    setCurrentPrice(store.lastPrice);
+    setPanOffset(0);
+  }, [selectedAsset, timeframe]);
+
+  // 2. Real-time Price Pulse & Alert Evaluation
+  const alertsRef = useRef(alerts);
+  alertsRef.current = alerts;
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const newPrice = stepOrganicLiveTick(selectedAsset);
+      setCurrentPrice(newPrice);
+
+      // Check real-time price alerts
+      const currentAlerts = alertsRef.current;
+      let anyAlertTriggered = false;
+      const updatedAlerts = currentAlerts.map((alt) => {
+        if (!alt.active || alt.triggered || alt.symbol !== selectedAsset.symbol) {
+          return alt;
+        }
+        let triggered = false;
+        if (alt.condition === 'ABOVE' && newPrice >= alt.targetPrice) {
+          triggered = true;
+        } else if (alt.condition === 'BELOW' && newPrice <= alt.targetPrice) {
+          triggered = true;
+        }
+
+        if (triggered) {
+          anyAlertTriggered = true;
+          soundEngine.playTradeWin();
+          const msg = `🔔 Alert: ${alt.symbol} reached ${alt.targetPrice.toFixed(selectedAsset.pipDecimals)} (${alt.condition})`;
+          setActiveAlertToast(msg);
+          setTimeout(() => setActiveAlertToast(null), 5000);
+
+          if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+            try {
+              new Notification('BFT Prop Alert', { body: msg });
+            } catch {
+              // Ignore error
+            }
+          }
+          return { ...alt, triggered: true };
+        }
+        return alt;
+      });
+
+      if (anyAlertTriggered) {
+        setAlerts(updatedAlerts);
+      }
+
+      // Re-aggregate candles consistently for current timeframe
+      const updatedCandles = aggregateCandlesForTimeframe(selectedAsset, TIMEFRAME_SECONDS[timeframe]);
+      setCandles(updatedCandles);
+      setPayoutSeed(Math.floor(Date.now() / 3000));
+    }, 180);
+
+    return () => clearInterval(interval);
+  }, [selectedAsset, timeframe]);
+
+  // 3. Trade resolution timer with stable refs & Celebratory On-Chart Win/Loss Notification
+  const currentPriceRef = useRef(currentPrice);
+  currentPriceRef.current = currentPrice;
+
+  const activeTradesRef = useRef(activeTrades);
+  activeTradesRef.current = activeTrades;
+
+  const accountRef = useRef(account);
+  accountRef.current = account;
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const now = Date.now();
+      const currentPriceVal = currentPriceRef.current;
+      const tradesList = activeTradesRef.current;
+      const curAccount = accountRef.current;
+      if (!curAccount) return;
+
+      tradesList.forEach((trade) => {
+        if (now >= trade.endTime) {
+          const isWin =
+            (trade.direction === 'CALL' && currentPriceVal > trade.strikePrice) ||
+            (trade.direction === 'PUT' && currentPriceVal < trade.strikePrice);
+
+          const profitReturn = isWin ? (trade.investment * trade.payoutPercentage) / 100 : -trade.investment;
+          const creditedAmount = isWin ? trade.investment + profitReturn : 0;
+
+          if (isWin) {
+            soundEngine.playTradeWin();
+          } else {
+            soundEngine.playTradeLoss();
+          }
+
+          // Trigger on-chart celebratory Win (+$X.XX WIN) or Loss ($0.00) animation
+          setTradeResultOverlay({
+            id: trade.id,
+            isWin,
+            profitAmount: isWin ? Number(profitReturn.toFixed(2)) : 0,
+            investment: trade.investment,
+            asset: trade.asset,
+            direction: trade.direction,
+            strikePrice: trade.strikePrice,
+            closePrice: currentPriceVal,
+            payoutPercentage: trade.payoutPercentage,
+          });
+          setTimeout(() => {
+            setTradeResultOverlay((prev) => (prev?.id === trade.id ? null : prev));
+          }, 3600);
+
+          const updatedTrade: BinaryTrade = {
+            ...trade,
+            status: isWin ? 'won' : 'lost',
+            closePrice: currentPriceVal,
+            pnl: isWin ? profitReturn : -trade.investment,
+          };
+          onUpdateTrade(updatedTrade);
+
+          const newBalance = Number((curAccount.currentBalance + creditedAmount).toFixed(2));
+          const updatedAccount: TradingAccount = {
+            ...curAccount,
+            currentBalance: newBalance,
+            tradesCount: curAccount.tradesCount + 1,
+            equity: newBalance,
+          };
+          onUpdateAccount(updatedAccount);
+        }
+      });
+    }, 300);
+
+    return () => clearInterval(timer);
+  }, [onUpdateTrade, onUpdateAccount]);
+
+  // Asset Tab Switching
+  const handleSelectTabAsset = (asset: AssetInfo) => {
+    soundEngine.playUiClick();
+    setSelectedAsset(asset);
+    if (!openTabs.find((t) => t.symbol === asset.symbol)) {
+      setOpenTabs([...openTabs, asset]);
+    }
+  };
+
+  const handleCloseTab = (e: React.MouseEvent, symbol: string) => {
+    e.stopPropagation();
+    soundEngine.playUiClick();
+    const remaining = openTabs.filter((t) => t.symbol !== symbol);
+    if (remaining.length === 0) return;
+    setOpenTabs(remaining);
+    if (selectedAsset.symbol === symbol) {
+      setSelectedAsset(remaining[0]);
+    }
+  };
+
+  // Trade Execution with Prop Firm Guardrails
+  const executeTradeAction = (
+    direction: BinaryOptionDirection,
+    targetAsset?: AssetInfo,
+    targetDuration?: number,
+    customInvestment?: number
+  ) => {
+    if (!account || account.status === 'breached') {
+      soundEngine.playTradeLoss();
+      setTradeError('Account is locked due to rule breach. Trading is disabled.');
+      setIsBreachModalOpen(true);
+      return;
+    }
+
+    const assetToTrade = targetAsset || selectedAsset;
+    const durationToUse = targetDuration || duration;
+    const stakeToUse = customInvestment || effectiveInvestment;
+
+    setTradeError(null);
+    setTradeSuccess(null);
+
+    if (riskBarricade.barricaded) {
+      soundEngine.playTradeLoss();
+      setTradeError('Risk Barricade Active: Account is within 80% of max loss limit. Orders locked to protect capital.');
+      return;
+    }
+
+    if (!isValidTradeDuration(durationToUse)) {
+      soundEngine.playTradeLoss();
+      setTradeError('Rule Violation: Minimum trade duration is 30 seconds to prevent tick scalping.');
+      return;
+    }
+
+    if (stakeToUse <= 0) {
+      setTradeError('Please enter a valid investment stake ($1+).');
+      return;
+    }
+
+    if (stakeToUse > account.currentBalance) {
+      setTradeError(`Insufficient balance. Available capital: $${account.currentBalance.toFixed(2)}`);
+      return;
+    }
+
+    // Strict 5% Max Risk Per Trade Check (Hard Breach if violated)
+    const maxRiskCheck = checkMaxRiskPerTradeViolation(
+      stakeToUse,
+      account.initialBalance || account.size,
+      account.maxRiskPerTradePercent || 5
+    );
+    if (maxRiskCheck.violated) {
+      soundEngine.playTradeLoss();
+      const breachReason = `Max Risk Per Trade Violated: Stake of $${stakeToUse.toFixed(2)} (${maxRiskCheck.riskPercent}%) exceeds the strict ${account.maxRiskPerTradePercent || 5}% ($${maxRiskCheck.maxAllowedStake.toFixed(2)}) per-trade risk limit. Permanent Hard Breach enforced.`;
+      const breachLog = {
+        id: `VIO-RISK5-${Date.now()}`,
+        rule: 'MAX_RISK_PER_TRADE' as const,
+        ruleName: '5% Max Risk Per Trade (Hard Breach)',
+        severity: 'critical' as const,
+        message: breachReason,
+        timestamp: Date.now(),
+        details: `Stake: $${stakeToUse} / Max Allowed: $${maxRiskCheck.maxAllowedStake} (5% Rule)`,
+      };
+      onUpdateAccount({
+        ...account,
+        status: 'hard-breached',
+        breachType: 'hard',
+        discountEligible: true,
+        breachReason,
+        breachedAt: Date.now(),
+        violationLogs: [...(account.violationLogs || []), breachLog],
+      });
+      setTradeError(breachReason);
+      setIsBreachModalOpen(true);
+      return;
+    }
+
+    const hedgingCheck = isHedgingViolation(direction, assetToTrade.symbol, activeTrades);
+    if (hedgingCheck.detected) {
+      soundEngine.playTradeLoss();
+      setTradeError(hedgingCheck.reason || `Hedging Prohibited: You already have an active opposing trade on ${assetToTrade.symbol}.`);
+      return;
+    }
+
+    const martingaleCheck = isMartingalePattern(stakeToUse, trades);
+    if (martingaleCheck.detected) {
+      soundEngine.playTradeLoss();
+      setTradeError(martingaleCheck.reason || 'Martingale Strategy Violation: Explosive stake doubling (≥1.8x) following a loss is strictly prohibited.');
+      return;
+    }
+
+    if (isDuringRestrictedNewsWindow(Date.now()).restricted) {
+      soundEngine.playTradeLoss();
+      setTradeError('Economic News Window: Trading within 2 minutes of High-Impact Macro Releases is restricted.');
+      return;
+    }
+
+    if (isPositionSizeSpike(stakeToUse, trades.map((t) => t.investment))) {
+      soundEngine.playTradeLoss();
+      setTradeError('Volume Spike Violation: Stake exceeds 5x your recent average trading volume.');
+      return;
+    }
+
+    // Deduct stake optimistically
+    soundEngine.playTradePlacement(direction);
+    const newBalance = Number((account.currentBalance - stakeToUse).toFixed(2));
+    onUpdateAccount({
+      ...account,
+      currentBalance: newBalance,
+      equity: newBalance,
+    });
+
+    const newTrade: BinaryTrade = {
+      id: `TRD-${Date.now().toString().slice(-6)}`,
+      accountId: account.id,
+      asset: assetToTrade.symbol,
+      direction,
+      strikePrice: currentPrice,
+      currentPrice,
+      investment: stakeToUse,
+      payoutPercentage: assetToTrade.payout,
+      potentialPayout: Number((stakeToUse + (stakeToUse * assetToTrade.payout) / 100).toFixed(2)),
+      startTime: Date.now(),
+      durationSeconds: durationToUse,
+      endTime: Date.now() + durationToUse * 1000,
+      status: 'active',
+    };
+
+    onAddTrade(newTrade);
+    setTradeSuccess(`Executed ${direction} on ${assetToTrade.symbol} for $${stakeToUse} (${durationToUse}s)`);
+    setTimeout(() => setTradeSuccess(null), 3000);
+  };
+
+  // Quotex "Double up (x2)" Feature: Replicate an open trade
+  const handleDoubleUp = (trade: BinaryTrade) => {
+    soundEngine.playUiClick();
+    const targetAssetObj = openTabs.find((a) => a.symbol === trade.asset) || selectedAsset;
+    executeTradeAction(trade.direction, targetAssetObj, trade.durationSeconds, trade.investment);
+  };
+
+  const handleTriggerTrade = (direction: BinaryOptionDirection) => {
+    if (oneClickTrading) {
+      executeTradeAction(direction);
+    } else {
+      soundEngine.playUiClick();
+      setPendingTradeDirection(direction);
+    }
+  };
+
+  // Step duration up or down through presets (5s to 4h)
+  const handleStepDuration = (dir: 'up' | 'down') => {
+    soundEngine.playUiClick();
+    const currentIndex = EXPIRY_PRESETS.indexOf(duration);
+    if (dir === 'up') {
+      if (currentIndex === -1 || currentIndex === EXPIRY_PRESETS.length - 1) {
+        setDuration(EXPIRY_PRESETS[EXPIRY_PRESETS.length - 1]);
+      } else {
+        setDuration(EXPIRY_PRESETS[currentIndex + 1]);
+      }
+    } else {
+      if (currentIndex <= 0) {
+        setDuration(EXPIRY_PRESETS[0]);
+      } else {
+        setDuration(EXPIRY_PRESETS[currentIndex - 1]);
+      }
+    }
+  };
+
+  // 4. Global Keyboard Shortcuts ('B' for Buy/Higher, 'S' for Sell/Lower, '1-5' for Timeframe)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
+      const key = e.key.toUpperCase();
+      if (key === 'B') {
+        e.preventDefault();
+        handleTriggerTrade('CALL');
+      } else if (key === 'S') {
+        e.preventDefault();
+        handleTriggerTrade('PUT');
+      } else if (e.key === '1') {
+        e.preventDefault();
+        soundEngine.playUiClick();
+        setTimeframe('5s');
+      } else if (e.key === '2') {
+        e.preventDefault();
+        soundEngine.playUiClick();
+        setTimeframe('15s');
+      } else if (e.key === '3') {
+        e.preventDefault();
+        soundEngine.playUiClick();
+        setTimeframe('30s');
+      } else if (e.key === '4') {
+        e.preventDefault();
+        soundEngine.playUiClick();
+        setTimeframe('1m');
+      } else if (e.key === '5') {
+        e.preventDefault();
+        soundEngine.playUiClick();
+        setTimeframe('5m');
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [oneClickTrading, duration, investment, selectedAsset, account, activeTrades, trades]);
+
+  // 5. Interactive Mouse Handlers for Panning & Technical Drawing Suite
+  const getCanvasCoords = (e: React.MouseEvent) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top,
+    };
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    const coords = getCanvasCoords(e);
+
+    // Check if user clicked an execution or settlement dot marker on the chart history overlay
+    if (activeDrawingTool === 'none' && showHistoryOverlay) {
+      const hitMarker = findHoveredTradeMarker(coords.x, coords.y, tradeMarkersRef.current, 13);
+      if (hitMarker) {
+        soundEngine.playUiClick();
+        setSelectedTradeMarker((prev) => (prev?.id === hitMarker.id ? null : hitMarker));
+        return;
+      }
+    }
+
+    setIsInteracting(true);
+    dragStartXRef.current = e.clientX;
+    initialPanOffsetRef.current = panOffset;
+
+    if (activeDrawingTool !== 'none') {
+      const newDraw: ChartDrawing = {
+        id: `DRW-${Date.now()}`,
+        type: activeDrawingTool,
+        startX: coords.x,
+        startY: coords.y,
+        endX: coords.x,
+        endY: coords.y,
+        color: drawingColor,
+        width: 2,
+        points: activeDrawingTool === 'brush' ? [{ x: coords.x, y: coords.y }] : undefined,
+      };
+      setCurrentDrawing(newDraw);
+    }
+  };
+
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    const zoomFactor = e.deltaY < 0 ? 0.14 : -0.14;
+    setZoomLevel((prev) => Number(Math.max(0.35, Math.min(3.5, prev + zoomFactor)).toFixed(2)));
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    const coords = getCanvasCoords(e);
+    const canvas = canvasRef.current;
+
+    if (canvas && candles.length > 0) {
+      const width = canvas.width;
+      const maxVisibleCandles = Math.max(18, Math.floor((width - 75) / (11 * zoomLevel)));
+      const endIndex = Math.max(maxVisibleCandles, candles.length - panOffset);
+      const startIndex = Math.max(0, endIndex - maxVisibleCandles);
+      const visibleSlice = candles.slice(startIndex, endIndex);
+      const slotWidth = (width - 78) / Math.max(1, visibleSlice.length);
+      const idx = Math.min(
+        visibleSlice.length - 1,
+        Math.max(0, Math.floor((coords.x - 10) / Math.max(1, slotWidth)))
+      );
+      setHoveredCandle(visibleSlice[idx] || null);
+      setCrosshairPos(coords);
+    }
+
+    if (!isInteracting) {
+      if (showHistoryOverlay && activeDrawingTool === 'none') {
+        const hitMarker = findHoveredTradeMarker(coords.x, coords.y, tradeMarkersRef.current, 13);
+        setHoveredTradeMarker((prev) => (prev?.id === hitMarker?.id ? prev : hitMarker));
+      } else if (hoveredTradeMarker) {
+        setHoveredTradeMarker(null);
+      }
+      return;
+    }
+
+    if (activeDrawingTool === 'none') {
+      // Pan chart history
+      const deltaX = e.clientX - dragStartXRef.current;
+      const candleWidthEst = 12 * zoomLevel;
+      const offsetDiff = Math.round(deltaX / candleWidthEst);
+      const newOffset = Math.max(0, Math.min(candles.length - 20, initialPanOffsetRef.current + offsetDiff));
+      setPanOffset(newOffset);
+    } else if (currentDrawing) {
+      if (activeDrawingTool === 'brush') {
+        setCurrentDrawing((prev) =>
+          prev
+            ? {
+                ...prev,
+                points: [...(prev.points || []), { x: coords.x, y: coords.y }],
+              }
+            : null
+        );
+      } else {
+        setCurrentDrawing((prev) =>
+          prev
+            ? {
+                ...prev,
+                endX: coords.x,
+                endY: coords.y,
+              }
+            : null
+        );
+      }
+    }
+  };
+
+  const handleMouseUp = () => {
+    if (currentDrawing) {
+      setDrawings((prev) => [...prev, currentDrawing]);
+      setCurrentDrawing(null);
+    }
+    setIsInteracting(false);
+  };
+
+  const handleMouseLeave = () => {
+    if (currentDrawing) {
+      setDrawings((prev) => [...prev, currentDrawing]);
+      setCurrentDrawing(null);
+    }
+    setHoveredTradeMarker(null);
+    setHoveredCandle(null);
+    setCrosshairPos(null);
+    setIsInteracting(false);
+  };
+
+  // 6. Seamless Mobile Touch Gestures (Single-Finger Pan & Two-Finger Pinch-to-Zoom)
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length === 1) {
+      const touch = e.touches[0];
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      const x = touch.clientX - rect.left;
+      const y = touch.clientY - rect.top;
+
+      dragStartXRef.current = touch.clientX;
+      initialPanOffsetRef.current = panOffset;
+      setIsInteracting(true);
+
+      if (showHistoryOverlay && activeDrawingTool === 'none') {
+        const hitMarker = findHoveredTradeMarker(x, y, tradeMarkersRef.current, 18);
+        if (hitMarker) {
+          soundEngine.playUiClick();
+          setSelectedTradeMarker((prev) => (prev?.id === hitMarker.id ? null : hitMarker));
+        }
+      }
+    } else if (e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      touchStartDistRef.current = Math.hypot(dx, dy);
+      initialTouchZoomRef.current = zoomLevel;
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (e.touches.length === 1 && isInteracting) {
+      const touch = e.touches[0];
+      const deltaX = touch.clientX - dragStartXRef.current;
+      const candleWidthEst = 12 * zoomLevel;
+      const offsetDiff = Math.round(deltaX / candleWidthEst);
+      const newOffset = Math.max(0, Math.min(candles.length - 20, initialPanOffsetRef.current + offsetDiff));
+      setPanOffset(newOffset);
+
+      const canvas = canvasRef.current;
+      if (canvas && candles.length > 0) {
+        const rect = canvas.getBoundingClientRect();
+        const coords = { x: touch.clientX - rect.left, y: touch.clientY - rect.top };
+        const width = canvas.width;
+        const maxVisibleCandles = Math.max(18, Math.floor((width - 75) / (11 * zoomLevel)));
+        const endIndex = Math.max(maxVisibleCandles, candles.length - newOffset);
+        const startIndex = Math.max(0, endIndex - maxVisibleCandles);
+        const visibleSlice = candles.slice(startIndex, endIndex);
+        const slotWidth = (width - 78) / Math.max(1, visibleSlice.length);
+        const idx = Math.min(
+          visibleSlice.length - 1,
+          Math.max(0, Math.floor((coords.x - 10) / Math.max(1, slotWidth)))
+        );
+        setHoveredCandle(visibleSlice[idx] || null);
+        setCrosshairPos(coords);
+      }
+    } else if (e.touches.length === 2 && touchStartDistRef.current !== null) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.hypot(dx, dy);
+      const scale = dist / touchStartDistRef.current;
+      const newZoom = Number(Math.max(0.35, Math.min(3.5, initialTouchZoomRef.current * scale)).toFixed(2));
+      setZoomLevel(newZoom);
+    }
+  };
+
+  const handleTouchEnd = () => {
+    setIsInteracting(false);
+    touchStartDistRef.current = null;
+  };
+
+  // 6. High-Performance Hardware-Accelerated Canvas Chart Renderer with Drawing Suite & MACD
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || candles.length === 0) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const width = canvas.width;
+    const height = canvas.height;
+
+    // Terminal Background: Exact Quotex Dark Canvas `#131722`
+    ctx.fillStyle = '#131722';
+    ctx.fillRect(0, 0, width, height);
+
+    // Compute visible slice of candles based on panOffset and zoomLevel
+    const maxVisibleCandles = Math.max(18, Math.floor((width - 75) / (11 * zoomLevel)));
+    const totalCandles = candles.length;
+    const endIndex = Math.max(maxVisibleCandles, totalCandles - panOffset);
+    const startIndex = Math.max(0, endIndex - maxVisibleCandles);
+    const visibleCandles = candles.slice(startIndex, endIndex);
+
+    const displayCandles = chartType === 'heikin-ashi' ? calculateHeikinAshi(visibleCandles) : visibleCandles;
+
+    // Price scaling
+    const prices = displayCandles.map((c) => [c.high, c.low]).flat();
+    if (panOffset === 0) {
+      prices.push(currentPrice);
+      activeTrades.forEach((t) => prices.push(t.strikePrice));
+    }
+
+    let minPrice = Math.min(...prices);
+    let maxPrice = Math.max(...prices);
+    const padding = (maxPrice - minPrice) * 0.14 || 0.0005;
+    minPrice -= padding;
+    maxPrice += padding;
+
+    const subPaneHeight = (indicators.showRsi ? 60 : 0) + (indicators.showMacd ? 70 : 0);
+    const chartHeight = height - subPaneHeight - 25;
+
+    const getY = (val: number) => {
+      return chartHeight - ((val - minPrice) / (maxPrice - minPrice)) * chartHeight + 10;
+    };
+
+    // 1. Grid Lines & Right Price Scale
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
+    ctx.lineWidth = 1;
+    const gridCount = 5;
+    for (let i = 0; i <= gridCount; i++) {
+      const y = (chartHeight / gridCount) * i + 10;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(width - 65, y);
+      ctx.stroke();
+
+      const priceAtY = maxPrice - (i / gridCount) * (maxPrice - minPrice);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.42)';
+      ctx.font = '10px JetBrains Mono, monospace';
+      ctx.textAlign = 'right';
+      ctx.fillText(priceAtY.toFixed(selectedAsset.pipDecimals), width - 8, y + 3);
+    }
+
+    // 2. Candlestick / Line / Bars rendering (Crisp Mint Green `#00e676` & Crimson Red `#ff3355` with prominent wicks)
+    const slotWidth = (width - 78) / Math.max(1, displayCandles.length);
+    const candleGap = Math.max(2, Math.round(slotWidth * 0.24));
+    const candleWidth = Math.max(4, Math.floor(slotWidth - candleGap));
+    const getCandleCenterX = (idx: number) => Math.floor(Math.round(idx * slotWidth + 10) + candleWidth / 2) + 0.5;
+
+    if (chartType === 'line') {
+      // Smooth Institutional Area + Price Line
+      ctx.beginPath();
+      displayCandles.forEach((c, idx) => {
+        const cx = getCandleCenterX(idx);
+        const cy = getY(c.close);
+        if (idx === 0) ctx.moveTo(cx, cy);
+        else ctx.lineTo(cx, cy);
+      });
+      ctx.strokeStyle = '#ff8800';
+      ctx.lineWidth = 2.2;
+      ctx.stroke();
+
+      if (displayCandles.length > 1) {
+        const firstX = getCandleCenterX(0);
+        const lastX = getCandleCenterX(displayCandles.length - 1);
+        ctx.lineTo(lastX, chartHeight + 10);
+        ctx.lineTo(firstX, chartHeight + 10);
+        ctx.closePath();
+        const grad = ctx.createLinearGradient(0, 10, 0, chartHeight + 10);
+        grad.addColorStop(0, 'rgba(255, 136, 0, 0.22)');
+        grad.addColorStop(1, 'rgba(255, 136, 0, 0.0)');
+        ctx.fillStyle = grad;
+        ctx.fill();
+      }
+    } else if (chartType === 'bars') {
+      // Institutional OHLC Bars
+      displayCandles.forEach((c, idx) => {
+        const x = Math.round(idx * slotWidth + 10);
+        const centerX = getCandleCenterX(idx);
+        const openY = getY(c.open);
+        const closeY = getY(c.close);
+        const highY = getY(c.high);
+        const lowY = getY(c.low);
+        const isGreen = c.close >= c.open;
+        const barColor = isGreen ? '#00e676' : '#ff3355';
+
+        ctx.strokeStyle = barColor;
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.moveTo(centerX, highY);
+        ctx.lineTo(centerX, lowY);
+        ctx.moveTo(x, openY);
+        ctx.lineTo(centerX, openY);
+        ctx.moveTo(centerX, closeY);
+        ctx.lineTo(x + candleWidth, closeY);
+        ctx.stroke();
+      });
+    } else {
+      displayCandles.forEach((c, idx) => {
+        const x = Math.round(idx * slotWidth + 10);
+        const centerX = getCandleCenterX(idx);
+        const openY = getY(c.open);
+        const closeY = getY(c.close);
+        const highY = getY(c.high);
+        const lowY = getY(c.low);
+        const isGreen = c.close >= c.open;
+
+        const candleColor = isGreen ? '#00e676' : '#ff3355';
+        const topBodyY = Math.min(openY, closeY);
+        const bottomBodyY = Math.max(openY, closeY);
+        const bodyH = Math.max(2, Math.round(bottomBodyY - topBodyY));
+
+        // Ensure upper and lower wicks are always crisp and visible
+        const effectiveHighY = Math.min(highY, topBodyY - 3);
+        const effectiveLowY = Math.max(lowY, topBodyY + bodyH + 3);
+
+        // Upper & Lower Wicks (Shadow Rejections)
+        ctx.strokeStyle = candleColor;
+        ctx.lineWidth = Math.max(1.4, Math.min(2.2, candleWidth * 0.18));
+        ctx.beginPath();
+        ctx.moveTo(centerX, effectiveHighY);
+        ctx.lineTo(centerX, effectiveLowY);
+        ctx.stroke();
+
+        // Candle Body
+        ctx.fillStyle = candleColor;
+        ctx.fillRect(x, Math.round(topBodyY), candleWidth, bodyH);
+      });
+    }
+
+    // 3. Technical Indicators (SMA, EMA, Bollinger Bands)
+    if (indicators.showSma) {
+      const smaValues = calculateSMA(displayCandles, indicators.smaPeriod);
+      ctx.strokeStyle = indicators.smaColor || '#2962ff';
+      ctx.lineWidth = indicators.smaWidth || 2;
+      ctx.beginPath();
+      let started = false;
+      smaValues.forEach((val, idx) => {
+        if (val !== null) {
+          const x = getCandleCenterX(idx);
+          const y = getY(val);
+          if (!started) {
+            ctx.moveTo(x, y);
+            started = true;
+          } else {
+            ctx.lineTo(x, y);
+          }
+        }
+      });
+      ctx.stroke();
+    }
+
+    if (indicators.showEma) {
+      const emaValues = calculateEMA(displayCandles, indicators.emaPeriod);
+      ctx.strokeStyle = indicators.emaColor || '#ff9800';
+      ctx.lineWidth = indicators.emaWidth || 2;
+      ctx.beginPath();
+      let started = false;
+      emaValues.forEach((val, idx) => {
+        if (val !== null) {
+          const x = getCandleCenterX(idx);
+          const y = getY(val);
+          if (!started) {
+            ctx.moveTo(x, y);
+            started = true;
+          } else {
+            ctx.lineTo(x, y);
+          }
+        }
+      });
+      ctx.stroke();
+    }
+
+    if (indicators.showBollinger) {
+      const { upper, middle, lower } = calculateBollingerBands(
+        displayCandles,
+        indicators.bollingerPeriod,
+        indicators.bollingerStd
+      );
+      const bandColor = indicators.bollingerColor || '#00e5ff';
+      ctx.strokeStyle = bandColor;
+      ctx.lineWidth = 1.4;
+      ctx.setLineDash([4, 3]);
+      [upper, lower].forEach((band) => {
+        ctx.beginPath();
+        let started = false;
+        band.forEach((val, idx) => {
+          if (val !== null) {
+            const x = getCandleCenterX(idx);
+            const y = getY(val);
+            if (!started) {
+              ctx.moveTo(x, y);
+              started = true;
+            } else {
+              ctx.lineTo(x, y);
+            }
+          }
+        });
+        ctx.stroke();
+      });
+      ctx.setLineDash([]);
+
+      // Middle Bollinger Band
+      ctx.strokeStyle = bandColor;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      let startedMid = false;
+      middle.forEach((val, idx) => {
+        if (val !== null) {
+          const x = getCandleCenterX(idx);
+          const y = getY(val);
+          if (!startedMid) {
+            ctx.moveTo(x, y);
+            startedMid = true;
+          } else {
+            ctx.lineTo(x, y);
+          }
+        }
+      });
+      ctx.stroke();
+    }
+
+    // 4. Current Market Price Pulsating Line & Axis Badge
+    const curY = getY(currentPrice);
+    ctx.strokeStyle = '#ff8800'; // Solid BFT Neon Amber
+    ctx.lineWidth = 1.3;
+    ctx.setLineDash([4, 2]);
+    ctx.beginPath();
+    ctx.moveTo(0, curY);
+    ctx.lineTo(width - 65, curY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Right Axis Price Tag
+    ctx.fillStyle = '#ff8800';
+    ctx.fillRect(width - 65, curY - 10, 65, 20);
+    ctx.fillStyle = '#0a0a0a';
+    ctx.font = 'bold 10px JetBrains Mono, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(currentPrice.toFixed(selectedAsset.pipDecimals), width - 32, curY + 4);
+
+    // 5. Visual Trade Overlay ("Beginning of trade" and "End of trade" markers)
+    activeTrades.forEach((trade) => {
+      const strikeY = getY(trade.strikePrice);
+      const isCall = trade.direction === 'CALL';
+      const isITM = isCall ? currentPrice > trade.strikePrice : currentPrice < trade.strikePrice;
+      const tradeColor = isITM ? '#00e676' : '#ff334b';
+
+      // Horizontal dashed strike line
+      ctx.strokeStyle = tradeColor;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([5, 3]);
+      ctx.beginPath();
+      ctx.moveTo(0, strikeY);
+      ctx.lineTo(width - 65, strikeY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // "Beginning of trade" marker pill on the left
+      ctx.fillStyle = tradeColor;
+      ctx.beginPath();
+      ctx.arc(14, strikeY, 4, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = 'rgba(19, 23, 34, 0.9)';
+      ctx.fillRect(22, strikeY - 10, 145, 20);
+      ctx.strokeStyle = tradeColor;
+      ctx.strokeRect(22, strikeY - 10, 145, 20);
+      ctx.fillStyle = tradeColor;
+      ctx.font = 'bold 9px JetBrains Mono, monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText(`● Beginning of trade: ${trade.strikePrice.toFixed(selectedAsset.pipDecimals)}`, 26, strikeY + 4);
+
+      // Countdown badge attached to price line
+      const secondsLeft = Math.max(0, Math.ceil((trade.endTime - Date.now()) / 1000));
+      const pnlVal = isITM ? (trade.investment * trade.payoutPercentage) / 100 : -trade.investment;
+      const pnlText = isITM ? `+$${pnlVal.toFixed(2)}` : `-$${trade.investment.toFixed(2)}`;
+      const badgeText = `${isCall ? '▲ CALL' : '▼ PUT'} ${secondsLeft}s | ${pnlText}`;
+
+      ctx.fillStyle = tradeColor;
+      ctx.fillRect(width - 250, strikeY - 12, 175, 24);
+      ctx.fillStyle = '#131722';
+      ctx.font = 'bold 11px JetBrains Mono, monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(badgeText, width - 162, strikeY + 4);
+
+      // "End of trade" vertical marker at the right boundary
+      const endLineX = width - 75;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(endLineX, 10);
+      ctx.lineTo(endLineX, chartHeight + 10);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
+      ctx.font = 'bold 9px JetBrains Mono, monospace';
+      ctx.textAlign = 'right';
+      ctx.fillText('⚑ End of trade', endLineX - 4, 20);
+    });
+
+    // 5b. Interactive Trade History Overlay (Small Green/Red Execution & Settlement Dots at Exact Timestamps)
+    if (showHistoryOverlay) {
+      const { markers, trajectories } = computeTradeHistoryChartMarkers({
+        trades: closedTrades,
+        assetSymbol: selectedAsset.symbol,
+        visibleCandles: displayCandles,
+        timeframeSeconds: TIMEFRAME_SECONDS[timeframe],
+        canvasWidth: width,
+        chartHeight,
+        minPrice,
+        maxPrice,
+      });
+      tradeMarkersRef.current = markers;
+
+      // Draw dashed trajectory connectors between Execution (startTime) and Settlement (endTime)
+      trajectories.forEach((traj) => {
+        const isHighlighted = activeInspectedMarker?.tradeId === traj.tradeId;
+        ctx.save();
+        ctx.strokeStyle = traj.color;
+        ctx.globalAlpha = isHighlighted ? 0.95 : 0.55;
+        ctx.lineWidth = isHighlighted ? 2.2 : 1.4;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(traj.entryPoint.x, traj.entryPoint.y);
+        ctx.lineTo(traj.exitPoint.x, traj.exitPoint.y);
+        ctx.stroke();
+        ctx.restore();
+      });
+
+      // Draw crisp green (#00e676) and red (#ff334b) execution & settlement indicator dots
+      markers.forEach((marker) => {
+        const isExactHover = activeInspectedMarker?.id === marker.id;
+        const isSameTradeHover = activeInspectedMarker?.tradeId === marker.tradeId;
+        const dotRadius = isExactHover ? 6 : isSameTradeHover ? 5.2 : 4.2;
+
+        ctx.save();
+        // Outer subtle pulse ring
+        ctx.beginPath();
+        ctx.arc(marker.x, marker.y, isExactHover ? 10 : 7, 0, Math.PI * 2);
+        ctx.fillStyle = marker.isWin
+          ? isExactHover
+            ? 'rgba(0, 230, 118, 0.32)'
+            : 'rgba(0, 230, 118, 0.16)'
+          : isExactHover
+          ? 'rgba(255, 51, 75, 0.32)'
+          : 'rgba(255, 51, 75, 0.16)';
+        ctx.fill();
+
+        // Main green/red dot indicator
+        ctx.beginPath();
+        ctx.arc(marker.x, marker.y, dotRadius, 0, Math.PI * 2);
+        ctx.fillStyle = marker.color;
+        ctx.fill();
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = '#131722';
+        ctx.stroke();
+
+        if (marker.pointType === 'execution') {
+          // Execution dot center pinpoint
+          ctx.beginPath();
+          ctx.arc(marker.x, marker.y, 1.6, 0, Math.PI * 2);
+          ctx.fillStyle = '#ffffff';
+          ctx.fill();
+        } else {
+          // Settlement dot outer ring + compact P/L tag
+          ctx.beginPath();
+          ctx.arc(marker.x, marker.y, dotRadius + 2.2, 0, Math.PI * 2);
+          ctx.strokeStyle = marker.color;
+          ctx.lineWidth = 1.1;
+          ctx.stroke();
+
+          const pnlText = marker.isWin
+            ? `+$${Math.abs(marker.pnl).toFixed(0)}`
+            : `-$${Math.abs(marker.pnl).toFixed(0)}`;
+          const tagW = 34;
+          const tagH = 14;
+          const tagX = Math.max(8, Math.min(width - 75 - tagW, marker.x - tagW / 2));
+          const tagY = marker.y > 32 ? marker.y - 21 : marker.y + 9;
+
+          ctx.fillStyle = 'rgba(19, 23, 34, 0.92)';
+          ctx.fillRect(tagX, tagY, tagW, tagH);
+          ctx.strokeStyle = marker.color;
+          ctx.lineWidth = 1;
+          ctx.strokeRect(tagX, tagY, tagW, tagH);
+
+          ctx.fillStyle = marker.color;
+          ctx.font = 'bold 8.5px JetBrains Mono, monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText(pnlText, tagX + tagW / 2, tagY + 10);
+        }
+        ctx.restore();
+      });
+    } else {
+      tradeMarkersRef.current = [];
+    }
+
+    // 6. User Technical Drawings Render (Trendlines, Rays, Fibonacci, Brush)
+    const allDrawings = [...drawings, ...(currentDrawing ? [currentDrawing] : [])];
+    allDrawings.forEach((d) => {
+      ctx.strokeStyle = d.color;
+      ctx.lineWidth = d.width || 2;
+
+      if (d.type === 'trendline' && d.endX !== undefined && d.endY !== undefined) {
+        ctx.beginPath();
+        ctx.moveTo(d.startX, d.startY);
+        ctx.lineTo(d.endX, d.endY);
+        ctx.stroke();
+      } else if (d.type === 'horizontal-ray') {
+        ctx.setLineDash([5, 3]);
+        ctx.beginPath();
+        ctx.moveTo(0, d.startY);
+        ctx.lineTo(width, d.startY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      } else if (d.type === 'support-resistance') {
+        // Institutional Support / Resistance Level Marker with Shaded Liquidity Zone & Price Label
+        ctx.save();
+        ctx.fillStyle = 'rgba(255, 136, 0, 0.12)';
+        ctx.fillRect(0, d.startY - 5, width - 65, 10);
+        ctx.strokeStyle = d.color || '#ff8800';
+        ctx.lineWidth = 1.8;
+        ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        ctx.moveTo(0, d.startY);
+        ctx.lineTo(width - 65, d.startY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        const srPrice =
+          maxPrice - ((d.startY - 10) / Math.max(1, chartHeight)) * (maxPrice - minPrice);
+        ctx.fillStyle = '#131722';
+        ctx.fillRect(12, d.startY - 17, 132, 15);
+        ctx.strokeStyle = d.color || '#ff8800';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(12, d.startY - 17, 132, 15);
+        ctx.fillStyle = d.color || '#ff8800';
+        ctx.font = 'bold 9px JetBrains Mono, monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(
+          `S/R LEVEL • ${srPrice.toFixed(selectedAsset.pipDecimals)}`,
+          16,
+          d.startY - 6
+        );
+        ctx.restore();
+      } else if (d.type === 'vertical-ray') {
+        ctx.setLineDash([5, 3]);
+        ctx.beginPath();
+        ctx.moveTo(d.startX, 0);
+        ctx.lineTo(d.startX, height);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      } else if (d.type === 'fibonacci' && d.endY !== undefined) {
+        const topY = Math.min(d.startY, d.endY);
+        const bottomY = Math.max(d.startY, d.endY);
+        const fibLevels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0];
+        fibLevels.forEach((lvl) => {
+          const y = bottomY - (bottomY - topY) * lvl;
+          ctx.strokeStyle = lvl === 0.618 ? '#ff9800' : d.color;
+          ctx.setLineDash([3, 3]);
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(width - 65, y);
+          ctx.stroke();
+
+          ctx.fillStyle = lvl === 0.618 ? '#ff9800' : d.color;
+          ctx.font = '9px JetBrains Mono, monospace';
+          ctx.textAlign = 'left';
+          ctx.fillText(`Fib ${(lvl * 100).toFixed(1)}%`, 15, y - 3);
+        });
+        ctx.setLineDash([]);
+      } else if (d.type === 'brush' && d.points && d.points.length > 1) {
+        ctx.beginPath();
+        ctx.moveTo(d.points[0].x, d.points[0].y);
+        for (let i = 1; i < d.points.length; i++) {
+          ctx.lineTo(d.points[i].x, d.points[i].y);
+        }
+        ctx.stroke();
+      }
+    });
+
+    // 7. RSI Sub-Pane at Bottom (if enabled)
+    let currentBottomY = height - 10;
+    if (indicators.showRsi) {
+      const rsiH = 55;
+      const rsiYStart = currentBottomY - rsiH;
+      currentBottomY = rsiYStart - 10;
+
+      ctx.fillStyle = '#11141e';
+      ctx.fillRect(0, rsiYStart, width, rsiH);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+      ctx.strokeRect(0, rsiYStart, width, rsiH);
+
+      const rsi70 = rsiYStart + rsiH * 0.3;
+      const rsi30 = rsiYStart + rsiH * 0.7;
+      ctx.strokeStyle = 'rgba(255, 51, 75, 0.4)';
+      ctx.setLineDash([2, 2]);
+      ctx.beginPath();
+      ctx.moveTo(0, rsi70);
+      ctx.lineTo(width, rsi70);
+      ctx.stroke();
+
+      ctx.strokeStyle = 'rgba(0, 230, 118, 0.4)';
+      ctx.beginPath();
+      ctx.moveTo(0, rsi30);
+      ctx.lineTo(width, rsi30);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      const rsiValues = calculateRSI(displayCandles, indicators.rsiPeriod);
+      ctx.strokeStyle = indicators.rsiColor || '#00e5ff';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      let started = false;
+      rsiValues.forEach((val, idx) => {
+        if (val !== null) {
+          const x = getCandleCenterX(idx);
+          const y = rsiYStart + rsiH - (val / 100) * rsiH;
+          if (!started) {
+            ctx.moveTo(x, y);
+            started = true;
+          } else {
+            ctx.lineTo(x, y);
+          }
+        }
+      });
+      ctx.stroke();
+
+      const lastRsi = rsiValues[rsiValues.length - 1];
+      ctx.fillStyle = indicators.rsiColor || '#00e5ff';
+      ctx.font = '10px JetBrains Mono, monospace';
+      ctx.textAlign = 'right';
+      ctx.fillText(`RSI (${indicators.rsiPeriod}): ${lastRsi ? lastRsi.toFixed(1) : '--'}`, width - 70, rsiYStart + 14);
+    }
+
+    // 8. MACD Sub-Pane at Bottom (if enabled)
+    if (indicators.showMacd) {
+      const macdH = 60;
+      const macdYStart = currentBottomY - macdH;
+
+      ctx.fillStyle = '#0f131c';
+      ctx.fillRect(0, macdYStart, width, macdH);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+      ctx.strokeRect(0, macdYStart, width, macdH);
+
+      const macdData = calculateMACD(displayCandles, indicators.macdFast, indicators.macdSlow, indicators.macdSignal);
+      const zeroY = macdYStart + macdH / 2;
+
+      const allMacdMags = [
+        ...macdData.macd.filter((v): v is number => v !== null).map((v) => Math.abs(v)),
+        ...macdData.signal.filter((v): v is number => v !== null).map((v) => Math.abs(v)),
+        ...macdData.histogram.filter((v): v is number => v !== null).map((v) => Math.abs(v)),
+      ];
+      const maxMacdAbs = Math.max(0.00001, ...allMacdMags);
+      const macdScale = (macdH * 0.42) / maxMacdAbs;
+
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+      ctx.beginPath();
+      ctx.moveTo(0, zeroY);
+      ctx.lineTo(width, zeroY);
+      ctx.stroke();
+
+      // Histogram bars
+      macdData.histogram.forEach((hist, idx) => {
+        if (hist !== null) {
+          const x = Math.round(idx * slotWidth + 10);
+          const barH = hist * macdScale;
+          ctx.fillStyle = hist >= 0 ? '#00e676' : '#ff334b';
+          ctx.fillRect(x, zeroY - barH, Math.max(2, candleWidth - 1), barH);
+        }
+      });
+
+      // MACD line
+      ctx.strokeStyle = indicators.macdColor || '#2962ff';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      let startedMacd = false;
+      macdData.macd.forEach((val, idx) => {
+        if (val !== null) {
+          const x = getCandleCenterX(idx);
+          const y = zeroY - val * macdScale;
+          if (!startedMacd) {
+            ctx.moveTo(x, y);
+            startedMacd = true;
+          } else {
+            ctx.lineTo(x, y);
+          }
+        }
+      });
+      ctx.stroke();
+
+      // Signal line
+      ctx.strokeStyle = indicators.macdSignalColor || '#ff334b';
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      let startedSig = false;
+      macdData.signal.forEach((val, idx) => {
+        if (val !== null) {
+          const x = getCandleCenterX(idx);
+          const y = zeroY - val * macdScale;
+          if (!startedSig) {
+            ctx.moveTo(x, y);
+            startedSig = true;
+          } else {
+            ctx.lineTo(x, y);
+          }
+        }
+      });
+      ctx.stroke();
+
+      ctx.fillStyle = '#00e5ff';
+      ctx.font = '9px JetBrains Mono, monospace';
+      ctx.textAlign = 'right';
+      ctx.fillText(`MACD (${indicators.macdFast}, ${indicators.macdSlow}, ${indicators.macdSignal})`, width - 70, macdYStart + 12);
+    }
+
+    // 9. TradingView Interactive Crosshair & Axis Callout Labels on Hover
+    if (crosshairPos && crosshairPos.x > 0 && crosshairPos.x < width - 65 && crosshairPos.y > 10 && crosshairPos.y < chartHeight + 10) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+
+      // Vertical crosshair line
+      ctx.beginPath();
+      ctx.moveTo(crosshairPos.x, 10);
+      ctx.lineTo(crosshairPos.x, chartHeight + 10);
+      ctx.stroke();
+
+      // Horizontal crosshair line
+      ctx.beginPath();
+      ctx.moveTo(0, crosshairPos.y);
+      ctx.lineTo(width - 65, crosshairPos.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Price callout pill on right price scale
+      const hoverPrice =
+        maxPrice - ((crosshairPos.y - 10) / Math.max(1, chartHeight)) * (maxPrice - minPrice);
+      ctx.fillStyle = '#252b3d';
+      ctx.fillRect(width - 64, crosshairPos.y - 9, 62, 18);
+      ctx.strokeStyle = '#ff8800';
+      ctx.strokeRect(width - 64, crosshairPos.y - 9, 62, 18);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 9.5px JetBrains Mono, monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(hoverPrice.toFixed(selectedAsset.pipDecimals), width - 33, crosshairPos.y + 3);
+      ctx.restore();
+    }
+  }, [
+    candles,
+    currentPrice,
+    selectedAsset,
+    timeframe,
+    chartType,
+    indicators,
+    activeTrades,
+    closedTrades,
+    showHistoryOverlay,
+    activeInspectedMarker,
+    crosshairPos,
+    zoomLevel,
+    panOffset,
+    drawings,
+    currentDrawing,
+    activeDrawingTool,
+    drawingColor,
+  ]);
+
+  // Handle canvas resize
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const resize = () => {
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = rect.width;
+      canvas.height = rect.height;
+    };
+    resize();
+    window.addEventListener('resize', resize);
+    return () => window.removeEventListener('resize', resize);
+  }, []);
+
+  return (
+    <div className="flex flex-col h-[calc(100vh-60px)] min-h-[720px] bg-[#131722] text-slate-100 overflow-hidden font-sans select-none">
+      {/* 1. TOP SCROLLABLE ASSET & PAYOUT BAR (Quotex Exact OTC Ticker) */}
+      <div className="h-12 bg-[#1e222d] border-b border-[#2a2e39] flex items-center justify-between px-3 shrink-0 z-20">
+        {/* Left: Brand Badge & Horizontal OTC Asset Tabs with Green Payout Badges */}
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1">
+          <button
+            onClick={() => {
+              soundEngine.playUiClick();
+              onNavigateTab?.('home');
+            }}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#161923] hover:bg-[#252a37] border border-[#2a2e39] text-xs font-mono font-bold shrink-0 cursor-pointer transition-colors mr-1 text-slate-300 hover:text-white"
+            title="Return to BFT Portal"
+          >
+            <span className="font-black text-cyan-400">BFT</span>
+            <span className="text-[9px] px-1 py-0.2 rounded bg-cyan-500/20 text-cyan-300 font-bold">
+              OTC
+            </span>
+          </button>
+
+          {openTabs.map((tab) => {
+            const isActive = tab.symbol === selectedAsset.symbol;
+            const liveTabPayout = getLivePayoutPercentage(tab, payoutSeed);
+            return (
+              <div
+                key={tab.symbol}
+                onClick={() => handleSelectTabAsset({ ...tab, payout: liveTabPayout })}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-mono font-bold transition-all cursor-pointer border shrink-0 ${
+                  isActive
+                    ? 'bg-[#252b3b] border-[#ff8800] text-white shadow-md'
+                    : 'bg-[#181b25] border-[#2a2e39] text-slate-400 hover:text-slate-200 hover:bg-[#202533]'
+                }`}
+              >
+                <span>{tab.flag || '📈'}</span>
+                <span>{tab.symbol}</span>
+                <span className="text-[10px] font-black px-1.5 py-0.2 rounded bg-emerald-950/80 text-[#00e676] border border-[#00e676]/40">
+                  +{liveTabPayout}%
+                </span>
+                {openTabs.length > 1 && (
+                  <button
+                    onClick={(e) => handleCloseTab(e, tab.symbol)}
+                    className="p-0.5 rounded hover:bg-slate-700 text-slate-500 hover:text-white"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+            );
+          })}
+
+          {/* Plus (+) Button to open Quotex Asset Picker Modal */}
+          <button
+            onClick={() => {
+              soundEngine.playUiClick();
+              setIsAssetModalOpen(true);
+            }}
+            className="w-8 h-8 rounded-lg bg-[#181b25] hover:bg-cyan-500 hover:text-slate-950 border border-[#2a2e39] flex items-center justify-center text-slate-400 transition-all cursor-pointer shrink-0"
+            title="Add OTC Trading Asset"
+          >
+            <Plus className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Right Section: Real/Demo Account Switcher, Deposit (Green), Withdrawal, Price Alerts, Sound, Profile */}
+        <div className="flex items-center gap-2 shrink-0 pl-2">
+          {/* Price Alert Manager Button */}
+          <button
+            onClick={() => {
+              soundEngine.playUiClick();
+              setIsPriceAlertModalOpen(true);
+            }}
+            className="relative px-2.5 py-1.5 rounded-xl bg-[#181b25] hover:bg-[#222736] border border-[#2a2e39] text-amber-400 hover:text-amber-300 text-xs font-mono flex items-center gap-1.5 transition-all cursor-pointer"
+            title="Real-Time Price Alerts"
+          >
+            <BellRing className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline font-bold">Alerts</span>
+            {alerts.filter((a) => a.active && !a.triggered).length > 0 && (
+              <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+            )}
+          </button>
+
+          {/* Account Balance Switcher Dropdown (Quotex CHALLENGE vs LIVE ACCOUNT Badge) */}
+          <div className="relative">
+            <button
+              onClick={() => setAccountDropdownOpen(!accountDropdownOpen)}
+              data-testid="terminal-account-switcher"
+              className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#181b25] hover:bg-[#222736] border border-[#2a2e39] text-xs font-mono transition-all cursor-pointer"
+            >
+              <div
+                className={`w-2 h-2 rounded-full ${
+                  isBreached
+                    ? 'bg-rose-500 animate-pulse'
+                    : isLiveFundedAccount(account)
+                    ? 'bg-[#00e676]'
+                    : 'bg-[#ff8800]'
+                }`}
+              />
+              <div className="text-left">
+                <div className="flex items-center gap-1.5">
+                  <span className="font-bold text-white text-[11px]">
+                    {account ? account.id : 'No Account'}
+                  </span>
+                  <span
+                    data-testid="terminal-account-status-badge"
+                    className={`text-[9px] px-1.5 py-0.5 rounded font-black uppercase tracking-wider border ${
+                      isLiveFundedAccount(account)
+                        ? 'bg-[#00c853]/25 text-[#00e676] border-[#00e676]/60'
+                        : 'bg-[#ff8800]/20 text-[#ff8800] border-[#ff8800]/50'
+                    }`}
+                  >
+                    {getAccountStatusBadgeLabel(account)}
+                  </span>
+                </div>
+                <div className={`text-xs font-black ${isBreached ? 'text-rose-400' : 'text-[#00e676]'}`}>
+                  ${(account?.currentBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </div>
+              </div>
+              <ChevronDown className="w-3.5 h-3.5 text-slate-400 ml-1" />
+            </button>
+
+            {/* Account Switcher Dropdown Menu */}
+            {accountDropdownOpen && (
+              <div className="absolute right-0 mt-2 w-72 rounded-xl bg-[#1e222d] border border-[#2a2e39] shadow-2xl p-2 z-50 font-mono text-xs animate-in fade-in">
+                <div className="text-[10px] uppercase font-bold text-slate-400 px-2 py-1">
+                  Switch Prop Account
+                </div>
+                {accounts.map((acc) => {
+                  const isLive = isLiveFundedAccount(acc);
+                  return (
+                    <button
+                      key={acc.id}
+                      onClick={() => {
+                        soundEngine.playUiClick();
+                        onSelectAccount?.(acc.id);
+                        setAccountDropdownOpen(false);
+                      }}
+                      className={`w-full flex items-center justify-between p-2 rounded-lg text-left transition-colors cursor-pointer ${
+                        acc.id === account?.id ? 'bg-cyan-500/15 border border-cyan-500/30' : 'hover:bg-[#262b3a]'
+                      }`}
+                    >
+                      <div>
+                        <div className="font-bold text-white flex items-center gap-1.5">
+                          <span>{acc.id}</span>
+                          <span
+                            className={`text-[9px] px-1.5 py-0.5 rounded font-black uppercase tracking-wider border ${
+                              isLive
+                                ? 'bg-[#00c853]/25 text-[#00e676] border-[#00e676]/60'
+                                : 'bg-[#ff8800]/20 text-[#ff8800] border-[#ff8800]/50'
+                            }`}
+                          >
+                            {getAccountStatusBadgeLabel(acc)}
+                          </span>
+                          {acc.status === 'breached' && (
+                            <span className="text-[9px] px-1 py-0.2 rounded bg-rose-500/20 text-rose-300 font-bold">
+                              BREACHED
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[#00e676] font-black mt-0.5">
+                          ${acc.currentBalance.toFixed(2)} • {acc.tierName}
+                        </div>
+                      </div>
+                      {acc.id === account?.id && <CheckCircle2 className="w-4 h-4 text-cyan-400" />}
+                    </button>
+                  );
+                })}
+                {onOpenChallengeModal && (
+                  <div className="border-t border-[#2a2e39] mt-2 pt-2">
+                    <button
+                      onClick={() => {
+                        setAccountDropdownOpen(false);
+                        onOpenChallengeModal();
+                      }}
+                      className="w-full py-1.5 text-xs text-center font-bold text-amber-400 hover:text-amber-300 rounded bg-[#131722] border border-amber-500/20 cursor-pointer"
+                    >
+                      + Buy New Evaluation Account
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Green "Deposit" Button (Cryptomus USDT TRC-20 Automated Gateway) */}
+          <button
+            type="button"
+            data-testid="terminal-deposit-btn"
+            onClick={() => {
+              soundEngine.playUiClick();
+              if (onOpenDepositModal) {
+                onOpenDepositModal();
+              } else if (onOpenChallengeModal) {
+                onOpenChallengeModal();
+              }
+            }}
+            className="px-3.5 py-1.5 rounded-lg bg-[#00e676] hover:bg-[#00c853] text-slate-950 font-black text-xs shadow-lg hover:brightness-105 transition-all cursor-pointer font-mono flex items-center gap-1.5"
+          >
+            <Plus className="w-3.5 h-3.5 stroke-[3]" />
+            <span className="font-black uppercase tracking-wider">Deposit</span>
+          </button>
+
+          {/* Instant "Withdrawal" Button */}
+          <button
+            onClick={() => {
+              soundEngine.playUiClick();
+              onOpenWithdrawalModal();
+            }}
+            className="px-3 py-1.5 rounded-lg bg-[#252b3b] hover:bg-[#2e364a] text-slate-200 border border-[#2a2e39] font-bold text-xs transition-all cursor-pointer font-mono flex items-center gap-1.5"
+          >
+            <Zap className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
+            <span className="hidden sm:inline">Withdrawal</span>
+          </button>
+
+          {/* Sound FX Toggle Button */}
+          <button
+            onClick={handleToggleSound}
+            className={`p-2 rounded-lg border transition-all cursor-pointer ${
+              soundEnabled
+                ? 'bg-[#252b3b] border-cyan-500/40 text-cyan-400'
+                : 'bg-[#181b25] border-[#2a2e39] text-slate-500'
+            }`}
+            title={soundEnabled ? 'Mute Sound Effects' : 'Enable Sound Effects'}
+          >
+            {soundEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
+          </button>
+
+          {/* Sleek Circular User Profile Avatar in TOP-RIGHT Corner */}
+          <button
+            onClick={() => {
+              soundEngine.playUiClick();
+              onNavigateTab?.('dashboard');
+            }}
+            className="relative flex items-center justify-center w-8 h-8 rounded-full bg-gradient-to-tr from-cyan-500 via-blue-500 to-indigo-500 text-white font-black text-xs border border-cyan-400/80 shadow-md hover:scale-105 transition-all cursor-pointer shrink-0 ml-1"
+            title="User Profile & Settings"
+          >
+            <span>
+              {userProfile?.fullName
+                ? userProfile.fullName.slice(0, 2).toUpperCase()
+                : 'TR'}
+            </span>
+            <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-[#00e676] border-2 border-[#1e222d]" />
+          </button>
+        </div>
+      </div>
+
+      {/* Main Trading Stage: Left Sidebar + Central Chart + Right Execution Panel */}
+      <div className="flex-1 flex overflow-hidden relative">
+        {/* 2. LEFT-SIDE ICON NAVIGATION BAR */}
+        <div className="w-14 bg-[#1e222d] border-r border-[#2a2e39] flex flex-col items-center justify-between py-3 shrink-0 z-10">
+          <div className="flex flex-col items-center gap-3">
+            {/* Trade / Terminal Icon (Active) */}
+            <button
+              className="w-10 h-10 rounded-xl bg-cyan-500/15 border border-cyan-400/50 flex items-center justify-center text-cyan-400 shadow-md cursor-pointer"
+              title="Trade Terminal"
+            >
+              <Activity className="w-5 h-5" />
+            </button>
+
+            {/* Trades History Drawer Toggle */}
+            <button
+              onClick={() => {
+                soundEngine.playUiClick();
+                setIsTradesDrawerOpen(!isTradesDrawerOpen);
+              }}
+              className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer ${
+                isTradesDrawerOpen
+                  ? 'bg-[#252b3b] text-cyan-400 border border-[#2a2e39]'
+                  : 'hover:bg-[#252a37] text-slate-400 hover:text-white'
+              }`}
+              title="Toggle Bottom Trades Drawer"
+            >
+              <Layers className="w-5 h-5" />
+            </button>
+
+            {/* Dedicated "BFT Trading Signals" Panel Button */}
+            <button
+              onClick={() => {
+                soundEngine.playUiClick();
+                setIsSignalsDrawerOpen(!isSignalsDrawerOpen);
+              }}
+              className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer relative ${
+                isSignalsDrawerOpen
+                  ? 'bg-emerald-500/20 text-[#00e676] border border-[#00e676]/40'
+                  : 'hover:bg-[#252a37] text-slate-400 hover:text-white'
+              }`}
+              title="BFT Trading Signals"
+            >
+              <Radio className="w-5 h-5 text-[#00e676]" />
+              <span className="w-2 h-2 rounded-full bg-[#00e676] absolute top-2 right-2 animate-ping" />
+            </button>
+
+            {/* Tournaments & Leaderboard */}
+            <button
+              onClick={() => {
+                soundEngine.playUiClick();
+                setIsLeaderboardOpen(true);
+              }}
+              className="w-10 h-10 rounded-xl hover:bg-[#252a37] flex items-center justify-center text-slate-400 hover:text-amber-400 transition-all cursor-pointer"
+              title="Tournaments & Leaderboard"
+            >
+              <Trophy className="w-5 h-5" />
+            </button>
+
+            {/* Market / Assets Catalog */}
+            <button
+              onClick={() => {
+                soundEngine.playUiClick();
+                setIsAssetModalOpen(true);
+              }}
+              className="w-10 h-10 rounded-xl hover:bg-[#252a37] flex items-center justify-center text-slate-400 hover:text-cyan-400 transition-all cursor-pointer"
+              title="OTC Market Assets"
+            >
+              <Globe className="w-5 h-5" />
+            </button>
+
+            {/* Prop Firm Rules & Guardrails */}
+            <button
+              onClick={() => {
+                soundEngine.playUiClick();
+                setIsRulesModalOpen(true);
+              }}
+              className="w-10 h-10 rounded-xl hover:bg-[#252a37] flex items-center justify-center text-slate-400 hover:text-sky-400 transition-all cursor-pointer"
+              title="Risk & Prop Firm Rules"
+            >
+              <ShieldCheck className="w-5 h-5" />
+            </button>
+
+            {/* 3-Tier Multi-Level Affiliate System */}
+            <button
+              onClick={() => {
+                soundEngine.playUiClick();
+                onNavigateTab?.('affiliate');
+              }}
+              className="w-10 h-10 rounded-xl hover:bg-[#252a37] flex items-center justify-center text-slate-400 hover:text-purple-400 transition-all cursor-pointer relative"
+              title="3-Tier Affiliate System (Earn up to 17%)"
+            >
+              <Users className="w-5 h-5" />
+              <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-purple-400 animate-pulse" />
+            </button>
+          </div>
+
+          {/* Bottom Icons: Indicators, Support & FAQ, User Profile */}
+          <div className="flex flex-col items-center gap-3">
+            {/* Indicator Parameters */}
+            <button
+              onClick={() => {
+                soundEngine.playUiClick();
+                setIsIndicatorModalOpen(true);
+              }}
+              className="w-10 h-10 rounded-xl hover:bg-[#252a37] flex items-center justify-center text-slate-400 hover:text-white transition-all cursor-pointer"
+              title="Technical Indicators"
+            >
+              <Sliders className="w-4 h-4" />
+            </button>
+
+            {/* Support / FAQ */}
+            <button
+              onClick={() => {
+                soundEngine.playUiClick();
+                onNavigateTab?.('faq');
+              }}
+              className="w-10 h-10 rounded-xl hover:bg-[#252a37] flex items-center justify-center text-slate-400 hover:text-white transition-all cursor-pointer"
+              title="Support & FAQ Desk"
+            >
+              <Headphones className="w-4 h-4" />
+            </button>
+
+            {/* Profile Hub */}
+            <button
+              onClick={() => {
+                soundEngine.playUiClick();
+                onNavigateTab?.('dashboard');
+              }}
+              className="w-10 h-10 rounded-xl hover:bg-[#252a37] flex items-center justify-center text-slate-400 hover:text-cyan-400 transition-all cursor-pointer"
+              title="Account Profile & Settings"
+            >
+              <User className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* 3. CENTRAL SUPER-SMOOTH OTC ALGORITHMIC CHART ENGINE */}
+        <div className="flex-1 flex flex-col relative overflow-hidden bg-[#131722]">
+          {/* Active Price Alert Floating Toast Notification */}
+          {activeAlertToast && (
+            <div className="absolute top-4 right-4 max-w-sm px-4 py-2.5 bg-slate-900/95 border border-cyan-400 text-cyan-300 font-bold text-xs font-mono rounded-xl shadow-2xl backdrop-blur-md flex items-center justify-between gap-3 z-40 animate-in slide-in-from-top-2">
+              <div className="flex items-center gap-2">
+                <BellRing className="w-4 h-4 text-cyan-400 shrink-0 animate-bounce" />
+                <span>{activeAlertToast}</span>
+              </div>
+              <button
+                onClick={() => setActiveAlertToast(null)}
+                className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5 stroke-[2.5]" />
+              </button>
+            </div>
+          )}
+
+          {/* FLOATING QUICK-ACCESS INDICATORS & DRAWING TOOLBAR */}
+          <div className="absolute top-3 left-3 z-20 flex flex-wrap items-center gap-2 font-mono text-xs select-none">
+            {/* Quick Indicators Bar */}
+            <div className="flex items-center gap-1 p-1 rounded-xl bg-[#1e222d]/90 backdrop-blur-md border border-[#2a2e39] shadow-xl">
+              <button
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  setIndicators((prev) => ({ ...prev, showSma: !prev.showSma }));
+                }}
+                className={`px-2 py-1 rounded text-[10px] font-bold transition-all cursor-pointer ${
+                  indicators.showSma ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                SMA
+              </button>
+              <button
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  setIndicators((prev) => ({ ...prev, showEma: !prev.showEma }));
+                }}
+                className={`px-2 py-1 rounded text-[10px] font-bold transition-all cursor-pointer ${
+                  indicators.showEma ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                EMA
+              </button>
+              <button
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  setIndicators((prev) => ({ ...prev, showBollinger: !prev.showBollinger }));
+                }}
+                className={`px-2 py-1 rounded text-[10px] font-bold transition-all cursor-pointer ${
+                  indicators.showBollinger ? 'bg-cyan-500 text-slate-950' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                BB
+              </button>
+              <button
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  setIndicators((prev) => ({ ...prev, showRsi: !prev.showRsi }));
+                }}
+                className={`px-2 py-1 rounded text-[10px] font-bold transition-all cursor-pointer ${
+                  indicators.showRsi ? 'bg-cyan-400 text-slate-950' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                RSI
+              </button>
+              <button
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  setIndicators((prev) => ({ ...prev, showMacd: !prev.showMacd }));
+                }}
+                className={`px-2 py-1 rounded text-[10px] font-bold transition-all cursor-pointer ${
+                  indicators.showMacd ? 'bg-indigo-500 text-white' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                MACD
+              </button>
+              <button
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  setIsIndicatorModalOpen(true);
+                }}
+                className="p-1 rounded text-slate-400 hover:text-white hover:bg-[#252b3b] cursor-pointer"
+                title="Indicator Settings"
+              >
+                <Sliders className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {/* Drawing Tools Suite */}
+            <div className="flex items-center gap-1 p-1 rounded-xl bg-[#1e222d]/90 backdrop-blur-md border border-[#2a2e39] shadow-xl">
+              <button
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  setActiveDrawingTool('none');
+                }}
+                className={`p-1.5 rounded transition-all cursor-pointer ${
+                  activeDrawingTool === 'none' ? 'bg-cyan-500 text-slate-950' : 'text-slate-400 hover:text-white'
+                }`}
+                title="Pointer / Pan Tool"
+              >
+                <Move className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  setActiveDrawingTool('trendline');
+                }}
+                className={`p-1.5 rounded transition-all cursor-pointer ${
+                  activeDrawingTool === 'trendline' ? 'bg-cyan-500 text-slate-950' : 'text-slate-400 hover:text-white'
+                }`}
+                title="Draw Trendline"
+              >
+                <TrendingUp className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  setActiveDrawingTool('horizontal-ray');
+                }}
+                className={`p-1.5 rounded transition-all cursor-pointer ${
+                  activeDrawingTool === 'horizontal-ray' ? 'bg-cyan-500 text-slate-950' : 'text-slate-400 hover:text-white'
+                }`}
+                title="Horizontal Price Line"
+              >
+                <Minus className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                data-testid="tool-support-resistance"
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  setActiveDrawingTool('support-resistance');
+                }}
+                className={`px-2 py-1 rounded text-[10px] font-bold transition-all cursor-pointer ${
+                  activeDrawingTool === 'support-resistance'
+                    ? 'bg-[#ff8800] text-slate-950 font-black'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+                title="Mark Support / Resistance Level Zone"
+              >
+                S/R
+              </button>
+              <button
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  setActiveDrawingTool('fibonacci');
+                }}
+                className={`p-1.5 rounded transition-all cursor-pointer ${
+                  activeDrawingTool === 'fibonacci' ? 'bg-cyan-500 text-slate-950' : 'text-slate-400 hover:text-white'
+                }`}
+                title="Fibonacci Retracement"
+              >
+                <Layers className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  setActiveDrawingTool('brush');
+                }}
+                className={`p-1.5 rounded transition-all cursor-pointer ${
+                  activeDrawingTool === 'brush' ? 'bg-cyan-500 text-slate-950' : 'text-slate-400 hover:text-white'
+                }`}
+                title="Freehand Brush"
+              >
+                <PenTool className="w-3.5 h-3.5" />
+              </button>
+
+              {/* Color picker */}
+              <div className="flex items-center gap-1 pl-1 border-l border-[#2a2e39]">
+                {['#00e5ff', '#00e676', '#ff9800', '#ff334b'].map((c) => (
+                  <button
+                    key={c}
+                    onClick={() => setDrawingColor(c)}
+                    className={`w-3.5 h-3.5 rounded-full border transition-transform cursor-pointer ${
+                      drawingColor === c ? 'scale-125 border-white' : 'border-transparent'
+                    }`}
+                    style={{ backgroundColor: c }}
+                  />
+                ))}
+              </div>
+
+              {/* Clear All Drawings */}
+              {drawings.length > 0 && (
+                <button
+                  onClick={() => {
+                    soundEngine.playUiClick();
+                    setDrawings([]);
+                  }}
+                  className="p-1 text-rose-400 hover:text-rose-300 ml-1 cursor-pointer"
+                  title="Clear All Drawings"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* Interactive Trade History Overlay Toggle & Marker Selector */}
+            <div className="flex items-center gap-1.5 p-1 rounded-xl bg-[#1e222d]/90 backdrop-blur-md border border-[#2a2e39] shadow-xl">
+              <button
+                type="button"
+                data-testid="toggle-history-overlay-btn"
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  setShowHistoryOverlay((prev) => {
+                    if (prev) {
+                      setHoveredTradeMarker(null);
+                      setSelectedTradeMarker(null);
+                    }
+                    return !prev;
+                  });
+                }}
+                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1.5 transition-all cursor-pointer border ${
+                  showHistoryOverlay
+                    ? 'bg-[#141824] border-[#ff8800]/60 text-white'
+                    : 'bg-transparent border-transparent text-slate-400 hover:text-white'
+                }`}
+                title="Toggle Interactive Trade Execution & Settlement Dots on Chart"
+              >
+                <span className="flex items-center gap-0.5">
+                  <span className="w-2 h-2 rounded-full bg-[#00e676]" />
+                  <span className="w-2 h-2 rounded-full bg-[#ff334b]" />
+                </span>
+                <span>History Dots</span>
+                <span
+                  data-testid="history-overlay-count-badge"
+                  className={`px-1 py-0.2 rounded text-[9px] font-black ${
+                    showHistoryOverlay
+                      ? 'bg-[#ff8800] text-slate-950'
+                      : 'bg-slate-800 text-slate-400'
+                  }`}
+                >
+                  {closedTrades.filter((t) => t.asset === selectedAsset.symbol).length * 2}
+                </span>
+              </button>
+
+              {showHistoryOverlay &&
+                closedTrades
+                  .filter((t) => t.asset === selectedAsset.symbol)
+                  .slice(0, 4)
+                  .map((t, idx) => {
+                    const isWin = t.status === 'won';
+                    const isSelected = activeInspectedMarker?.tradeId === t.id;
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        data-testid={`chart-marker-chip-${idx}`}
+                        onClick={() => {
+                          soundEngine.playUiClick();
+                          const found =
+                            tradeMarkersRef.current.find(
+                              (m) => m.tradeId === t.id && m.pointType === 'settlement'
+                            ) ||
+                            tradeMarkersRef.current.find((m) => m.tradeId === t.id) ||
+                            null;
+                          setSelectedTradeMarker((prev) =>
+                            prev?.tradeId === t.id ? null : found
+                          );
+                        }}
+                        className={`px-2 py-0.5 rounded text-[9px] font-mono font-bold flex items-center gap-1 transition-all cursor-pointer border ${
+                          isSelected
+                            ? isWin
+                              ? 'bg-[#00e676]/25 border-[#00e676] text-[#00e676]'
+                              : 'bg-[#ff334b]/25 border-[#ff334b] text-[#ff334b]'
+                            : 'bg-[#131722] border-[#2a2e39] text-slate-300 hover:border-slate-500'
+                        }`}
+                        title={`Inspect ${t.direction} trade settled at ${new Date(t.endTime).toLocaleTimeString()}`}
+                      >
+                        <span
+                          className={`w-1.5 h-1.5 rounded-full ${
+                            isWin ? 'bg-[#00e676]' : 'bg-[#ff334b]'
+                          }`}
+                        />
+                        <span>
+                          {isWin
+                            ? `+$${Math.abs(t.pnl ?? 0).toFixed(0)}`
+                            : `-$${Math.abs(t.pnl ?? t.investment).toFixed(0)}`}
+                        </span>
+                      </button>
+                    );
+                  })}
+            </div>
+          </div>
+
+          {/* Risk Barricade Warning (80% threshold) */}
+          {riskBarricade.barricaded && !isBreached && (
+            <div className="px-4 py-1.5 bg-amber-950/90 border-b border-amber-500/60 flex items-center justify-between text-xs font-mono text-amber-300 z-20">
+              <span className="flex items-center gap-2">
+                <ShieldAlert className="w-4 h-4 text-amber-400" />
+                <strong>Live Risk Barricade Active</strong>: Account loss is at 80% threshold. Orders locked to protect evaluation.
+              </span>
+            </div>
+          )}
+
+          {/* TradingView Live OHLCV Hover Inspector Bar */}
+          {(() => {
+            const inspectedCandle =
+              hoveredCandle || (candles.length > 0 ? candles[candles.length - 1] : null);
+            if (!inspectedCandle) return null;
+            const isBull = inspectedCandle.close >= inspectedCandle.open;
+            const changeAbs = inspectedCandle.close - inspectedCandle.open;
+            const changePct =
+              inspectedCandle.open !== 0
+                ? (changeAbs / inspectedCandle.open) * 100
+                : 0;
+            return (
+              <div
+                data-testid="chart-ohlc-bar"
+                className="absolute top-14 left-3 z-20 px-3 py-1.5 rounded-xl bg-[#141824]/90 backdrop-blur-md border border-[#2a2e39] flex flex-wrap items-center gap-3 font-mono text-[11px] pointer-events-none select-none shadow-lg"
+              >
+                <span className="font-black text-white flex items-center gap-1">
+                  <span>{selectedAsset.symbol}</span>
+                  <span className="text-[9px] px-1.5 py-0.2 rounded bg-[#252b3d] text-cyan-400 font-bold">
+                    {timeframe}
+                  </span>
+                </span>
+                <span className="text-slate-400">
+                  O{' '}
+                  <strong className={isBull ? 'text-[#00e676]' : 'text-[#ff334b]'}>
+                    {inspectedCandle.open.toFixed(selectedAsset.pipDecimals)}
+                  </strong>
+                </span>
+                <span className="text-slate-400">
+                  H{' '}
+                  <strong className={isBull ? 'text-[#00e676]' : 'text-[#ff334b]'}>
+                    {inspectedCandle.high.toFixed(selectedAsset.pipDecimals)}
+                  </strong>
+                </span>
+                <span className="text-slate-400">
+                  L{' '}
+                  <strong className={isBull ? 'text-[#00e676]' : 'text-[#ff334b]'}>
+                    {inspectedCandle.low.toFixed(selectedAsset.pipDecimals)}
+                  </strong>
+                </span>
+                <span className="text-slate-400">
+                  C{' '}
+                  <strong className={isBull ? 'text-[#00e676]' : 'text-[#ff334b]'}>
+                    {inspectedCandle.close.toFixed(selectedAsset.pipDecimals)}
+                  </strong>
+                </span>
+                <span
+                  className={`font-bold ${
+                    isBull ? 'text-[#00e676]' : 'text-[#ff334b]'
+                  }`}
+                >
+                  {changeAbs >= 0 ? '+' : ''}
+                  {changeAbs.toFixed(selectedAsset.pipDecimals)} ({changePct >= 0 ? '+' : ''}
+                  {changePct.toFixed(2)}%)
+                </span>
+                <span className="text-slate-500 text-[10px]">
+                  Vol {inspectedCandle.volume}
+                </span>
+              </div>
+            );
+          })()}
+
+          {/* Canvas Chart Area with Wheel Zoom, Drag-to-Pan and Technical Drawings */}
+          <div
+            className={`flex-1 relative w-full h-full cursor-${
+              activeDrawingTool !== 'none'
+                ? 'crosshair'
+                : hoveredTradeMarker
+                ? 'pointer'
+                : isInteracting
+                ? 'grabbing'
+                : 'grab'
+            }`}
+            onWheel={handleWheel}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseLeave}
+          >
+            <canvas ref={canvasRef} className="w-full h-full block" />
+
+            {/* Interactive Chart Trade History Marker Tooltip (Hover / Click on Green/Red Execution & Settlement Dots) */}
+            {showHistoryOverlay && activeInspectedMarker && (
+              <div
+                data-testid="chart-trade-history-tooltip"
+                style={{
+                  left: `${Math.max(16, Math.min(520, activeInspectedMarker.x - 130))}px`,
+                  top: `${Math.max(58, Math.min(340, activeInspectedMarker.y + 16))}px`,
+                }}
+                className="absolute z-30 w-72 rounded-xl bg-[#141824]/95 border border-[#2a2e39] shadow-2xl p-3 font-mono text-xs text-slate-200 backdrop-blur-md"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between gap-2 pb-2 mb-2 border-b border-[#2a2e39]">
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className={`w-2.5 h-2.5 rounded-full ${
+                        activeInspectedMarker.isWin ? 'bg-[#00e676]' : 'bg-[#ff334b]'
+                      }`}
+                    />
+                    <span
+                      data-testid="tooltip-point-type"
+                      className="text-[10px] font-black uppercase tracking-wider text-white"
+                    >
+                      {activeInspectedMarker.pointType === 'execution'
+                        ? 'Execution Dot'
+                        : 'Settlement Dot'}
+                    </span>
+                    <span
+                      className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${
+                        activeInspectedMarker.isWin
+                          ? 'bg-[#00e676]/20 text-[#00e676] border border-[#00e676]/40'
+                          : 'bg-[#ff334b]/20 text-[#ff334b] border border-[#ff334b]/40'
+                      }`}
+                    >
+                      {activeInspectedMarker.isWin ? 'WON' : 'LOST'}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    aria-label="Close trade marker tooltip"
+                    onClick={() => {
+                      setHoveredTradeMarker(null);
+                      setSelectedTradeMarker(null);
+                    }}
+                    className="p-0.5 rounded hover:bg-[#252b3d] text-slate-400 hover:text-white cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between text-[11px] mb-2">
+                  <span className="font-bold text-white">{activeInspectedMarker.asset}</span>
+                  <span
+                    className={`font-black ${
+                      activeInspectedMarker.direction === 'CALL'
+                        ? 'text-[#00e676]'
+                        : 'text-[#ff334b]'
+                    }`}
+                  >
+                    {activeInspectedMarker.direction === 'CALL' ? '▲ BUY (CALL)' : '▼ SELL (PUT)'} • $
+                    {activeInspectedMarker.investment.toFixed(2)}
+                  </span>
+                </div>
+
+                <div className="space-y-1.5 bg-[#0f131d] rounded-lg p-2 border border-[#222634] text-[10px]">
+                  <div
+                    className={`flex items-center justify-between p-1 rounded ${
+                      activeInspectedMarker.pointType === 'execution'
+                        ? 'bg-[#1e2538] border border-slate-600/50 text-white font-bold'
+                        : 'text-slate-400'
+                    }`}
+                  >
+                    <span>● Executed ({new Date(activeInspectedMarker.startTime).toLocaleTimeString()}):</span>
+                    <span className="font-bold text-slate-200">
+                      {activeInspectedMarker.strikePrice.toFixed(selectedAsset.pipDecimals)}
+                    </span>
+                  </div>
+                  <div
+                    className={`flex items-center justify-between p-1 rounded ${
+                      activeInspectedMarker.pointType === 'settlement'
+                        ? 'bg-[#1e2538] border border-slate-600/50 text-white font-bold'
+                        : 'text-slate-400'
+                    }`}
+                  >
+                    <span>◉ Settled ({new Date(activeInspectedMarker.endTime).toLocaleTimeString()}):</span>
+                    <span className="font-bold text-slate-200">
+                      {activeInspectedMarker.closePrice.toFixed(selectedAsset.pipDecimals)}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between mt-2.5 pt-2 border-t border-[#2a2e39]">
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      data-testid="switch-marker-point-btn"
+                      onClick={() => {
+                        const targetType =
+                          activeInspectedMarker.pointType === 'execution'
+                            ? 'settlement'
+                            : 'execution';
+                        const partner = tradeMarkersRef.current.find(
+                          (m) =>
+                            m.tradeId === activeInspectedMarker.tradeId &&
+                            m.pointType === targetType
+                        );
+                        if (partner) {
+                          setSelectedTradeMarker(partner);
+                        }
+                      }}
+                      className="px-2 py-0.5 rounded bg-[#1e2538] hover:bg-[#283149] text-[9px] font-bold text-cyan-300 border border-cyan-500/30 cursor-pointer"
+                    >
+                      View {activeInspectedMarker.pointType === 'execution' ? 'Settlement' : 'Execution'} Dot
+                    </button>
+                  </div>
+                  <div
+                    data-testid="tooltip-net-pnl"
+                    className={`text-xs font-black ${
+                      activeInspectedMarker.isWin ? 'text-[#00e676]' : 'text-[#ff334b]'
+                    }`}
+                  >
+                    {activeInspectedMarker.isWin
+                      ? `+$${Math.abs(activeInspectedMarker.pnl).toFixed(2)}`
+                      : `-$${Math.abs(activeInspectedMarker.pnl).toFixed(2)}`}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Snap back to Live button when panned backwards */}
+            {panOffset > 0 && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  soundEngine.playUiClick();
+                  setPanOffset(0);
+                }}
+                className="absolute top-16 right-20 z-20 px-3 py-1.5 rounded-xl bg-cyan-400 text-slate-950 font-black text-xs font-mono flex items-center gap-1.5 shadow-xl hover:bg-cyan-300 cursor-pointer transition-all animate-bounce"
+              >
+                <RotateCcw className="w-3.5 h-3.5 stroke-[3]" />
+                <span>Snap to Live Chart</span>
+              </button>
+            )}
+
+            {/* Bottom-Left Chart Controls (Timeframe, Chart Type, Indicators, Zoom) */}
+            <div className="absolute bottom-4 left-4 z-10 flex items-center gap-2 bg-[#1e222d]/90 backdrop-blur-md border border-[#2a2e39] rounded-xl p-1.5 shadow-xl font-mono text-xs">
+              {/* Chart Type Selector */}
+              <div className="flex bg-[#131722] rounded-lg p-0.5 border border-[#2a2e39]">
+                {(['candles', 'heikin-ashi', 'line', 'bars'] as const).map((type) => (
+                  <button
+                    key={type}
+                    onClick={() => {
+                      soundEngine.playUiClick();
+                      setChartType(type);
+                    }}
+                    className={`px-2 py-1 rounded text-[10px] font-bold uppercase transition-all cursor-pointer ${
+                      chartType === type
+                        ? 'bg-cyan-400 text-slate-950 font-black'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {type === 'heikin-ashi' ? 'H-Ashi' : type}
+                  </button>
+                ))}
+              </div>
+
+              {/* Timeframe Selector (TradingView 1m, 5m, 15m, 1h, 1D + Fast OTC Tick Timeframes) */}
+              <div className="flex bg-[#131722] rounded-lg p-0.5 border border-[#2a2e39]">
+                {(
+                  [
+                    { tf: '5s' as const, key: '1' },
+                    { tf: '15s' as const, key: '2' },
+                    { tf: '30s' as const, key: '3' },
+                    { tf: '1m' as const, key: '4' },
+                    { tf: '5m' as const, key: '5' },
+                    { tf: '15m' as const, key: '6' },
+                    { tf: '1h' as const, key: '7' },
+                    { tf: '1D' as const, key: '8' },
+                  ] as const
+                ).map((item) => (
+                  <button
+                    key={item.tf}
+                    type="button"
+                    data-testid={`timeframe-${item.tf}`}
+                    onClick={() => {
+                      soundEngine.playUiClick();
+                      setTimeframe(item.tf);
+                    }}
+                    className={`px-2 py-1 rounded text-[10px] font-bold transition-all flex items-center gap-1 cursor-pointer ${
+                      timeframe === item.tf
+                        ? 'bg-cyan-400 text-slate-950 font-black'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                    title={`Switch timeframe (${item.tf})`}
+                  >
+                    <span>{item.tf}</span>
+                  </button>
+                ))}
+              </div>
+
+              {/* Zoom Controls */}
+              <div className="flex items-center gap-1 pl-1 border-l border-[#2a2e39]">
+                <button
+                  onClick={() => setZoomLevel((z) => Math.min(2, z + 0.1))}
+                  className="p-1 rounded bg-[#131722] hover:bg-[#252b3b] text-slate-400 hover:text-white cursor-pointer"
+                  title="Zoom In"
+                >
+                  <ZoomIn className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => setZoomLevel((z) => Math.max(0.5, z - 0.1))}
+                  className="p-1 rounded bg-[#131722] hover:bg-[#252b3b] text-slate-400 hover:text-white cursor-pointer"
+                  title="Zoom Out"
+                >
+                  <ZoomOut className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            {/* CELEBRATORY ON-CHART TRADE RESULT ANIMATION OVERLAY (WIN +$X.XX WIN / LOSS $0.00) */}
+            {tradeResultOverlay && (
+              <div
+                data-testid="trade-result-chart-overlay"
+                className="absolute inset-0 z-25 pointer-events-none flex items-center justify-center p-4 animate-bft-modal"
+              >
+                {tradeResultOverlay.isWin ? (
+                  <div className="pointer-events-auto relative px-8 py-6 rounded-3xl bg-[#071a12]/95 border-2 border-[#00e676] shadow-2xl text-center font-mono max-w-sm w-full">
+                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#00e676]/20 border border-[#00e676]/50 text-[#00e676] text-[10px] font-black uppercase tracking-widest mb-2">
+                      <Trophy className="w-3.5 h-3.5" />
+                      <span>CONTRACT SETTLED IN THE MONEY</span>
+                    </div>
+                    <div className="text-4xl sm:text-5xl font-black text-[#00e676] tracking-tight my-1">
+                      +${tradeResultOverlay.profitAmount.toFixed(2)} WIN
+                    </div>
+                    <div className="text-xs text-emerald-200 font-bold mt-1">
+                      {tradeResultOverlay.asset} • {tradeResultOverlay.direction} (+{tradeResultOverlay.payoutPercentage}% Payout)
+                    </div>
+                    <div className="mt-3 pt-2.5 border-t border-[#00e676]/25 flex items-center justify-between text-[11px] text-slate-300">
+                      <span>Strike: {tradeResultOverlay.strikePrice.toFixed(selectedAsset.pipDecimals)}</span>
+                      <span>Close: {tradeResultOverlay.closePrice.toFixed(selectedAsset.pipDecimals)}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="pointer-events-auto relative px-8 py-6 rounded-3xl bg-[#1c090d]/95 border-2 border-[#ff334b] shadow-2xl text-center font-mono max-w-sm w-full transition-opacity duration-500">
+                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#ff334b]/20 border border-[#ff334b]/50 text-[#ff334b] text-[10px] font-black uppercase tracking-widest mb-2">
+                      <AlertCircle className="w-3.5 h-3.5" />
+                      <span>OUT OF THE MONEY • EXPIRED</span>
+                    </div>
+                    <div className="text-4xl sm:text-5xl font-black text-[#ff334b] tracking-tight my-1">
+                      $0.00
+                    </div>
+                    <div className="text-xs text-rose-200 font-bold mt-1">
+                      {tradeResultOverlay.asset} • {tradeResultOverlay.direction} (-${tradeResultOverlay.investment.toFixed(2)} Stake)
+                    </div>
+                    <div className="mt-3 pt-2.5 border-t border-[#ff334b]/25 flex items-center justify-between text-[11px] text-slate-300">
+                      <span>Strike: {tradeResultOverlay.strikePrice.toFixed(selectedAsset.pipDecimals)}</span>
+                      <span>Close: {tradeResultOverlay.closePrice.toFixed(selectedAsset.pipDecimals)}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ABSOLUTE CHART & TERMINAL LOCKING OVERLAY (DUAL BREACH SYSTEM) */}
+            {isSoftBreached ? (
+              <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/85 backdrop-blur-xl p-4 animate-in fade-in duration-200">
+                <div className="max-w-md w-full rounded-3xl bg-[#1e222d]/95 border-2 border-amber-500/80 p-8 shadow-[0_0_80px_rgba(245,158,11,0.35)] text-center font-mono">
+                  <div className="w-16 h-16 rounded-2xl bg-amber-500/20 border border-amber-500/50 flex items-center justify-center mx-auto mb-4 text-amber-400">
+                    <Clock className="w-8 h-8 animate-pulse" />
+                  </div>
+                  <span className="px-3 py-1 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-black uppercase tracking-wider">
+                    Soft Breach: Daily Drawdown Paused
+                  </span>
+                  <h3 className="text-xl font-black text-white font-sans mt-3">
+                    Trading Paused Until Daily Reset
+                  </h3>
+                  <p className="text-xs text-slate-300 mt-2 font-sans leading-relaxed">
+                    Your account ({account?.id}) reached the daily loss limit ({account?.dailyLossLimitPercent}%). To preserve your challenge, trading is temporarily locked until the next daily trading cycle begins.
+                  </p>
+
+                  {/* Live Countdown Timer */}
+                  <div className="my-5 p-3.5 rounded-2xl bg-[#131722] border border-amber-500/40">
+                    <div className="text-[10px] text-slate-400 uppercase font-mono mb-1">
+                      Next Trading Day Auto-Reset In:
+                    </div>
+                    <div className="text-2xl font-black text-amber-400 font-mono tracking-widest">
+                      {Math.floor(softResetSecondsRemaining / 3600).toString().padStart(2, '0')}:
+                      {Math.floor((softResetSecondsRemaining % 3600) / 60).toString().padStart(2, '0')}:
+                      {(softResetSecondsRemaining % 60).toString().padStart(2, '0')}
+                    </div>
+                    <div className="text-[10px] text-slate-400 mt-1">
+                      Account will automatically unlock and daily drawdown resets to 0.0%
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <button
+                      onClick={handleResetSoftBreach}
+                      className="w-full py-3.5 px-6 rounded-2xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-xl shadow-amber-500/25 cursor-pointer uppercase font-sans tracking-wide transition-all"
+                    >
+                      <Zap className="w-4 h-4 fill-slate-950" />
+                      <span>Simulate Daily Reset & Resume Trading</span>
+                    </button>
+
+                    {otherActiveAccounts.length > 0 && (
+                      <div className="pt-2">
+                        <div className="text-[10px] text-slate-400 mb-2 uppercase">
+                          Or switch to another active account:
+                        </div>
+                        <div className="flex flex-wrap gap-2 justify-center">
+                          {otherActiveAccounts.map((act) => (
+                            <button
+                              key={act.id}
+                              onClick={() => onSelectAccount?.(act.id)}
+                              className="px-3 py-1.5 rounded-xl bg-[#131722] hover:bg-[#252b3b] border border-[#00e676]/40 text-[#00e676] text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
+                            >
+                              <span className="w-2 h-2 rounded-full bg-[#00e676]" />
+                              <span>{act.id} (${act.currentBalance.toLocaleString()})</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : isHardBreached ? (
+              <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/85 backdrop-blur-xl p-4 animate-in fade-in duration-200">
+                <div className="max-w-md w-full rounded-3xl bg-[#1e222d]/95 border-2 border-rose-500/80 p-8 shadow-[0_0_80px_rgba(244,63,94,0.35)] text-center font-mono">
+                  <div className="w-16 h-16 rounded-2xl bg-rose-500/20 border border-rose-500/50 flex items-center justify-center mx-auto mb-4 text-rose-400">
+                    <Lock className="w-8 h-8 animate-pulse" />
+                  </div>
+                  <span className="px-3 py-1 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[10px] font-black uppercase tracking-wider">
+                    Permanent Hard Breach: Rule Violation
+                  </span>
+                  <h3 className="text-xl font-black text-white font-sans mt-3">
+                    Chart & Trading Permanently Locked
+                  </h3>
+                  <p className="text-xs text-slate-300 mt-2 font-sans leading-relaxed">
+                    {account
+                      ? `Your account (${account.id}) has breached maximum overall loss or risk rules. Under strict institutional compliance, accounts cannot be reset or retried.`
+                      : 'You do not currently hold an active funded trading account.'}
+                  </p>
+
+                  {/* Reset Account Courtesy discount banner */}
+                  <div className="my-4 p-3 rounded-xl bg-amber-950/40 border border-amber-500/40 text-left text-xs">
+                    <div className="flex items-center gap-2 text-amber-300 font-bold mb-1">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                      <span>10% Reset Courtesy Discount Applied</span>
+                    </div>
+                    <p className="text-[11px] text-slate-300">
+                      Get 10% off your replacement evaluation account with instant TRC-20 activation.
+                    </p>
+                  </div>
+
+                  <div className="mt-4 space-y-2.5">
+                    <button
+                      onClick={() => onOpenChallengeModal?.()}
+                      className="w-full py-4 px-6 rounded-2xl bg-[#00e676] hover:bg-[#00c853] text-slate-950 font-black text-sm flex items-center justify-center gap-2 shadow-xl shadow-emerald-500/25 cursor-pointer uppercase font-sans tracking-wide transition-all"
+                    >
+                      <Lock className="w-4 h-4 fill-slate-950" />
+                      <span>Buy New Account (10% Courtesy Applied)</span>
+                    </button>
+
+                    <button
+                      onClick={() => setIsBreachModalOpen(true)}
+                      className="w-full py-2.5 px-4 rounded-xl bg-[#131722] hover:bg-[#252b3b] text-slate-300 hover:text-white border border-[#2a2e39] text-xs font-bold transition-all cursor-pointer"
+                    >
+                      Review Breach Audit Log
+                    </button>
+
+                    {otherActiveAccounts.length > 0 && (
+                      <div className="pt-2">
+                        <div className="text-[10px] text-slate-400 mb-2 uppercase">
+                          Or switch to another active account:
+                        </div>
+                        <div className="flex flex-wrap gap-2 justify-center">
+                          {otherActiveAccounts.map((act) => (
+                            <button
+                              key={act.id}
+                              onClick={() => onSelectAccount?.(act.id)}
+                              className="px-3 py-1.5 rounded-xl bg-[#131722] hover:bg-[#252b3b] border border-[#00e676]/40 text-[#00e676] text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
+                            >
+                              <span className="w-2 h-2 rounded-full bg-[#00e676]" />
+                              <span>{act.id} (${act.currentBalance.toLocaleString()})</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          {/* Bottom Collapsible Trades Drawer */}
+          {isTradesDrawerOpen && account && (
+            <div className="border-t border-[#2a2e39] bg-[#1e222d] shrink-0 max-h-56 overflow-y-auto">
+              <TradingDrawer
+                account={{ ...account, equity: liveEquity }}
+                trades={trades}
+                currentPrice={currentPrice}
+                onDoubleUp={handleDoubleUp}
+              />
+            </div>
+          )}
+        </div>
+
+        {/* 4. RIGHT-SIDE QUOTEX TRADE EXECUTION & ACTIVE POSITIONS / HISTORY PANEL */}
+        <div
+          data-testid="quotex-right-panel"
+          className="w-80 sm:w-[336px] bg-[#1c202e] border-l border-[#2a2e39] flex flex-col justify-between p-3.5 shrink-0 z-10 overflow-y-auto"
+        >
+          <div className="space-y-3">
+            {/* Top Row: Selected Asset | Payout % + PENDING TRADE Toggle Switch */}
+            <div className="p-2.5 rounded-xl bg-[#141722] border border-[#2a2e39] space-y-2">
+              <div className="flex items-center justify-between gap-1.5">
+                <button
+                  type="button"
+                  data-testid="open-asset-modal-btn"
+                  onClick={() => {
+                    soundEngine.playUiClick();
+                    setIsAssetModalOpen(true);
+                  }}
+                  className="flex items-center gap-1 text-left hover:opacity-90 transition-opacity cursor-pointer shrink-0"
+                >
+                  <span className="text-sm shrink-0">{selectedAsset.flag || '📈'}</span>
+                  <span className="font-black text-white text-[11px] font-mono whitespace-nowrap">
+                    {selectedAsset.symbol}
+                  </span>
+                  <span className="text-[11px] font-mono font-black text-[#00e676] shrink-0 ml-0.5">
+                    {selectedAsset.payout}%
+                  </span>
+                  <ChevronDown className="w-3 h-3 text-slate-400 shrink-0" />
+                </button>
+
+                {/* PENDING TRADE Toggle */}
+                <button
+                  type="button"
+                  data-testid="pending-trade-toggle"
+                  onClick={() => {
+                    soundEngine.playUiClick();
+                    if (!pendingOrderEnabled && !pendingTriggerPrice) {
+                      setPendingTriggerPrice(currentPrice.toFixed(selectedAsset.pipDecimals));
+                    }
+                    setPendingOrderEnabled(!pendingOrderEnabled);
+                  }}
+                  className="flex items-center gap-1 shrink-0 cursor-pointer group"
+                  title="Toggle Pending Trade Execution"
+                >
+                  <span className="text-[9px] font-black uppercase tracking-wider text-blue-400 group-hover:text-blue-300 font-mono">
+                    PENDING TRADE
+                  </span>
+                  <div
+                    className={`w-6 h-3.5 rounded-full p-0.5 transition-colors flex items-center ${
+                      pendingOrderEnabled ? 'bg-blue-500 justify-end' : 'bg-[#2a2f42] justify-start'
+                    }`}
+                  >
+                    <div className="w-2.5 h-2.5 rounded-full bg-white" />
+                  </div>
+                </button>
+              </div>
+
+              {pendingOrderEnabled && (
+                <div className="pt-2 border-t border-[#2a2e39] flex items-center justify-between gap-2 font-mono text-[11px]">
+                  <span className="text-slate-400">Trigger Price:</span>
+                  <input
+                    type="text"
+                    value={pendingTriggerPrice}
+                    onChange={(e) => setPendingTriggerPrice(e.target.value)}
+                    className="w-28 px-2 py-1 rounded bg-[#1c202e] border border-blue-500/40 text-white text-right font-bold text-xs focus:outline-none"
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* TIME / EXPIRY CONTROL BOX (With "-" / "+" Steppers & "SWITCH TIME" Toggle) */}
+            <div className="p-3 rounded-xl bg-[#141722] border border-[#2a2e39] font-mono">
+              <div className="flex items-center justify-between mb-1.5 text-[11px]">
+                <span className="text-slate-400 font-semibold">Time</span>
+                <span className="text-[10px] text-amber-400 font-bold">Min 30s Rule</span>
+              </div>
+
+              <div className="flex items-center justify-between bg-[#1c202e] border border-[#2a2e39] rounded-xl px-2 py-1.5 mb-2">
+                <button
+                  type="button"
+                  onClick={() => handleStepDuration('down')}
+                  className="w-7 h-7 rounded-full bg-[#262b3d] hover:bg-[#323950] text-slate-200 hover:text-white font-black text-sm flex items-center justify-center cursor-pointer transition-colors"
+                  title="Decrease Expiry Time"
+                >
+                  -
+                </button>
+                <div
+                  data-testid="quotex-time-display"
+                  className="flex-1 text-center font-black text-white text-base tracking-wider"
+                >
+                  {expiryMode === 'timer' ? formatTimerDisplay(duration) : getClockExpiry(duration)}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleStepDuration('up')}
+                  className="w-7 h-7 rounded-full bg-[#262b3d] hover:bg-[#323950] text-slate-200 hover:text-white font-black text-sm flex items-center justify-center cursor-pointer transition-colors"
+                  title="Increase Expiry Time"
+                >
+                  +
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  data-testid="switch-time-btn"
+                  onClick={() => {
+                    soundEngine.playUiClick();
+                    setExpiryMode((prev) => (prev === 'timer' ? 'time' : 'timer'));
+                  }}
+                  className="text-[10px] font-black uppercase tracking-wider text-blue-400 hover:text-blue-300 cursor-pointer transition-colors"
+                >
+                  SWITCH TIME
+                </button>
+
+                <div className="flex items-center gap-1 text-[10px]">
+                  {[
+                    { label: '30s', val: 30 },
+                    { label: '1m', val: 60 },
+                    { label: '5m', val: 300 },
+                    { label: '15m', val: 900 },
+                  ].map((p) => (
+                    <button
+                      key={p.val}
+                      type="button"
+                      onClick={() => {
+                        soundEngine.playUiClick();
+                        setDuration(p.val);
+                      }}
+                      className={`px-1.5 py-0.5 rounded font-bold cursor-pointer transition-colors ${
+                        duration === p.val
+                          ? 'bg-[#ff8800] text-slate-950 font-black'
+                          : 'bg-[#1c202e] text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* INVESTMENT CONTROL BOX (With "-" / "+" Steppers & "SWITCH" Option) */}
+            <div className="p-3 rounded-xl bg-[#141722] border border-[#2a2e39] font-mono">
+              <div className="flex items-center justify-between text-[11px] mb-1.5">
+                <span className="text-slate-400 font-semibold">Investment</span>
+                <span className="text-[10px] text-slate-400">
+                  Max 5%: ${account ? ((account.initialBalance * 5) / 100).toFixed(0) : '500'}
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between bg-[#1c202e] border border-[#2a2e39] rounded-xl px-2 py-1.5 mb-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEngine.playUiClick();
+                    setInvestment((v) => Math.max(1, v - (v <= 10 ? 1 : 10)));
+                  }}
+                  className="w-7 h-7 rounded-full bg-[#262b3d] hover:bg-[#323950] text-slate-200 hover:text-white font-black text-sm flex items-center justify-center cursor-pointer transition-colors"
+                  title="Decrease Investment"
+                >
+                  -
+                </button>
+                <div className="flex-1 flex items-center justify-center gap-1 font-black text-white text-base">
+                  <input
+                    aria-label="Investment Amount"
+                    type="number"
+                    min={1}
+                    value={investment}
+                    onChange={(e) => setInvestment(Math.max(1, Number(e.target.value)))}
+                    className="w-16 bg-transparent text-center focus:outline-none font-black text-white"
+                  />
+                  <span className="text-slate-300 text-sm font-black">
+                    {investmentMode === 'usd' ? '$' : '%'}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEngine.playUiClick();
+                    setInvestment((v) => v + (v < 10 ? 1 : 10));
+                  }}
+                  className="w-7 h-7 rounded-full bg-[#262b3d] hover:bg-[#323950] text-slate-200 hover:text-white font-black text-sm flex items-center justify-center cursor-pointer transition-colors"
+                  title="Increase Investment"
+                >
+                  +
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  data-testid="switch-investment-btn"
+                  onClick={() => {
+                    soundEngine.playUiClick();
+                    if (investmentMode === 'usd') {
+                      setInvestmentMode('percent');
+                      setInvestment(2);
+                    } else {
+                      setInvestmentMode('usd');
+                      setInvestment(50);
+                    }
+                  }}
+                  className="text-[10px] font-black uppercase tracking-wider text-blue-400 hover:text-blue-300 cursor-pointer transition-colors"
+                >
+                  SWITCH ({investmentMode === 'usd' ? '$ → %' : '% → $'})
+                </button>
+
+                <div className="flex items-center gap-1 text-[10px]">
+                  {[2, 10, 50, 100].map((amt) => (
+                    <button
+                      key={amt}
+                      type="button"
+                      onClick={() => {
+                        soundEngine.playUiClick();
+                        setInvestmentMode('usd');
+                        setInvestment(amt);
+                      }}
+                      className={`px-1.5 py-0.5 rounded font-bold cursor-pointer transition-colors ${
+                        investmentMode === 'usd' && investment === amt
+                          ? 'bg-[#ff8800] text-slate-950 font-black'
+                          : 'bg-[#1c202e] text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      ${amt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Notification messages */}
+            {tradeError && (
+              <div className="p-2.5 rounded-xl bg-rose-950/90 border border-rose-500/50 text-xs text-rose-200 flex items-start gap-2 font-mono">
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                <span>{tradeError}</span>
+              </div>
+            )}
+            {tradeSuccess && (
+              <div className="p-2.5 rounded-xl bg-emerald-950/90 border border-[#00e676]/50 text-xs text-emerald-200 flex items-start gap-2 font-mono">
+                <CheckCircle2 className="w-4 h-4 text-[#00e676] shrink-0 mt-0.5" />
+                <span>{tradeSuccess}</span>
+              </div>
+            )}
+
+            {/* QUOTEX ACTION BUTTONS (Big Bright Green "Buy" -> Live Payout Display -> Big Bright Red "Sell") */}
+            {isSoftBreached ? (
+              <div className="p-4 rounded-xl bg-amber-950/60 border border-amber-500/60 text-center space-y-2.5 font-mono">
+                <Clock className="w-6 h-6 text-amber-400 mx-auto animate-pulse" />
+                <div className="font-black text-white text-xs uppercase">Daily Pause (Soft Breach)</div>
+                <p className="text-[10px] text-amber-200">
+                  Daily drawdown limit reached. Trading temporarily paused until next daily cycle.
+                </p>
+                <button
+                  onClick={handleResetSoftBreach}
+                  className="w-full py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs cursor-pointer uppercase font-sans"
+                >
+                  Simulate Daily Reset
+                </button>
+              </div>
+            ) : isHardBreached ? (
+              <div className="p-4 rounded-xl bg-rose-950/60 border border-rose-500/60 text-center space-y-2.5 font-mono">
+                <AlertOctagon className="w-6 h-6 text-rose-400 mx-auto animate-pulse" />
+                <div className="font-black text-white text-xs uppercase">Terminal Locked (Hard Breach)</div>
+                <button
+                  onClick={() => setIsBreachModalOpen(true)}
+                  className="w-full py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs cursor-pointer uppercase"
+                >
+                  Review Breach Report
+                </button>
+                <button
+                  onClick={() => onOpenChallengeModal?.()}
+                  className="w-full py-3 rounded-xl bg-[#00c853] hover:bg-[#00e676] text-slate-950 font-black text-xs cursor-pointer uppercase"
+                >
+                  Buy New Account (10% Off)
+                </button>
+              </div>
+            ) : riskBarricade.barricaded ? (
+              <div className="space-y-2 font-mono">
+                <div className="p-2.5 rounded-xl bg-amber-950/50 border border-amber-500/50 text-[11px] text-amber-300 text-center">
+                  ⚠️ <strong>Risk Barricade Active</strong>: Loss at 80% threshold. Orders blocked.
+                </div>
+                <button
+                  disabled
+                  className="w-full py-3.5 rounded-xl bg-[#131722] text-slate-500 font-black text-sm cursor-not-allowed border border-[#2a2e39]"
+                >
+                  TRADING LOCKED
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-2.5 font-sans">
+                {/* Big Bright Green "Buy" Button */}
+                <button
+                  type="button"
+                  data-testid="quotex-buy-btn"
+                  onClick={() => handleTriggerTrade('CALL')}
+                  className="w-full py-3.5 px-5 rounded-xl bg-[#00b865] hover:bg-[#00cf72] active:scale-[0.99] text-white font-black text-lg flex items-center justify-between transition-all cursor-pointer"
+                  title="Execute Buy / Higher Order (Shortcut: [B])"
+                >
+                  <span>Buy</span>
+                  <span className="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center">
+                    <TrendingUp className="w-4 h-4 text-white stroke-[3]" />
+                  </span>
+                </button>
+
+                {/* Live Payout Calculation Display (Exact Quotex Center Row: "Your payout: 3.66 $") */}
+                <div
+                  data-testid="quotex-payout-display"
+                  className="py-1.5 px-3 rounded-lg bg-[#141722] border border-[#2a2e39] flex items-center justify-between text-xs font-mono"
+                >
+                  <span className="text-slate-400">Your payout:</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-white font-black text-sm">
+                      {(
+                        effectiveInvestment +
+                        (effectiveInvestment * selectedAsset.payout) / 100
+                      ).toFixed(2)}{' '}
+                      $
+                    </span>
+                    <span className="text-[10px] font-black text-[#00e676]">
+                      (+${((effectiveInvestment * selectedAsset.payout) / 100).toFixed(2)})
+                    </span>
+                  </div>
+                </div>
+
+                {/* Big Bright Red "Sell" Button */}
+                <button
+                  type="button"
+                  data-testid="quotex-sell-btn"
+                  onClick={() => handleTriggerTrade('PUT')}
+                  className="w-full py-3.5 px-5 rounded-xl bg-[#ff3d2e] hover:bg-[#ff5245] active:scale-[0.99] text-white font-black text-lg flex items-center justify-between transition-all cursor-pointer"
+                  title="Execute Sell / Lower Order (Shortcut: [S])"
+                >
+                  <span>Sell</span>
+                  <span className="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center">
+                    <TrendingDown className="w-4 h-4 text-white stroke-[3]" />
+                  </span>
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* BOTTOM SECTION OF RIGHT PANEL: ACTIVE TRADES & HISTORY TAB */}
+          <div className="mt-3 pt-3 border-t border-[#2a2e39] flex-1 flex flex-col min-h-[190px] font-mono">
+            {/* Quotex Trades / History Tab Header */}
+            <div className="flex items-center bg-[#141722] p-1 rounded-xl border border-[#2a2e39] mb-2.5 text-xs">
+              <button
+                type="button"
+                data-testid="right-tab-trades"
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  setRightPanelTab('trades');
+                }}
+                className={`flex-1 py-1.5 px-2 rounded-lg font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
+                  rightPanelTab === 'trades'
+                    ? 'bg-[#252b3d] text-white font-black'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <span>Trades</span>
+                <span
+                  className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                    activeTrades.length > 0 ? 'bg-[#00c853] text-slate-950' : 'bg-[#1c202e] text-slate-400'
+                  }`}
+                >
+                  {activeTrades.length}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                data-testid="right-tab-history"
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  setRightPanelTab('history');
+                }}
+                className={`flex-1 py-1.5 px-2 rounded-lg font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
+                  rightPanelTab === 'history'
+                    ? 'bg-[#252b3d] text-white font-black'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Clock className="w-3 h-3" />
+                <span>History</span>
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-[#1c202e] text-slate-400 font-bold">
+                  {closedTrades.length}
+                </span>
+              </button>
+            </div>
+
+            {/* Tab Content: Active Trades vs Closed Trade History */}
+            <div className="flex-1 overflow-y-auto space-y-2 pr-0.5 max-h-56">
+              {rightPanelTab === 'trades' ? (
+                activeTrades.length === 0 ? (
+                  <div className="p-4 rounded-xl bg-[#141722] border border-[#2a2e39] text-center text-[11px] text-slate-400 space-y-1">
+                    <div className="text-slate-300 font-bold">No Running Positions</div>
+                    <div>Click Buy or Sell above to open an instant OTC contract.</div>
+                  </div>
+                ) : (
+                  activeTrades.map((t) => {
+                    const secondsLeft = Math.max(0, Math.ceil((t.endTime - Date.now()) / 1000));
+                    const isCall = t.direction === 'CALL';
+                    const isInTheMoney = isCall ? currentPrice > t.strikePrice : currentPrice < t.strikePrice;
+                    const percentRemaining = Math.max(0, Math.min(100, (secondsLeft / t.durationSeconds) * 100));
+                    const assetObj = DEFAULT_ASSETS.find((a) => a.symbol === t.asset);
+
+                    return (
+                      <div
+                        key={t.id}
+                        className={`p-2.5 rounded-xl border text-xs transition-all ${
+                          isInTheMoney
+                            ? 'bg-[#081a14] border-[#00e676]/50'
+                            : 'bg-[#1a0a0e] border-[#ff334b]/50'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-bold text-white flex items-center gap-1.5 text-[11px] truncate">
+                            <span>{assetObj?.flag || '📈'}</span>
+                            <span className="truncate">{t.asset}</span>
+                          </span>
+                          <span
+                            className={`px-1.5 py-0.2 rounded text-[9px] font-black shrink-0 ${
+                              isCall ? 'bg-emerald-500/20 text-[#00e676]' : 'bg-rose-500/20 text-rose-400'
+                            }`}
+                          >
+                            {isCall ? '▲ BUY' : '▼ SELL'} ${t.investment}
+                          </span>
+                        </div>
+
+                        {/* Live Countdown Progress Bar */}
+                        <div className="w-full h-1 bg-[#131722] rounded-full overflow-hidden my-1.5 border border-[#2a2e39]">
+                          <div
+                            className={`h-full transition-all duration-500 ${
+                              isInTheMoney ? 'bg-[#00e676]' : 'bg-[#ff334b]'
+                            }`}
+                            style={{ width: `${percentRemaining}%` }}
+                          />
+                        </div>
+
+                        <div className="flex items-center justify-between text-[10px] pt-0.5">
+                          <span className="text-slate-300 flex items-center gap-1 font-bold">
+                            <Clock className="w-3 h-3 text-cyan-400" />
+                            {formatTimerDisplay(secondsLeft)}
+                          </span>
+
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              aria-label="Settle trade now"
+                              onClick={() => {
+                                onUpdateTrade({
+                                  ...t,
+                                  endTime: Date.now() - 10,
+                                });
+                              }}
+                              className="px-1.5 py-0.5 rounded bg-[#ff8800]/20 hover:bg-[#ff8800]/30 text-[#ff8800] border border-[#ff8800]/40 text-[9px] font-bold cursor-pointer"
+                              title="Settle trade immediately at current market price"
+                            >
+                              Settle
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleDoubleUp(t)}
+                              className="px-1.5 py-0.5 rounded bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 text-[9px] font-bold cursor-pointer"
+                              title="Double up position (x2)"
+                            >
+                              x2
+                            </button>
+
+                            <span className={`font-black ${isInTheMoney ? 'text-[#00e676]' : 'text-rose-400'}`}>
+                              {isInTheMoney ? `+$${t.potentialPayout.toFixed(2)}` : `-$${t.investment.toFixed(2)}`}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )
+              ) : closedTrades.length === 0 ? (
+                <div className="p-4 rounded-xl bg-[#141722] border border-[#2a2e39] text-center text-[11px] text-slate-400">
+                  No settled trades yet. Completed contracts appear here in real time.
+                </div>
+              ) : (
+                closedTrades.slice(0, 15).map((t) => {
+                  const isWin = t.status === 'won';
+                  const isCall = t.direction === 'CALL';
+                  const assetObj = DEFAULT_ASSETS.find((a) => a.symbol === t.asset);
+                  const isHighlightedOnChart = activeInspectedMarker?.tradeId === t.id;
+                  return (
+                    <div
+                      key={t.id}
+                      onClick={() => {
+                        soundEngine.playUiClick();
+                        setShowHistoryOverlay(true);
+                        const marker =
+                          tradeMarkersRef.current.find(
+                            (m) => m.tradeId === t.id && m.pointType === 'settlement'
+                          ) ||
+                          tradeMarkersRef.current.find((m) => m.tradeId === t.id) ||
+                          null;
+                        if (marker) {
+                          setSelectedTradeMarker(marker);
+                        }
+                      }}
+                      className={`p-2.5 rounded-xl border flex items-center justify-between text-xs cursor-pointer transition-colors ${
+                        isHighlightedOnChart
+                          ? isWin
+                            ? 'bg-[#081a14] border-[#00e676]'
+                            : 'bg-[#1a0a0e] border-[#ff334b]'
+                          : 'bg-[#141722] border-[#2a2e39] hover:border-slate-600'
+                      }`}
+                      title="Click to highlight execution & settlement dots on chart"
+                    >
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 font-bold text-white text-[11px]">
+                          <span
+                            className={`w-2 h-2 rounded-full shrink-0 ${
+                              isWin ? 'bg-[#00e676]' : 'bg-[#ff334b]'
+                            }`}
+                          />
+                          <span>{assetObj?.flag || '📈'}</span>
+                          <span className="truncate">{t.asset}</span>
+                          <span className="text-[9px] text-slate-400">+{t.payoutPercentage}%</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-[10px] text-slate-400 mt-0.5">
+                          <span className={isCall ? 'text-[#00e676] font-bold' : 'text-rose-400 font-bold'}>
+                            {isCall ? '▲ Buy' : '▼ Sell'} ${t.investment}
+                          </span>
+                          <span>•</span>
+                          <span>
+                            {new Date(t.endTime).toLocaleTimeString([], {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                              second: '2-digit',
+                            })}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <div className={`font-black text-xs ${isWin ? 'text-[#00e676]' : 'text-rose-400'}`}>
+                          {isWin ? `+$${(t.pnl ?? t.potentialPayout ?? 0).toFixed(2)}` : '$0.00'}
+                        </div>
+                        <div className="text-[9px] text-slate-500">
+                          {isWin
+                            ? `Return: $${(t.investment + (t.pnl ?? t.potentialPayout ?? 0)).toFixed(2)}`
+                            : `-${t.investment.toFixed(2)} $`}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 5. LIVE BOTTOM STATUS BAR (Drawdown & Capital Metrics) */}
+      <div className="h-10 bg-[#161923] border-t border-[#2a2e39] px-4 flex items-center justify-between font-mono text-[11px] shrink-0 z-20">
+        {/* Left: Capital & Drawdown Metrics */}
+        <div className="flex items-center gap-5 overflow-x-auto no-scrollbar">
+          {/* Current Capital / Balance */}
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className="text-slate-400 uppercase text-[10px]">Capital:</span>
+            <span className="text-white font-black text-xs">
+              ${(account?.currentBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+            </span>
+            <span className="text-slate-500 text-[10px]">
+              (${liveEquity.toFixed(2)} Eq)
+            </span>
+          </div>
+
+          {/* Live Daily Drawdown (Used % and remaining $ limit) */}
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className="text-slate-400 uppercase text-[10px]">Daily DD:</span>
+            <span
+              className={`font-black ${
+                metrics.dailyDrawdownPercent >= (account?.dailyLossLimitPercent || 4)
+                  ? 'text-rose-400'
+                  : metrics.dailyDrawdownPercent >= (account?.dailyLossLimitPercent || 4) * 0.8
+                  ? 'text-amber-400'
+                  : 'text-[#00e676]'
+              }`}
+            >
+              {metrics.dailyDrawdownPercent.toFixed(2)}% / {account?.dailyLossLimitPercent || 4}%
+            </span>
+            <span className="text-slate-500 text-[10px] hidden sm:inline">
+              (Rem: $
+              {Math.max(
+                0,
+                ((account?.startingDayEquity || 10000) * (account?.dailyLossLimitPercent || 4)) / 100 -
+                  ((account?.startingDayEquity || 10000) - liveEquity)
+              ).toFixed(0)}
+              )
+            </span>
+          </div>
+
+          {/* Live Overall Max Drawdown (Used % and remaining $ limit) */}
+          <div className="flex items-center gap-1.5 shrink-0 hidden md:flex">
+            <span className="text-slate-400 uppercase text-[10px]">Max DD:</span>
+            <span
+              className={`font-black ${
+                metrics.overallLossPercent >= (account?.maxOverallLossPercent || 8)
+                  ? 'text-rose-400'
+                  : metrics.overallLossPercent >= (account?.maxOverallLossPercent || 8) * 0.8
+                  ? 'text-amber-400'
+                  : 'text-slate-200'
+              }`}
+            >
+              {metrics.overallLossPercent.toFixed(2)}% / {account?.maxOverallLossPercent || 8}%
+            </span>
+            <span className="text-slate-500 text-[10px]">
+              (Rem: $
+              {Math.max(
+                0,
+                ((account?.initialBalance || 10000) * (account?.maxOverallLossPercent || 8)) / 100 -
+                  ((account?.initialBalance || 10000) - liveEquity)
+              ).toFixed(0)}
+              )
+            </span>
+          </div>
+        </div>
+
+        {/* Right: Keyboard Shortcuts Hint & Account Status Badge & Latency */}
+        <div className="flex items-center gap-3 shrink-0">
+          {/* Global Shortcuts Pill */}
+          <div className="hidden lg:flex items-center gap-1.5 text-[10px] text-slate-400 bg-[#1e222d] px-2.5 py-0.5 rounded-lg border border-[#2a2e39]">
+            <Keyboard className="w-3.5 h-3.5 text-cyan-400" />
+            <span>[B] Up • [S] Down • [1-5] Timeframe</span>
+          </div>
+
+          {/* Account Status Badge */}
+          <div className="flex items-center gap-1">
+            <span
+              className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider ${
+                account?.status === 'active'
+                  ? 'bg-emerald-950 text-[#00e676] border border-[#00e676]/40'
+                  : isSoftBreached
+                  ? 'bg-amber-950 text-amber-400 border border-amber-500/40 animate-pulse'
+                  : 'bg-rose-950 text-rose-400 border border-rose-500/40 animate-pulse'
+              }`}
+            >
+              {isSoftBreached
+                ? 'SOFT BREACH (DAILY PAUSE)'
+                : isHardBreached
+                ? 'HARD BREACH (PERMANENT)'
+                : account?.status || 'LOCKED'}
+            </span>
+          </div>
+
+          {/* Instant Ping / Network rail */}
+          <div className="flex items-center gap-1.5 text-[10px] text-[#00e676]">
+            <span className="w-2 h-2 rounded-full bg-[#00e676] animate-pulse" />
+            <span className="hidden sm:inline font-mono">18ms • TRC-20 Ultra Low Latency</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Confirmation Modal (only if One-Click is disabled) */}
+      {pendingTradeDirection && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="w-full max-w-sm rounded-2xl bg-[#1e222d] border border-[#2a2e39] p-6 shadow-2xl text-center font-mono">
+            <h4 className="text-base font-black text-white mb-2">Confirm Binary Option Order</h4>
+            <p className="text-xs text-slate-300 mb-4">
+              Place <strong>{pendingTradeDirection}</strong> on <strong>{selectedAsset.symbol}</strong> for{' '}
+              <strong className="text-cyan-400">${investment}</strong> with {duration}s expiry?
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setPendingTradeDirection(null)}
+                className="flex-1 py-2.5 rounded-xl bg-[#131722] text-slate-300 hover:text-white font-bold text-xs cursor-pointer border border-[#2a2e39]"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  executeTradeAction(pendingTradeDirection);
+                  setPendingTradeDirection(null);
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-[#00e676] text-slate-950 font-black text-xs glow-mint cursor-pointer"
+              >
+                Confirm Order
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Quotex Asset Selector Modal */}
+      <QuotexAssetModal
+        isOpen={isAssetModalOpen}
+        onClose={() => setIsAssetModalOpen(false)}
+        onSelectAsset={handleSelectTabAsset}
+        currentAssetSymbol={selectedAsset.symbol}
+      />
+
+      {/* Dedicated BFT Trading Signals Panel */}
+      <QuotexSignalsDrawer
+        isOpen={isSignalsDrawerOpen}
+        onClose={() => setIsSignalsDrawerOpen(false)}
+        onApplySignal={(asset, dir, dur) => {
+          handleSelectTabAsset(asset);
+          setDuration(dur);
+          executeTradeAction(dir, asset, dur);
+        }}
+      />
+
+      {/* Quotex Leaderboard Modal */}
+      <QuotexLeaderboardModal
+        isOpen={isLeaderboardOpen}
+        onClose={() => setIsLeaderboardOpen(false)}
+      />
+
+      {/* Indicator Settings Modal */}
+      <IndicatorSettingsModal
+        isOpen={isIndicatorModalOpen}
+        onClose={() => setIsIndicatorModalOpen(false)}
+        settings={indicators}
+        onSave={(s: IndicatorSettings) => setIndicators(s)}
+      />
+
+      {/* Real-Time Price Alerts Modal */}
+      <PriceAlertModal
+        isOpen={isPriceAlertModalOpen}
+        onClose={() => setIsPriceAlertModalOpen(false)}
+        selectedAsset={selectedAsset}
+        currentPrice={currentPrice}
+        alerts={alerts}
+        onAddAlert={(alt) => setAlerts((prev) => [alt, ...prev])}
+        onDeleteAlert={(id) => setAlerts((prev) => prev.filter((a) => a.id !== id))}
+        onToggleAlert={(id) =>
+          setAlerts((prev) => prev.map((a) => (a.id === id ? { ...a, active: !a.active } : a)))
+        }
+      />
+
+      {/* Account Breach Modal - Dual Breach System */}
+      {account && (
+        <AccountBreachModal
+          isOpen={isBreachModalOpen}
+          onClose={() => setIsBreachModalOpen(false)}
+          account={account}
+          accounts={accounts}
+          onSelectAccount={onSelectAccount}
+          onOpenChallengeModal={onOpenChallengeModal}
+          onResetSoftBreach={handleResetSoftBreach}
+        />
+      )}
+    </div>
+  );
+};
