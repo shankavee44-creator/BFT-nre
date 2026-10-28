@@ -38,12 +38,12 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
   const img2Url = '/assets/aistudio/1793209776304.jpg_c5bccaaa.jpeg';
 
   return (
-    <div className="relative overflow-hidden py-14 md:py-24 border-b border-white/10 bg-[#0a0a0a] animate-bft-entry">
+    <div className="relative overflow-hidden py-10 sm:py-16 md:py-24 border-b border-white/10 bg-[#0a0a0a] animate-bft-entry">
       {/* Animated Spooky Dual Background Image Layers */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden select-none">
         {/* Layer 1: Moonlit Jack-O'-Lantern & Tree */}
         <div
-          className={`absolute inset-0 bg-cover bg-center transition-opacity duration-1000 ${
+          className={`absolute inset-0 mobile-spooky-bg-1 transition-opacity duration-1000 ${
             bgMode === 'auto'
               ? 'animate-bft-bg-1'
               : bgMode === 'image1'
@@ -55,7 +55,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
 
         {/* Layer 2: Spooky Haunted Mansion & Graveyard */}
         <div
-          className={`absolute inset-0 bg-cover bg-center transition-opacity duration-1000 ${
+          className={`absolute inset-0 mobile-spooky-bg-2 transition-opacity duration-1000 ${
             bgMode === 'auto'
               ? 'animate-bft-bg-2'
               : bgMode === 'image2'
@@ -66,32 +66,32 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
         />
 
         {/* Dark Radial & Vertical Gradient Vignettes for High Contrast Text Legibility */}
-        <div className="absolute inset-0 bg-gradient-to-b from-[#0a0a0a]/90 via-[#0a0a0a]/75 to-[#0a0a0a]" />
-        <div className="absolute inset-0 bg-gradient-to-r from-[#0a0a0a]/85 via-transparent to-[#0a0a0a]/85" />
+        <div className="absolute inset-0 bg-gradient-to-b from-[#0a0a0a]/80 via-[#0a0a0a]/65 to-[#0a0a0a]" />
+        <div className="absolute inset-0 bg-gradient-to-r from-[#0a0a0a]/80 via-transparent to-[#0a0a0a]/80" />
         <div className="absolute inset-0 bg-cyber-grid opacity-30 mix-blend-overlay" />
 
         {/* Ambient Pulsing Orange Glow */}
-        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[300px] bg-[#ff8800]/20 rounded-full blur-[120px] pointer-events-none animate-pulse-glow" />
+        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[320px] sm:w-[600px] h-[200px] sm:h-[300px] bg-[#ff8800]/25 rounded-full blur-[90px] sm:blur-[120px] pointer-events-none animate-pulse-glow" />
 
         {/* Floating Spooky Ember Particles */}
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          <div className="absolute bottom-10 left-[15%] w-2 h-2 rounded-full bg-[#ff8800] blur-[1px] animate-spooky-ember" style={{ animationDelay: '0s' }} />
-          <div className="absolute bottom-20 left-[35%] w-2.5 h-2.5 rounded-full bg-[#ffaa00] blur-[1px] animate-spooky-ember" style={{ animationDelay: '2s' }} />
-          <div className="absolute bottom-12 left-[65%] w-1.5 h-1.5 rounded-full bg-[#ff8800] blur-[1px] animate-spooky-ember" style={{ animationDelay: '4s' }} />
-          <div className="absolute bottom-16 left-[82%] w-2 h-2 rounded-full bg-[#ffbb00] blur-[1px] animate-spooky-ember" style={{ animationDelay: '1.5s' }} />
+          <div className="absolute bottom-10 left-[10%] sm:left-[15%] w-2 h-2 rounded-full bg-[#ff8800] blur-[1px] animate-spooky-ember" style={{ animationDelay: '0s' }} />
+          <div className="absolute bottom-20 left-[30%] sm:left-[35%] w-2.5 h-2.5 rounded-full bg-[#ffaa00] blur-[1px] animate-spooky-ember" style={{ animationDelay: '2s' }} />
+          <div className="absolute bottom-12 left-[60%] sm:left-[65%] w-1.5 h-1.5 rounded-full bg-[#ff8800] blur-[1px] animate-spooky-ember" style={{ animationDelay: '4s' }} />
+          <div className="absolute bottom-16 left-[85%] sm:left-[82%] w-2 h-2 rounded-full bg-[#ffbb00] blur-[1px] animate-spooky-ember" style={{ animationDelay: '1.5s' }} />
         </div>
       </div>
 
-      <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-        {/* Background Theme Switcher Control Pill */}
-        <div className="inline-flex items-center gap-1.5 p-1 rounded-full bg-[#0d0d12]/90 border border-[#ff8800]/50 backdrop-blur-md mb-4 text-[11px] font-mono shadow-xl">
-          <span className="text-[#ff8800] font-black px-2 flex items-center gap-1">
-            <Sparkles className="w-3.5 h-3.5" /> BG Theme:
+      <div className="relative max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 text-center">
+        {/* Mobile-Friendly Background Theme Switcher Control Pill */}
+        <div className="inline-flex flex-wrap items-center justify-center gap-1 sm:gap-1.5 p-1 rounded-2xl sm:rounded-full bg-[#0d0d12]/95 border border-[#ff8800]/60 backdrop-blur-md mb-4 text-[10px] sm:text-[11px] font-mono shadow-xl max-w-full">
+          <span className="text-[#ff8800] font-black px-1.5 sm:px-2 flex items-center gap-1">
+            <Sparkles className="w-3 h-3 sm:w-3.5 sm:h-3.5" /> Mobile BG:
           </span>
           <button
             type="button"
             onClick={() => setBgMode('auto')}
-            className={`px-3 py-1 rounded-full font-bold transition-all cursor-pointer ${
+            className={`px-2.5 py-1 rounded-xl sm:rounded-full font-bold transition-all cursor-pointer ${
               bgMode === 'auto'
                 ? 'bg-[#ff8800] text-slate-950 font-black'
                 : 'text-slate-300 hover:text-white'
@@ -102,7 +102,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
           <button
             type="button"
             onClick={() => setBgMode('image1')}
-            className={`px-3 py-1 rounded-full font-bold transition-all cursor-pointer ${
+            className={`px-2.5 py-1 rounded-xl sm:rounded-full font-bold transition-all cursor-pointer ${
               bgMode === 'image1'
                 ? 'bg-[#ff8800] text-slate-950 font-black'
                 : 'text-slate-300 hover:text-white'
@@ -113,7 +113,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
           <button
             type="button"
             onClick={() => setBgMode('image2')}
-            className={`px-3 py-1 rounded-full font-bold transition-all cursor-pointer ${
+            className={`px-2.5 py-1 rounded-xl sm:rounded-full font-bold transition-all cursor-pointer ${
               bgMode === 'image2'
                 ? 'bg-[#ff8800] text-slate-950 font-black'
                 : 'text-slate-300 hover:text-white'
