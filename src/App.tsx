@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { supabase } from './utils/supabase';
 import { Header } from './components/Header';
 import { HeroBanner } from './components/HeroBanner';
 import { FastestPayoutAwardBanner } from './components/FastestPayoutAwardBanner';
@@ -273,30 +274,44 @@ export default function App() {
     saveProfile(updated);
   };
 
-  // Global 1-second ticker to automatically complete the 2-minute KYC verification timer
+  // Periodic Supabase profile sync for Manual Admin approvals (KYC, Balance)
   useEffect(() => {
-    if (userProfile.kycStatus !== 'pending' || !userProfile.kycVerificationEndsAt) return;
-    const interval = setInterval(() => {
-      const check = checkKycTimerCompletion(userProfile, Date.now());
-      if (check.completed) {
-        const verifiedProfile: UserProfile = {
-          ...check.updatedProfile,
-          kycStatus: 'verified',
-          profileLocked: true,
-        };
-        setUserProfile(verifiedProfile);
-        saveProfile(verifiedProfile);
-        apiSubmitKyc({
-          docType: verifiedProfile.kycDocumentType || 'Passport',
-          fullName: verifiedProfile.fullName,
-          address: verifiedProfile.address,
-          dateOfBirth: verifiedProfile.dateOfBirth,
-          country: verifiedProfile.country,
-        }).catch(() => {});
+    if (!userProfile.isLoggedIn || !userProfile.id) return;
+    let isMounted = true;
+
+    async function syncSupabaseProfile() {
+      try {
+        const { data: p } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', userProfile.id)
+          .maybeSingle();
+
+        if (p && isMounted) {
+          const effectiveStatus = p.kyc_status || userProfile.kycStatus;
+          const isVerified = effectiveStatus === 'verified' || effectiveStatus === 'approved';
+          if (p.kyc_status !== userProfile.kycStatus) {
+            const updated: UserProfile = {
+              ...userProfile,
+              kycStatus: isVerified ? 'verified' : effectiveStatus,
+              profileLocked: isVerified ? true : userProfile.profileLocked,
+            };
+            setUserProfile(updated);
+            saveProfile(updated);
+          }
+        }
+      } catch {
+        // Fallback
       }
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [userProfile]);
+    }
+
+    syncSupabaseProfile();
+    const interval = setInterval(syncSupabaseProfile, 5000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [userProfile.isLoggedIn, userProfile.id, userProfile.kycStatus]);
 
   const handleAddWithdrawal = (req: WithdrawalRequest) => {
     const updated = [req, ...withdrawals];

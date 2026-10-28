@@ -17,7 +17,7 @@ export function canUserWithdraw(profile: UserProfile | null | undefined): {
   allowed: boolean;
   message: string;
 } {
-  if (!profile || profile.kycStatus !== 'verified') {
+  if (!profile || (profile.kycStatus !== 'verified' && profile.kycStatus !== 'approved')) {
     return {
       allowed: false,
       message: KYC_WITHDRAWAL_LOCK_MESSAGE,
@@ -123,7 +123,7 @@ export function validateAndLockProfileDetails(
 
 /**
  * Evaluates an uploaded KYC document against the user's locked personal details.
- * If the extracted document data matches the locked profile details, starts the 2-minute verification timer.
+ * Submits the document for Manual Admin Verification in Supabase (status: 'pending').
  */
 export function evaluateKycDocumentUpload(
   profile: UserProfile,
@@ -185,8 +185,6 @@ export function evaluateKycDocumentUpload(
     };
   }
 
-  const verificationEndsAt = nowMs + KYC_VERIFICATION_DURATION_MS;
-
   return {
     matched: true,
     updatedProfile: {
@@ -198,56 +196,37 @@ export function evaluateKycDocumentUpload(
       kycExtractedName: doc.extractedFullName.trim(),
       kycExtractedDob: doc.extractedDob.trim(),
       kycSubmittedAt: new Date(nowMs).toISOString().split('T')[0],
-      kycVerificationEndsAt: verificationEndsAt,
+      kycVerificationEndsAt: undefined,
       kycRejectionReason: undefined,
     },
   };
 }
 
 /**
- * Checks whether a pending 2-minute KYC verification timer has completed and transitions status to 'verified'.
+ * Manual Admin Verification helper: returns pending status until approved by admin in Supabase.
  */
 export function checkKycTimerCompletion(
   profile: UserProfile,
-  nowMs: number = Date.now()
+  _nowMs: number = Date.now()
 ): {
   completed: boolean;
   remainingSeconds: number;
   updatedProfile: UserProfile;
 } {
-  if (profile.kycStatus === 'verified') {
-    return {
-      completed: true,
-      remainingSeconds: 0,
-      updatedProfile: profile,
-    };
-  }
-
-  if (profile.kycStatus !== 'pending' || !profile.kycVerificationEndsAt) {
-    return {
-      completed: false,
-      remainingSeconds: 0,
-      updatedProfile: profile,
-    };
-  }
-
-  const remainingMs = profile.kycVerificationEndsAt - nowMs;
-  if (remainingMs <= 0) {
+  if (profile.kycStatus === 'verified' || profile.kycStatus === 'approved') {
     return {
       completed: true,
       remainingSeconds: 0,
       updatedProfile: {
         ...profile,
         kycStatus: 'verified',
-        kycVerificationEndsAt: undefined,
-        kycRejectionReason: undefined,
       },
     };
   }
 
   return {
     completed: false,
-    remainingSeconds: Math.ceil(remainingMs / 1000),
+    remainingSeconds: 0,
     updatedProfile: profile,
   };
 }

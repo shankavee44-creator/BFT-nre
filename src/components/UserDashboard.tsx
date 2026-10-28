@@ -137,17 +137,23 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   );
   const [kycFeedbackError, setKycFeedbackError] = useState<string | null>(null);
   const [kycFeedbackSuccess, setKycFeedbackSuccess] = useState<string | null>(null);
-  const [remainingKycSeconds, setRemainingKycSeconds] = useState<number>(0);
-
   const [selectedKycFile, setSelectedKycFile] = useState<File | null>(null);
 
-  // Live query Supabase profiles table for real-time balance, kyc_status, referral_code & total_referral_earnings
+  // Live Supabase state for Deposits & Withdrawals Manual Admin Approvals
+  const [supabaseDeposits, setSupabaseDeposits] = useState<any[]>([]);
+  const [supabaseWithdrawals, setSupabaseWithdrawals] = useState<any[]>([]);
+
+  // Live query Supabase profiles, deposits, and withdrawals for real-time status & manual admin review tracking
   useEffect(() => {
     let isMounted = true;
-    async function syncLiveProfile() {
-      const { data: { user } } = await supabase.auth.getUser();
-      const targetUserId = user?.id || userProfile.id;
-      if (targetUserId) {
+
+    async function syncLiveSupabaseData() {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        const targetUserId = user?.id || userProfile.id;
+        if (!targetUserId) return;
+
+        // Query profiles table
         const { data: p } = await supabase
           .from('profiles')
           .select('*')
@@ -155,21 +161,46 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           .maybeSingle();
 
         if (p && isMounted) {
+          const isVerified = p.kyc_status === 'verified' || p.kyc_status === 'approved';
           onUpdateProfile({
             ...userProfile,
             id: p.id,
             email: p.email,
             fullName: p.full_name || userProfile.fullName,
             referralCode: p.referral_code || userProfile.referralCode,
-            kycStatus: p.kyc_status || userProfile.kycStatus,
+            kycStatus: isVerified ? 'verified' : p.kyc_status || userProfile.kycStatus,
             referredBy: p.referred_by || userProfile.referredBy,
           });
         }
+
+        // Query deposits table
+        const depsRes = await supabase
+          .from('deposits')
+          .select('*')
+          .eq('user_id', targetUserId)
+          .order('created_at', { ascending: false });
+
+        // Query withdrawals table
+        const wdsRes = await supabase
+          .from('withdrawals')
+          .select('*')
+          .eq('user_id', targetUserId)
+          .order('created_at', { ascending: false });
+
+        if (isMounted) {
+          if (depsRes.data) setSupabaseDeposits(depsRes.data);
+          if (wdsRes.data) setSupabaseWithdrawals(wdsRes.data);
+        }
+      } catch (err) {
+        console.warn('Live Supabase data sync notice:', err);
       }
     }
-    syncLiveProfile();
+
+    syncLiveSupabaseData();
+    const interval = setInterval(syncLiveSupabaseData, 4000);
     return () => {
       isMounted = false;
+      clearInterval(interval);
     };
   }, []);
 
@@ -194,36 +225,6 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     userProfile.dateOfBirth,
     userProfile.profileLocked,
   ]);
-
-  // 2-Minute Automated KYC Verification Timer
-  useEffect(() => {
-    if (userProfile.kycStatus !== 'pending' || !userProfile.kycVerificationEndsAt) {
-      setRemainingKycSeconds(0);
-      return;
-    }
-
-    const tick = () => {
-      const check = checkKycTimerCompletion(userProfile, Date.now());
-      setRemainingKycSeconds(check.remainingSeconds);
-      if (check.completed) {
-        onUpdateProfile(check.updatedProfile);
-        setKycFeedbackSuccess(
-          'Automated KYC Document Verification Complete! Your account is now VERIFIED and withdrawals are unlocked.'
-        );
-        soundEngine.playTradeWin();
-      }
-    };
-
-    tick();
-    const interval = setInterval(tick, 1000);
-    return () => clearInterval(interval);
-  }, [userProfile, onUpdateProfile]);
-
-  const formatTimerMmSs = (sec: number) => {
-    const mins = Math.floor(sec / 60);
-    const remSec = sec % 60;
-    return `${mins.toString().padStart(2, '0')}:${remSec.toString().padStart(2, '0')}`;
-  };
 
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -541,10 +542,10 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                   }`}
                 >
                   <ShieldCheck className="w-3.5 h-3.5" />
-                  KYC Status: {userProfile.kycStatus.toUpperCase()}
-                  {userProfile.kycStatus === 'pending' && remainingKycSeconds > 0
-                    ? ` (${formatTimerMmSs(remainingKycSeconds)})`
-                    : ''}
+                  KYC Status:{' '}
+                  {userProfile.kycStatus === 'pending'
+                    ? 'PENDING VERIFICATION (Manual Admin Review)'
+                    : userProfile.kycStatus.toUpperCase()}
                 </span>
               </div>
             </div>
@@ -616,10 +617,14 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               <div>
                 <div className="font-black text-white uppercase">
                   {userProfile.kycStatus === 'pending'
-                    ? `KYC Verification in Progress (${formatTimerMmSs(remainingKycSeconds)} remaining)`
+                    ? 'KYC Status: Pending Verification — Manual Admin Review'
                     : 'KYC Status: Unverified — Withdrawals Restricted'}
                 </div>
-                <p className="text-slate-300 mt-0.5">{KYC_WITHDRAWAL_LOCK_MESSAGE}</p>
+                <p className="text-slate-300 mt-0.5">
+                  {userProfile.kycStatus === 'pending'
+                    ? 'Your ID photo has been uploaded to the kyc-documents bucket and a request created in the kyc_requests table (status: pending). An administrator will review your request in Supabase.'
+                    : KYC_WITHDRAWAL_LOCK_MESSAGE}
+                </p>
               </div>
             </div>
             <button
@@ -631,7 +636,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               }}
               className="px-4 py-2 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] text-slate-950 font-black text-xs uppercase shrink-0 cursor-pointer transition-colors"
             >
-              {userProfile.kycStatus === 'pending' ? 'View Verification Timer' : 'Complete KYC Now →'}
+              {userProfile.kycStatus === 'pending' ? 'Pending Approval in Supabase' : 'Complete KYC Now →'}
             </button>
           </div>
         )}
@@ -969,6 +974,135 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               })}
             </div>
           )}
+
+          {/* Supabase Financials & Manual Approvals Ledger */}
+          <div className="mt-8 p-6 rounded-3xl bg-[#0a0a0a] border border-[#ff8800]/40 font-mono">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-6 pb-4 border-b border-white/10">
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded bg-[#ff8800]/15 text-[#ff8800] border border-[#ff8800]/40">
+                  SUPABASE DATABASE REAL-TIME LEDGER
+                </span>
+                <h3 className="text-lg font-black text-white mt-1">
+                  Manual Admin Verification Tracker
+                </h3>
+              </div>
+              <span className="text-xs text-slate-400">
+                Live Status from Supabase (<code className="text-[#ff8800]">deposits</code> & <code className="text-[#ff8800]">withdrawals</code> tables)
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Deposits Column */}
+              <div className="p-4 rounded-2xl bg-[#111115] border border-white/10 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold uppercase text-white flex items-center gap-1.5">
+                    <UploadCloud className="w-4 h-4 text-[#ff8800]" /> Deposits ({supabaseDeposits.length})
+                  </h4>
+                  <span className="text-[10px] text-slate-400">Manual Approval</span>
+                </div>
+
+                {supabaseDeposits.length === 0 ? (
+                  <div className="p-4 rounded-xl bg-[#16161b] text-center text-xs text-slate-500">
+                    No deposit requests recorded in Supabase yet.
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                    {supabaseDeposits.map((dep) => (
+                      <div
+                        key={dep.id}
+                        data-testid={`supabase-deposit-row-${dep.id}`}
+                        className="p-3 rounded-xl bg-[#16161c] border border-white/10 flex items-center justify-between text-xs"
+                      >
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-black text-[#00e676]">+${Number(dep.amount).toFixed(2)} USDT</span>
+                            <span
+                              data-testid={`deposit-status-badge-${dep.id}`}
+                              className={`px-2 py-0.5 rounded text-[9px] font-black uppercase border ${
+                                dep.status === 'approved' || dep.status === 'completed'
+                                  ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                                  : dep.status === 'rejected'
+                                  ? 'bg-rose-500/20 text-rose-400 border-rose-500/40'
+                                  : 'bg-[#ff8800] text-slate-950 border-amber-300 font-extrabold'
+                              }`}
+                            >
+                              {dep.status === 'pending' ? 'Pending Approval' : dep.status}
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-slate-400 mt-1 flex items-center gap-2">
+                            <span>ID: {dep.id.slice(0, 8)}...</span>
+                            {dep.slip_url && (
+                              <a
+                                href={dep.slip_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-cyan-400 hover:underline flex items-center gap-0.5"
+                              >
+                                View Slip ↗
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-[10px] text-slate-500">
+                          {dep.created_at ? new Date(dep.created_at).toLocaleDateString() : 'Today'}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Withdrawals Column */}
+              <div className="p-4 rounded-2xl bg-[#111115] border border-white/10 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold uppercase text-white flex items-center gap-1.5">
+                    <Zap className="w-4 h-4 text-[#ff8800]" /> Withdrawals ({supabaseWithdrawals.length})
+                  </h4>
+                  <span className="text-[10px] text-slate-400">Manual Approval</span>
+                </div>
+
+                {supabaseWithdrawals.length === 0 ? (
+                  <div className="p-4 rounded-xl bg-[#16161b] text-center text-xs text-slate-500">
+                    No withdrawal requests recorded in Supabase yet.
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                    {supabaseWithdrawals.map((wd) => (
+                      <div
+                        key={wd.id}
+                        data-testid={`supabase-withdrawal-row-${wd.id}`}
+                        className="p-3 rounded-xl bg-[#16161c] border border-white/10 flex items-center justify-between text-xs"
+                      >
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-black text-rose-400">-${Number(wd.amount).toFixed(2)} USD</span>
+                            <span
+                              data-testid={`withdrawal-status-badge-${wd.id}`}
+                              className={`px-2 py-0.5 rounded text-[9px] font-black uppercase border ${
+                                wd.status === 'completed' || wd.status === 'paid'
+                                  ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                                  : wd.status === 'rejected'
+                                  ? 'bg-rose-500/20 text-rose-400 border-rose-500/40'
+                                  : 'bg-[#ff8800] text-slate-950 border-amber-300 font-extrabold'
+                              }`}
+                            >
+                              {wd.status === 'pending' || wd.status === 'processing' ? 'Pending Approval' : wd.status}
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-slate-400 mt-1">
+                            ID: {wd.id.slice(0, 8)}... • Awaiting Admin Processing
+                          </div>
+                        </div>
+                        <div className="text-[10px] text-slate-500">
+                          {wd.created_at ? new Date(wd.created_at).toLocaleDateString() : 'Today'}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1166,27 +1300,27 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               <span
                 data-testid="kyc-panel-status-pill"
                 className={`px-3 py-1 rounded-full text-xs font-black uppercase font-mono border ${
-                  userProfile.kycStatus === 'verified'
+                  userProfile.kycStatus === 'verified' || userProfile.kycStatus === 'approved'
                     ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
                     : userProfile.kycStatus === 'pending'
-                    ? 'bg-[#ff8800]/20 text-[#ff8800] border-[#ff8800]/50'
+                    ? 'bg-[#ff8800]/20 text-[#ff8800] border-[#ff8800]/50 font-bold'
                     : 'bg-rose-500/20 text-rose-400 border-rose-500/40'
                 }`}
               >
                 {userProfile.kycStatus === 'pending'
-                  ? `VERIFYING (${formatTimerMmSs(remainingKycSeconds)})`
+                  ? 'PENDING MANUAL REVIEW'
                   : userProfile.kycStatus.toUpperCase()}
               </span>
             </div>
 
             <h3 className="text-lg font-black text-white font-mono flex items-center gap-2">
               <ShieldCheck className="w-5 h-5 text-[#ff8800]" />
-              Government ID Upload & Automated Data Match
+              Government ID Upload & Manual Admin Review
             </h3>
             <p className="text-xs text-slate-400 mt-1">
-              Upload your government-issued ID Card, Passport, or Driving License. If the extracted document data
-              matches your locked profile details, your account automatically updates to **Verified** within a
-              2-minute processing timer.
+              Upload your government-issued ID Card, Passport, or Driving License scan. Your photo is saved to the{' '}
+              <code className="text-[#ff8800]">kyc-documents</code> bucket and inserted into the{' '}
+              <code className="text-[#ff8800]">kyc_requests</code> table. An administrator will review and approve your submission in Supabase.
             </p>
 
             {/* Guard if Step 1 is not locked yet */}
@@ -1206,7 +1340,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               </div>
             ) : (
               <div className="mt-5 space-y-5">
-                {/* Active 2-Minute Countdown Timer Card when Pending */}
+                {/* Active Manual Admin Review Pending Card */}
                 {userProfile.kycStatus === 'pending' && (
                   <div
                     data-testid="kyc-pending-timer-card"
@@ -1214,46 +1348,28 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                   >
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                       <div className="flex items-center gap-2.5">
-                        <Clock className="w-5 h-5 text-[#ff8800] animate-spin" />
+                        <Clock className="w-5 h-5 text-[#ff8800]" />
                         <div>
                           <div className="text-xs font-black text-white uppercase">
-                            Automated OCR Identity Match Confirmed — Processing Clearance
+                            ID Document Uploaded — Waiting for Manual Admin Review
                           </div>
-                          <div className="text-[11px] text-slate-300">
-                            Matched: <strong className="text-emerald-400">{userProfile.fullName}</strong> • DOB:{' '}
-                            <strong className="text-emerald-400">{userProfile.dateOfBirth}</strong>
+                          <div className="text-[11px] text-slate-300 mt-0.5">
+                            Full Name: <strong className="text-amber-300">{userProfile.fullName}</strong> • DOB:{' '}
+                            <strong className="text-amber-300">{userProfile.dateOfBirth}</strong>
                           </div>
                         </div>
                       </div>
                       <div
                         data-testid="kyc-countdown-timer"
-                        className="text-2xl font-black text-[#ff8800] bg-[#0a0a0a] px-3.5 py-1.5 rounded-xl border border-[#ff8800]/50 text-center"
+                        className="text-xs font-black text-slate-950 bg-[#ff8800] px-3.5 py-1.5 rounded-xl text-center uppercase"
                       >
-                        {formatTimerMmSs(remainingKycSeconds)}
+                        Pending Approval
                       </div>
                     </div>
 
-                    {/* Progress bar */}
-                    <div className="w-full h-2 rounded-full bg-[#0a0a0a] overflow-hidden border border-white/10">
-                      <div
-                        className="h-full bg-[#ff8800] transition-all duration-500"
-                        style={{
-                          width: `${Math.min(
-                            100,
-                            Math.max(
-                              5,
-                              ((KYC_VERIFICATION_DURATION_SECONDS - remainingKycSeconds) /
-                                KYC_VERIFICATION_DURATION_SECONDS) *
-                                100
-                            )
-                          )}%`,
-                        }}
-                      />
-                    </div>
-
-                    <div className="flex flex-col sm:flex-row items-center justify-between gap-2 pt-1">
-                      <span className="text-[11px] text-slate-400">
-                        Status will automatically update to <strong>VERIFIED</strong> when the 2-minute timer finishes.
+                    <div className="flex flex-col sm:flex-row items-center justify-between gap-2 pt-1 border-t border-[#ff8800]/30 text-xs text-slate-300">
+                      <span>
+                        Your KYC request is stored in Supabase with status <strong className="text-[#ff8800]">pending</strong>. Withdrawals will unlock as soon as an administrator approves your document.
                       </span>
                     </div>
                   </div>
@@ -1428,8 +1544,8 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                       className="w-full py-3.5 min-h-[44px] rounded-xl bg-[#ff8800] hover:bg-[#ff9900] disabled:opacity-50 text-slate-950 font-black text-xs font-mono uppercase tracking-wider cursor-pointer transition-colors"
                     >
                       {userProfile.kycStatus === 'pending'
-                        ? `Auto-Verification Running (${formatTimerMmSs(remainingKycSeconds)})...`
-                        : `Upload ${docType} & Start 2-Minute Auto-Verification`}
+                        ? 'Verification Pending Manual Admin Review...'
+                        : `Upload ${docType} & Submit for Admin Review`}
                     </button>
                   </form>
                 )}

@@ -173,32 +173,10 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
     [amount, monthsActive]
   );
 
-  // Active processing request for 3-minute SLA auto-completion
+  // Manual Admin Verification Mode: Withdrawals remain pending until approved by admin in Supabase
   const activeRequest = withdrawals.find(
-    (w) => w.status === 'processing' && account && w.accountId === account.id
+    (w) => (w.status === 'processing' || w.status === 'pending') && account && w.accountId === account.id
   );
-
-  useEffect(() => {
-    if (!activeRequest) return;
-    const timer = setInterval(() => {
-      const elapsed = Math.floor((Date.now() - activeRequest.requestedAt) / 1000);
-      if (elapsed >= 95 && activeRequest.status === 'processing') {
-        const guarantee = evaluateWithdrawalGuarantee(activeRequest, Date.now());
-        onUpdateWithdrawal({
-          ...activeRequest,
-          status: 'paid',
-          completedAt: Date.now(),
-          txHash:
-            activeRequest.paymentMethod === 'bank_transfer'
-              ? `SWIFT-BFT-${Math.floor(100000 + Math.random() * 900000)}`
-              : `0x${Math.random().toString(16).substring(2, 14)}${Math.random().toString(16).substring(2, 14)}`,
-          timeElapsedSeconds: elapsed,
-          amount: guarantee.payoutAmount,
-        });
-      }
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [activeRequest, onUpdateWithdrawal]);
 
   // Merged Transaction Ledger & Pagination (strictly real user withdrawals, no fake demo rows)
   const allTransactions = useMemo(() => buildMergedTransactionLedger(withdrawals, false), [withdrawals]);
@@ -334,35 +312,12 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
         return;
       }
 
-      if (apiRes.updatedAccount) {
-        onUpdateAccount({
-          ...account,
-          currentBalance: apiRes.updatedAccount.current_balance,
-          equity: apiRes.updatedAccount.equity,
-          firstWithdrawalCompleted: Boolean(apiRes.updatedAccount.first_withdrawal_completed),
-          monthsCompleted: monthsActive,
-          scalingActive: monthsActive >= 3,
-        });
-      } else {
-        const newBalance = Number((account.currentBalance - amount).toFixed(2));
-        const newEquity = Number((account.equity - amount).toFixed(2));
-        onUpdateAccount({
-          ...account,
-          currentBalance: newBalance,
-          equity: newEquity,
-          monthsCompleted: monthsActive,
-          scalingActive: monthsActive >= 3,
-          firstWithdrawalCompleted: true,
-        });
-      }
-
-      const reqId = apiRes.withdrawal?.id || `5194${Math.floor(1000000 + Math.random() * 8999999)}`;
+      // Do NOT deduct balance automatically; keep status: 'pending' until admin marks it as 'completed' in Supabase.
+      const reqId = `WD-${Math.floor(1000000 + Math.random() * 8999999)}`;
       const refNum =
-        apiRes.withdrawal?.reference_number ||
-        apiRes.withdrawal?.tx_hash ||
-        (paymentMethod === 'crypto_trc20'
+        paymentMethod === 'crypto_trc20'
           ? `0x${Math.random().toString(16).substring(2, 14)}${Math.random().toString(16).substring(2, 14)}`
-          : `SWIFT-BFT-${Math.floor(100000 + Math.random() * 900000)}`);
+          : `SWIFT-BFT-${Math.floor(100000 + Math.random() * 900000)}`;
 
       const newRequest: WithdrawalRequest = {
         id: reqId,
@@ -384,18 +339,15 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
             : undefined,
         referenceNumber: refNum,
         requestedAt: Date.now(),
-        status: 'paid',
-        completedAt: Date.now(),
-        txHash: refNum,
-        isDoublePayoutEligible: true,
-        timeElapsedSeconds: 42,
+        status: 'pending',
+        isDoublePayoutEligible: false,
+        timeElapsedSeconds: 0,
       };
 
       onAddWithdrawal(newRequest);
-      onWithdrawalCommissionTriggered?.(breakdown.traderShareBeforeFee);
       soundEngine.playWithdrawalSuccess();
       setSuccessBanner(
-        `Payout Order #${reqId} confirmed! ${newRequest.netReceivedAmount?.toFixed(2)} $ net payout (after 10% withdrawal fee of $${breakdown.withdrawalFeeAmount.toFixed(2)}) dispatched via ${quotexMethod} (${network}).`
+        `Withdrawal Request Submitted! Status: Pending Approval. Your payout request of $${amount.toFixed(2)} USD is recorded in Supabase and awaiting manual admin review.`
       );
     } catch (err: any) {
       setError(err?.message || 'Failed to submit withdrawal request.');

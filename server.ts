@@ -494,14 +494,14 @@ async function startServer() {
 
       const cleanDocType = String(docType || 'Passport').trim();
       const updated = updateUserKycStatus(user.id, {
-        status: 'verified',
+        status: 'pending',
         docType: cleanDocType,
       });
 
       return res.json({
         ok: true,
         user: formatUserResponse(updated),
-        message: 'KYC Verification approved! Personal details permanently locked & withdrawals unlocked.',
+        message: 'KYC Document submitted! Status set to pending manual admin review.',
       });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err?.message || 'KYC verification error.' });

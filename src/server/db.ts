@@ -865,25 +865,12 @@ export function processWithdrawalRequest(params: {
   const withdrawalId = `WD-${Math.floor(51940000000 + Math.random() * 99999999)}`;
   const refNumber = `0x${Math.random().toString(16).slice(2, 10)}${Math.random().toString(16).slice(2, 10)}`;
 
-  // Debit account balance
-  const newBalance = Number((account.current_balance - params.requestedAmount).toFixed(2));
-  const newEquity = Number((account.equity - params.requestedAmount).toFixed(2));
-
-  db.prepare(`
-    UPDATE accounts SET
-      current_balance = ?,
-      equity = ?,
-      first_withdrawal_completed = 1,
-      updated_at = ?
-    WHERE id = ?
-  `).run(newBalance, newEquity, now, account.id);
-
-  // Insert withdrawal record
+  // Insert withdrawal record with status 'pending' (balance will be debited manually upon admin approval)
   db.prepare(`
     INSERT INTO withdrawals (
       id, user_id, account_id, gross_amount, net_profit, max_allowed_profit, profit_share_rate, fee_amount, net_payout,
       wallet_address, network, payment_method, status, reference_number, tx_hash, requested_at, processed_at
-    ) VALUES (?, ?, ?, ?, ?, ?, 0.80, ?, ?, ?, ?, ?, 'completed', ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, 0.80, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, NULL)
   `).run(
     withdrawalId,
     params.userId,
@@ -898,8 +885,7 @@ export function processWithdrawalRequest(params: {
     params.paymentMethod,
     refNumber,
     refNumber,
-    now,
-    now + 95000
+    now
   );
 
   // Real-time 8% Direct Referral Payout Bonus to Direct Sponsor

@@ -187,12 +187,8 @@ export const CryptomusDepositModal: React.FC<CryptomusDepositModalProps> = ({
               : [fetched, ...prev];
           });
 
-          if (
-            fetched.status === 'completed' &&
-            !creditedUuidsRef.current.has(fetched.uuid)
-          ) {
-            creditedUuidsRef.current.add(fetched.uuid);
-            onCreditAccountDeposit(fetched.accountId, fetched.amount, fetched);
+          if (fetched.status === 'completed') {
+            // Manual Admin Verification: deposit remains pending until approved by admin in Supabase
           }
         }
       } catch {
@@ -330,12 +326,8 @@ export const CryptomusDepositModal: React.FC<CryptomusDepositModalProps> = ({
         );
       }
 
-      if (
-        updated.status === 'completed' &&
-        !creditedUuidsRef.current.has(updated.uuid)
-      ) {
-        creditedUuidsRef.current.add(updated.uuid);
-        onCreditAccountDeposit(updated.accountId, updated.amount, updated);
+      if (updated.status === 'completed') {
+        // Deposit recorded in Supabase deposits table; awaits manual admin approval
       }
     } catch {
       setErrorMessage('Unable to reach Cryptomus webhook endpoint.');
@@ -760,25 +752,25 @@ export const CryptomusDepositModal: React.FC<CryptomusDepositModalProps> = ({
             </div>
 
             <div>
-              <span className="px-3 py-1 rounded-full bg-[#00e676]/20 text-[#00e676] border border-[#00e676]/40 text-[10px] font-black uppercase tracking-widest">
-                WEBHOOK CONFIRMED • TRANSACTION COMPLETED
+              <span className="px-3 py-1 rounded-full bg-[#ff8800]/20 text-[#ff8800] border border-[#ff8800]/40 text-[10px] font-black uppercase tracking-widest">
+                DEPOSIT SUBMITTED • PENDING MANUAL ADMIN APPROVAL
               </span>
               <h3 className="text-2xl font-black text-white mt-2">
-                +${activeInvoice.amount.toFixed(2)} USDT Credited!
+                ${activeInvoice.amount.toFixed(2)} USDT Deposit Submitted
               </h3>
-              <p className="text-xs text-emerald-200 mt-1">
-                Account <strong>{activeInvoice.accountId}</strong> has been automatically credited via Cryptomus TRC-20 Webhook.
+              <p className="text-xs text-amber-200 mt-1">
+                Recorded in Supabase (deposits table). Your payment slip is under manual review by an administrator.
               </p>
             </div>
 
-            <div className="p-3.5 rounded-xl bg-[#0b1310] border border-[#00e676]/30 text-left text-xs space-y-1.5">
+            <div className="p-3.5 rounded-xl bg-[#0b1310] border border-[#ff8800]/30 text-left text-xs space-y-1.5">
               <div className="flex justify-between">
                 <span className="text-slate-400">Status:</span>
                 <span
                   data-testid="completed-transaction-status"
-                  className="text-[#00e676] font-black uppercase"
+                  className="text-[#ff8800] font-black uppercase"
                 >
-                  Completed
+                  Pending Approval
                 </span>
               </div>
               <div className="flex justify-between">

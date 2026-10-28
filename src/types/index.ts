@@ -158,7 +158,7 @@ export interface WithdrawalRequest {
   timeElapsedSeconds: number;
 }
 
-export type KYCStatus = 'unverified' | 'pending' | 'verified';
+export type KYCStatus = 'unverified' | 'pending' | 'verified' | 'approved' | 'rejected';
 
 export type KYCDocumentType = 'ID Card' | 'Passport' | 'Driving License';
 
