@@ -26,6 +26,7 @@ import {
   User,
   Zap,
   Ban,
+  LogOut,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -81,6 +82,7 @@ interface UserDashboardProps {
   onNavigateToPricing?: () => void;
   onPassChallengePhase?: (account: TradingAccount) => void;
   initialTab?: 'accounts' | 'analytics' | 'affiliate' | 'kyc' | 'profile' | 'security';
+  onLogout?: () => void;
 }
 
 export const UserDashboard: React.FC<UserDashboardProps> = ({
@@ -98,6 +100,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   onNavigateToPricing,
   onPassChallengePhase,
   initialTab = 'accounts',
+  onLogout,
 }) => {
   const [activeTab, setActiveTab] = useState<
     'accounts' | 'analytics' | 'affiliate' | 'kyc' | 'profile' | 'security'
@@ -583,6 +586,22 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             >
               {accounts.length === 0 ? 'Choose a Plan / Buy Challenge' : '+ Buy Another Account'}
             </button>
+
+            {onLogout && (
+              <button
+                type="button"
+                data-testid="dashboard-profile-logout-btn"
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  onLogout();
+                }}
+                className="px-4 py-2.5 rounded-xl bg-rose-950/60 hover:bg-rose-900/80 border border-rose-500/40 text-rose-300 hover:text-white font-mono text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer shrink-0"
+                title="Sign Out of Your Profile"
+              >
+                <LogOut className="w-3.5 h-3.5 text-rose-400" />
+                <span>Sign Out</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -1742,6 +1761,29 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               {twoFactor ? 'ENABLED' : 'DISABLED'}
             </button>
           </div>
+
+          {onLogout && (
+            <div className="mt-8 pt-6 border-t border-white/10">
+              <h4 className="text-sm font-bold text-white mb-1 flex items-center gap-2">
+                <LogOut className="w-4 h-4 text-rose-400" /> Session & Profile Logout
+              </h4>
+              <p className="text-xs text-slate-400 mb-4 font-mono">
+                Currently authenticated as <strong className="text-white">{userProfile.email}</strong>. Sign out to clear your active session.
+              </p>
+              <button
+                type="button"
+                data-testid="security-tab-logout-btn"
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  onLogout();
+                }}
+                className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-mono text-xs font-black transition-colors flex items-center gap-2 cursor-pointer shadow-lg"
+              >
+                <LogOut className="w-4 h-4" />
+                <span>Sign Out of Profile</span>
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

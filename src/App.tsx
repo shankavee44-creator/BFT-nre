@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Header } from './components/Header';
 import { HeroBanner } from './components/HeroBanner';
+import { FastestPayoutAwardBanner } from './components/FastestPayoutAwardBanner';
 import { PricingTiers } from './components/PricingTiers';
 import { TradingRules } from './components/TradingRules';
 import { TradingTerminal } from './components/TradingTerminal';
@@ -587,6 +588,13 @@ export default function App() {
               onOpenAuthModal={handleOpenAuthModal}
               isLoggedIn={Boolean(userProfile?.isLoggedIn)}
             />
+            <FastestPayoutAwardBanner
+              onClaimDiscount={() => {
+                const el = document.getElementById('pricing');
+                if (el) el.scrollIntoView({ behavior: 'smooth' });
+              }}
+              onOpenWithdrawals={() => handleNavigateTab('withdrawals')}
+            />
             <PricingTiers
               activePromoCode={activePromoCode}
               onSelectPromoCode={setActivePromoCode}
@@ -667,6 +675,7 @@ export default function App() {
             }}
             onPassChallengePhase={handlePassChallengePhase}
             initialTab={currentTab === 'affiliate' ? 'affiliate' : 'accounts'}
+            onLogout={handleLogout}
           />
         )}
       </main>

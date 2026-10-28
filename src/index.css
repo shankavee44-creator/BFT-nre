@@ -100,6 +100,19 @@
   animation: bftModalScaleIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+@keyframes bftFloat {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+.animate-bft-float {
+  animation: bftFloat 4s ease-in-out infinite;
+}
+
 /* Interactive Button & Card Micro-Elevation */
 button,
 [role="button"] {
