@@ -102,7 +102,7 @@ test('evaluateKycDocumentUpload checks document match and starts 2-minute auto-v
     {
       docType: 'Passport',
       documentNumber: 'P99281722',
-      fileName: 'passport_scan.jpg',
+      frontFileName: 'passport_scan.jpg',
       extractedFullName: 'Wrong Person',
       extractedDob: '1994-08-15',
     },
@@ -117,7 +117,7 @@ test('evaluateKycDocumentUpload checks document match and starts 2-minute auto-v
     {
       docType: 'Passport',
       documentNumber: 'P99281722',
-      fileName: 'jordan_vance_passport.png',
+      frontFileName: 'jordan_vance_passport.png',
       extractedFullName: 'Jordan Vance',
       extractedDob: '1994-08-15',
     },

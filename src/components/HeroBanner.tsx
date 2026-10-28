@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Zap,
   ShieldCheck,
@@ -9,6 +9,7 @@ import {
   DollarSign,
   Tag,
   UserPlus,
+  Sparkles,
 } from 'lucide-react';
 import { PromoCodeType } from '../types';
 
@@ -31,13 +32,99 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
   onOpenAuthModal,
   isLoggedIn = false,
 }) => {
+  const [bgMode, setBgMode] = useState<'auto' | 'image1' | 'image2'>('auto');
+
+  const img1Url = '/assets/aistudio/1793209787676.jpg_5e442646.jpeg';
+  const img2Url = '/assets/aistudio/1793209776304.jpg_c5bccaaa.jpeg';
+
   return (
-    <div className="relative overflow-hidden py-12 md:py-20 border-b border-white/10 bg-[#0a0a0a] animate-bft-entry">
-      <div className="absolute inset-0 bg-cyber-grid opacity-50 pointer-events-none" />
+    <div className="relative overflow-hidden py-14 md:py-24 border-b border-white/10 bg-[#0a0a0a] animate-bft-entry">
+      {/* Animated Spooky Dual Background Image Layers */}
+      <div className="absolute inset-0 pointer-events-none overflow-hidden select-none">
+        {/* Layer 1: Moonlit Jack-O'-Lantern & Tree */}
+        <div
+          className={`absolute inset-0 bg-cover bg-center transition-opacity duration-1000 ${
+            bgMode === 'auto'
+              ? 'animate-bft-bg-1'
+              : bgMode === 'image1'
+              ? 'opacity-85 scale-105 transition-transform duration-700'
+              : 'opacity-0'
+          }`}
+          style={{ backgroundImage: `url("${img1Url}")` }}
+        />
+
+        {/* Layer 2: Spooky Haunted Mansion & Graveyard */}
+        <div
+          className={`absolute inset-0 bg-cover bg-center transition-opacity duration-1000 ${
+            bgMode === 'auto'
+              ? 'animate-bft-bg-2'
+              : bgMode === 'image2'
+              ? 'opacity-85 scale-105 transition-transform duration-700'
+              : 'opacity-0'
+          }`}
+          style={{ backgroundImage: `url("${img2Url}")` }}
+        />
+
+        {/* Dark Radial & Vertical Gradient Vignettes for High Contrast Text Legibility */}
+        <div className="absolute inset-0 bg-gradient-to-b from-[#0a0a0a]/90 via-[#0a0a0a]/75 to-[#0a0a0a]" />
+        <div className="absolute inset-0 bg-gradient-to-r from-[#0a0a0a]/85 via-transparent to-[#0a0a0a]/85" />
+        <div className="absolute inset-0 bg-cyber-grid opacity-30 mix-blend-overlay" />
+
+        {/* Ambient Pulsing Orange Glow */}
+        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[300px] bg-[#ff8800]/20 rounded-full blur-[120px] pointer-events-none animate-pulse-glow" />
+
+        {/* Floating Spooky Ember Particles */}
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          <div className="absolute bottom-10 left-[15%] w-2 h-2 rounded-full bg-[#ff8800] blur-[1px] animate-spooky-ember" style={{ animationDelay: '0s' }} />
+          <div className="absolute bottom-20 left-[35%] w-2.5 h-2.5 rounded-full bg-[#ffaa00] blur-[1px] animate-spooky-ember" style={{ animationDelay: '2s' }} />
+          <div className="absolute bottom-12 left-[65%] w-1.5 h-1.5 rounded-full bg-[#ff8800] blur-[1px] animate-spooky-ember" style={{ animationDelay: '4s' }} />
+          <div className="absolute bottom-16 left-[82%] w-2 h-2 rounded-full bg-[#ffbb00] blur-[1px] animate-spooky-ember" style={{ animationDelay: '1.5s' }} />
+        </div>
+      </div>
 
       <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+        {/* Background Theme Switcher Control Pill */}
+        <div className="inline-flex items-center gap-1.5 p-1 rounded-full bg-[#0d0d12]/90 border border-[#ff8800]/50 backdrop-blur-md mb-4 text-[11px] font-mono shadow-xl">
+          <span className="text-[#ff8800] font-black px-2 flex items-center gap-1">
+            <Sparkles className="w-3.5 h-3.5" /> BG Theme:
+          </span>
+          <button
+            type="button"
+            onClick={() => setBgMode('auto')}
+            className={`px-3 py-1 rounded-full font-bold transition-all cursor-pointer ${
+              bgMode === 'auto'
+                ? 'bg-[#ff8800] text-slate-950 font-black'
+                : 'text-slate-300 hover:text-white'
+            }`}
+          >
+            Auto Crossfade
+          </button>
+          <button
+            type="button"
+            onClick={() => setBgMode('image1')}
+            className={`px-3 py-1 rounded-full font-bold transition-all cursor-pointer ${
+              bgMode === 'image1'
+                ? 'bg-[#ff8800] text-slate-950 font-black'
+                : 'text-slate-300 hover:text-white'
+            }`}
+          >
+            Moonlit Pumpkin
+          </button>
+          <button
+            type="button"
+            onClick={() => setBgMode('image2')}
+            className={`px-3 py-1 rounded-full font-bold transition-all cursor-pointer ${
+              bgMode === 'image2'
+                ? 'bg-[#ff8800] text-slate-950 font-black'
+                : 'text-slate-300 hover:text-white'
+            }`}
+          >
+            Haunted Mansion
+          </button>
+        </div>
+
         {/* Top BFT Institutional Badge */}
-        <div className="inline-flex flex-wrap items-center justify-center gap-2 px-5 py-2 rounded-full bg-[#12100e] border border-[#ff8800]/60 mb-6">
+        <div className="inline-flex flex-wrap items-center justify-center gap-2 px-5 py-2 rounded-full bg-[#12100e]/90 border border-[#ff8800]/60 mb-6 backdrop-blur-sm">
           <Zap className="w-4 h-4 text-[#ff8800] fill-[#ff8800]" />
           <span className="text-xs sm:text-sm font-black tracking-wider text-[#ff8800] uppercase font-mono">
             BFT INSTITUTIONAL PROP • 80% → 90% SCALING SPLIT
@@ -47,14 +134,14 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
         </div>
 
         {/* Brand Headline */}
-        <h1 className="text-4xl sm:text-6xl lg:text-7xl font-black tracking-tight text-white max-w-5xl mx-auto leading-[1.06] mb-6">
+        <h1 className="text-3xl sm:text-5xl lg:text-6xl font-black tracking-tight text-white max-w-4xl mx-auto leading-[1.08] mb-5">
           Trade Binary Options With{' '}
           <span className="text-[#ff8800]">
             Institutional Prop Capital
           </span>
         </h1>
 
-        <p className="text-base sm:text-xl text-slate-300 max-w-3xl mx-auto mb-8 font-normal leading-relaxed">
+        <p className="text-sm sm:text-base lg:text-lg text-slate-300 max-w-2xl mx-auto mb-6 font-normal leading-relaxed">
           Get funded up to <strong className="text-white font-bold">$100,000</strong> with{' '}
           <strong className="text-[#ff8800]">Binary Funded Trader (BFT)</strong>. Withdraw{' '}
           <strong className="text-emerald-400 font-bold">80% profit split</strong> in your first 3 months, automatically scaling to{' '}

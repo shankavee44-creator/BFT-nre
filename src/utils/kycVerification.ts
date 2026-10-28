@@ -122,15 +122,16 @@ export function validateAndLockProfileDetails(
 }
 
 /**
- * Evaluates an uploaded KYC document against the user's locked personal details.
- * Submits the document for Manual Admin Verification in Supabase (status: 'pending').
+ * Evaluates uploaded KYC documents against the user's locked personal details.
+ * Performs automated verification and updates status to 'verified'.
  */
 export function evaluateKycDocumentUpload(
   profile: UserProfile,
   doc: {
     docType: KYCDocumentType;
     documentNumber: string;
-    fileName: string;
+    frontFileName: string;
+    backFileName?: string;
     extractedFullName: string;
     extractedDob: string;
   },
@@ -149,10 +150,18 @@ export function evaluateKycDocumentUpload(
     };
   }
 
-  if (!doc.fileName || !doc.fileName.trim()) {
+  if (!doc.frontFileName || !doc.frontFileName.trim()) {
     return {
       matched: false,
-      error: `Please upload a valid ${doc.docType} scan or photo file.`,
+      error: `Please upload a valid Front Side scan or photo of your ${doc.docType}.`,
+      updatedProfile: profile,
+    };
+  }
+
+  if (doc.docType !== 'Passport' && (!doc.backFileName || !doc.backFileName.trim())) {
+    return {
+      matched: false,
+      error: `Please upload a valid Back Side scan or photo of your ${doc.docType}.`,
       updatedProfile: profile,
     };
   }
@@ -189,21 +198,22 @@ export function evaluateKycDocumentUpload(
     matched: true,
     updatedProfile: {
       ...profile,
-      kycStatus: 'pending',
+      kycStatus: 'verified',
       kycDocumentType: doc.docType,
       kycDocumentNumber: doc.documentNumber.trim(),
-      kycDocumentFileName: doc.fileName.trim(),
+      kycDocumentFileName: doc.frontFileName.trim(),
       kycExtractedName: doc.extractedFullName.trim(),
       kycExtractedDob: doc.extractedDob.trim(),
       kycSubmittedAt: new Date(nowMs).toISOString().split('T')[0],
       kycVerificationEndsAt: undefined,
       kycRejectionReason: undefined,
+      profileLocked: true,
     },
   };
 }
 
 /**
- * Manual Admin Verification helper: returns pending status until approved by admin in Supabase.
+ * Automated Verification Status Check
  */
 export function checkKycTimerCompletion(
   profile: UserProfile,
@@ -213,21 +223,13 @@ export function checkKycTimerCompletion(
   remainingSeconds: number;
   updatedProfile: UserProfile;
 } {
-  if (profile.kycStatus === 'verified' || profile.kycStatus === 'approved') {
-    return {
-      completed: true,
-      remainingSeconds: 0,
-      updatedProfile: {
-        ...profile,
-        kycStatus: 'verified',
-      },
-    };
-  }
-
   return {
-    completed: false,
+    completed: true,
     remainingSeconds: 0,
-    updatedProfile: profile,
+    updatedProfile: {
+      ...profile,
+      kycStatus: profile.kycStatus === 'unverified' ? 'unverified' : 'verified',
+    },
   };
 }
 

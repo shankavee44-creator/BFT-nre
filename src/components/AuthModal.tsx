@@ -198,82 +198,54 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
 
     try {
-      // 1. Try Supabase Auth
+      // 1. Strict Supabase Auth Sign-In Validation
       const { data, error } = await supabase.auth.signInWithPassword({
         email: cleanEmail,
         password,
       });
 
-      if (!error && data?.user) {
-        const user = data.user;
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', user.id)
-          .maybeSingle();
-
-        const userRefCode = profile?.referral_code || `BFT-${user.id.slice(0, 6).toUpperCase()}`;
-        const jwtToken = createSessionJwtToken({
-          userId: user.id,
-          email: cleanEmail,
-          referralCode: userRefCode,
-          rememberMe,
-        });
-
-        onAuthSuccess({
-          userId: user.id,
-          email: cleanEmail,
-          fullName: profile?.full_name || user.user_metadata?.full_name || cleanEmail.split('@')[0],
-          referralCode: userRefCode,
-          referredBy: profile?.referred_by || null,
-          rememberMe,
-          jwtToken,
-          isNewRegistration: false,
-          serverUser: {
-            id: user.id,
-            email: cleanEmail,
-            fullName: profile?.full_name || user.user_metadata?.full_name,
-            referralCode: userRefCode,
-            kycStatus: profile?.kyc_status || 'unverified',
-            balance: profile?.balance || 0,
-          },
-        });
-        onClose();
+      if (error || !data?.user) {
+        setAuthError('Invalid email or password.');
         setIsSubmitting(false);
         return;
       }
 
-      // Fallback: If account is not in Supabase yet, sign in seamlessly via local/session state
-      const fallbackUserId = `usr_${btoa(cleanEmail).replace(/[^a-zA-Z0-9]/g, '').slice(0, 12)}`;
-      const fallbackRefCode = `BFT-${cleanEmail.slice(0, 4).toUpperCase()}77`;
+      const user = data.user;
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      const userRefCode = profile?.referral_code || `BFT-${user.id.slice(0, 6).toUpperCase()}`;
       const jwtToken = createSessionJwtToken({
-        userId: fallbackUserId,
+        userId: user.id,
         email: cleanEmail,
-        referralCode: fallbackRefCode,
+        referralCode: userRefCode,
         rememberMe,
       });
 
       onAuthSuccess({
-        userId: fallbackUserId,
+        userId: user.id,
         email: cleanEmail,
-        fullName: cleanEmail.split('@')[0].replace(/[._-]/g, ' '),
-        referralCode: fallbackRefCode,
-        referredBy: null,
+        fullName: profile?.full_name || user.user_metadata?.full_name || cleanEmail.split('@')[0],
+        referralCode: userRefCode,
+        referredBy: profile?.referred_by || null,
         rememberMe,
         jwtToken,
         isNewRegistration: false,
         serverUser: {
-          id: fallbackUserId,
+          id: user.id,
           email: cleanEmail,
-          fullName: cleanEmail.split('@')[0],
-          referralCode: fallbackRefCode,
-          kycStatus: 'unverified',
-          balance: 0,
+          fullName: profile?.full_name || user.user_metadata?.full_name,
+          referralCode: userRefCode,
+          kycStatus: profile?.kyc_status || 'unverified',
+          balance: profile?.balance || 0,
         },
       });
       onClose();
     } catch (err: any) {
-      setAuthError(err?.message || 'Authentication error. Please check your credentials.');
+      setAuthError('Invalid email or password.');
     } finally {
       setIsSubmitting(false);
     }

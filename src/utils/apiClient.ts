@@ -270,3 +270,14 @@ export async function apiGetLeaderboard() {
     return { ok: false, error: e?.message || 'Failed to fetch leaderboard' };
   }
 }
+
+export async function apiGetAdminUsers() {
+  try {
+    const res = await fetch('/api/admin/users', {
+      headers: getAuthHeaders(),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Failed to fetch platform users' };
+  }
+}

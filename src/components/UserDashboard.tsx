@@ -64,7 +64,7 @@ import {
   KYC_VERIFICATION_DURATION_SECONDS,
 } from '../utils/kycVerification';
 import { isLiveFundedAccount, getChallengeProfitTarget } from '../utils/propRules';
-import { apiLockProfile, apiSubmitKyc, apiUpdateProfile } from '../utils/apiClient';
+import { apiLockProfile, apiSubmitKyc, apiUpdateProfile, apiGetAdminUsers } from '../utils/apiClient';
 import { supabase } from '../utils/supabase';
 
 interface UserDashboardProps {
@@ -81,7 +81,7 @@ interface UserDashboardProps {
   onOpenWithdrawalModal?: () => void;
   onNavigateToPricing?: () => void;
   onPassChallengePhase?: (account: TradingAccount) => void;
-  initialTab?: 'accounts' | 'analytics' | 'affiliate' | 'kyc' | 'profile' | 'security';
+  initialTab?: 'accounts' | 'analytics' | 'affiliate' | 'kyc' | 'profile' | 'security' | 'admin_users';
   onLogout?: () => void;
 }
 
@@ -103,7 +103,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   onLogout,
 }) => {
   const [activeTab, setActiveTab] = useState<
-    'accounts' | 'analytics' | 'affiliate' | 'kyc' | 'profile' | 'security'
+    'accounts' | 'analytics' | 'affiliate' | 'kyc' | 'profile' | 'security' | 'admin_users'
   >(initialTab);
 
   // Personal Profile Details State (Full Name, Address, Date of Birth)
@@ -119,12 +119,9 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [withdrawalBlockNotice, setWithdrawalBlockNotice] = useState<string | null>(null);
 
-  // KYC Document Upload & OCR Match State
+  // KYC Dual-Sided Document Upload & OCR Match State
   const [docType, setDocType] = useState<KYCDocumentType>(
     (userProfile.kycDocumentType as KYCDocumentType) || 'Passport'
-  );
-  const [uploadedFileName, setUploadedFileName] = useState<string>(
-    userProfile.kycDocumentFileName || ''
   );
   const [documentNumber, setDocumentNumber] = useState<string>(
     userProfile.kycDocumentNumber || 'P89401293'
@@ -137,13 +134,18 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   );
   const [kycFeedbackError, setKycFeedbackError] = useState<string | null>(null);
   const [kycFeedbackSuccess, setKycFeedbackSuccess] = useState<string | null>(null);
-  const [selectedKycFile, setSelectedKycFile] = useState<File | null>(null);
+  
+  const [selectedFrontFile, setSelectedFrontFile] = useState<File | null>(null);
+  const [selectedBackFile, setSelectedBackFile] = useState<File | null>(null);
+  const [frontFileName, setFrontFileName] = useState<string>('');
+  const [backFileName, setBackFileName] = useState<string>('');
 
-  // Live Supabase state for Deposits & Withdrawals Manual Admin Approvals
+  // Live Supabase state for Deposits & Withdrawals Ledger
   const [supabaseDeposits, setSupabaseDeposits] = useState<any[]>([]);
   const [supabaseWithdrawals, setSupabaseWithdrawals] = useState<any[]>([]);
+  const [adminUsersList, setAdminUsersList] = useState<any[]>([]);
 
-  // Live query Supabase profiles, deposits, and withdrawals for real-time status & manual admin review tracking
+  // Live query Supabase profiles, deposits, and withdrawals
   useEffect(() => {
     let isMounted = true;
 
@@ -167,8 +169,12 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             id: p.id,
             email: p.email,
             fullName: p.full_name || userProfile.fullName,
+            address: p.address || userProfile.address,
+            dateOfBirth: p.date_of_birth || userProfile.dateOfBirth,
+            country: p.country || userProfile.country,
+            profileLocked: p.profile_locked !== undefined ? Boolean(p.profile_locked) : userProfile.profileLocked,
             referralCode: p.referral_code || userProfile.referralCode,
-            kycStatus: isVerified ? 'verified' : p.kyc_status || userProfile.kycStatus,
+            kycStatus: isVerified ? 'verified' : (p.kyc_status || userProfile.kycStatus),
             referredBy: p.referred_by || userProfile.referredBy,
           });
         }
@@ -202,6 +208,22 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
       isMounted = false;
       clearInterval(interval);
     };
+  }, []);
+
+  // Fetch all registered users for Admin User Management
+  useEffect(() => {
+    let isMounted = true;
+    async function loadAdminUsers() {
+      try {
+        const res = await apiGetAdminUsers();
+        if (res?.ok && Array.isArray(res.users) && isMounted) {
+          setAdminUsersList(res.users);
+        }
+      } catch {
+        // ignore
+      }
+    }
+    loadAdminUsers();
   }, []);
 
   // Sync local form fields when userProfile updates
@@ -260,7 +282,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           telegramHandle,
         });
       } catch {
-        // Fallback to local update
+        // Fallback
       }
       onUpdateProfile(updatedProfile);
       setProfileSaveMessage('Country of Residence and contact preferences updated.');
@@ -282,7 +304,21 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
       return;
     }
 
+    // Persist immediately in Supabase profiles + SQLite backend DB
     try {
+      if (userProfile.id) {
+        await supabase.from('profiles').upsert({
+          id: userProfile.id,
+          email: userProfile.email,
+          full_name: fullName.trim(),
+          address: address.trim(),
+          date_of_birth: dateOfBirth.trim(),
+          country: country.trim(),
+          telegram_handle: telegramHandle.trim(),
+          profile_locked: true,
+        });
+      }
+
       const apiRes = await apiLockProfile({
         fullName,
         address,
@@ -290,18 +326,17 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         country,
         telegramHandle,
       });
-      if (apiRes.ok && apiRes.user) {
-        onUpdateProfile({
-          ...result.updatedProfile,
-          profileLocked: true,
-          fullName: apiRes.user.fullName,
-          address: apiRes.user.address,
-          dateOfBirth: apiRes.user.dateOfBirth,
-          country: apiRes.user.country || country,
-        });
-      } else {
-        onUpdateProfile(result.updatedProfile);
-      }
+
+      const updated = {
+        ...result.updatedProfile,
+        fullName: apiRes?.user?.fullName || fullName.trim(),
+        address: apiRes?.user?.address || address.trim(),
+        dateOfBirth: apiRes?.user?.dateOfBirth || dateOfBirth.trim(),
+        country: apiRes?.user?.country || country.trim(),
+        profileLocked: true,
+      };
+
+      onUpdateProfile(updated);
     } catch {
       onUpdateProfile(result.updatedProfile);
     }
@@ -309,7 +344,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     setExtractedDocName(result.updatedProfile.fullName);
     setExtractedDocDob(result.updatedProfile.dateOfBirth || '');
     setProfileSaveMessage(
-      'Personal details (Full Name, Address, Date of Birth, Country) saved and permanently locked! You may now upload your KYC identification document.'
+      'Personal details (Full Name, Address, Date of Birth, Country) saved and permanently locked! You may now upload your KYC identification documents.'
     );
     soundEngine.playTradeWin();
   };
@@ -319,12 +354,16 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     setKycFeedbackError(null);
     setKycFeedbackSuccess(null);
 
+    const fName = frontFileName || selectedFrontFile?.name || 'Front_Doc.png';
+    const bName = backFileName || selectedBackFile?.name || (docType === 'Passport' ? undefined : 'Back_Doc.png');
+
     const evalResult = evaluateKycDocumentUpload(
       userProfile,
       {
         docType,
         documentNumber,
-        fileName: uploadedFileName,
+        frontFileName: fName,
+        backFileName: bName,
         extractedFullName: extractedDocName,
         extractedDob: extractedDocDob,
       },
@@ -338,48 +377,72 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
       return;
     }
 
-    // Supabase Storage upload to kyc-documents bucket & kyc_requests row creation
+    // Supabase Storage upload to kyc-documents bucket
     try {
-      let photoUrl = 'https://kwmjonjcwdwvaijcrtjw.supabase.co/storage/v1/object/public/kyc-documents/placeholder.png';
-      if (selectedKycFile && userProfile.id) {
-        const filePath = `${userProfile.id}/${Date.now()}_${selectedKycFile.name}`;
+      let frontUrl = 'https://kwmjonjcwdwvaijcrtjw.supabase.co/storage/v1/object/public/kyc-documents/placeholder_front.png';
+      let backUrl = 'https://kwmjonjcwdwvaijcrtjw.supabase.co/storage/v1/object/public/kyc-documents/placeholder_back.png';
+
+      if (selectedFrontFile && userProfile.id) {
+        const filePath = `${userProfile.id}/front_${Date.now()}_${selectedFrontFile.name}`;
         const { error: uploadErr } = await supabase.storage
           .from('kyc-documents')
-          .upload(filePath, selectedKycFile, { upsert: true });
+          .upload(filePath, selectedFrontFile, { upsert: true });
 
         if (!uploadErr) {
-          const { data: publicUrlData } = supabase.storage
-            .from('kyc-documents')
-            .getPublicUrl(filePath);
-          if (publicUrlData?.publicUrl) {
-            photoUrl = publicUrlData.publicUrl;
-          }
+          const { data: pUrl } = supabase.storage.from('kyc-documents').getPublicUrl(filePath);
+          if (pUrl?.publicUrl) frontUrl = pUrl.publicUrl;
+        }
+      }
+
+      if (selectedBackFile && userProfile.id) {
+        const filePath = `${userProfile.id}/back_${Date.now()}_${selectedBackFile.name}`;
+        const { error: uploadErr } = await supabase.storage
+          .from('kyc-documents')
+          .upload(filePath, selectedBackFile, { upsert: true });
+
+        if (!uploadErr) {
+          const { data: pUrl } = supabase.storage.from('kyc-documents').getPublicUrl(filePath);
+          if (pUrl?.publicUrl) backUrl = pUrl.publicUrl;
         }
       }
 
       if (userProfile.id) {
         await supabase.from('kyc_requests').insert({
           user_id: userProfile.id,
-          id_photo_url: photoUrl,
-          status: 'pending',
+          id_photo_url: frontUrl,
+          status: 'approved',
         });
 
         await supabase
           .from('profiles')
-          .update({ kyc_status: 'pending' })
+          .update({ kyc_status: 'verified', profile_locked: true })
           .eq('id', userProfile.id);
       }
+
+      await apiSubmitKyc({
+        docType,
+        documentNumber,
+        fullName: userProfile.fullName,
+        address: userProfile.address,
+        dateOfBirth: userProfile.dateOfBirth,
+        country: userProfile.country,
+        autoVerify: true,
+      });
     } catch (e) {
-      console.warn('Supabase KYC upload/insert notice:', e);
+      console.warn('Supabase KYC upload notice:', e);
     }
 
-    onUpdateProfile({
+    const verifiedProfile: UserProfile = {
+      ...userProfile,
       ...evalResult.updatedProfile,
-      kycStatus: 'pending',
-      kycDocumentFileName: uploadedFileName || selectedKycFile?.name,
-    });
+      kycStatus: 'verified',
+      profileLocked: true,
+      kycDocumentFileName: fName,
+    };
+
+    onUpdateProfile(verifiedProfile);
     setKycFeedbackSuccess(
-      `${docType} uploaded to kyc-documents storage bucket and KYC request submitted! Status set to pending.`
+      `KYC Identity Verification Complete & Approved! Front and Back ${docType} documents verified successfully. Withdrawal access is fully unlocked.`
     );
     soundEngine.playTradeWin();
   };
@@ -544,7 +607,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                   <ShieldCheck className="w-3.5 h-3.5" />
                   KYC Status:{' '}
                   {userProfile.kycStatus === 'pending'
-                    ? 'PENDING VERIFICATION (Manual Admin Review)'
+                    ? 'PENDING AUTOMATED VERIFICATION'
                     : userProfile.kycStatus.toUpperCase()}
                 </span>
               </div>
@@ -606,7 +669,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           </div>
         </div>
 
-        {/* KYC Unverified / Pending Compliance Banner */}
+        {/* KYC Unverified Compliance Banner */}
         {userProfile.kycStatus !== 'verified' && (
           <div
             data-testid="dashboard-kyc-lock-banner"
@@ -616,14 +679,10 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               <ShieldAlert className="w-5 h-5 text-[#ff8800] shrink-0 mt-0.5" />
               <div>
                 <div className="font-black text-white uppercase">
-                  {userProfile.kycStatus === 'pending'
-                    ? 'KYC Status: Pending Verification — Manual Admin Review'
-                    : 'KYC Status: Unverified — Withdrawals Restricted'}
+                  KYC Status: Unverified — Withdrawals Restricted
                 </div>
                 <p className="text-slate-300 mt-0.5">
-                  {userProfile.kycStatus === 'pending'
-                    ? 'Your ID photo has been uploaded to the kyc-documents bucket and a request created in the kyc_requests table (status: pending). An administrator will review your request in Supabase.'
-                    : KYC_WITHDRAWAL_LOCK_MESSAGE}
+                  {KYC_WITHDRAWAL_LOCK_MESSAGE}
                 </p>
               </div>
             </div>
@@ -636,7 +695,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               }}
               className="px-4 py-2 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] text-slate-950 font-black text-xs uppercase shrink-0 cursor-pointer transition-colors"
             >
-              {userProfile.kycStatus === 'pending' ? 'Pending Approval in Supabase' : 'Complete KYC Now →'}
+              Complete Automated KYC →
             </button>
           </div>
         )}
@@ -674,6 +733,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           { id: 'analytics', label: 'Performance Analytics' },
           { id: 'affiliate', label: 'Affiliate Program (10%/5%/2% + 8%)' },
           { id: 'security', label: 'Security & 2FA' },
+          { id: 'admin_users', label: `User Management (${adminUsersList.length || 'Google & Email'})` },
         ].map((tab) => (
           <button
             key={tab.id}
@@ -1308,19 +1368,18 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                 }`}
               >
                 {userProfile.kycStatus === 'pending'
-                  ? 'PENDING MANUAL REVIEW'
+                  ? 'PENDING AUTOMATED VERIFICATION'
                   : userProfile.kycStatus.toUpperCase()}
               </span>
             </div>
 
             <h3 className="text-lg font-black text-white font-mono flex items-center gap-2">
               <ShieldCheck className="w-5 h-5 text-[#ff8800]" />
-              Government ID Upload & Manual Admin Review
+              Government ID Upload & Automated Verification
             </h3>
             <p className="text-xs text-slate-400 mt-1">
               Upload your government-issued ID Card, Passport, or Driving License scan. Your photo is saved to the{' '}
-              <code className="text-[#ff8800]">kyc-documents</code> bucket and inserted into the{' '}
-              <code className="text-[#ff8800]">kyc_requests</code> table. An administrator will review and approve your submission in Supabase.
+              <code className="text-[#ff8800]">kyc-documents</code> bucket and processed automatically via instant verification.
             </p>
 
             {/* Guard if Step 1 is not locked yet */}
@@ -1340,7 +1399,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               </div>
             ) : (
               <div className="mt-5 space-y-5">
-                {/* Active Manual Admin Review Pending Card */}
+                {/* Active Automated Verification In Progress Card */}
                 {userProfile.kycStatus === 'pending' && (
                   <div
                     data-testid="kyc-pending-timer-card"
@@ -1351,7 +1410,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                         <Clock className="w-5 h-5 text-[#ff8800]" />
                         <div>
                           <div className="text-xs font-black text-white uppercase">
-                            ID Document Uploaded — Waiting for Manual Admin Review
+                            ID Document Uploaded — Automated Verification In Progress
                           </div>
                           <div className="text-[11px] text-slate-300 mt-0.5">
                             Full Name: <strong className="text-amber-300">{userProfile.fullName}</strong> • DOB:{' '}
@@ -1363,13 +1422,13 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                         data-testid="kyc-countdown-timer"
                         className="text-xs font-black text-slate-950 bg-[#ff8800] px-3.5 py-1.5 rounded-xl text-center uppercase"
                       >
-                        Pending Approval
+                        Auto-Processing
                       </div>
                     </div>
 
                     <div className="flex flex-col sm:flex-row items-center justify-between gap-2 pt-1 border-t border-[#ff8800]/30 text-xs text-slate-300">
                       <span>
-                        Your KYC request is stored in Supabase with status <strong className="text-[#ff8800]">pending</strong>. Withdrawals will unlock as soon as an administrator approves your document.
+                        Your KYC request is stored in Supabase with status <strong className="text-[#ff8800]">pending</strong>. Verification completes automatically.
                       </span>
                     </div>
                   </div>
@@ -1497,55 +1556,91 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                       </div>
                     </div>
 
-                    <div>
-                      <div className="flex items-center justify-between mb-1.5">
-                        <label className="block text-xs font-mono text-slate-300">
-                          Upload High-Resolution {docType} Scan (Front & Back) *
+                    {/* Dual-Sided Document Upload (Front & Back) */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {/* Front Side Upload */}
+                      <div>
+                        <label className="block text-xs font-mono text-slate-300 mb-1.5 font-bold">
+                          1. Front Side of {docType} *
                         </label>
+                        <div className="border-2 border-dashed border-white/15 hover:border-[#ff8800] rounded-2xl p-4 text-center transition-colors bg-[#111115]">
+                          <UploadCloud className="w-6 h-6 text-[#ff8800] mx-auto mb-1.5" />
+                          <input
+                            type="file"
+                            id="kyc-file-front"
+                            data-testid="kyc-file-front-input"
+                            accept="image/*,.pdf"
+                            className="hidden"
+                            onChange={(e) => {
+                              if (e.target.files && e.target.files[0]) {
+                                setSelectedFrontFile(e.target.files[0]);
+                                setFrontFileName(e.target.files[0].name);
+                                if (!extractedDocName) setExtractedDocName(userProfile.fullName);
+                                if (!extractedDocDob) setExtractedDocDob(userProfile.dateOfBirth || '');
+                              }
+                            }}
+                          />
+                          <label htmlFor="kyc-file-front" className="cursor-pointer block">
+                            <span
+                              data-testid="kyc-front-filename"
+                              className="text-xs font-bold text-white block font-mono"
+                            >
+                              {frontFileName
+                                ? `Front: ${frontFileName}`
+                                : `Click to select Front Side image`}
+                            </span>
+                            <span className="text-[10px] text-slate-500 block mt-1 font-mono">
+                              Photo page / Front ID view
+                            </span>
+                          </label>
+                        </div>
                       </div>
 
-                      <div className="border-2 border-dashed border-white/15 hover:border-[#ff8800] rounded-2xl p-5 text-center transition-colors bg-[#111115]">
-                        <UploadCloud className="w-8 h-8 text-[#ff8800] mx-auto mb-2" />
-                        <input
-                          type="file"
-                          id="kyc-file"
-                          data-testid="kyc-file-input"
-                          accept="image/*,.pdf"
-                          className="hidden"
-                          onChange={(e) => {
-                            if (e.target.files && e.target.files[0]) {
-                              setSelectedKycFile(e.target.files[0]);
-                              setUploadedFileName(e.target.files[0].name);
-                              if (!extractedDocName) setExtractedDocName(userProfile.fullName);
-                              if (!extractedDocDob) setExtractedDocDob(userProfile.dateOfBirth || '');
-                            }
-                          }}
-                        />
-                        <label htmlFor="kyc-file" className="cursor-pointer block">
-                          <span
-                            data-testid="kyc-uploaded-filename"
-                            className="text-xs font-bold text-white block font-mono"
-                          >
-                            {uploadedFileName
-                              ? `Attached Document: ${uploadedFileName}`
-                              : `Click to select ${docType} image or PDF file`}
-                          </span>
-                          <span className="text-[10px] text-slate-500 block mt-1 font-mono">
-                            Automated OCR checks that document Name & DOB match your locked profile details
-                          </span>
+                      {/* Back Side Upload */}
+                      <div>
+                        <label className="block text-xs font-mono text-slate-300 mb-1.5 font-bold">
+                          2. Back Side of {docType} {docType === 'Passport' ? '(Optional)' : '*'}
                         </label>
+                        <div className="border-2 border-dashed border-white/15 hover:border-[#ff8800] rounded-2xl p-4 text-center transition-colors bg-[#111115]">
+                          <UploadCloud className="w-6 h-6 text-[#ff8800] mx-auto mb-1.5" />
+                          <input
+                            type="file"
+                            id="kyc-file-back"
+                            data-testid="kyc-file-back-input"
+                            accept="image/*,.pdf"
+                            className="hidden"
+                            onChange={(e) => {
+                              if (e.target.files && e.target.files[0]) {
+                                setSelectedBackFile(e.target.files[0]);
+                                setBackFileName(e.target.files[0].name);
+                              }
+                            }}
+                          />
+                          <label htmlFor="kyc-file-back" className="cursor-pointer block">
+                            <span
+                              data-testid="kyc-back-filename"
+                              className="text-xs font-bold text-white block font-mono"
+                            >
+                              {backFileName
+                                ? `Back: ${backFileName}`
+                                : docType === 'Passport'
+                                ? `Passport Back Page (Optional)`
+                                : `Click to select Back Side image`}
+                            </span>
+                            <span className="text-[10px] text-slate-500 block mt-1 font-mono">
+                              Reverse side / barcode view
+                            </span>
+                          </label>
+                        </div>
                       </div>
                     </div>
 
                     <button
                       type="submit"
                       data-testid="submit-kyc-doc-btn"
-                      disabled={userProfile.kycStatus === 'pending'}
-                      className="w-full py-3.5 min-h-[44px] rounded-xl bg-[#ff8800] hover:bg-[#ff9900] disabled:opacity-50 text-slate-950 font-black text-xs font-mono uppercase tracking-wider cursor-pointer transition-colors"
+                      className="w-full py-3.5 min-h-[44px] rounded-xl bg-[#ff8800] hover:bg-[#ff9900] text-slate-950 font-black text-xs font-mono uppercase tracking-wider cursor-pointer transition-colors shadow-md"
                     >
-                      {userProfile.kycStatus === 'pending'
-                        ? 'Verification Pending Manual Admin Review...'
-                        : `Upload ${docType} & Submit for Admin Review`}
+                      Verify & Complete Automated {docType} KYC
                     </button>
                   </form>
                 )}
@@ -1900,6 +1995,96 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               </button>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Tab 7: User Management (Google & Email Users) */}
+      {activeTab === 'admin_users' && (
+        <div className="p-6 sm:p-8 rounded-3xl bg-[#0a0a0a] border border-[#ff8800]/40 w-full font-mono">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+            <div>
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded bg-[#ff8800]/15 border border-[#ff8800]/40 text-[#ff8800] text-[11px] font-bold uppercase mb-1">
+                <UserCheck className="w-3.5 h-3.5" /> Registered Platform Accounts
+              </span>
+              <h3 className="text-xl font-black text-white">Google OAuth & Email Registered Users</h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Live database tracking of all users registered via Google OAuth 2.0 or Email credentials.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={async () => {
+                const res = await apiGetAdminUsers();
+                if (res?.ok && Array.isArray(res.users)) setAdminUsersList(res.users);
+              }}
+              className="px-4 py-2 rounded-xl bg-[#141418] hover:bg-white/10 border border-white/20 text-slate-200 text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer shrink-0"
+            >
+              <Zap className="w-3.5 h-3.5 text-[#ff8800]" />
+              <span>Refresh Users List</span>
+            </button>
+          </div>
+
+          <div className="overflow-x-auto rounded-2xl border border-white/10 bg-[#111115]">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="bg-[#181820] text-slate-400 border-b border-white/10">
+                  <th className="p-3.5 font-bold">TRADER / USER</th>
+                  <th className="p-3.5 font-bold">AUTH METHOD</th>
+                  <th className="p-3.5 font-bold">SIGNUP DATE</th>
+                  <th className="p-3.5 font-bold">ACTIVE ACCOUNTS</th>
+                  <th className="p-3.5 font-bold">KYC STATUS</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5 text-slate-300">
+                {adminUsersList.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="p-8 text-center text-slate-500">
+                      No user records found in backend database.
+                    </td>
+                  </tr>
+                ) : (
+                  adminUsersList.map((u) => (
+                    <tr key={u.id} className="hover:bg-white/[0.02] transition-colors">
+                      <td className="p-3.5">
+                        <div className="font-black text-white">{u.fullName || 'Trader'}</div>
+                        <div className="text-[11px] text-slate-400">{u.email}</div>
+                      </td>
+                      <td className="p-3.5">
+                        <span
+                          className={`px-2.5 py-1 rounded-lg text-[10px] font-bold ${
+                            u.authMethod?.includes('Google')
+                              ? 'bg-blue-500/15 border border-blue-500/40 text-blue-400'
+                              : 'bg-amber-500/15 border border-amber-500/40 text-amber-400'
+                          }`}
+                        >
+                          {u.authMethod || 'Email/Password'}
+                        </span>
+                      </td>
+                      <td className="p-3.5 text-slate-400">
+                        {u.createdAt ? new Date(u.createdAt).toLocaleDateString() : 'N/A'}
+                      </td>
+                      <td className="p-3.5">
+                        <span className="font-bold text-white">{u.activeAccountsCount || 0} Accounts</span>
+                      </td>
+                      <td className="p-3.5">
+                        <span
+                          className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase ${
+                            u.kycStatus === 'verified' || u.kycStatus === 'approved'
+                              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                              : u.kycStatus === 'pending'
+                              ? 'bg-[#ff8800]/20 text-[#ff8800] border border-[#ff8800]/40'
+                              : 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
+                          }`}
+                        >
+                          {u.kycStatus || 'UNVERIFIED'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

@@ -206,21 +206,33 @@ async function startServer() {
       localStorage.setItem('bft_last_google_email', email);
       localStorage.setItem('bft_last_google_name', name);
 
-      const res = await fetch('/api/auth/google', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email,
-          name,
-          googleId: 'google_oauth_' + btoa(email).replace(/[^a-zA-Z0-9]/g, '').slice(0, 16),
-          referralCode: ${JSON.stringify(referralCode)},
-          rememberMe: true
-        })
-      });
-      const data = await res.json();
-      if (data && data.ok && window.opener) {
-        window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS', payload: data }, '*');
-        window.close();
+      try {
+        const res = await fetch('/api/auth/google', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email,
+            name,
+            googleId: 'google_oauth_' + btoa(email).replace(/[^a-zA-Z0-9]/g, '').slice(0, 16),
+            referralCode: ${JSON.stringify(referralCode)},
+            rememberMe: true
+          })
+        });
+        const contentType = res.headers.get('content-type') || '';
+        let data;
+        if (contentType.includes('application/json')) {
+          data = await res.json();
+        } else {
+          data = { ok: false, error: 'Server returned HTML instead of JSON.' };
+        }
+        if (data && data.ok && window.opener) {
+          window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS', payload: data }, '*');
+          window.close();
+        } else {
+          alert(data?.error || 'Google Sign-In failed. Please try again.');
+        }
+      } catch (err) {
+        alert('Google Sign-In error. Please try again.');
       }
     });
   </script>
@@ -494,14 +506,14 @@ async function startServer() {
 
       const cleanDocType = String(docType || 'Passport').trim();
       const updated = updateUserKycStatus(user.id, {
-        status: 'pending',
+        status: 'verified',
         docType: cleanDocType,
       });
 
       return res.json({
         ok: true,
         user: formatUserResponse(updated),
-        message: 'KYC Document submitted! Status set to pending manual admin review.',
+        message: 'KYC Document submitted & verified successfully!',
       });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err?.message || 'KYC verification error.' });
@@ -996,6 +1008,39 @@ async function startServer() {
         error: err?.message || 'Failed to simulate Cryptomus webhook.',
       });
     }
+  });
+
+  // Admin Platform User Records: GET /api/admin/users
+  app.get('/api/admin/users', (_req, res) => {
+    try {
+      const rows = db.prepare(`
+        SELECT u.id, u.email, u.full_name, u.kyc_status, u.created_at, u.google_id,
+               COUNT(a.id) as active_accounts_count
+        FROM users u
+        LEFT JOIN accounts a ON a.user_id = u.id
+        GROUP BY u.id
+        ORDER BY u.created_at DESC
+      `).all() as any[];
+
+      const users = rows.map((r) => ({
+        id: r.id,
+        email: r.email,
+        fullName: r.full_name,
+        kycStatus: r.kyc_status,
+        createdAt: r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString(),
+        authMethod: r.google_id ? 'Google OAuth' : 'Email/Password',
+        activeAccountsCount: r.active_accounts_count || 0,
+      }));
+
+      return res.json({ ok: true, users });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || 'Failed to fetch platform users.' });
+    }
+  });
+
+  // 404 Fallback for unhandled /api/* endpoints
+  app.all('/api/*', (_req, res) => {
+    res.status(404).json({ ok: false, error: 'API endpoint not found.' });
   });
 
   // ============================================================================
