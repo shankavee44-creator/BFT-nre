@@ -20,6 +20,7 @@ import {
   validateDepositAmount,
   createCryptomusInvoiceObject,
 } from '../utils/cryptomusEngine';
+import { CRYPTOMUS_CONFIG } from '../config/cryptomus';
 
 interface CryptomusDepositModalProps {
   isOpen: boolean;
@@ -338,11 +339,19 @@ export const CryptomusDepositModal: React.FC<CryptomusDepositModalProps> = ({
             <Wallet className="w-6 h-6" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="text-[10px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded-full bg-[#00e676]/15 text-[#00e676] border border-[#00e676]/40 font-mono">
                 CRYPTOMUS AUTOMATED GATEWAY
               </span>
               <span className="text-[10px] font-mono text-slate-400">USDT • TRC-20</span>
+              <span
+                data-testid="cryptomus-merchant-badge"
+                title={`Cryptomus Merchant UUID: ${CRYPTOMUS_CONFIG.merchantId}`}
+                className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30 flex items-center gap-1"
+              >
+                <ShieldCheck className="w-3 h-3 text-[#00e676]" />
+                Merchant: {CRYPTOMUS_CONFIG.merchantId.slice(0, 8)}...{CRYPTOMUS_CONFIG.merchantId.slice(-4)}
+              </span>
             </div>
             <h2 className="text-xl sm:text-2xl font-black text-white mt-1">
               Instant USDT (TRC-20) Deposit
@@ -646,6 +655,16 @@ export const CryptomusDepositModal: React.FC<CryptomusDepositModalProps> = ({
                       <span>{copiedField === 'url' ? 'Copied' : 'Copy URL'}</span>
                     </button>
                   </div>
+                </div>
+
+                <div className="flex items-center justify-between text-[10px] text-slate-400 px-1 pt-1 border-t border-[#222736]">
+                  <span className="flex items-center gap-1">
+                    <ShieldCheck className="w-3 h-3 text-[#00e676]" />
+                    Merchant ID:
+                  </span>
+                  <span className="font-mono text-amber-400 font-bold truncate max-w-[200px]" title={CRYPTOMUS_CONFIG.merchantId}>
+                    {CRYPTOMUS_CONFIG.merchantId}
+                  </span>
                 </div>
               </div>
             </div>

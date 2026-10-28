@@ -121,3 +121,16 @@ test('processCryptomusWebhookPayload credits exact USDT amount on paid status an
   assert.equal(duplicateResult.alreadyCompleted, true);
   assert.equal(duplicateResult.creditedAmountUsdt, 0);
 });
+
+test('createCryptomusInvoiceObject attaches Merchant ID 9b16fe05-6331-49c0-a1be-d574726df832', async () => {
+  const { CRYPTOMUS_CONFIG } = await import('../config/cryptomus');
+  assert.equal(CRYPTOMUS_CONFIG.merchantId, '9b16fe05-6331-49c0-a1be-d574726df832');
+  assert.equal(CRYPTOMUS_CONFIG.domainVerificationTag, '9b16fe05');
+
+  const invoice = createCryptomusInvoiceObject({
+    amount: 100,
+    accountId: 'BFT-91823',
+  });
+  assert.equal(invoice.merchantId, '9b16fe05-6331-49c0-a1be-d574726df832');
+  assert.ok(invoice.paymentUrl.startsWith('https://pay.cryptomus.com/pay/'));
+});

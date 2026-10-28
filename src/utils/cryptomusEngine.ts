@@ -24,6 +24,7 @@ export interface CryptomusDepositInvoice {
   completedAt?: number;
   isLiveApi: boolean;
   errorMessage?: string;
+  merchantId?: string;
 }
 
 export interface CryptomusWebhookPayload {
@@ -238,6 +239,7 @@ export function createCryptomusInvoiceObject(params: {
   address?: string;
   paymentUrl?: string;
   isLiveApi?: boolean;
+  merchantId?: string;
   nowMs?: number;
 }): CryptomusDepositInvoice {
   const now = params.nowMs ?? Date.now();
@@ -269,6 +271,7 @@ export function createCryptomusInvoiceObject(params: {
     createdAt: now,
     expiresAt: now + 3600 * 1000, // 60-minute invoice validity window
     isLiveApi: Boolean(params.isLiveApi),
+    merchantId: params.merchantId || '9b16fe05-6331-49c0-a1be-d574726df832',
   };
 }
 

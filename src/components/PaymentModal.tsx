@@ -15,6 +15,7 @@ import {
 import { EvaluationPackage, TradingAccount, PromoCodeType } from '../types';
 import { generateAccountCredentials, calculateDiscountedPrice } from '../utils/propRules';
 import { getStoredReferralCode } from '../utils/affiliateEngine';
+import { CRYPTOMUS_CONFIG } from '../config/cryptomus';
 
 interface PaymentModalProps {
   packageToBuy: EvaluationPackage | null;
@@ -154,9 +155,17 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                 <Zap className="w-6 h-6 fill-[#ff8800]" />
               </div>
               <div>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-[#ffaa00] bg-[#ff8800]/15 border border-[#ff8800]/30 px-2 py-0.5 rounded-full font-mono">
-                  TRC-20 USDT Instant Checkout
-                </span>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-[#ffaa00] bg-[#ff8800]/15 border border-[#ff8800]/30 px-2 py-0.5 rounded-full font-mono">
+                    CRYPTOMUS GATEWAY • TRC-20
+                  </span>
+                  <span
+                    title={`Cryptomus Merchant UUID: ${CRYPTOMUS_CONFIG.merchantId}`}
+                    className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30"
+                  >
+                    Merchant: {CRYPTOMUS_CONFIG.merchantId.slice(0, 8)}...{CRYPTOMUS_CONFIG.merchantId.slice(-4)}
+                  </span>
+                </div>
                 <h3 className="text-xl font-black text-white mt-1">Activate Funded Evaluation</h3>
               </div>
             </div>
@@ -289,7 +298,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
 
               <div className="w-full text-center">
                 <span className="text-[10px] uppercase text-slate-400 font-semibold tracking-wider block mb-1 font-mono">
-                  Official TRC-20 Depository Address
+                  Cryptomus TRC-20 Depository Address (Merchant: {CRYPTOMUS_CONFIG.merchantId.slice(0, 8)}...)
                 </span>
                 <div className="flex items-center justify-between gap-2 p-2 rounded-lg bg-[#141418] border border-white/15 font-mono text-xs text-slate-200">
                   <span className="truncate">{trc20Address}</span>

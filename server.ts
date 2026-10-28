@@ -1,23 +1,32 @@
 import express from 'express';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
-import {
+import type {
   CryptomusDepositInvoice,
   CryptomusWebhookPayload,
+} from './src/utils/cryptomusEngine.ts';
+import {
   computeCryptomusSign,
   validateDepositAmount,
   createCryptomusInvoiceObject,
   processCryptomusWebhookPayload,
-} from './src/utils/cryptomusEngine';
+} from './src/utils/cryptomusEngine.ts';
+import { CRYPTOMUS_CONFIG } from './src/config/cryptomus.ts';
 
-dotenv.config();
+dotenv.config({ override: true });
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT) || 3000;
-const CRYPTOMUS_MERCHANT_ID = process.env.CRYPTOMUS_MERCHANT_ID || '';
+const CRYPTOMUS_MERCHANT_ID =
+  process.env.CRYPTOMUS_MERCHANT_ID &&
+  process.env.CRYPTOMUS_MERCHANT_ID !== 'MY_CRYPTOMUS_MERCHANT_ID' &&
+  process.env.CRYPTOMUS_MERCHANT_ID !== 'T9ZCjY8LZET78sG3rpNB5DxmreQhDSx9ZC'
+    ? process.env.CRYPTOMUS_MERCHANT_ID
+    : CRYPTOMUS_CONFIG.merchantId;
 const CRYPTOMUS_API_KEY =
   process.env.CRYPTOMUS_API_KEY || 'bft_cryptomus_webhook_signing_key_v1';
 const APP_URL = process.env.APP_URL || `http://localhost:${PORT}`;
@@ -48,6 +57,11 @@ async function startServer() {
   const app = express();
 
   app.use(express.json({ limit: '1mb' }));
+
+  // Deployment Health Check endpoints
+  app.get(['/healthz', '/api/health'], (_req, res) => {
+    res.status(200).json({ status: 'ok', uptime: process.uptime(), timestamp: Date.now() });
+  });
 
   // Ensure explicit MIME types on static assets to prevent 'application/octet-stream' deployment errors
   const setExplicitMimeHeaders = (res: express.Response, filePath: string) => {
@@ -141,6 +155,7 @@ async function startServer() {
                 address: data.result.address,
                 paymentUrl: data.result.url,
                 isLiveApi: true,
+                merchantId: CRYPTOMUS_MERCHANT_ID,
               });
               invoicesByUuid.set(liveInvoice.uuid, liveInvoice);
               invoicesByOrderId.set(liveInvoice.orderId, liveInvoice);
@@ -159,6 +174,7 @@ async function startServer() {
         userId,
         orderId,
         isLiveApi: false,
+        merchantId: CRYPTOMUS_MERCHANT_ID,
       });
 
       invoicesByUuid.set(invoice.uuid, invoice);
@@ -196,7 +212,24 @@ async function startServer() {
   });
 
   // ============================================================================
-  // 3. GET /api/cryptomus/invoices
+  // 3. GET /api/cryptomus/config
+  // Returns active Cryptomus Gateway merchant configuration
+  // ============================================================================
+  app.get('/api/cryptomus/config', (_req, res) => {
+    return res.json({
+      ok: true,
+      merchantId: CRYPTOMUS_MERCHANT_ID,
+      currency: 'USDT',
+      network: 'tron',
+      networkLabel: 'TRC-20 (TRON Network)',
+      domainVerificationTag: '9b16fe05',
+      minDepositUsdt: 10,
+      maxDepositUsdt: 100000,
+    });
+  });
+
+  // ============================================================================
+  // 4. GET /api/cryptomus/invoices
   // Lists all Cryptomus deposit invoices (optionally filtered by accountId)
   // ============================================================================
   app.get('/api/cryptomus/invoices', (req, res) => {
@@ -345,7 +378,14 @@ async function startServer() {
   // ============================================================================
   // Vite Middleware (Development) vs Built Static Assets (Production)
   // ============================================================================
-  if (process.env.NODE_ENV !== 'production') {
+  const distPath = path.resolve(__dirname, 'dist');
+  const hasDist = fs.existsSync(path.join(distPath, 'index.html'));
+  const isDev =
+    (process.env.NODE_ENV === 'development' || !process.env.NODE_ENV) &&
+    process.env.npm_lifecycle_event === 'dev';
+  const isProduction = !isDev && (process.env.NODE_ENV === 'production' || hasDist);
+
+  if (!isProduction) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -353,7 +393,6 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.resolve(__dirname, 'dist');
     app.use(
       express.static(distPath, {
         setHeaders: (res, filePath) => {
@@ -367,8 +406,16 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`BFT Server & Cryptomus Gateway running on http://0.0.0.0:${PORT}`);
+  const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`BFT Server & Cryptomus Gateway running on http://0.0.0.0:${PORT} (mode: ${isProduction ? 'production' : 'development'})`);
+  });
+
+  process.on('SIGTERM', () => {
+    console.log('SIGTERM received, closing HTTP server gracefully...');
+    server.close(() => {
+      console.log('HTTP server closed.');
+      process.exit(0);
+    });
   });
 }
 
