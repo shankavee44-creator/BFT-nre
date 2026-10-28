@@ -112,6 +112,7 @@ export const CryptomusDepositModal: React.FC<CryptomusDepositModalProps> = ({
   const [invoiceHistory, setInvoiceHistory] = useState<CryptomusDepositInvoice[]>([]);
   const [copiedField, setCopiedField] = useState<'address' | 'url' | 'uuid' | null>(null);
   const [remainingSeconds, setRemainingSeconds] = useState<number>(3600);
+  const [depositSlipFile, setDepositSlipFile] = useState<File | null>(null);
 
   const creditedUuidsRef = useRef<Set<string>>(new Set());
 
@@ -208,8 +209,6 @@ export const CryptomusDepositModal: React.FC<CryptomusDepositModalProps> = ({
     setCopiedField(field);
     setTimeout(() => setCopiedField(null), 2000);
   };
-
-  const [depositSlipFile, setDepositSlipFile] = useState<File | null>(null);
 
   // Step 1 -> Step 2: Call POST /api/cryptomus/create-invoice and record deposit in Supabase
   const handleCreateInvoice = async (e: React.FormEvent) => {

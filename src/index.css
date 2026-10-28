@@ -290,3 +290,42 @@ button:active:not(:disabled),
     animation: bftCrossFadeLayer2Mobile 14s ease-in-out infinite;
   }
 }
+
+/* Pricing Tiers Section Background Animation */
+@keyframes pricingBgCrossFade1 {
+  0%, 45% {
+    opacity: 0.45;
+    transform: scale(1.02) translate(0px, 0px);
+  }
+  55%, 95% {
+    opacity: 0.08;
+    transform: scale(1.08) translate(-10px, -5px);
+  }
+  100% {
+    opacity: 0.45;
+    transform: scale(1.02) translate(0px, 0px);
+  }
+}
+
+@keyframes pricingBgCrossFade2 {
+  0%, 45% {
+    opacity: 0.08;
+    transform: scale(1.08) translate(10px, 5px);
+  }
+  55%, 95% {
+    opacity: 0.45;
+    transform: scale(1.02) translate(0px, 0px);
+  }
+  100% {
+    opacity: 0.08;
+    transform: scale(1.08) translate(10px, 5px);
+  }
+}
+
+.animate-pricing-bg-1 {
+  animation: pricingBgCrossFade1 18s ease-in-out infinite;
+}
+
+.animate-pricing-bg-2 {
+  animation: pricingBgCrossFade2 18s ease-in-out infinite;
+}

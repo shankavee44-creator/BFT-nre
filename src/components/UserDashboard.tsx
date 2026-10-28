@@ -140,6 +140,17 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   const [frontFileName, setFrontFileName] = useState<string>('');
   const [backFileName, setBackFileName] = useState<string>('');
 
+  // Mobile Step Progression State for Mobile Viewports
+  const [kycMobileStep, setKycMobileStep] = useState<1 | 2>(() => {
+    return userProfile.profileLocked ? 2 : 1;
+  });
+
+  useEffect(() => {
+    if (userProfile.profileLocked) {
+      setKycMobileStep(2);
+    }
+  }, [userProfile.profileLocked]);
+
   // Live Supabase state for Deposits & Withdrawals Ledger
   const [supabaseDeposits, setSupabaseDeposits] = useState<any[]>([]);
   const [supabaseWithdrawals, setSupabaseWithdrawals] = useState<any[]>([]);
@@ -343,10 +354,17 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
     setExtractedDocName(result.updatedProfile.fullName);
     setExtractedDocDob(result.updatedProfile.dateOfBirth || '');
+    setKycMobileStep(2);
     setProfileSaveMessage(
       'Personal details (Full Name, Address, Date of Birth, Country) saved and permanently locked! You may now upload your KYC identification documents.'
     );
     soundEngine.playTradeWin();
+    setTimeout(() => {
+      const step2El = document.getElementById('kyc-step2-container');
+      if (step2El) {
+        step2El.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }, 120);
   };
 
   const handleKycSubmit = async (e: React.FormEvent) => {
@@ -1168,9 +1186,44 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
       {/* Tab 2: Strict 2-Step KYC Verification & Profile Lock */}
       {activeTab === 'kyc' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Step 1 Column (5 cols): Personal Profile Details & Permanent Lock */}
-          <div className="lg:col-span-5 p-6 rounded-3xl bg-[#0a0a0a] border border-[#ff8800]/40 flex flex-col justify-between">
+        <div className="space-y-4">
+          {/* Mobile Responsive Stepper Tabs (< 1024px) */}
+          <div className="lg:hidden p-1 rounded-2xl bg-[#141418] border border-white/10 flex font-mono text-xs shadow-lg">
+            <button
+              type="button"
+              data-testid="kyc-mobile-step1-btn"
+              onClick={() => setKycMobileStep(1)}
+              className={`flex-1 py-3 px-3 rounded-xl font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer min-h-[44px] ${
+                kycMobileStep === 1
+                  ? 'bg-[#ff8800] text-slate-950 font-black'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <span>1. Personal Details</span>
+              {isProfileLocked && <Check className="w-3.5 h-3.5 text-emerald-950" />}
+            </button>
+            <button
+              type="button"
+              data-testid="kyc-mobile-step2-btn"
+              onClick={() => {
+                if (isProfileLocked) setKycMobileStep(2);
+              }}
+              className={`flex-1 py-3 px-3 rounded-xl font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer min-h-[44px] ${
+                kycMobileStep === 2
+                  ? 'bg-[#ff8800] text-slate-950 font-black'
+                  : isProfileLocked
+                  ? 'text-slate-300 hover:text-white'
+                  : 'text-slate-600 cursor-not-allowed'
+              }`}
+            >
+              <span>2. Upload Document</span>
+              {!isProfileLocked && <Lock className="w-3.5 h-3.5" />}
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            {/* Step 1 Column (5 cols): Personal Profile Details & Permanent Lock */}
+            <div className={`lg:col-span-5 p-5 sm:p-6 rounded-3xl bg-[#0a0a0a] border border-[#ff8800]/40 flex flex-col justify-between ${kycMobileStep === 2 ? 'hidden lg:flex' : 'flex'}`}>
             <div>
               <div className="flex items-center justify-between mb-4">
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#ff8800]/15 border border-[#ff8800]/40 text-[#ff8800] text-xs font-mono font-black uppercase">
@@ -1352,7 +1405,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           </div>
 
           {/* Step 2 Column (7 cols): Document Upload & 2-Minute Automated Verification */}
-          <div className="lg:col-span-7 p-6 rounded-3xl bg-[#0a0a0a] border border-[#ff8800]/40">
+          <div id="kyc-step2-container" className={`lg:col-span-7 p-5 sm:p-6 rounded-3xl bg-[#0a0a0a] border border-[#ff8800]/40 ${kycMobileStep === 1 && !isProfileLocked ? 'hidden lg:block' : 'block'}`}>
             <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
               <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#ff8800]/15 border border-[#ff8800]/40 text-[#ff8800] text-xs font-mono font-black uppercase">
                 Step 2 of 2 • Document Upload & Auto-Verification
@@ -1580,19 +1633,18 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                               }
                             }}
                           />
-                          <label htmlFor="kyc-file-front" className="cursor-pointer block">
-                            <span
-                              data-testid="kyc-front-filename"
-                              className="text-xs font-bold text-white block font-mono"
-                            >
-                              {frontFileName
-                                ? `Front: ${frontFileName}`
-                                : `Click to select Front Side image`}
-                            </span>
-                            <span className="text-[10px] text-slate-500 block mt-1 font-mono">
-                              Photo page / Front ID view
+                          <label
+                            htmlFor="kyc-file-front"
+                            className="cursor-pointer mt-1 px-4 py-3 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] active:scale-[0.98] text-slate-950 font-black text-xs font-mono uppercase tracking-wider transition-all shadow-md min-h-[44px] flex items-center justify-center gap-2"
+                          >
+                            <Camera className="w-4 h-4 shrink-0" />
+                            <span data-testid="kyc-front-filename" className="truncate">
+                              {frontFileName ? `✓ ${frontFileName.slice(0, 16)}...` : 'Select Front Photo / Camera'}
                             </span>
                           </label>
+                          <span className="text-[10px] text-slate-400 block mt-2 font-mono">
+                            Photo ID page / Front side view
+                          </span>
                         </div>
                       </div>
 
@@ -1616,21 +1668,22 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                               }
                             }}
                           />
-                          <label htmlFor="kyc-file-back" className="cursor-pointer block">
-                            <span
-                              data-testid="kyc-back-filename"
-                              className="text-xs font-bold text-white block font-mono"
-                            >
+                          <label
+                            htmlFor="kyc-file-back"
+                            className="cursor-pointer mt-1 px-4 py-3 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] active:scale-[0.98] text-slate-950 font-black text-xs font-mono uppercase tracking-wider transition-all shadow-md min-h-[44px] flex items-center justify-center gap-2"
+                          >
+                            <Camera className="w-4 h-4 shrink-0" />
+                            <span data-testid="kyc-back-filename" className="truncate">
                               {backFileName
-                                ? `Back: ${backFileName}`
+                                ? `✓ ${backFileName.slice(0, 16)}...`
                                 : docType === 'Passport'
-                                ? `Passport Back Page (Optional)`
-                                : `Click to select Back Side image`}
-                            </span>
-                            <span className="text-[10px] text-slate-500 block mt-1 font-mono">
-                              Reverse side / barcode view
+                                ? 'Passport Back Page (Optional)'
+                                : 'Select Back Photo / Camera'}
                             </span>
                           </label>
+                          <span className="text-[10px] text-slate-400 block mt-2 font-mono">
+                            Reverse side / barcode view
+                          </span>
                         </div>
                       </div>
                     </div>
@@ -1648,7 +1701,8 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             )}
           </div>
         </div>
-      )}
+      </div>
+    )}
 
       {/* Tab 3: Profile Settings & Immutable Personal Details */}
       {activeTab === 'profile' && (
