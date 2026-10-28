@@ -50,8 +50,8 @@ import {
   AffiliatePayout,
   KYCDocumentType,
 } from '../types';
-import { exportTradesToCSV, generateSample30DayTrades } from '../utils/csvExport';
-import { BUILTIN_AVATARS } from '../utils/storage';
+import { exportTradesToCSV } from '../utils/csvExport';
+import { BUILTIN_AVATARS, SUPPORTED_COUNTRIES, getFlagForCountry } from '../utils/storage';
 import { soundEngine } from '../utils/soundEffects';
 import { AffiliateDashboard } from './AffiliateDashboard';
 import {
@@ -62,7 +62,8 @@ import {
   KYC_WITHDRAWAL_LOCK_MESSAGE,
   KYC_VERIFICATION_DURATION_SECONDS,
 } from '../utils/kycVerification';
-import { apiLockProfile, apiSubmitKyc } from '../utils/apiClient';
+import { isLiveFundedAccount, getChallengeProfitTarget } from '../utils/propRules';
+import { apiLockProfile, apiSubmitKyc, apiUpdateProfile } from '../utils/apiClient';
 
 interface UserDashboardProps {
   userProfile: UserProfile;
@@ -207,6 +208,27 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     setProfileErrorMessage(null);
     setProfileSaveMessage(null);
 
+    // If profile is already locked, still allow updating Country and Telegram preferences
+    if (userProfile.profileLocked) {
+      const updatedProfile: UserProfile = {
+        ...userProfile,
+        country,
+        telegramHandle,
+      };
+      try {
+        await apiUpdateProfile({
+          country,
+          telegramHandle,
+        });
+      } catch {
+        // Fallback to local update
+      }
+      onUpdateProfile(updatedProfile);
+      setProfileSaveMessage('Country of Residence and contact preferences updated.');
+      soundEngine.playTradeWin();
+      return;
+    }
+
     const result = validateAndLockProfileDetails(userProfile, {
       fullName,
       address,
@@ -236,6 +258,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           fullName: apiRes.user.fullName,
           address: apiRes.user.address,
           dateOfBirth: apiRes.user.dateOfBirth,
+          country: apiRes.user.country || country,
         });
       } else {
         onUpdateProfile(result.updatedProfile);
@@ -247,7 +270,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     setExtractedDocName(result.updatedProfile.fullName);
     setExtractedDocDob(result.updatedProfile.dateOfBirth || '');
     setProfileSaveMessage(
-      'Personal details (Full Name, Address, Date of Birth) saved and permanently locked! You may now upload your KYC identification document.'
+      'Personal details (Full Name, Address, Date of Birth, Country) saved and permanently locked! You may now upload your KYC identification document.'
     );
     soundEngine.playTradeWin();
   };
@@ -331,33 +354,50 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     exportTradesToCSV(trades, accId);
   };
 
-  const effectiveTrades =
-    trades.length > 0 ? trades : generateSample30DayTrades(accounts[0]?.id || 'BFT-91823');
+  // Only use real trades executed by the user (zero mock/dummy fallback data for new accounts)
+  const effectiveTrades = trades;
   const wonTradesCount = effectiveTrades.filter((t) => t.status === 'won').length;
   const lostTradesCount = effectiveTrades.filter((t) => t.status === 'lost').length;
-  const totalSettled = wonTradesCount + lostTradesCount || 1;
-  const winRatePercent = Number(((wonTradesCount / totalSettled) * 100).toFixed(1));
+  const totalSettled = wonTradesCount + lostTradesCount;
+  const winRatePercent = totalSettled > 0 ? Number(((wonTradesCount / totalSettled) * 100).toFixed(1)) : 0;
 
-  const winLossPieData = [
-    { name: 'Wins (ITM)', value: wonTradesCount, color: '#00e676' },
-    { name: 'Losses (OTM)', value: lostTradesCount, color: '#ff334b' },
-  ];
+  const winLossPieData =
+    totalSettled > 0
+      ? [
+          { name: 'Wins (ITM)', value: wonTradesCount, color: '#00e676' },
+          { name: 'Losses (OTM)', value: lostTradesCount, color: '#ff334b' },
+        ]
+      : [{ name: 'No Trades Yet', value: 1, color: '#262b38' }];
 
-  const profitTrajectoryData = Array.from({ length: 30 }).map((_, idx) => {
-    const day = idx + 1;
-    const progress = day / 30;
-    const basePnl = Math.round(Math.sin(progress * Math.PI * 1.5) * 650 + progress * 2400);
-    return {
-      day: `Oct ${day}`,
-      profit: Math.max(0, basePnl),
-    };
-  });
+  const profitTrajectoryData =
+    effectiveTrades.length > 0
+      ? effectiveTrades.slice(-30).map((t, idx) => ({
+          day: `Trade ${idx + 1}`,
+          profit: Number((t.pnl || 0).toFixed(2)),
+        }))
+      : [{ day: 'Start', profit: 0 }];
 
   const durationStats = [
-    { duration: '30s', trades: 14, winRate: 71.4 },
-    { duration: '60s', trades: 28, winRate: 75.0 },
-    { duration: '3m', trades: 8, winRate: 62.5 },
-    { duration: '5m', trades: 5, winRate: 80.0 },
+    {
+      duration: '30s',
+      trades: effectiveTrades.filter((t) => t.durationSeconds <= 30).length,
+      winRate: 0,
+    },
+    {
+      duration: '60s',
+      trades: effectiveTrades.filter((t) => t.durationSeconds > 30 && t.durationSeconds <= 60).length,
+      winRate: 0,
+    },
+    {
+      duration: '3m',
+      trades: effectiveTrades.filter((t) => t.durationSeconds > 60 && t.durationSeconds <= 180).length,
+      winRate: 0,
+    },
+    {
+      duration: '5m',
+      trades: effectiveTrades.filter((t) => t.durationSeconds > 180).length,
+      winRate: 0,
+    },
   ];
 
   const isProfileLocked = Boolean(userProfile.profileLocked);
@@ -422,8 +462,10 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               </div>
               <p className="text-xs text-slate-400 mt-1 font-mono">{userProfile.email}</p>
               <div className="flex flex-wrap items-center justify-center sm:justify-start gap-3 mt-3 text-xs text-slate-300">
-                <span className="flex items-center gap-1 font-mono">
-                  <Globe className="w-3.5 h-3.5 text-slate-400" /> {userProfile.country || 'Unset'}
+                <span data-testid="profile-header-country" className="flex items-center gap-1.5 font-mono">
+                  <Globe className="w-3.5 h-3.5 text-[#ff8800]" />
+                  <span>{getFlagForCountry(userProfile.country)}</span>
+                  <span>{userProfile.country || 'United States'}</span>
                 </span>
                 {userProfile.dateOfBirth && (
                   <span className="flex items-center gap-1 font-mono text-slate-300">
@@ -654,6 +696,11 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {accounts.map((acc) => {
                 const profit = Number((acc.currentBalance - acc.initialBalance).toFixed(2));
+                const isLive = isLiveFundedAccount(acc);
+                const challengeTarget = getChallengeProfitTarget(acc);
+                const progressPct = challengeTarget.isChallenge
+                  ? Math.min(100, Math.max(0, (Math.max(0, profit) / Math.max(1, challengeTarget.targetAmount)) * 100))
+                  : 100;
 
                 return (
                   <div
@@ -670,16 +717,22 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                     <div className="flex items-center justify-between mb-3">
                       <div className="flex items-center gap-2">
                         <span className="text-base font-black text-white font-mono">{acc.id}</span>
-                        <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-[#ff8800]/15 text-[#ff8800] border border-[#ff8800]/30 font-mono">
-                          {acc.tierName} ({acc.phase.toUpperCase()})
+                        <span
+                          className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded font-mono border ${
+                            isLive
+                              ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40'
+                              : 'bg-[#ff8800]/15 text-[#ff8800] border-[#ff8800]/30'
+                          }`}
+                        >
+                          {isLive ? 'LIVE FUNDED' : `CHALLENGE (${acc.phase.toUpperCase()})`}
                         </span>
                       </div>
                       <span
                         className={`text-xs font-semibold px-2.5 py-0.5 rounded-full font-mono ${
                           acc.status === 'hard-breached' || acc.status === 'breached'
                             ? 'bg-rose-950/80 text-rose-300 border border-rose-500/50'
-                            : acc.status === 'soft-breached'
-                            ? 'bg-amber-950/80 text-amber-300 border border-amber-500/50'
+                            : acc.status === 'passed'
+                            ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-500/50'
                             : 'bg-emerald-950/60 text-emerald-400 border border-emerald-500/30'
                         }`}
                       >
@@ -692,7 +745,40 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                         <span className="text-emerald-300 flex items-center gap-1.5 font-bold">
                           <Award className="w-4 h-4 text-[#ff8800]" /> Certificate: {acc.certificateId}
                         </span>
-                        <span className="text-[10px] text-slate-300">Phase Locked & Deployed</span>
+                        <span className="text-[10px] text-slate-300">Live Account Provisioned</span>
+                      </div>
+                    )}
+
+                    {/* Challenge Profit Target Progress Bar for One-Step & Two-Step Challenge Accounts */}
+                    {!isLive && acc.status === 'active' && (
+                      <div className="mb-3 p-3 rounded-xl bg-[#111115] border border-[#ff8800]/30 font-mono text-xs">
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-[10px] uppercase font-bold text-[#ff8800]">
+                            Challenge Profit Target ({challengeTarget.targetPercent}%)
+                          </span>
+                          <span className="text-[11px] font-black text-white">
+                            ${Math.max(0, profit).toFixed(2)} / ${challengeTarget.targetAmount.toLocaleString()}
+                          </span>
+                        </div>
+                        <div className="w-full h-2 rounded-full bg-[#0a0a0a] overflow-hidden border border-white/10">
+                          <div
+                            className="h-full bg-[#ff8800] transition-all duration-300"
+                            style={{ width: `${progressPct}%` }}
+                          />
+                        </div>
+                        <div className="flex items-center justify-between mt-1.5 text-[10px] text-slate-400">
+                          <span>Withdrawals unlock after passing challenge</span>
+                          {profit >= challengeTarget.targetAmount && onPassChallengePhase && (
+                            <button
+                              type="button"
+                              data-testid={`claim-live-account-btn-${acc.id}`}
+                              onClick={() => onPassChallengePhase(acc)}
+                              className="px-2 py-0.5 rounded bg-emerald-500 text-slate-950 font-black uppercase cursor-pointer"
+                            >
+                              Claim Certificate & Live Account →
+                            </button>
+                          )}
+                        </div>
                       </div>
                     )}
 
@@ -715,9 +801,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                       </div>
                       <div>
                         <span className="text-[10px] text-slate-400 block uppercase">Split</span>
-                        <span className="font-bold text-emerald-400">
-                          {(acc.monthsCompleted || 1) >= 3 ? '90%' : '80%'}
-                        </span>
+                        <span className="font-bold text-emerald-400">80%</span>
                       </div>
                     </div>
 
@@ -775,23 +859,34 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                             <ArrowRight className="w-3.5 h-3.5 stroke-[2.5]" />
                           </button>
 
-                          <button
-                            type="button"
-                            data-testid={`withdraw-account-btn-${acc.id}`}
-                            onClick={() => handleAttemptWithdrawal(acc.id)}
-                            className={`px-3.5 py-2.5 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 cursor-pointer font-mono border ${
-                              kycWithdrawalCheck.allowed
-                                ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400 hover:bg-emerald-500/30'
-                                : 'bg-[#141418] border-white/15 text-slate-400 hover:text-white'
-                            }`}
-                          >
-                            {kycWithdrawalCheck.allowed ? (
-                              <Zap className="w-3.5 h-3.5" />
-                            ) : (
+                          {isLive ? (
+                            <button
+                              type="button"
+                              data-testid={`withdraw-account-btn-${acc.id}`}
+                              onClick={() => handleAttemptWithdrawal(acc.id)}
+                              className={`px-3.5 py-2.5 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 cursor-pointer font-mono border ${
+                                kycWithdrawalCheck.allowed
+                                  ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400 hover:bg-emerald-500/30'
+                                  : 'bg-[#141418] border-white/15 text-slate-400 hover:text-white'
+                              }`}
+                            >
+                              {kycWithdrawalCheck.allowed ? (
+                                <Zap className="w-3.5 h-3.5" />
+                              ) : (
+                                <Lock className="w-3.5 h-3.5 text-[#ff8800]" />
+                              )}
+                              <span>Withdraw</span>
+                            </button>
+                          ) : (
+                            <div
+                              data-testid={`withdraw-locked-challenge-${acc.id}`}
+                              title="Challenge accounts cannot withdraw funds until the profit target is reached and the Live Funded Account is provisioned."
+                              className="px-3 py-2.5 rounded-xl bg-[#141418] border border-white/10 text-slate-400 font-mono text-[11px] font-bold flex items-center gap-1.5 select-none"
+                            >
                               <Lock className="w-3.5 h-3.5 text-[#ff8800]" />
-                            )}
-                            <span>Withdraw</span>
-                          </button>
+                              <span>Challenge Phase (No Withdrawals)</span>
+                            </div>
+                          )}
                         </>
                       )}
                     </div>
@@ -940,6 +1035,28 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                       }`}
                     />
                   </div>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="kyc-country-select"
+                    className="flex items-center justify-between text-xs font-mono text-slate-300 mb-1.5"
+                  >
+                    <span>Country of Residence (National Flag) *</span>
+                  </label>
+                  <select
+                    id="kyc-country-select"
+                    data-testid="kyc-country-select"
+                    value={country}
+                    onChange={(e) => setCountry(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-[#111115] border border-white/20 text-white text-xs font-mono focus:outline-none focus:border-[#ff8800]"
+                  >
+                    {SUPPORTED_COUNTRIES.map((c) => (
+                      <option key={c.code} value={c.name}>
+                        {c.flag} {c.name}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 {!isProfileLocked ? (
@@ -1387,13 +1504,22 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-mono text-slate-300 mb-1">Country of Residence</label>
-                <input
-                  type="text"
+                <label htmlFor="profile-country-select" className="block text-xs font-mono text-slate-300 mb-1">
+                  Country of Residence (Leaderboard Flag)
+                </label>
+                <select
+                  id="profile-country-select"
+                  data-testid="profile-country-select"
                   value={country}
                   onChange={(e) => setCountry(e.target.value)}
                   className="w-full px-3.5 py-2.5 rounded-xl bg-[#111115] border border-white/15 text-white text-xs font-mono focus:outline-none focus:border-[#ff8800]"
-                />
+                >
+                  {SUPPORTED_COUNTRIES.map((c) => (
+                    <option key={c.code} value={c.name}>
+                      {c.flag} {c.name}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div>

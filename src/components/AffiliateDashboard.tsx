@@ -67,19 +67,51 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
 
   useEffect(() => {
     let active = true;
-    apiGetAffiliateDashboard()
-      .then((res) => {
-        if (active && res && res.ok && res.stats) {
-          setBackendStats(res.stats);
-        }
-      })
-      .catch(() => {});
+    const fetchStats = () => {
+      apiGetAffiliateDashboard()
+        .then((res) => {
+          if (active && res && res.ok && res.stats) {
+            setBackendStats(res.stats);
+          }
+        })
+        .catch(() => {});
+    };
+    fetchStats();
+    const timer = setInterval(fetchStats, 3000);
     return () => {
       active = false;
+      clearInterval(timer);
     };
   }, [userProfile.id]);
 
-  const rawStats: AffiliateStats = calculateAffiliateStats(userProfile.id, referrals, payouts);
+  // Merge real-time SQLite recentCommissions into ReferralRecord format so the ledger updates live
+  const backendReferralRecords: ReferralRecord[] = Array.isArray(backendStats?.recentCommissions)
+    ? backendStats.recentCommissions.map((c: any) => ({
+        id: c.id,
+        referrerId: userProfile.id,
+        referredUserId: c.from_user_id,
+        referredUserName: c.from_name || 'Referred Trader',
+        referredUserEmail: c.from_email || '',
+        level: (c.tier_level === 2 ? 2 : c.tier_level === 3 ? 3 : 1) as 1 | 2 | 3,
+        packageTier: 'one-step',
+        packageName: c.description || 'Challenge Purchase',
+        packagePrice: Number(c.base_amount || 0),
+        commissionRate: Number(c.percentage || 10) / 100,
+        commissionAmount: Number(c.commission_amount || 0),
+        commissionType: c.commission_type === 'withdrawal_bonus' ? 'withdrawal' : 'package',
+        status: 'credited',
+        timestamp: c.created_at ? new Date(c.created_at).getTime() : Date.now(),
+      }))
+    : [];
+
+  const mergedReferrals: ReferralRecord[] = [
+    ...backendReferralRecords,
+    ...referrals.filter(
+      (r) => !backendReferralRecords.some((b) => b.id === r.id)
+    ),
+  ];
+
+  const rawStats: AffiliateStats = calculateAffiliateStats(userProfile.id, mergedReferrals, payouts);
   const stats: AffiliateStats = backendStats
     ? {
         ...rawStats,
@@ -161,7 +193,7 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
     }, 1000);
   };
 
-  const filteredReferrals = referrals
+  const filteredReferrals = mergedReferrals
     .filter((r) => r.referrerId === userProfile.id)
     .filter((r) => {
       if (filterLevel === 'all') return true;
@@ -275,10 +307,12 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
           </div>
           <div className="text-3xl font-black text-emerald-400 font-mono">
             $
-            {referrals
-              .filter((r) => r.referrerId === userProfile.id && r.commissionType === 'withdrawal')
-              .reduce((s, r) => s + r.commissionAmount, 0)
-              .toFixed(2)}
+            {(
+              backendStats?.levelCommissions?.withdrawalBonus ??
+              mergedReferrals
+                .filter((r) => r.referrerId === userProfile.id && r.commissionType === 'withdrawal')
+                .reduce((s, r) => s + r.commissionAmount, 0)
+            ).toFixed(2)}
           </div>
           <div className="text-[11px] text-slate-400 mt-2">8% earned from direct referrals' withdrawals</div>
         </div>

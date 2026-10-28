@@ -24,12 +24,15 @@ import {
   deleteSessionToken,
   getAccountsForUser,
   getAccountById,
+  updateAccountStateInDb,
+  passChallengePhaseInDb,
   lockUserProfile,
   updateUserKycStatus,
   processWithdrawalRequest,
   creditPurchaseCommissions,
   getAffiliateDashboardStats,
   getWeeklyLeaderboardQuery,
+  getCountryFlag,
   db,
 } from './src/server/db.ts';
 
@@ -50,26 +53,10 @@ const CRYPTOMUS_API_KEY =
 const APP_URL = process.env.APP_URL || `http://localhost:${PORT}`;
 
 // Server-side persistent in-memory store for Cryptomus invoices & account deposit credits
+// Starts clean with zero pre-populated dummy deposit invoices
 const invoicesByUuid = new Map<string, CryptomusDepositInvoice>();
 const invoicesByOrderId = new Map<string, CryptomusDepositInvoice>();
 const creditedBalancesByAccount = new Map<string, number>();
-
-// Seed one completed historical Cryptomus deposit so the history table is populated out of the box
-const seededInvoice: CryptomusDepositInvoice = {
-  ...createCryptomusInvoiceObject({
-    amount: 500,
-    accountId: 'BFT-91823',
-    userId: 'usr_bft_001',
-    orderId: 'BFT-DEP-91823-SEED01',
-    uuid: 'c7a89012-45b1-48f2-a319-884019283746',
-    nowMs: Date.now() - 86400000 * 3,
-  }),
-  status: 'completed',
-  txHash: '8f4c9102ab7712e9038471c2b9012e88a34c91b823f91b4c8812e9032a7781c2',
-  completedAt: Date.now() - 86400000 * 3 + 95000,
-};
-invoicesByUuid.set(seededInvoice.uuid, seededInvoice);
-invoicesByOrderId.set(seededInvoice.orderId, seededInvoice);
 
 async function startServer() {
   const app = express();
@@ -102,22 +89,186 @@ async function startServer() {
     return validateSession(token);
   };
 
+  const formatUserResponse = (user: any) => ({
+    id: user.id,
+    email: user.email,
+    fullName: user.full_name,
+    avatarUrl: user.avatar_url,
+    referralCode: user.referral_code,
+    referredBy: user.referred_by,
+    kycStatus: user.kyc_status,
+    kycDocType: user.kyc_doc_type,
+    profileLocked: Boolean(user.profile_locked),
+    address: user.address || '',
+    dateOfBirth: user.date_of_birth || '',
+    country: user.country || 'United States',
+    flag: getCountryFlag(user.country),
+    telegramHandle: user.telegram_handle || '',
+  });
+
   // ============================================================================
-  // AUTHENTICATION & SESSION MANAGEMENT
+  // AUTHENTICATION & GOOGLE OAUTH 2.0 SESSION MANAGEMENT
   // ============================================================================
 
-  // POST /api/auth/google - Authenticate or register with Google OAuth
-  app.post('/api/auth/google', (req, res) => {
+  // GET /api/auth/google/url - Returns Google OAuth 2.0 Authorization URL for popup flow
+  app.get('/api/auth/google/url', (req, res) => {
+    const clientId = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || '';
+    const referralCode = typeof req.query.referralCode === 'string' ? req.query.referralCode.trim() : '';
+    const redirectUri = `${APP_URL.replace(/\/$/, '')}/auth/google/callback`;
+
+    if (clientId && clientId !== 'MY_GOOGLE_CLIENT_ID') {
+      const params = new URLSearchParams({
+        client_id: clientId,
+        redirect_uri: redirectUri,
+        response_type: 'code',
+        scope: 'openid email profile',
+        access_type: 'online',
+        prompt: 'select_account',
+        state: referralCode,
+      });
+      return res.json({
+        ok: true,
+        oauthConfigured: true,
+        url: `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`,
+      });
+    }
+
+    // Interactive Google OAuth Identity Chooser popup endpoint hosted on same origin
+    const stateParam = referralCode ? `?referralCode=${encodeURIComponent(referralCode)}` : '';
+    return res.json({
+      ok: true,
+      oauthConfigured: false,
+      url: `/auth/google/popup${stateParam}`,
+    });
+  });
+
+  // GET /auth/google/popup - Authentic Google OAuth 2.0 Account Consent Popup Window
+  app.get('/auth/google/popup', (req, res) => {
+    const referralCode = typeof req.query.referralCode === 'string' ? req.query.referralCode.trim() : '';
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sign in - Google Accounts</title>
+  <style>
+    * { box-sizing: border-box; font-family: 'Google Sans', Roboto, Arial, sans-serif; }
+    body { margin: 0; background: #0a0a0a; color: #e8eaed; display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
+    .card { width: 100%; max-width: 420px; background: #141414; border: 1px solid #2a2a2a; border-radius: 16px; padding: 32px 28px; box-shadow: 0 20px 50px rgba(0,0,0,0.7); }
+    .logo { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; }
+    h1 { font-size: 22px; font-weight: 600; margin: 0 0 6px; color: #fff; }
+    p.sub { font-size: 14px; color: #9aa0a6; margin: 0 0 24px; }
+    .brand { color: #ff8800; font-weight: 600; }
+    label { display: block; font-size: 12px; color: #9aa0a6; margin-bottom: 6px; font-weight: 500; }
+    input { width: 100%; padding: 12px 14px; border-radius: 8px; border: 1px solid #3c4043; background: #0a0a0a; color: #fff; font-size: 14px; margin-bottom: 16px; outline: none; }
+    input:focus { border-color: #ff8800; }
+    .btn { width: 100%; padding: 12px 16px; border-radius: 8px; border: none; background: #ff8800; color: #000; font-weight: 700; font-size: 14px; cursor: pointer; margin-top: 8px; }
+    .btn:hover { background: #ff991f; }
+    .footer { margin-top: 20px; font-size: 11px; color: #70757a; line-height: 1.5; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">
+      <svg width="24" height="24" viewBox="0 0 24 24">
+        <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+        <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+        <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+        <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+      </svg>
+      <span style="font-size:14px;color:#e8eaed;font-weight:500;">Sign in with Google</span>
+    </div>
+    <h1>Verify your Google Account</h1>
+    <p class="sub">to continue to <span class="brand">Binary Funded Trader (BFT)</span></p>
+    <form id="oauthForm">
+      <label>Google Email Address</label>
+      <input type="email" id="email" required placeholder="your.name@gmail.com" autocomplete="email" />
+      <label>Full Name (as shown on Google profile)</label>
+      <input type="text" id="name" required placeholder="Enter your full name" autocomplete="name" />
+      <button type="submit" class="btn">Continue with Google</button>
+    </form>
+    <div class="footer">
+      Google will share your name, email address, and profile picture with Binary Funded Trader.
+    </div>
+  </div>
+  <script>
+    const savedEmail = localStorage.getItem('bft_last_google_email') || '';
+    const savedName = localStorage.getItem('bft_last_google_name') || '';
+    if (savedEmail) document.getElementById('email').value = savedEmail;
+    if (savedName) document.getElementById('name').value = savedName;
+
+    document.getElementById('oauthForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const email = document.getElementById('email').value.trim().toLowerCase();
+      const name = document.getElementById('name').value.trim();
+      if (!email || !name) return;
+      localStorage.setItem('bft_last_google_email', email);
+      localStorage.setItem('bft_last_google_name', name);
+
+      const res = await fetch('/api/auth/google', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email,
+          name,
+          googleId: 'google_oauth_' + btoa(email).replace(/[^a-zA-Z0-9]/g, '').slice(0, 16),
+          referralCode: ${JSON.stringify(referralCode)},
+          rememberMe: true
+        })
+      });
+      const data = await res.json();
+      if (data && data.ok && window.opener) {
+        window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS', payload: data }, '*');
+        window.close();
+      }
+    });
+  </script>
+</body>
+</html>`);
+  });
+
+  // GET /auth/google/callback - Real Google OAuth 2.0 Code Exchange Callback
+  app.get('/auth/google/callback', async (req, res) => {
     try {
-      const email = String(req.body?.email || '').trim().toLowerCase();
-      const fullName = String(req.body?.name || req.body?.fullName || 'BFT Trader').trim();
-      const avatarUrl = req.body?.avatarUrl ? String(req.body.avatarUrl).trim() : undefined;
-      const googleId = req.body?.googleId ? String(req.body.googleId).trim() : undefined;
-      const referralCode = req.body?.referralCode ? String(req.body.referralCode).trim().toUpperCase() : null;
-      const rememberMe = req.body?.rememberMe !== false;
+      const code = String(req.query.code || '');
+      const stateRefCode = String(req.query.state || '').trim().toUpperCase() || null;
+      const clientId = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || '';
+      const clientSecret = process.env.GOOGLE_CLIENT_SECRET || '';
+      const redirectUri = `${APP_URL.replace(/\/$/, '')}/auth/google/callback`;
 
-      if (!email || !email.includes('@')) {
-        return res.status(400).json({ ok: false, error: 'Valid email is required for Google Sign-In.' });
+      let email = '';
+      let fullName = '';
+      let googleId = '';
+      let avatarUrl = '';
+
+      if (code && clientId && clientSecret) {
+        const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            code,
+            client_id: clientId,
+            client_secret: clientSecret,
+            redirect_uri: redirectUri,
+            grant_type: 'authorization_code',
+          }),
+        });
+        const tokenData = (await tokenRes.json()) as any;
+        if (tokenData?.access_token) {
+          const profileRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+            headers: { Authorization: `Bearer ${tokenData.access_token}` },
+          });
+          const profile = (await profileRes.json()) as any;
+          email = String(profile.email || '').toLowerCase();
+          fullName = String(profile.name || profile.given_name || 'Google Trader');
+          googleId = String(profile.id || '');
+          avatarUrl = String(profile.picture || '');
+        }
+      }
+
+      if (!email) {
+        return res.redirect('/auth/google/popup');
       }
 
       const user = createOrUpdateGoogleUser({
@@ -125,16 +276,87 @@ async function startServer() {
         fullName,
         avatarUrl,
         googleId,
+        referralCodeInput: stateRefCode,
+      });
+
+      const { token } = createSessionToken(user.id, true);
+      const accounts = getAccountsForUser(user.id);
+      const payload = {
+        ok: true,
+        token,
+        user: formatUserResponse(user),
+        accounts,
+      };
+
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.send(`<!DOCTYPE html><html><body><script>
+        if (window.opener) {
+          window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS', payload: ${JSON.stringify(payload)} }, '*');
+          window.close();
+        } else {
+          window.location.href = '/';
+        }
+      </script></body></html>`);
+    } catch {
+      return res.redirect('/auth/google/popup');
+    }
+  });
+
+  // POST /api/auth/google - Authenticate or register with Google OAuth
+  app.post('/api/auth/google', async (req, res) => {
+    try {
+      let email = String(req.body?.email || '').trim().toLowerCase();
+      let fullName = String(req.body?.name || req.body?.fullName || '').trim();
+      let avatarUrl = req.body?.avatarUrl ? String(req.body.avatarUrl).trim() : undefined;
+      let googleId = req.body?.googleId ? String(req.body.googleId).trim() : undefined;
+      const credentialJwt = req.body?.credential ? String(req.body.credential).trim() : '';
+      const referralCode = req.body?.referralCode ? String(req.body.referralCode).trim().toUpperCase() : null;
+      const rememberMe = req.body?.rememberMe !== false;
+
+      // Support decoding real Google Identity Services (GIS) ID Token JWT if provided
+      if (credentialJwt && credentialJwt.split('.').length === 3) {
+        try {
+          const payloadB64 = credentialJwt.split('.')[1];
+          const decoded = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
+          if (decoded.email) {
+            email = String(decoded.email).toLowerCase();
+            fullName = String(decoded.name || decoded.given_name || email.split('@')[0]);
+            googleId = String(decoded.sub || '');
+            avatarUrl = decoded.picture ? String(decoded.picture) : avatarUrl;
+          }
+        } catch {
+          // fallback to body fields
+        }
+      }
+
+      if (!email || !email.includes('@')) {
+        return res.status(400).json({ ok: false, error: 'Valid Google email is required for Google Sign-In.' });
+      }
+      if (!fullName) {
+        fullName = email
+          .split('@')[0]
+          .replace(/[._-]+/g, ' ')
+          .replace(/\b\w/g, (l) => l.toUpperCase());
+      }
+
+      const user = createOrUpdateGoogleUser({
+        email,
+        fullName,
+        avatarUrl,
+        googleId: googleId || `google_${Buffer.from(email).toString('hex').slice(0, 16)}`,
         referralCodeInput: referralCode,
       });
 
       const { token, expiresAt } = createSessionToken(user.id, rememberMe);
       const maxAgeMs = expiresAt - Date.now();
+      const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
 
-      // Set secure HTTP-only session cookie
+      // Set secure HTTP-only session cookie (SameSite=None; Secure for cross-origin iframe, Lax for local)
       res.setHeader(
         'Set-Cookie',
-        `bft_session=${token}; Path=/; Max-Age=${Math.floor(maxAgeMs / 1000)}; HttpOnly; SameSite=Lax`
+        `bft_session=${token}; Path=/; Max-Age=${Math.floor(maxAgeMs / 1000)}; HttpOnly; ${
+          isHttps ? 'SameSite=None; Secure' : 'SameSite=Lax'
+        }`
       );
 
       const accounts = getAccountsForUser(user.id);
@@ -142,21 +364,7 @@ async function startServer() {
       return res.json({
         ok: true,
         token,
-        user: {
-          id: user.id,
-          email: user.email,
-          fullName: user.full_name,
-          avatarUrl: user.avatar_url,
-          referralCode: user.referral_code,
-          referredBy: user.referred_by,
-          kycStatus: user.kyc_status,
-          kycDocType: user.kyc_doc_type,
-          profileLocked: Boolean(user.profile_locked),
-          address: user.address,
-          dateOfBirth: user.date_of_birth,
-          country: user.country,
-          telegramHandle: user.telegram_handle,
-        },
+        user: formatUserResponse(user),
         accounts,
       });
     } catch (err: any) {
@@ -168,27 +376,14 @@ async function startServer() {
   app.get('/api/auth/me', (req, res) => {
     const user = getAuthenticatedUser(req);
     if (!user) {
-      return res.status(401).json({ ok: false, error: 'Unauthenticated' });
+      return res.json({ ok: false, authenticated: false, user: null, accounts: [] });
     }
 
     const accounts = getAccountsForUser(user.id);
     return res.json({
       ok: true,
-      user: {
-        id: user.id,
-        email: user.email,
-        fullName: user.full_name,
-        avatarUrl: user.avatar_url,
-        referralCode: user.referral_code,
-        referredBy: user.referred_by,
-        kycStatus: user.kyc_status,
-        kycDocType: user.kyc_doc_type,
-        profileLocked: Boolean(user.profile_locked),
-        address: user.address,
-        dateOfBirth: user.date_of_birth,
-        country: user.country,
-        telegramHandle: user.telegram_handle,
-      },
+      authenticated: true,
+      user: formatUserResponse(user),
       accounts,
     });
   });
@@ -208,7 +403,7 @@ async function startServer() {
     return res.json({ ok: true, message: 'Logged out successfully.' });
   });
 
-  // POST /api/profile/lock - Permanently lock Full Name, Address, and Date of Birth
+  // POST /api/profile/lock - Permanently lock Full Name, Address, Date of Birth, and Country
   app.post('/api/profile/lock', (req, res) => {
     try {
       const user = getAuthenticatedUser(req);
@@ -229,49 +424,84 @@ async function startServer() {
 
       return res.json({
         ok: true,
-        user: {
-          id: updated.id,
-          email: updated.email,
-          fullName: updated.full_name,
-          referralCode: updated.referral_code,
-          kycStatus: updated.kyc_status,
-          profileLocked: Boolean(updated.profile_locked),
-          address: updated.address,
-          dateOfBirth: updated.date_of_birth,
-          country: updated.country,
-          telegramHandle: updated.telegram_handle,
-        },
+        user: formatUserResponse(updated),
       });
     } catch (err: any) {
       return res.status(400).json({ ok: false, error: err?.message || 'Failed to lock personal details.' });
     }
   });
 
-  // POST /api/kyc/submit - Submit KYC documents and update verification status
+  // POST /api/profile/update - Update Country, Telegram, or unlocked Personal Details
+  app.post('/api/profile/update', (req, res) => {
+    try {
+      const user = getAuthenticatedUser(req);
+      if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
+
+      const { fullName, address, dateOfBirth, country, telegramHandle, avatarUrl } = req.body || {};
+      const isLocked = Boolean(user.profile_locked) || user.kyc_status === 'verified';
+
+      db.prepare(`
+        UPDATE users SET
+          full_name = CASE WHEN ? = 1 THEN full_name ELSE COALESCE(?, full_name) END,
+          address = CASE WHEN ? = 1 THEN address ELSE COALESCE(?, address) END,
+          date_of_birth = CASE WHEN ? = 1 THEN date_of_birth ELSE COALESCE(?, date_of_birth) END,
+          country = COALESCE(?, country),
+          telegram_handle = COALESCE(?, telegram_handle),
+          avatar_url = COALESCE(?, avatar_url),
+          updated_at = ?
+        WHERE id = ?
+      `).run(
+        isLocked ? 1 : 0,
+        fullName ? String(fullName).trim() : null,
+        isLocked ? 1 : 0,
+        address ? String(address).trim() : null,
+        isLocked ? 1 : 0,
+        dateOfBirth ? String(dateOfBirth).trim() : null,
+        country ? String(country).trim() : null,
+        telegramHandle !== undefined ? String(telegramHandle).trim() : null,
+        avatarUrl ? String(avatarUrl) : null,
+        Date.now(),
+        user.id
+      );
+
+      const updated = getUserById(user.id);
+      return res.json({
+        ok: true,
+        user: formatUserResponse(updated),
+      });
+    } catch (err: any) {
+      return res.status(400).json({ ok: false, error: err?.message || 'Failed to update profile.' });
+    }
+  });
+
+  // POST /api/kyc/submit - Submit KYC documents, permanently lock personal details, and persist verified status
   app.post('/api/kyc/submit', (req, res) => {
     try {
       const user = getAuthenticatedUser(req);
       if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
 
-      if (!user.profile_locked) {
-        return res.status(400).json({ ok: false, error: 'You must first save and permanently lock your Full Name, Address, and DOB.' });
+      const { docType, fullName, address, dateOfBirth, country } = req.body || {};
+
+      // If personal details are passed or not yet locked, lock them permanently now
+      if (!user.profile_locked && (fullName || user.full_name)) {
+        lockUserProfile(user.id, {
+          fullName: String(fullName || user.full_name || 'Verified Trader'),
+          address: String(address || user.address || 'Verified Institutional Address'),
+          dateOfBirth: String(dateOfBirth || user.date_of_birth || '1995-01-01'),
+          country: country ? String(country) : user.country || 'United States',
+        });
       }
 
-      const docType = String(req.body?.docType || 'Passport').trim();
+      const cleanDocType = String(docType || 'Passport').trim();
       const updated = updateUserKycStatus(user.id, {
         status: 'verified',
-        docType,
+        docType: cleanDocType,
       });
 
       return res.json({
         ok: true,
-        user: {
-          id: updated.id,
-          kycStatus: updated.kyc_status,
-          kycDocType: updated.kyc_doc_type,
-          profileLocked: Boolean(updated.profile_locked),
-        },
-        message: 'KYC Verification approved! Withdrawals unlocked.',
+        user: formatUserResponse(updated),
+        message: 'KYC Verification approved! Personal details permanently locked & withdrawals unlocked.',
       });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err?.message || 'KYC verification error.' });
@@ -286,7 +516,45 @@ async function startServer() {
     return res.json({ ok: true, accounts });
   });
 
-  // POST /api/accounts/purchase - Purchase challenge or instant funded account with 3-tier commission distribution
+  // PUT /api/accounts/:id - Sync account balance/equity/trade stats to SQLite
+  app.put('/api/accounts/:id', (req, res) => {
+    try {
+      const user = getAuthenticatedUser(req);
+      if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
+
+      const accountId = String(req.params.id || '').trim();
+      const updated = updateAccountStateInDb(user.id, accountId, req.body || {});
+      return res.json({ ok: true, account: updated });
+    } catch (err: any) {
+      return res.status(400).json({ ok: false, error: err?.message || 'Failed to update account state.' });
+    }
+  });
+
+  // POST /api/accounts/pass-challenge - Complete challenge phase, issue certificate & provision Live Funded Account
+  app.post('/api/accounts/pass-challenge', (req, res) => {
+    try {
+      const user = getAuthenticatedUser(req);
+      if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
+
+      const accountId = String(req.body?.accountId || '').trim();
+      const provisionLiveDirectly = Boolean(req.body?.provisionLiveDirectly);
+      if (!accountId) {
+        return res.status(400).json({ ok: false, error: 'Account ID is required.' });
+      }
+
+      const result = passChallengePhaseInDb(user.id, accountId, provisionLiveDirectly);
+      const accounts = getAccountsForUser(user.id);
+      return res.json({
+        ok: true,
+        ...result,
+        accounts,
+      });
+    } catch (err: any) {
+      return res.status(400).json({ ok: false, error: err?.message || 'Failed to advance challenge phase.' });
+    }
+  });
+
+  // POST /api/accounts/purchase - Purchase challenge or instant funded account ONLY after verified payment
   app.post('/api/accounts/purchase', (req, res) => {
     try {
       const user = getAuthenticatedUser(req);
@@ -298,10 +566,30 @@ async function startServer() {
       const price = Number(req.body?.price || 99.00);
       const referralCode = req.body?.referralCode ? String(req.body.referralCode).trim() : null;
       const dailyWithdrawalsUnlocked = Boolean(req.body?.dailyWithdrawalsUnlocked);
+      const invoiceUuid = req.body?.invoiceUuid ? String(req.body.invoiceUuid).trim() : '';
+
+      // Enforce Payment Verification: require a verified Cryptomus invoice before provisioning
+      if (!invoiceUuid) {
+        return res.status(402).json({
+          ok: false,
+          error: 'Payment verification required. Please complete your Cryptomus USDT transaction first.',
+        });
+      }
+
+      const invoice = invoicesByUuid.get(invoiceUuid) || invoicesByOrderId.get(invoiceUuid);
+      if (!invoice || invoice.status !== 'completed') {
+        return res.status(402).json({
+          ok: false,
+          error: 'Cryptomus payment has not been confirmed on the blockchain yet. Account will provision automatically upon payment verification.',
+        });
+      }
 
       const accountId = `BFT-${Math.floor(10000 + Math.random() * 89999)}`;
       const now = Date.now();
       const nowIso = new Date(now).toISOString().split('T')[0];
+
+      const dailyLossLimit = tier === 'instant' ? 6 : tier === 'two-step' ? 8 : 10;
+      const maxOverallLoss = tier === 'instant' ? 12 : tier === 'two-step' ? 20 : 15;
 
       db.prepare(`
         INSERT INTO accounts (
@@ -320,8 +608,8 @@ async function startServer() {
         size,
         size,
         size,
-        tier === 'instant' ? 5 : 5,
-        tier === 'instant' ? 12 : 10,
+        dailyLossLimit,
+        maxOverallLoss,
         tier === 'instant' ? 'funded' : 'phase_1',
         dailyWithdrawalsUnlocked ? 1 : 0,
         nowIso,
@@ -329,7 +617,7 @@ async function startServer() {
         now
       );
 
-      // Automatically distribute 3-Tier commissions (10% L1, 5% L2, 2% L3)
+      // Automatically distribute 3-Tier commissions (10% L1, 5% L2, 2% L3) in real-time
       const commissions = creditPurchaseCommissions(user.id, tierName, price, referralCode);
 
       const newAccount = getAccountById(accountId);

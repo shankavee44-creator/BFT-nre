@@ -67,6 +67,7 @@ import {
   checkMaxRiskPerTradeViolation,
   isLiveFundedAccount,
   getAccountStatusBadgeLabel,
+  getChallengeProfitTarget,
 } from '../utils/propRules';
 import {
   calculateHeikinAshi,
@@ -201,6 +202,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   onOpenChallengeModal,
   onNavigateTab,
   userProfile,
+  onPassChallengePhase,
 }) => {
   // Quotex Open OTC Asset Tabs across Forex, Crypto, Commodities & Stocks
   const [openTabs, setOpenTabs] = useState<AssetInfo[]>(() => [
@@ -216,10 +218,23 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   const [candles, setCandles] = useState<Candle[]>([]);
   const [payoutSeed, setPayoutSeed] = useState<number>(() => Math.floor(Date.now() / 3000));
 
-  // Charting controls
+  // Charting controls & Asset-Specific State Isolation for Indicators & Drawings
   const [timeframe, setTimeframe] = useState<Timeframe>('1m');
+  const prevTimeframeRef = useRef<Timeframe>('1m');
   const [chartType, setChartType] = useState<ChartType>('candles');
-  const [indicators, setIndicators] = useState<IndicatorSettings>(DEFAULT_INDICATOR_SETTINGS);
+  const [indicatorsByAsset, setIndicatorsByAsset] = useState<Record<string, IndicatorSettings>>({});
+  const indicators = indicatorsByAsset[selectedAsset.symbol] || DEFAULT_INDICATOR_SETTINGS;
+  const setIndicators: React.Dispatch<React.SetStateAction<IndicatorSettings>> = React.useCallback(
+    (updater) => {
+      const sym = selectedAsset.symbol;
+      setIndicatorsByAsset((prev) => {
+        const cur = prev[sym] || DEFAULT_INDICATOR_SETTINGS;
+        const next = typeof updater === 'function' ? updater(cur) : updater;
+        return { ...prev, [sym]: next };
+      });
+    },
+    [selectedAsset.symbol]
+  );
   const [zoomLevel, setZoomLevel] = useState<number>(1);
 
   // Mobile Responsiveness, Practice Fallback Account & Canvas Resize State
@@ -260,14 +275,27 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   const touchStartDistRef = useRef<number | null>(null);
   const initialTouchZoomRef = useRef<number>(1);
 
-  // Technical Drawing Suite & Pencil Side-Drawer State
+  // Technical Drawing Suite & Pencil Side-Drawer State (Isolated Per Asset Pair)
   const [isDrawingDrawerOpen, setIsDrawingDrawerOpen] = useState<boolean>(false);
+  const [drawerActiveSection, setDrawerActiveSection] = useState<'drawings' | 'indicators'>('drawings');
   const [activeDrawingTool, setActiveDrawingTool] = useState<DrawingTool>('none');
   const [lastUsedDrawingTool, setLastUsedDrawingTool] = useState<DrawingTool>('trendline');
   const [drawingColor, setDrawingColor] = useState<string>('#ff8800');
   const [drawingWidth, setDrawingWidth] = useState<number>(2);
   const [drawingLineStyle, setDrawingLineStyle] = useState<DrawingLineStyle>('solid');
-  const [drawings, setDrawings] = useState<ChartDrawing[]>([]);
+  const [drawingsByAsset, setDrawingsByAsset] = useState<Record<string, ChartDrawing[]>>({});
+  const drawings = drawingsByAsset[selectedAsset.symbol] || [];
+  const setDrawings: React.Dispatch<React.SetStateAction<ChartDrawing[]>> = React.useCallback(
+    (updater) => {
+      const sym = selectedAsset.symbol;
+      setDrawingsByAsset((prev) => {
+        const cur = prev[sym] || [];
+        const next = typeof updater === 'function' ? updater(cur) : updater;
+        return { ...prev, [sym]: next };
+      });
+    },
+    [selectedAsset.symbol]
+  );
   const [currentDrawing, setCurrentDrawing] = useState<ChartDrawing | null>(null);
   const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null);
   const [hoveredDrawingId, setHoveredDrawingId] = useState<string | null>(null);
@@ -278,12 +306,22 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     lastY: number;
   } | null>(null);
 
+  // Reset active selection when switching asset pair so drawings never bleed across markets
+  useEffect(() => {
+    setCurrentDrawing(null);
+    setSelectedDrawingId(null);
+    setHoveredDrawingId(null);
+  }, [selectedAsset.symbol]);
+
   // Smooth 60fps interpolated price state
   const [smoothPrice, setSmoothPrice] = useState<number>(DEFAULT_ASSETS[0].basePrice);
   const targetPriceRef = useRef<number>(DEFAULT_ASSETS[0].basePrice);
 
-  // Chart Navigation, Panning & TradingView Crosshair / OHLC Inspector
+  // Chart Navigation, 60fps Inertia Panning & TradingView Crosshair / OHLC Inspector
   const [panOffset, setPanOffset] = useState<number>(0);
+  const panOffsetFloatRef = useRef<number>(0);
+  const panVelocityRef = useRef<number>(0);
+  const dragSamplesRef = useRef<DragSample[]>([]);
   const [isInteracting, setIsInteracting] = useState<boolean>(false);
   const [crosshairPos, setCrosshairPos] = useState<{ x: number; y: number } | null>(null);
   const [hoveredCandle, setHoveredCandle] = useState<Candle | null>(null);
@@ -357,27 +395,18 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  // Interactive Chart Trade History Overlay State (Green/Red Execution & Settlement Dots)
-  const [showHistoryOverlay, setShowHistoryOverlay] = useState<boolean>(true);
+  // Interactive Chart Trade History Overlay State (Disabled by default; no hardcoded history dots clutter)
+  const [showHistoryOverlay, setShowHistoryOverlay] = useState<boolean>(false);
   const [hoveredTradeMarker, setHoveredTradeMarker] = useState<TradeChartMarkerPoint | null>(null);
   const [selectedTradeMarker, setSelectedTradeMarker] = useState<TradeChartMarkerPoint | null>(null);
   const tradeMarkersRef = useRef<TradeChartMarkerPoint[]>([]);
 
-  // Active and closed trades for this account + deterministic candle-anchored past trades
+  // Active and real closed trades for this account (zero fake seeded trades)
   const activeTrades = trades.filter((t) => t.status === 'active');
   const userClosedTrades = trades.filter((t) => t.status === 'won' || t.status === 'lost');
-  const seededAssetPastTrades = React.useMemo(
-    () => generateSeededPastTradesForCandles(selectedAsset, candles, account?.id || 'BFT-91823'),
-    [selectedAsset, candles, account?.id]
-  );
   const closedTrades = React.useMemo(() => {
-    const existingIds = new Set(userClosedTrades.map((t) => t.id));
-    const merged = [
-      ...userClosedTrades,
-      ...seededAssetPastTrades.filter((t) => !existingIds.has(t.id)),
-    ];
-    return merged.sort((a, b) => b.endTime - a.endTime);
-  }, [userClosedTrades, seededAssetPastTrades]);
+    return [...userClosedTrades].sort((a, b) => b.endTime - a.endTime);
+  }, [userClosedTrades]);
 
   const activeInspectedMarker = hoveredTradeMarker || selectedTradeMarker;
   const effectiveInvestment =
@@ -513,18 +542,37 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     setSoundEnabled(newState);
   };
 
-  // 1. Centralized Deterministic Candle Engine
+  // 1. Centralized Deterministic Candle Engine & Timeframe Scaling
   useEffect(() => {
     const store = getOrCreateMasterHistory(selectedAsset);
-    const aggregated = aggregateCandlesForTimeframe(selectedAsset, TIMEFRAME_SECONDS[timeframe]);
+    const prevSec = TIMEFRAME_SECONDS[prevTimeframeRef.current];
+    const nextSec = TIMEFRAME_SECONDS[timeframe];
+    prevTimeframeRef.current = timeframe;
+
+    const aggregated = aggregateCandlesForTimeframe(selectedAsset, nextSec);
     setCandles(aggregated);
     setCurrentPrice(store.lastPrice);
     setSmoothPrice(store.lastPrice);
     targetPriceRef.current = store.lastPrice;
-    setPanOffset(0);
+
+    // Preserve relative historical scroll position when switching timeframes on same asset
+    setPanOffset((prevOffset) => {
+      if (prevOffset <= 0) {
+        panOffsetFloatRef.current = 0;
+        return 0;
+      }
+      const translated = translatePanOffsetForTimeframe(
+        prevOffset,
+        prevSec,
+        nextSec
+      );
+      panOffsetFloatRef.current = translated;
+      return Math.round(translated);
+    });
+    panVelocityRef.current = 0;
   }, [selectedAsset, timeframe]);
 
-  // 1b. Butter-Smooth 60fps Price & Candle Micro-Interpolation Loop
+  // 1b. Butter-Smooth 60fps Price & Inertia Momentum Panning Loop
   useEffect(() => {
     targetPriceRef.current = currentPrice;
   }, [currentPrice]);
@@ -538,11 +586,26 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         if (Math.abs(diff) < 1e-8) return target;
         return prev + diff * 0.24;
       });
+
+      // Step momentum inertia panning when user releases drag with velocity
+      if (Math.abs(panVelocityRef.current) >= 0.05) {
+        const maxVis = Math.max(
+          18,
+          Math.floor(((canvasRef.current?.width || 800) - 75) / (11 * zoomLevel))
+        );
+        const maxPan = Math.max(0, candles.length - maxVis);
+        const step = stepMomentum(panOffsetFloatRef.current, panVelocityRef.current, 0.93, 0.012, maxPan);
+        panOffsetFloatRef.current = step.nextPanOffset;
+        panVelocityRef.current = step.nextVelocity;
+        const rounded = Math.round(step.nextPanOffset);
+        setPanOffset((prev) => (prev === rounded ? prev : rounded));
+      }
+
       rafId = requestAnimationFrame(animate60fps);
     };
     rafId = requestAnimationFrame(animate60fps);
     return () => cancelAnimationFrame(rafId);
-  }, []);
+  }, [candles.length, zoomLevel]);
 
   // 2. Real-time Price Pulse & Alert Evaluation
   const alertsRef = useRef(alerts);
@@ -669,6 +732,15 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
           };
           if (account) {
             onUpdateAccount(updatedAccount);
+            // Check if a One-Step or Two-Step Challenge account just hit its profit target!
+            if (isWin && !isLiveFundedAccount(updatedAccount)) {
+              const targetStatus = getChallengeProfitTarget(updatedAccount);
+              if (targetStatus.isTargetMet) {
+                setTimeout(() => {
+                  onPassChallengePhase?.(updatedAccount);
+                }, 900);
+              }
+            }
           } else {
             setDemoPracticeAccount(updatedAccount);
           }
@@ -677,7 +749,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     }, 300);
 
     return () => clearInterval(timer);
-  }, [account, onUpdateTrade, onUpdateAccount]);
+  }, [account, onUpdateTrade, onUpdateAccount, onPassChallengePhase]);
 
   // Asset Tab Switching
   const handleSelectTabAsset = (asset: AssetInfo) => {
@@ -1029,12 +1101,43 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     setIsInteracting(true);
     dragStartXRef.current = e.clientX;
     initialPanOffsetRef.current = panOffset;
+    panOffsetFloatRef.current = panOffset;
+    panVelocityRef.current = 0;
+    dragSamplesRef.current = [{ x: e.clientX, time: performance.now() }];
   };
 
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
-    const zoomFactor = e.deltaY < 0 ? 0.14 : -0.14;
-    setZoomLevel((prev) => Number(Math.max(0.35, Math.min(3.5, prev + zoomFactor)).toFixed(2)));
+    const canvas = canvasRef.current;
+    // Support horizontal trackpad two-finger swipe panning
+    if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && Math.abs(e.deltaX) > 2) {
+      const candleWidthEst = Math.max(4, 11 * zoomLevel);
+      const offsetDiff = Math.round(e.deltaX / candleWidthEst);
+      setPanOffset((prev) => {
+        const next = Math.max(0, Math.min(Math.max(0, candles.length - 18), prev - offsetDiff));
+        panOffsetFloatRef.current = next;
+        return next;
+      });
+      return;
+    }
+
+    const zoomFactor = e.deltaY < 0 ? 0.16 : -0.16;
+    if (canvas && candles.length > 0) {
+      const coords = getCanvasCoords(e);
+      const focalRatio = Math.max(0, Math.min(1, coords.x / Math.max(1, canvas.width)));
+      const anchored = calculateAnchoredZoom(
+        zoomLevel,
+        zoomFactor,
+        focalRatio,
+        panOffset
+      );
+      setZoomLevel(anchored.nextZoom);
+      const clampedPan = Math.max(0, Math.min(Math.max(0, candles.length - 18), Math.round(anchored.nextPanOffset)));
+      setPanOffset(clampedPan);
+      panOffsetFloatRef.current = clampedPan;
+    } else {
+      setZoomLevel((prev) => Number(Math.max(0.35, Math.min(3.5, prev + zoomFactor)).toFixed(2)));
+    }
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
@@ -1103,12 +1206,30 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     }
 
     if (activeDrawingTool === 'none') {
-      // Pan chart history smoothly
+      // Pan chart history smoothly at 60fps + record velocity samples
+      const nowMs = performance.now();
+      dragSamplesRef.current.push({ x: e.clientX, time: nowMs });
+      if (dragSamplesRef.current.length > 8) {
+        dragSamplesRef.current.shift();
+      }
+
       const deltaX = e.clientX - dragStartXRef.current;
-      const candleWidthEst = 12 * zoomLevel;
-      const offsetDiff = Math.round(deltaX / candleWidthEst);
-      const newOffset = Math.max(0, Math.min(candles.length - 20, initialPanOffsetRef.current + offsetDiff));
+      const candleWidthEst = Math.max(4, 11 * zoomLevel);
+      const offsetDiff = deltaX / candleWidthEst;
+      const maxOffset = Math.max(0, candles.length - 18);
+      const floatOffset = Math.max(0, Math.min(maxOffset, initialPanOffsetRef.current + offsetDiff));
+      const newOffset = Math.round(floatOffset);
+      panOffsetFloatRef.current = floatOffset;
       setPanOffset(newOffset);
+
+      // Dynamically prepend older historical candles if user pans near the start of history
+      if (newOffset >= candles.length - 120 && candles.length < 5000) {
+        setCandles((prev) =>
+          prev.length < 5000
+            ? prependHistoricalCandles(selectedAsset, TIMEFRAME_SECONDS[timeframe], 500)
+            : prev
+        );
+      }
     } else if (currentDrawing) {
       setCurrentDrawing((prev) => (prev ? updateDrawingOnDrag(prev, coords.x, coords.y) : null));
     }
@@ -1125,7 +1246,13 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       setCurrentDrawing(null);
       // Disarm after completing the drawing; clicking the tool again in the drawer immediately re-arms it
       setActiveDrawingTool('none');
+    } else if (activeDrawingTool === 'none' && dragSamplesRef.current.length >= 2) {
+      const releaseVel = computeReleaseVelocity(dragSamplesRef.current, Math.max(4, 11 * zoomLevel));
+      if (Math.abs(releaseVel) >= 0.15) {
+        panVelocityRef.current = releaseVel;
+      }
     }
+    dragSamplesRef.current = [];
     setIsInteracting(false);
   };
 
@@ -1140,6 +1267,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       setCurrentDrawing(null);
       setActiveDrawingTool('none');
     }
+    dragSamplesRef.current = [];
     setHoveredDrawingId(null);
     setHoveredTradeMarker(null);
     setHoveredCandle(null);
@@ -1159,6 +1287,9 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
       dragStartXRef.current = touch.clientX;
       initialPanOffsetRef.current = panOffset;
+      panOffsetFloatRef.current = panOffset;
+      panVelocityRef.current = 0;
+      dragSamplesRef.current = [{ x: touch.clientX, time: performance.now() }];
       setIsInteracting(true);
 
       if (showHistoryOverlay && activeDrawingTool === 'none') {
@@ -1179,6 +1310,10 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   const handleTouchMove = (e: React.TouchEvent) => {
     if (e.touches.length === 1 && isInteracting) {
       const touch = e.touches[0];
+      dragSamplesRef.current.push({ x: touch.clientX, time: performance.now() });
+      if (dragSamplesRef.current.length > 8) {
+        dragSamplesRef.current.shift();
+      }
       const deltaX = touch.clientX - dragStartXRef.current;
       const newOffset = calculateTouchPanOffset(
         initialPanOffsetRef.current,
@@ -1186,7 +1321,16 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         zoomLevel,
         candles.length
       );
+      panOffsetFloatRef.current = newOffset;
       setPanOffset(newOffset);
+
+      if (newOffset >= candles.length - 120 && candles.length < 5000) {
+        setCandles((prev) =>
+          prev.length < 5000
+            ? prependHistoricalCandles(selectedAsset, TIMEFRAME_SECONDS[timeframe], 500)
+            : prev
+        );
+      }
 
       const canvas = canvasRef.current;
       if (canvas && candles.length > 0) {
@@ -1219,6 +1363,13 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   };
 
   const handleTouchEnd = () => {
+    if (dragSamplesRef.current.length >= 2) {
+      const releaseVel = computeReleaseVelocity(dragSamplesRef.current, zoomLevel);
+      if (Math.abs(releaseVel) >= 0.15) {
+        panVelocityRef.current = releaseVel;
+      }
+    }
+    dragSamplesRef.current = [];
     setIsInteracting(false);
     touchStartDistRef.current = null;
   };
@@ -1485,6 +1636,29 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         }
       });
       ctx.stroke();
+    }
+
+    if (indicators.showFib && displayCandles.length >= 2) {
+      const fibLevels = calculateFibonacciLevels(maxPrice, minPrice);
+      if (fibLevels && fibLevels.length > 0) {
+        ctx.save();
+        ctx.font = 'bold 9px JetBrains Mono, monospace';
+        ctx.textAlign = 'right';
+        fibLevels.forEach((lvl) => {
+          const y = getY(lvl.price);
+          ctx.strokeStyle = 'rgba(255, 136, 0, 0.55)';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([4, 4]);
+          ctx.beginPath();
+          ctx.moveTo(10, y);
+          ctx.lineTo(width - 68, y);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle = '#ff8800';
+          ctx.fillText(`Fib ${lvl.label} (${lvl.price.toFixed(selectedAsset.pipDecimals)})`, width - 72, y - 3);
+        });
+        ctx.restore();
+      }
     }
 
     // 4. Current Market Price 60fps Line, Axis Badge & Live Candle Expiry Countdown Timer
@@ -2522,7 +2696,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             </div>
           )}
 
-          {/* SLEEK TECHNICAL ANALYSIS DRAWING TOOLS SIDE-DRAWER MENU (11 QUOTEX TOOLS) */}
+          {/* SLEEK TECHNICAL ANALYSIS DRAWING TOOLS & INDICATORS SIDE-DRAWER MENU */}
           {isDrawingDrawerOpen && (
             <div
               data-testid="drawing-tools-side-drawer"
@@ -2536,10 +2710,10 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                   </div>
                   <div>
                     <div className="font-black text-white text-xs tracking-wide uppercase">
-                      Drawing Tools
+                      Drawings & Indicators
                     </div>
-                    <div className="text-[10px] text-slate-400">
-                      Click tool to arm • Click canvas to draw
+                    <div className="text-[10px] text-[#ff8800]">
+                      Asset: {selectedAsset.symbol} (Isolated State)
                     </div>
                   </div>
                 </div>
@@ -2548,230 +2722,358 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                   data-testid="close-drawing-drawer-btn"
                   onClick={() => setIsDrawingDrawerOpen(false)}
                   className="p-1.5 rounded-lg bg-[#1a1f2e] hover:bg-[#252c40] text-slate-400 hover:text-white cursor-pointer"
-                  title="Close Drawing Drawer"
+                  title="Close Drawing & Indicator Drawer"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
               </div>
 
-              {/* Active Tool Status Banner & Pointer Reset */}
-              <div className="px-3.5 py-2 bg-[#10141d] border-b border-[#1f2433] flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5">
-                  <span
-                    className={`w-2 h-2 rounded-full ${
-                      activeDrawingTool !== 'none' ? 'bg-[#00e676]' : 'bg-slate-500'
-                    }`}
-                  />
-                  <span className="text-[10px] font-bold text-slate-300">
-                    {activeDrawingTool !== 'none'
-                      ? `Armed: ${
-                          QUOTEX_DRAWING_TOOLS.find((t) => t.id === activeDrawingTool)?.label ||
-                          activeDrawingTool
-                        }`
-                      : 'Mode: Pointer / Select'}
-                  </span>
-                </div>
+              {/* Section Switcher Tabs: Drawing Tools vs Indicators */}
+              <div className="grid grid-cols-2 gap-1 p-1.5 bg-[#0a0c12] border-b border-[#1f2433]">
                 <button
                   type="button"
-                  data-testid="drawer-pointer-mode-btn"
-                  onClick={() => handleSelectDrawingTool('none')}
-                  className={`px-2 py-0.5 rounded text-[10px] font-bold border cursor-pointer ${
-                    activeDrawingTool === 'none'
-                      ? 'bg-[#ff8800] text-slate-950 border-[#ff8800]'
-                      : 'bg-[#181d2a] text-slate-300 border-[#2a3042] hover:text-white'
+                  data-testid="drawer-tab-drawings"
+                  onClick={() => {
+                    soundEngine.playUiClick();
+                    setDrawerActiveSection('drawings');
+                  }}
+                  className={`py-1.5 px-2 rounded-lg text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
+                    drawerActiveSection === 'drawings'
+                      ? 'bg-[#ff8800] text-slate-950'
+                      : 'text-slate-400 hover:text-white bg-[#131722]'
                   }`}
                 >
-                  Pointer
+                  <Pencil className="w-3 h-3" />
+                  <span>Drawings ({drawings.length})</span>
+                </button>
+                <button
+                  type="button"
+                  data-testid="drawer-tab-indicators"
+                  onClick={() => {
+                    soundEngine.playUiClick();
+                    setDrawerActiveSection('indicators');
+                  }}
+                  className={`py-1.5 px-2 rounded-lg text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
+                    drawerActiveSection === 'indicators'
+                      ? 'bg-[#ff8800] text-slate-950'
+                      : 'text-slate-400 hover:text-white bg-[#131722]'
+                  }`}
+                >
+                  <Sliders className="w-3 h-3" />
+                  <span>Indicators</span>
                 </button>
               </div>
 
-              {/* Default Styling Controls (Color, Thickness, Line Style) */}
-              <div className="px-3.5 py-2.5 border-b border-[#222735] space-y-2 bg-[#0f131c]">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] uppercase font-bold text-slate-400">Stroke Color</span>
-                  <div className="flex items-center gap-1.5">
-                    {DRAWING_COLOR_PALETTE.map((c) => (
-                      <button
-                        key={c}
-                        type="button"
-                        data-testid={`drawer-color-${c.replace('#', '')}`}
-                        onClick={() => {
-                          setDrawingColor(c);
-                          if (selectedDrawingId) {
-                            setDrawings((prev) =>
-                              prev.map((d) => (d.id === selectedDrawingId ? { ...d, color: c } : d))
-                            );
-                          }
-                        }}
-                        className={`w-4 h-4 rounded-full border transition-transform cursor-pointer ${
-                          (selectedDrawing?.color || drawingColor) === c
-                            ? 'scale-125 border-white'
-                            : 'border-white/20'
+              {drawerActiveSection === 'drawings' ? (
+                <>
+                  {/* Active Tool Status Banner & Pointer Reset */}
+                  <div className="px-3.5 py-2 bg-[#10141d] border-b border-[#1f2433] flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className={`w-2 h-2 rounded-full ${
+                          activeDrawingTool !== 'none' ? 'bg-[#00e676]' : 'bg-slate-500'
                         }`}
-                        style={{ backgroundColor: c }}
-                        title={`Select color ${c}`}
                       />
-                    ))}
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-1">
-                    <span className="text-[10px] uppercase font-bold text-slate-400 mr-1">Width</span>
-                    {[1, 2, 3, 4].map((w) => (
-                      <button
-                        key={w}
-                        type="button"
-                        data-testid={`drawer-width-${w}`}
-                        onClick={() => {
-                          setDrawingWidth(w);
-                          if (selectedDrawingId) {
-                            setDrawings((prev) =>
-                              prev.map((d) => (d.id === selectedDrawingId ? { ...d, width: w } : d))
-                            );
-                          }
-                        }}
-                        className={`px-1.5 py-0.5 rounded text-[10px] font-bold border cursor-pointer ${
-                          (selectedDrawing?.width || drawingWidth) === w
-                            ? 'bg-[#ff8800] text-slate-950 border-[#ff8800]'
-                            : 'bg-[#161b26] text-slate-400 border-[#262c3d] hover:text-white'
-                        }`}
-                      >
-                        {w}px
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="flex items-center gap-1">
-                    {(['solid', 'dashed', 'dotted'] as const).map((st) => (
-                      <button
-                        key={st}
-                        type="button"
-                        data-testid={`drawer-style-${st}`}
-                        onClick={() => {
-                          setDrawingLineStyle(st);
-                          if (selectedDrawingId) {
-                            setDrawings((prev) =>
-                              prev.map((d) =>
-                                d.id === selectedDrawingId ? { ...d, lineStyle: st } : d
-                              )
-                            );
-                          }
-                        }}
-                        className={`px-1.5 py-0.5 rounded text-[9px] uppercase font-bold border cursor-pointer ${
-                          (selectedDrawing?.lineStyle || drawingLineStyle) === st
-                            ? 'bg-[#ff8800] text-slate-950 border-[#ff8800]'
-                            : 'bg-[#161b26] text-slate-400 border-[#262c3d] hover:text-white'
-                        }`}
-                      >
-                        {st}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* Scrollable List of All 11 Technical Analysis Drawing Tools */}
-              <div className="flex-1 overflow-y-auto p-2.5 space-y-1.5">
-                {QUOTEX_DRAWING_TOOLS.map((tool) => {
-                  const isArmed = activeDrawingTool === tool.id;
-                  const countOfType = drawings.filter((d) => d.type === tool.id).length;
-                  return (
+                      <span className="text-[10px] font-bold text-slate-300">
+                        {activeDrawingTool !== 'none'
+                          ? `Armed: ${
+                              QUOTEX_DRAWING_TOOLS.find((t) => t.id === activeDrawingTool)?.label ||
+                              activeDrawingTool
+                            }`
+                          : 'Mode: Pointer / Select'}
+                      </span>
+                    </div>
                     <button
-                      key={tool.id}
                       type="button"
-                      data-testid={`drawing-tool-${tool.id}`}
-                      onClick={() => handleSelectDrawingTool(tool.id)}
-                      className={`w-full flex items-center justify-between p-2.5 rounded-xl border text-left transition-colors cursor-pointer ${
-                        isArmed
-                          ? 'bg-[#ff8800] text-slate-950 border-[#ff8800] font-black'
-                          : 'bg-[#141822] hover:bg-[#1c2230] text-slate-200 border-[#242a38]'
+                      data-testid="drawer-pointer-mode-btn"
+                      onClick={() => handleSelectDrawingTool('none')}
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold border cursor-pointer ${
+                        activeDrawingTool === 'none'
+                          ? 'bg-[#ff8800] text-slate-950 border-[#ff8800]'
+                          : 'bg-[#181d2a] text-slate-300 border-[#2a3042] hover:text-white'
                       }`}
                     >
-                      <div className="min-w-0 pr-2">
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-xs">{tool.label}</span>
-                          {countOfType > 0 && (
-                            <span
-                              className={`px-1.5 py-0.2 rounded text-[9px] font-black ${
-                                isArmed
-                                  ? 'bg-slate-950 text-[#ff8800]'
-                                  : 'bg-[#ff8800]/20 text-[#ff8800]'
-                              }`}
-                            >
-                              {countOfType} on chart
-                            </span>
-                          )}
-                        </div>
-                        <div
-                          className={`text-[10px] truncate mt-0.5 ${
-                            isArmed ? 'text-slate-900 font-semibold' : 'text-slate-400'
+                      Pointer
+                    </button>
+                  </div>
+
+                  {/* Default Styling Controls (Color, Thickness, Line Style) */}
+                  <div className="px-3.5 py-2.5 border-b border-[#222735] space-y-2 bg-[#0f131c]">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] uppercase font-bold text-slate-400">Stroke Color</span>
+                      <div className="flex items-center gap-1.5">
+                        {DRAWING_COLOR_PALETTE.map((c) => (
+                          <button
+                            key={c}
+                            type="button"
+                            data-testid={`drawer-color-${c.replace('#', '')}`}
+                            onClick={() => {
+                              setDrawingColor(c);
+                              if (selectedDrawingId) {
+                                setDrawings((prev) =>
+                                  prev.map((d) => (d.id === selectedDrawingId ? { ...d, color: c } : d))
+                                );
+                              }
+                            }}
+                            className={`w-4 h-4 rounded-full border transition-transform cursor-pointer ${
+                              (selectedDrawing?.color || drawingColor) === c
+                                ? 'scale-125 border-white'
+                                : 'border-white/20'
+                            }`}
+                            style={{ backgroundColor: c }}
+                            title={`Select color ${c}`}
+                          />
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1">
+                        <span className="text-[10px] uppercase font-bold text-slate-400 mr-1">Width</span>
+                        {[1, 2, 3, 4].map((w) => (
+                          <button
+                            key={w}
+                            type="button"
+                            data-testid={`drawer-width-${w}`}
+                            onClick={() => {
+                              setDrawingWidth(w);
+                              if (selectedDrawingId) {
+                                setDrawings((prev) =>
+                                  prev.map((d) => (d.id === selectedDrawingId ? { ...d, width: w } : d))
+                                );
+                              }
+                            }}
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold border cursor-pointer ${
+                              (selectedDrawing?.width || drawingWidth) === w
+                                ? 'bg-[#ff8800] text-slate-950 border-[#ff8800]'
+                                : 'bg-[#161b26] text-slate-400 border-[#262c3d] hover:text-white'
+                            }`}
+                          >
+                            {w}px
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="flex items-center gap-1">
+                        {(['solid', 'dashed', 'dotted'] as const).map((st) => (
+                          <button
+                            key={st}
+                            type="button"
+                            data-testid={`drawer-style-${st}`}
+                            onClick={() => {
+                              setDrawingLineStyle(st);
+                              if (selectedDrawingId) {
+                                setDrawings((prev) =>
+                                  prev.map((d) =>
+                                    d.id === selectedDrawingId ? { ...d, lineStyle: st } : d
+                                  )
+                                );
+                              }
+                            }}
+                            className={`px-1.5 py-0.5 rounded text-[9px] uppercase font-bold border cursor-pointer ${
+                              (selectedDrawing?.lineStyle || drawingLineStyle) === st
+                                ? 'bg-[#ff8800] text-slate-950 border-[#ff8800]'
+                                : 'bg-[#161b26] text-slate-400 border-[#262c3d] hover:text-white'
+                            }`}
+                          >
+                            {st}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Scrollable List of All 11 Technical Analysis Drawing Tools */}
+                  <div className="flex-1 overflow-y-auto p-2.5 space-y-1.5">
+                    {QUOTEX_DRAWING_TOOLS.map((tool) => {
+                      const isArmed = activeDrawingTool === tool.id;
+                      const countOfType = drawings.filter((d) => d.type === tool.id).length;
+                      return (
+                        <button
+                          key={tool.id}
+                          type="button"
+                          data-testid={`drawing-tool-${tool.id}`}
+                          onClick={() => handleSelectDrawingTool(tool.id)}
+                          className={`w-full flex items-center justify-between p-2.5 rounded-xl border text-left transition-colors cursor-pointer ${
+                            isArmed
+                              ? 'bg-[#ff8800] text-slate-950 border-[#ff8800] font-black'
+                              : 'bg-[#141822] hover:bg-[#1c2230] text-slate-200 border-[#242a38]'
                           }`}
                         >
-                          {tool.description}
-                        </div>
+                          <div className="min-w-0 pr-2">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-xs">{tool.label}</span>
+                              {countOfType > 0 && (
+                                <span
+                                  className={`px-1.5 py-0.2 rounded text-[9px] font-black ${
+                                    isArmed
+                                      ? 'bg-slate-950 text-[#ff8800]'
+                                      : 'bg-[#ff8800]/20 text-[#ff8800]'
+                                  }`}
+                                >
+                                  {countOfType} on chart
+                                </span>
+                              )}
+                            </div>
+                            <div
+                              className={`text-[10px] truncate mt-0.5 ${
+                                isArmed ? 'text-slate-900 font-semibold' : 'text-slate-400'
+                              }`}
+                            >
+                              {tool.description}
+                            </div>
+                          </div>
+                          <span
+                            className={`px-2 py-1 rounded text-[9px] font-black uppercase shrink-0 ${
+                              isArmed
+                                ? 'bg-slate-950 text-[#ff8800]'
+                                : 'bg-[#1c2232] text-[#ff8800] border border-[#ff8800]/30'
+                            }`}
+                          >
+                            {isArmed ? 'ARMED' : 'DRAW'}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Active Drawn Objects List & Footer Clear Controls */}
+                  <div className="p-3 border-t border-[#222735] bg-[#121620] space-y-2">
+                    <div className="flex items-center justify-between text-[10px] text-slate-400">
+                      <span>Drawn on {selectedAsset.symbol}: {drawings.length}</span>
+                      {selectedDrawing && (
+                        <span className="text-[#ff8800] font-bold">
+                          Selected: {QUOTEX_DRAWING_TOOLS.find((t) => t.id === selectedDrawing.type)?.label || selectedDrawing.type}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {selectedDrawing && (
+                        <button
+                          type="button"
+                          data-testid="drawer-delete-selected-btn"
+                          onClick={() => {
+                            soundEngine.playUiClick();
+                            setDrawings((prev) => prev.filter((d) => d.id !== selectedDrawing.id));
+                            setSelectedDrawingId(null);
+                          }}
+                          className="flex-1 py-1.5 px-2.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 font-bold text-[11px] flex items-center justify-center gap-1 cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Delete Selected</span>
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        data-testid="clear-all-drawings-btn"
+                        disabled={drawings.length === 0}
+                        onClick={() => {
+                          soundEngine.playUiClick();
+                          setDrawings([]);
+                          setSelectedDrawingId(null);
+                          setCurrentDrawing(null);
+                        }}
+                        className={`flex-1 py-1.5 px-2.5 rounded-lg border font-bold text-[11px] flex items-center justify-center gap-1 ${
+                          drawings.length > 0
+                            ? 'bg-[#1a202e] hover:bg-rose-950/60 border-[#2e364a] text-slate-200 hover:text-rose-300 cursor-pointer'
+                            : 'bg-[#131722] border-[#1f2433] text-slate-600 cursor-not-allowed'
+                        }`}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Clear All ({drawings.length})</span>
+                      </button>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                /* INDICATORS TAB CONTENT INSIDE PENCIL SIDE-DRAWER */
+                <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
+                  <div className="text-[10px] text-slate-400 px-1">
+                    Technical indicators are saved independently for <strong className="text-white">{selectedAsset.symbol}</strong>.
+                  </div>
+
+                  {[
+                    {
+                      key: 'showSma' as const,
+                      label: `Simple Moving Average (SMA ${indicators.smaPeriod})`,
+                      desc: 'Smooth trend direction overlay',
+                      active: indicators.showSma,
+                    },
+                    {
+                      key: 'showEma' as const,
+                      label: `Exponential Moving Average (EMA ${indicators.emaPeriod})`,
+                      desc: 'Fast-reacting momentum average',
+                      active: indicators.showEma,
+                    },
+                    {
+                      key: 'showBollinger' as const,
+                      label: `Bollinger Bands (${indicators.bollingerPeriod}, ${indicators.bollingerStd}σ)`,
+                      desc: 'Volatility channel & breakout bands',
+                      active: indicators.showBollinger,
+                    },
+                    {
+                      key: 'showRsi' as const,
+                      label: `Relative Strength Index (RSI ${indicators.rsiPeriod})`,
+                      desc: 'Overbought (70) & Oversold (30) oscillator',
+                      active: indicators.showRsi,
+                    },
+                    {
+                      key: 'showMacd' as const,
+                      label: `MACD (${indicators.macdFast}, ${indicators.macdSlow}, ${indicators.macdSignal})`,
+                      desc: 'Momentum histogram & signal crossover',
+                      active: indicators.showMacd,
+                    },
+                    {
+                      key: 'showFib' as const,
+                      label: 'Fibonacci Retracement Levels',
+                      desc: 'Auto 23.6%, 38.2%, 50%, 61.8% levels',
+                      active: indicators.showFib,
+                    },
+                  ].map((ind) => (
+                    <button
+                      key={ind.key}
+                      type="button"
+                      data-testid={`drawer-indicator-${ind.key}`}
+                      onClick={() => {
+                        soundEngine.playUiClick();
+                        setIndicators((prev) => ({ ...prev, [ind.key]: !prev[ind.key] }));
+                      }}
+                      className={`w-full flex items-center justify-between p-2.5 rounded-xl border text-left transition-colors cursor-pointer ${
+                        ind.active
+                          ? 'bg-[#ff8800]/15 border-[#ff8800] text-white'
+                          : 'bg-[#141822] hover:bg-[#1c2230] border-[#242a38] text-slate-300'
+                      }`}
+                    >
+                      <div className="pr-2">
+                        <div className="font-bold text-xs text-white">{ind.label}</div>
+                        <div className="text-[10px] text-slate-400 mt-0.5">{ind.desc}</div>
                       </div>
                       <span
                         className={`px-2 py-1 rounded text-[9px] font-black uppercase shrink-0 ${
-                          isArmed
-                            ? 'bg-slate-950 text-[#ff8800]'
-                            : 'bg-[#1c2232] text-[#ff8800] border border-[#ff8800]/30'
+                          ind.active
+                            ? 'bg-[#ff8800] text-slate-950'
+                            : 'bg-[#1c2232] text-slate-400 border border-[#2a3042]'
                         }`}
                       >
-                        {isArmed ? 'ARMED' : 'DRAW'}
+                        {ind.active ? 'ON' : 'OFF'}
                       </span>
                     </button>
-                  );
-                })}
-              </div>
+                  ))}
 
-              {/* Active Drawn Objects List & Footer Clear Controls */}
-              <div className="p-3 border-t border-[#222735] bg-[#121620] space-y-2">
-                <div className="flex items-center justify-between text-[10px] text-slate-400">
-                  <span>Drawn Objects on Chart: {drawings.length}</span>
-                  {selectedDrawing && (
-                    <span className="text-[#ff8800] font-bold">
-                      Selected: {QUOTEX_DRAWING_TOOLS.find((t) => t.id === selectedDrawing.type)?.label || selectedDrawing.type}
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  {selectedDrawing && (
-                    <button
-                      type="button"
-                      data-testid="drawer-delete-selected-btn"
-                      onClick={() => {
-                        soundEngine.playUiClick();
-                        setDrawings((prev) => prev.filter((d) => d.id !== selectedDrawing.id));
-                        setSelectedDrawingId(null);
-                      }}
-                      className="flex-1 py-1.5 px-2.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 font-bold text-[11px] flex items-center justify-center gap-1 cursor-pointer"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>Delete Selected</span>
-                    </button>
-                  )}
                   <button
                     type="button"
-                    data-testid="clear-all-drawings-btn"
-                    disabled={drawings.length === 0}
+                    data-testid="drawer-open-indicator-params-btn"
                     onClick={() => {
                       soundEngine.playUiClick();
-                      setDrawings([]);
-                      setSelectedDrawingId(null);
-                      setCurrentDrawing(null);
+                      setIsIndicatorModalOpen(true);
                     }}
-                    className={`flex-1 py-1.5 px-2.5 rounded-lg border font-bold text-[11px] flex items-center justify-center gap-1 ${
-                      drawings.length > 0
-                        ? 'bg-[#1a202e] hover:bg-rose-950/60 border-[#2e364a] text-slate-200 hover:text-rose-300 cursor-pointer'
-                        : 'bg-[#131722] border-[#1f2433] text-slate-600 cursor-not-allowed'
-                    }`}
+                    className="w-full py-2.5 px-3 rounded-xl bg-[#181d2a] hover:bg-[#22293a] border border-[#2e364a] text-[#ff8800] font-bold text-xs flex items-center justify-center gap-2 cursor-pointer mt-2"
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>Clear All ({drawings.length})</span>
+                    <Sliders className="w-3.5 h-3.5" />
+                    <span>Configure Indicator Periods</span>
                   </button>
                 </div>
-              </div>
+              )}
             </div>
           )}
 
@@ -2935,259 +3237,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             </span>
           </div>
 
-          {/* FLOATING QUICK-ACCESS INDICATORS & DRAWING TOOLBAR */}
-          <div
-            className={`${
-              isMobileQuickToolsOpen
-                ? 'flex top-12 left-2.5 right-2.5 bg-[#0e1015]/95 p-2 rounded-xl border border-white/15 shadow-2xl'
-                : 'hidden md:flex top-3 left-3'
-            } absolute z-20 flex-wrap items-center gap-2 font-mono text-xs select-none`}
-          >
-            {/* Quick Indicators Bar */}
-            <div className="flex items-center gap-1 p-1 rounded-xl bg-[#1e222d]/90 backdrop-blur-md border border-[#2a2e39] shadow-xl">
-              <button
-                onClick={() => {
-                  soundEngine.playUiClick();
-                  setIndicators((prev) => ({ ...prev, showSma: !prev.showSma }));
-                }}
-                className={`px-2 py-1 rounded text-[10px] font-bold transition-all cursor-pointer ${
-                  indicators.showSma ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                SMA
-              </button>
-              <button
-                onClick={() => {
-                  soundEngine.playUiClick();
-                  setIndicators((prev) => ({ ...prev, showEma: !prev.showEma }));
-                }}
-                className={`px-2 py-1 rounded text-[10px] font-bold transition-all cursor-pointer ${
-                  indicators.showEma ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                EMA
-              </button>
-              <button
-                onClick={() => {
-                  soundEngine.playUiClick();
-                  setIndicators((prev) => ({ ...prev, showBollinger: !prev.showBollinger }));
-                }}
-                className={`px-2 py-1 rounded text-[10px] font-bold transition-all cursor-pointer ${
-                  indicators.showBollinger ? 'bg-cyan-500 text-slate-950' : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                BB
-              </button>
-              <button
-                onClick={() => {
-                  soundEngine.playUiClick();
-                  setIndicators((prev) => ({ ...prev, showRsi: !prev.showRsi }));
-                }}
-                className={`px-2 py-1 rounded text-[10px] font-bold transition-all cursor-pointer ${
-                  indicators.showRsi ? 'bg-cyan-400 text-slate-950' : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                RSI
-              </button>
-              <button
-                onClick={() => {
-                  soundEngine.playUiClick();
-                  setIndicators((prev) => ({ ...prev, showMacd: !prev.showMacd }));
-                }}
-                className={`px-2 py-1 rounded text-[10px] font-bold transition-all cursor-pointer ${
-                  indicators.showMacd ? 'bg-indigo-500 text-white' : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                MACD
-              </button>
-              <button
-                onClick={() => {
-                  soundEngine.playUiClick();
-                  setIsIndicatorModalOpen(true);
-                }}
-                className="p-1 rounded text-slate-400 hover:text-white hover:bg-[#252b3b] cursor-pointer"
-                title="Indicator Settings"
-              >
-                <Sliders className="w-3.5 h-3.5" />
-              </button>
-            </div>
-
-            {/* Drawing Tools Suite with Dedicated Pencil Drawer Button */}
-            <div className="flex items-center gap-1 p-1 rounded-xl bg-[#1e222d]/90 backdrop-blur-md border border-[#2a2e39] shadow-xl">
-              <button
-                type="button"
-                data-testid="drawing-tools-pencil-btn"
-                onClick={() => {
-                  soundEngine.playUiClick();
-                  setIsDrawingDrawerOpen((prev) => !prev);
-                }}
-                className={`px-2 py-1 rounded text-[10px] font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
-                  isDrawingDrawerOpen || activeDrawingTool !== 'none'
-                    ? 'bg-[#ff8800] text-slate-950 font-black'
-                    : 'text-slate-200 hover:text-white bg-[#141722]'
-                }`}
-                title="Open Technical Analysis Drawing Tools Side-Drawer"
-              >
-                <Pencil className="w-3.5 h-3.5" />
-                <span>Drawing Tools</span>
-              </button>
-
-              <button
-                onClick={() => handleSelectDrawingTool('none')}
-                className={`p-1.5 rounded transition-all cursor-pointer ${
-                  activeDrawingTool === 'none' ? 'bg-cyan-500 text-slate-950' : 'text-slate-400 hover:text-white'
-                }`}
-                title="Pointer / Pan Tool"
-              >
-                <Move className="w-3.5 h-3.5" />
-              </button>
-              <button
-                onClick={() => handleSelectDrawingTool('trendline')}
-                className={`p-1.5 rounded transition-all cursor-pointer ${
-                  activeDrawingTool === 'trendline' ? 'bg-[#ff8800] text-slate-950' : 'text-slate-400 hover:text-white'
-                }`}
-                title="Draw Trend Line"
-              >
-                <TrendingUp className="w-3.5 h-3.5" />
-              </button>
-              <button
-                onClick={() => handleSelectDrawingTool('horizontal-line')}
-                className={`p-1.5 rounded transition-all cursor-pointer ${
-                  activeDrawingTool === 'horizontal-line' ? 'bg-[#ff8800] text-slate-950' : 'text-slate-400 hover:text-white'
-                }`}
-                title="Horizontal Line"
-              >
-                <Minus className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                data-testid="tool-support-resistance"
-                onClick={() => handleSelectDrawingTool('support-resistance')}
-                className={`px-2 py-1 rounded text-[10px] font-bold transition-all cursor-pointer ${
-                  activeDrawingTool === 'support-resistance'
-                    ? 'bg-[#ff8800] text-slate-950 font-black'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-                title="Mark Support / Resistance Level Zone"
-              >
-                S/R
-              </button>
-
-              {/* Color picker */}
-              <div className="flex items-center gap-1 pl-1 border-l border-[#2a2e39]">
-                {['#ff8800', '#00e676', '#00e5ff', '#ff334b'].map((c) => (
-                  <button
-                    key={c}
-                    onClick={() => setDrawingColor(c)}
-                    className={`w-3.5 h-3.5 rounded-full border transition-transform cursor-pointer ${
-                      drawingColor === c ? 'scale-125 border-white' : 'border-transparent'
-                    }`}
-                    style={{ backgroundColor: c }}
-                  />
-                ))}
-              </div>
-
-              {/* Clear All Drawings */}
-              {drawings.length > 0 && (
-                <button
-                  onClick={() => {
-                    soundEngine.playUiClick();
-                    setDrawings([]);
-                    setSelectedDrawingId(null);
-                  }}
-                  className="p-1 text-rose-400 hover:text-rose-300 ml-1 cursor-pointer"
-                  title="Clear All Drawings"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
-
-            {/* Interactive Trade History Overlay Toggle & Marker Selector */}
-            <div className="flex items-center gap-1.5 p-1 rounded-xl bg-[#1e222d]/90 backdrop-blur-md border border-[#2a2e39] shadow-xl">
-              <button
-                type="button"
-                data-testid="toggle-history-overlay-btn"
-                onClick={() => {
-                  soundEngine.playUiClick();
-                  setShowHistoryOverlay((prev) => {
-                    if (prev) {
-                      setHoveredTradeMarker(null);
-                      setSelectedTradeMarker(null);
-                    }
-                    return !prev;
-                  });
-                }}
-                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1.5 transition-all cursor-pointer border ${
-                  showHistoryOverlay
-                    ? 'bg-[#141824] border-[#ff8800]/60 text-white'
-                    : 'bg-transparent border-transparent text-slate-400 hover:text-white'
-                }`}
-                title="Toggle Interactive Trade Execution & Settlement Dots on Chart"
-              >
-                <span className="flex items-center gap-0.5">
-                  <span className="w-2 h-2 rounded-full bg-[#00e676]" />
-                  <span className="w-2 h-2 rounded-full bg-[#ff334b]" />
-                </span>
-                <span>History Dots</span>
-                <span
-                  data-testid="history-overlay-count-badge"
-                  className={`px-1 py-0.2 rounded text-[9px] font-black ${
-                    showHistoryOverlay
-                      ? 'bg-[#ff8800] text-slate-950'
-                      : 'bg-slate-800 text-slate-400'
-                  }`}
-                >
-                  {closedTrades.filter((t) => t.asset === selectedAsset.symbol).length * 2}
-                </span>
-              </button>
-
-              {showHistoryOverlay &&
-                closedTrades
-                  .filter((t) => t.asset === selectedAsset.symbol)
-                  .slice(0, 4)
-                  .map((t, idx) => {
-                    const isWin = t.status === 'won';
-                    const isSelected = activeInspectedMarker?.tradeId === t.id;
-                    return (
-                      <button
-                        key={t.id}
-                        type="button"
-                        data-testid={`chart-marker-chip-${idx}`}
-                        onClick={() => {
-                          soundEngine.playUiClick();
-                          const found =
-                            tradeMarkersRef.current.find(
-                              (m) => m.tradeId === t.id && m.pointType === 'settlement'
-                            ) ||
-                            tradeMarkersRef.current.find((m) => m.tradeId === t.id) ||
-                            null;
-                          setSelectedTradeMarker((prev) =>
-                            prev?.tradeId === t.id ? null : found
-                          );
-                        }}
-                        className={`px-2 py-0.5 rounded text-[9px] font-mono font-bold flex items-center gap-1 transition-all cursor-pointer border ${
-                          isSelected
-                            ? isWin
-                              ? 'bg-[#00e676]/25 border-[#00e676] text-[#00e676]'
-                              : 'bg-[#ff334b]/25 border-[#ff334b] text-[#ff334b]'
-                            : 'bg-[#131722] border-[#2a2e39] text-slate-300 hover:border-slate-500'
-                        }`}
-                        title={`Inspect ${t.direction} trade settled at ${new Date(t.endTime).toLocaleTimeString()}`}
-                      >
-                        <span
-                          className={`w-1.5 h-1.5 rounded-full ${
-                            isWin ? 'bg-[#00e676]' : 'bg-[#ff334b]'
-                          }`}
-                        />
-                        <span>
-                          {formatInlineTradeResultBadge(isWin, t.pnl ?? 0, t.investment)}
-                        </span>
-                      </button>
-                    );
-                  })}
-            </div>
-          </div>
+          {/* Top indicator & drawing toolbar removed from chart canvas; all drawings & indicators live inside the Pencil Side-Drawer */}
 
           {/* Risk Barricade Warning (80% threshold) */}
           {riskBarricade.barricaded && !isBreached && (

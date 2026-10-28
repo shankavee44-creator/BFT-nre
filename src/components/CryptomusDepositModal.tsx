@@ -790,47 +790,56 @@ export const CryptomusDepositModal: React.FC<CryptomusDepositModalProps> = ({
             </span>
           </div>
 
-          <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
-            {invoiceHistory.map((inv) => (
-              <div
-                key={inv.uuid}
-                data-testid={`deposit-history-row-${inv.orderId}`}
-                className="p-2.5 rounded-xl bg-[#11141d] border border-[#222736] flex items-center justify-between text-xs"
-              >
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="font-bold text-white">{inv.orderId}</span>
-                    <span
-                      className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${
-                        inv.status === 'completed'
-                          ? 'bg-[#00e676]/20 text-[#00e676] border border-[#00e676]/40'
-                          : inv.status === 'failed'
-                          ? 'bg-[#ff334b]/20 text-[#ff334b] border border-[#ff334b]/40'
-                          : 'bg-[#ff8800]/20 text-[#ff8800] border border-[#ff8800]/40'
-                      }`}
-                    >
-                      {inv.status === 'completed' ? 'Completed' : inv.status}
-                    </span>
+          {invoiceHistory.length === 0 ? (
+            <div
+              data-testid="deposit-history-empty"
+              className="p-4 rounded-xl bg-[#11141d] border border-[#222736] text-center text-xs text-slate-500"
+            >
+              No USDT (TRC-20) deposit transactions recorded for this account yet.
+            </div>
+          ) : (
+            <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+              {invoiceHistory.map((inv) => (
+                <div
+                  key={inv.uuid}
+                  data-testid={`deposit-history-row-${inv.orderId}`}
+                  className="p-2.5 rounded-xl bg-[#11141d] border border-[#222736] flex items-center justify-between text-xs"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-white">{inv.orderId}</span>
+                      <span
+                        className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${
+                          inv.status === 'completed'
+                            ? 'bg-[#00e676]/20 text-[#00e676] border border-[#00e676]/40'
+                            : inv.status === 'failed'
+                            ? 'bg-[#ff334b]/20 text-[#ff334b] border border-[#ff334b]/40'
+                            : 'bg-[#ff8800]/20 text-[#ff8800] border border-[#ff8800]/40'
+                        }`}
+                      >
+                        {inv.status === 'completed' ? 'Completed' : inv.status}
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-slate-400 truncate mt-0.5">
+                      TRC-20: {inv.address}
+                    </div>
                   </div>
-                  <div className="text-[10px] text-slate-400 truncate mt-0.5">
-                    TRC-20: {inv.address}
-                  </div>
-                </div>
 
-                <div className="text-right shrink-0 ml-3">
-                  <div className="font-black text-[#00e676]">
-                    +${inv.amount.toFixed(2)} USDT
-                  </div>
-                  <div className="text-[9px] text-slate-500">
-                    {new Date(inv.createdAt).toLocaleTimeString([], {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
+                  <div className="text-right shrink-0 ml-3">
+                    <div className="font-black text-[#00e676]">
+                      +${inv.amount.toFixed(2)} USDT
+                    </div>
+                    <div className="text-[9px] text-slate-500">
+                      {new Date(inv.createdAt).toLocaleTimeString([], {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>

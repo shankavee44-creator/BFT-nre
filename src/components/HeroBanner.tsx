@@ -19,6 +19,7 @@ interface HeroBannerProps {
   onOpenTerminal: () => void;
   onOpenWithdrawals: () => void;
   onOpenAuthModal?: (mode: 'login' | 'register') => void;
+  isLoggedIn?: boolean;
 }
 
 export const HeroBanner: React.FC<HeroBannerProps> = ({
@@ -28,6 +29,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
   onOpenTerminal,
   onOpenWithdrawals,
   onOpenAuthModal,
+  isLoggedIn = false,
 }) => {
   return (
     <div className="relative overflow-hidden py-12 md:py-20 border-b border-white/10 bg-[#0a0a0a] animate-bft-entry">
@@ -146,9 +148,10 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
             <TrendingUp className="w-4 h-4 text-emerald-400" />
             Launch Live OTC Terminal
           </button>
-          {onOpenAuthModal && (
+          {!isLoggedIn && onOpenAuthModal && (
             <button
               onClick={() => onOpenAuthModal('login')}
+              data-testid="hero-google-signin-btn"
               className="px-6 py-4 rounded-xl bg-white hover:bg-slate-100 text-slate-950 font-black text-sm sm:text-base transition-colors cursor-pointer flex items-center gap-2 font-mono"
             >
               <UserPlus className="w-4 h-4" />

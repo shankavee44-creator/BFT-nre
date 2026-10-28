@@ -60,7 +60,14 @@ import {
   processWithdrawalCommission,
 } from './utils/affiliateEngine';
 import { PACKAGES, advanceChallengeAccountPhase } from './utils/propRules';
-import { apiGetMe, apiLogout } from './utils/apiClient';
+import {
+  apiGetMe,
+  apiLogout,
+  apiSubmitKyc,
+  apiPassChallenge,
+  apiUpdateAccountState,
+  apiGetWithdrawals,
+} from './utils/apiClient';
 import { Gift, X, UserPlus, ShieldAlert, LogIn } from 'lucide-react';
 
 export default function App() {
@@ -118,25 +125,84 @@ export default function App() {
     // Check live database session on backend
     apiGetMe().then((res) => {
       if (res && res.ok && res.user) {
-        setUserProfile((prev) => ({
-          ...prev,
-          id: res.user.id,
-          email: res.user.email,
-          fullName: res.user.fullName || prev.fullName,
-          referralCode: res.user.referralCode || prev.referralCode,
-          referredBy: res.user.referredBy || prev.referredBy,
-          kycStatus: res.user.kycStatus || prev.kycStatus,
-          profileLocked: Boolean(res.user.profileLocked),
-          address: res.user.address || prev.address,
-          dateOfBirth: res.user.dateOfBirth || prev.dateOfBirth,
-          country: res.user.country || prev.country,
-          telegramHandle: res.user.telegramHandle || prev.telegramHandle,
-          isLoggedIn: true,
-        }));
-        if (Array.isArray(res.accounts) && res.accounts.length > 0) {
-          setAccounts(res.accounts);
-          setActiveAccountId(res.accounts[0].id);
+        setUserProfile((prev) => {
+          const isSameUser =
+            prev.email &&
+            res.user.email &&
+            prev.email.toLowerCase() === res.user.email.toLowerCase();
+          const localAlreadyVerified = isSameUser && prev.kycStatus === 'verified';
+          const effectiveKycStatus =
+            res.user.kycStatus === 'verified' || localAlreadyVerified
+              ? 'verified'
+              : res.user.kycStatus || (isSameUser ? prev.kycStatus : 'unverified');
+
+          if (localAlreadyVerified && res.user.kycStatus !== 'verified') {
+            apiSubmitKyc({
+              docType: prev.kycDocumentType || 'Passport',
+              fullName: prev.fullName || res.user.fullName,
+              address: prev.address || res.user.address,
+              dateOfBirth: prev.dateOfBirth || res.user.dateOfBirth,
+              country: prev.country || res.user.country,
+            }).catch(() => {});
+          }
+
+          const synced: UserProfile = {
+            ...prev,
+            id: res.user.id,
+            email: res.user.email,
+            fullName: res.user.fullName || (isSameUser ? prev.fullName : ''),
+            referralCode: res.user.referralCode || (isSameUser ? prev.referralCode : ''),
+            referredBy: res.user.referredBy || (isSameUser ? prev.referredBy : undefined),
+            kycStatus: effectiveKycStatus,
+            profileLocked: Boolean(res.user.profileLocked || effectiveKycStatus === 'verified'),
+            address: res.user.address || (isSameUser ? prev.address : ''),
+            dateOfBirth: res.user.dateOfBirth || (isSameUser ? prev.dateOfBirth : ''),
+            country: res.user.country || (isSameUser ? prev.country : 'United States'),
+            telegramHandle: res.user.telegramHandle || (isSameUser ? prev.telegramHandle : ''),
+            isLoggedIn: true,
+          };
+          saveProfile(synced);
+          return synced;
+        });
+
+        if (Array.isArray(res.accounts)) {
+          const mappedAccounts = res.accounts.map((a: TradingAccount) => ({
+            ...a,
+            ownerId: res.user.id,
+            ownerEmail: res.user.email,
+          }));
+          setAccounts(mappedAccounts);
+          saveAccounts(mappedAccounts);
+          const nextActiveId = mappedAccounts[0]?.id || '';
+          setActiveAccountId(nextActiveId);
+          saveActiveAccountId(nextActiveId);
         }
+
+        apiGetWithdrawals()
+          .then((wRes) => {
+            if (wRes && wRes.ok && Array.isArray(wRes.withdrawals)) {
+              const mappedW: WithdrawalRequest[] = wRes.withdrawals.map((row: any) => ({
+                id: row.id,
+                accountId: row.account_id,
+                amount: row.gross_amount,
+                withdrawalFee: row.fee_amount,
+                netReceivedAmount: row.net_payout,
+                profitSplitApplied: Math.round((row.profit_share_rate || 0.8) * 100),
+                paymentMethod: row.payment_method || 'crypto_trc20',
+                trc20Address: row.wallet_address,
+                referenceNumber: row.reference_number,
+                requestedAt: row.requested_at,
+                completedAt: row.processed_at,
+                status: row.status === 'completed' ? 'paid' : row.status,
+                txHash: row.tx_hash,
+                isDoublePayoutEligible: false,
+                timeElapsedSeconds: 92,
+              }));
+              setWithdrawals(mappedW);
+              saveWithdrawals(mappedW);
+            }
+          })
+          .catch(() => {});
       }
     }).catch(() => {
       // offline or storage fallback
@@ -156,9 +222,22 @@ export default function App() {
   }, []);
 
   const handleUpdateSingleAccount = (updated: TradingAccount) => {
-    const newAccounts = accounts.map((acc) => (acc.id === updated.id ? updated : acc));
-    setAccounts(newAccounts);
-    saveAccounts(newAccounts);
+    setAccounts((prev) => {
+      const newAccounts = prev.map((acc) => (acc.id === updated.id ? updated : acc));
+      saveAccounts(newAccounts);
+      return newAccounts;
+    });
+    apiUpdateAccountState(updated.id, {
+      currentBalance: updated.currentBalance,
+      equity: updated.equity,
+      startingDayEquity: updated.startingDayEquity,
+      status: updated.status,
+      phase: updated.phase,
+      tradesCount: updated.tradesCount,
+      winRate: updated.winRate,
+      tradingDaysCompleted: updated.tradingDaysCompleted,
+      certificateId: updated.certificateId,
+    }).catch(() => {});
   };
 
   const handleCreditAccountDeposit = (accountId: string, amountUsdt: number) => {
@@ -167,11 +246,16 @@ export default function App() {
         if (acc.id !== accountId) return acc;
         const newBal = Number((acc.currentBalance + amountUsdt).toFixed(2));
         const newEq = Number((acc.equity + amountUsdt).toFixed(2));
-        return {
+        const nextAcc = {
           ...acc,
           currentBalance: newBal,
           equity: newEq,
         };
+        apiUpdateAccountState(acc.id, {
+          currentBalance: newBal,
+          equity: newEq,
+        }).catch(() => {});
+        return nextAcc;
       });
       saveAccounts(updated);
       return updated;
@@ -194,8 +278,20 @@ export default function App() {
     const interval = setInterval(() => {
       const check = checkKycTimerCompletion(userProfile, Date.now());
       if (check.completed) {
-        setUserProfile(check.updatedProfile);
-        saveProfile(check.updatedProfile);
+        const verifiedProfile: UserProfile = {
+          ...check.updatedProfile,
+          kycStatus: 'verified',
+          profileLocked: true,
+        };
+        setUserProfile(verifiedProfile);
+        saveProfile(verifiedProfile);
+        apiSubmitKyc({
+          docType: verifiedProfile.kycDocumentType || 'Passport',
+          fullName: verifiedProfile.fullName,
+          address: verifiedProfile.address,
+          dateOfBirth: verifiedProfile.dateOfBirth,
+          country: verifiedProfile.country,
+        }).catch(() => {});
       }
     }, 1000);
     return () => clearInterval(interval);
@@ -267,22 +363,73 @@ export default function App() {
     }
   };
 
-  const handlePassChallengePhase = (accountToPass: TradingAccount) => {
+  const handlePassChallengePhase = async (accountToPass: TradingAccount) => {
+    try {
+      const apiRes = await apiPassChallenge({
+        accountId: accountToPass.id,
+        provisionLiveDirectly: false,
+      });
+      if (apiRes && apiRes.ok && apiRes.deployedAccount && apiRes.lockedAccount) {
+        const deployed: TradingAccount = {
+          ...apiRes.deployedAccount,
+          ownerId: userProfile.id,
+          ownerEmail: userProfile.email,
+        };
+        const locked: TradingAccount = {
+          ...apiRes.lockedAccount,
+          ownerId: userProfile.id,
+          ownerEmail: userProfile.email,
+        };
+        const updatedList = Array.isArray(apiRes.accounts)
+          ? apiRes.accounts.map((a: TradingAccount) => ({
+              ...a,
+              ownerId: userProfile.id,
+              ownerEmail: userProfile.email,
+            }))
+          : [deployed, ...accounts.map((a) => (a.id === accountToPass.id ? locked : a))];
+
+        setAccounts(updatedList);
+        saveAccounts(updatedList);
+        setActiveAccountId(deployed.id);
+        saveActiveAccountId(deployed.id);
+
+        setCertificateModalState({
+          isOpen: true,
+          certificateId: apiRes.certificateId || deployed.certificateId || `CERT-${accountToPass.id}`,
+          passedAccount: locked,
+          deployedAccount: deployed,
+        });
+        return;
+      }
+    } catch {
+      // Fallback to client-side progression if offline
+    }
+
     const result = advanceChallengeAccountPhase(accountToPass);
+    const deployedNext: TradingAccount = {
+      ...result.deployedNextAccount,
+      ownerId: userProfile.id,
+      ownerEmail: userProfile.email,
+    };
+    const lockedPrev: TradingAccount = {
+      ...result.lockedPreviousAccount,
+      ownerId: userProfile.id,
+      ownerEmail: userProfile.email,
+    };
     const updatedList = [
-      result.deployedNextAccount,
-      ...accounts.map((a) => (a.id === accountToPass.id ? result.lockedPreviousAccount : a)),
+      deployedNext,
+      ...accounts.map((a) => (a.id === accountToPass.id ? lockedPrev : a)),
     ];
     setAccounts(updatedList);
     saveAccounts(updatedList);
-    setActiveAccountId(result.deployedNextAccount.id);
-    saveActiveAccountId(result.deployedNextAccount.id);
+    setActiveAccountId(deployedNext.id);
+    saveActiveAccountId(deployedNext.id);
 
     setCertificateModalState({
       isOpen: true,
       certificateId: result.certificateId,
-      passedAccount: result.lockedPreviousAccount,
-      deployedAccount: result.deployedNextAccount,
+      passedAccount: lockedPrev,
+      deployedAccount: deployedNext,
     });
   };
 
@@ -438,6 +585,7 @@ export default function App() {
               onOpenTerminal={() => handleNavigateTab('terminal')}
               onOpenWithdrawals={() => handleNavigateTab('withdrawals')}
               onOpenAuthModal={handleOpenAuthModal}
+              isLoggedIn={Boolean(userProfile?.isLoggedIn)}
             />
             <PricingTiers
               activePromoCode={activePromoCode}
@@ -594,6 +742,8 @@ export default function App() {
           rememberMe,
           isNewRegistration,
           updatedAffiliateUsers,
+          serverUser,
+          serverAccounts,
         }) => {
           if (updatedAffiliateUsers) {
             setAffiliateUsers(updatedAffiliateUsers);
@@ -607,17 +757,75 @@ export default function App() {
             referredBy: referredBy || undefined,
             rememberMe,
             isNewRegistration,
+            kycStatus: serverUser?.kycStatus,
+            kycDocType: serverUser?.kycDocType,
+            profileLocked: serverUser?.profileLocked,
+            address: serverUser?.address,
+            dateOfBirth: serverUser?.dateOfBirth,
+            country: serverUser?.country,
+            telegramHandle: serverUser?.telegramHandle,
+            avatarUrl: serverUser?.avatarUrl,
           });
           setUserProfile(loadedOrCreatedProfile);
 
-          const ownedAccounts = filterAccountsForUser(accounts, loadedOrCreatedProfile);
-          if (ownedAccounts.length > 0) {
-            setActiveAccountId(ownedAccounts[0].id);
-            saveActiveAccountId(ownedAccounts[0].id);
+          if (Array.isArray(serverAccounts)) {
+            const mappedServerAccounts = serverAccounts.map((a) => ({
+              ...a,
+              ownerId: userId,
+              ownerEmail: email,
+            }));
+            setAccounts(mappedServerAccounts);
+            saveAccounts(mappedServerAccounts);
+            if (mappedServerAccounts.length > 0) {
+              setActiveAccountId(mappedServerAccounts[0].id);
+              saveActiveAccountId(mappedServerAccounts[0].id);
+            } else {
+              setActiveAccountId('');
+              saveActiveAccountId('');
+            }
           } else {
-            setActiveAccountId('');
-            saveActiveAccountId('');
+            const ownedAccounts = filterAccountsForUser(accounts, loadedOrCreatedProfile);
+            if (ownedAccounts.length > 0) {
+              setActiveAccountId(ownedAccounts[0].id);
+              saveActiveAccountId(ownedAccounts[0].id);
+            } else {
+              setActiveAccountId('');
+              saveActiveAccountId('');
+            }
           }
+
+          // Load user's real withdrawals from SQLite (empty for new users)
+          apiGetWithdrawals()
+            .then((wRes) => {
+              if (wRes && wRes.ok && Array.isArray(wRes.withdrawals)) {
+                const mappedW: WithdrawalRequest[] = wRes.withdrawals.map((row: any) => ({
+                  id: row.id,
+                  accountId: row.account_id,
+                  amount: row.gross_amount,
+                  withdrawalFee: row.fee_amount,
+                  netReceivedAmount: row.net_payout,
+                  profitSplitApplied: Math.round((row.profit_share_rate || 0.8) * 100),
+                  paymentMethod: row.payment_method || 'crypto_trc20',
+                  trc20Address: row.wallet_address,
+                  referenceNumber: row.reference_number,
+                  requestedAt: row.requested_at,
+                  completedAt: row.processed_at,
+                  status: row.status === 'completed' ? 'paid' : row.status,
+                  txHash: row.tx_hash,
+                  isDoublePayoutEligible: false,
+                  timeElapsedSeconds: 92,
+                }));
+                setWithdrawals(mappedW);
+                saveWithdrawals(mappedW);
+              } else {
+                setWithdrawals([]);
+                saveWithdrawals([]);
+              }
+            })
+            .catch(() => {
+              setWithdrawals([]);
+              saveWithdrawals([]);
+            });
 
           setProtectedRouteNotice(null);
           setIsAuthModalOpen(false);

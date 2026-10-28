@@ -151,21 +151,49 @@ export const BUILTIN_AVATARS: string[] = [
   )}`,
 ];
 
+export const SUPPORTED_COUNTRIES: Array<{ name: string; code: string; flag: string }> = [
+  { name: 'United States', code: 'US', flag: '🇺🇸' },
+  { name: 'Sri Lanka', code: 'LK', flag: '🇱🇰' },
+  { name: 'United Kingdom', code: 'GB', flag: '🇬🇧' },
+  { name: 'United Arab Emirates', code: 'AE', flag: '🇦🇪' },
+  { name: 'India', code: 'IN', flag: '🇮🇳' },
+  { name: 'Malaysia', code: 'MY', flag: '🇲🇾' },
+  { name: 'Pakistan', code: 'PK', flag: '🇵🇰' },
+  { name: 'Singapore', code: 'SG', flag: '🇸🇬' },
+  { name: 'Canada', code: 'CA', flag: '🇨🇦' },
+  { name: 'Australia', code: 'AU', flag: '🇦🇺' },
+  { name: 'Germany', code: 'DE', flag: '🇩🇪' },
+  { name: 'France', code: 'FR', flag: '🇫🇷' },
+  { name: 'Japan', code: 'JP', flag: '🇯🇵' },
+  { name: 'Switzerland', code: 'CH', flag: '🇨🇭' },
+  { name: 'Brazil', code: 'BR', flag: '🇧🇷' },
+  { name: 'Nigeria', code: 'NG', flag: '🇳🇬' },
+  { name: 'South Africa', code: 'ZA', flag: '🇿🇦' },
+];
+
+export function getFlagForCountry(countryName?: string): string {
+  if (!countryName) return '🇺🇸';
+  const match = SUPPORTED_COUNTRIES.find(
+    (c) => c.name.toLowerCase() === countryName.trim().toLowerCase()
+  );
+  return match ? match.flag : '🌐';
+}
+
 const INITIAL_PROFILE: UserProfile = {
-  id: 'usr_bft_001',
-  email: 'trader.pro@bft-capital.com',
+  id: '',
+  email: '',
   fullName: '',
   address: '',
   dateOfBirth: '',
   profileLocked: false,
-  country: 'United Kingdom',
+  country: 'United States',
   avatarUrl: BUILTIN_AVATARS[0],
   telegramHandle: '',
   kycStatus: 'unverified',
   kycDocumentType: 'Passport',
   twoFactorEnabled: false,
   activeAccountId: '',
-  referralCode: 'BFT-ALEX77',
+  referralCode: '',
   referredBy: undefined,
   isLoggedIn: false,
 };
@@ -458,6 +486,14 @@ export function loadOrCreateUserProfileByEmail(params: {
   referredBy?: string;
   rememberMe?: boolean;
   isNewRegistration?: boolean;
+  kycStatus?: 'unverified' | 'pending' | 'verified' | 'rejected';
+  kycDocType?: 'Passport' | 'ID Card' | 'Driving License';
+  profileLocked?: boolean;
+  address?: string;
+  dateOfBirth?: string;
+  country?: string;
+  telegramHandle?: string;
+  avatarUrl?: string;
 }): UserProfile {
   const emailKey = params.email.trim().toLowerCase();
   try {
@@ -469,6 +505,22 @@ export function loadOrCreateUserProfileByEmail(params: {
         if (existing) {
           const updated: UserProfile = {
             ...existing,
+            id: params.userId || existing.id,
+            fullName: params.fullName || existing.fullName,
+            referralCode: params.referralCode || existing.referralCode,
+            referredBy: params.referredBy ?? existing.referredBy,
+            kycStatus:
+              params.kycStatus === 'verified' || existing.kycStatus === 'verified'
+                ? 'verified'
+                : params.kycStatus === 'pending' || existing.kycStatus === 'pending'
+                ? 'pending'
+                : 'unverified',
+            profileLocked: Boolean(params.profileLocked || existing.profileLocked || params.kycStatus === 'verified'),
+            address: params.address || existing.address || '',
+            dateOfBirth: params.dateOfBirth || existing.dateOfBirth || '',
+            country: params.country || existing.country || 'United States',
+            telegramHandle: params.telegramHandle || existing.telegramHandle || '',
+            avatarUrl: params.avatarUrl || existing.avatarUrl || BUILTIN_AVATARS[0],
             isLoggedIn: true,
             rememberMe: params.rememberMe,
           };
@@ -478,21 +530,26 @@ export function loadOrCreateUserProfileByEmail(params: {
       }
     }
   } catch {
-    // fallback to creating fresh unverified profile
+    // fallback to creating fresh profile
   }
 
   const freshProfile: UserProfile = {
     id: params.userId,
     email: params.email.trim(),
     fullName: params.fullName.trim(),
-    address: '',
-    dateOfBirth: '',
-    profileLocked: false,
-    country: 'United States',
-    avatarUrl: BUILTIN_AVATARS[0],
-    telegramHandle: '',
-    kycStatus: 'unverified',
-    kycDocumentType: 'Passport',
+    address: params.address || '',
+    dateOfBirth: params.dateOfBirth || '',
+    profileLocked: Boolean(params.profileLocked || params.kycStatus === 'verified'),
+    country: params.country || 'United States',
+    avatarUrl: params.avatarUrl || BUILTIN_AVATARS[0],
+    telegramHandle: params.telegramHandle || '',
+    kycStatus:
+      params.kycStatus === 'verified'
+        ? 'verified'
+        : params.kycStatus === 'pending'
+        ? 'pending'
+        : 'unverified',
+    kycDocumentType: params.kycDocType || 'Passport',
     twoFactorEnabled: false,
     activeAccountId: '',
     referralCode: params.referralCode,
@@ -554,7 +611,7 @@ export function loadWithdrawals(): WithdrawalRequest[] {
   } catch {
     // fallback
   }
-  return INITIAL_WITHDRAWALS;
+  return [];
 }
 
 export function saveWithdrawals(withdrawals: WithdrawalRequest[]): void {

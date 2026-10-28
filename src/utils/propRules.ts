@@ -647,9 +647,50 @@ export interface RuleValidationResult {
   code?: string;
 }
 
+export function getChallengeProfitTarget(account?: TradingAccount | null): {
+  isChallenge: boolean;
+  targetPercent: number;
+  targetAmount: number;
+  currentProfit: number;
+  progressPercent: number;
+  isTargetMet: boolean;
+} {
+  if (!account || isLiveFundedAccount(account)) {
+    return {
+      isChallenge: false,
+      targetPercent: 0,
+      targetAmount: 0,
+      currentProfit: account ? Math.max(0, account.currentBalance - account.initialBalance) : 0,
+      progressPercent: 100,
+      isTargetMet: false,
+    };
+  }
+  const targetPercent =
+    account.tier === 'one-step'
+      ? 30
+      : account.phase === 'phase_2'
+      ? 15
+      : 25;
+  const targetAmount = Number(((account.initialBalance * targetPercent) / 100).toFixed(2));
+  const currentProfit = Number((account.currentBalance - account.initialBalance).toFixed(2));
+  const progressPercent =
+    targetAmount > 0
+      ? Math.min(100, Math.max(0, Number(((currentProfit / targetAmount) * 100).toFixed(1))))
+      : 0;
+  return {
+    isChallenge: true,
+    targetPercent,
+    targetAmount,
+    currentProfit,
+    progressPercent,
+    isTargetMet: currentProfit >= targetAmount && targetAmount > 0,
+  };
+}
+
 /**
  * Validates if an account can request a withdrawal.
  * Rules:
+ * - Challenge accounts (One-Step / Two-Step in phase_1 or phase_2) CANNOT withdraw funds during the challenge phase.
  * - Minimum withdrawal threshold: strictly $250 in account profits.
  * - Mandatory 14-day waiting period for the very first withdrawal across all account types.
  */
@@ -658,6 +699,15 @@ export function validateWithdrawalRequest(
   requestedAmount: number,
   options?: { enforceFirstWithdrawalLock?: boolean; nowMs?: number }
 ): RuleValidationResult {
+  if (!isLiveFundedAccount(account)) {
+    return {
+      valid: false,
+      reason:
+        'Withdrawals are locked during the Challenge Phase. Trade to hit your profit target first to pass the challenge, earn your Completion Certificate, and unlock your Live Funded Account.',
+      code: 'CHALLENGE_PHASE_LOCKED',
+    };
+  }
+
   if (options?.enforceFirstWithdrawalLock) {
     const firstLock = checkFirstWithdrawalWaitingPeriod(account, options.nowMs);
     if (!firstLock.eligible) {

@@ -199,8 +199,8 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
     return () => clearInterval(timer);
   }, [activeRequest, onUpdateWithdrawal]);
 
-  // Merged Transaction Ledger & Pagination
-  const allTransactions = useMemo(() => buildMergedTransactionLedger(withdrawals), [withdrawals]);
+  // Merged Transaction Ledger & Pagination (strictly real user withdrawals, no fake demo rows)
+  const allTransactions = useMemo(() => buildMergedTransactionLedger(withdrawals, false), [withdrawals]);
   const filteredTransactions = useMemo(() => {
     if (typeFilter === 'ALL') return allTransactions;
     return allTransactions.filter((t) => t.type === typeFilter);
@@ -651,6 +651,39 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
         )}
 
         {/* =====================================================================
+            CHALLENGE PHASE WITHDRAWAL LOCK BANNER (One-Step / Two-Step Challenge)
+            ===================================================================== */}
+        {account && !isLiveFundedAccount(account) && (
+          <div
+            data-testid="challenge-phase-withdrawal-lock-banner"
+            className="mx-3 sm:mx-6 mt-4 p-3.5 sm:p-4 rounded-xl bg-[#14100a] border border-[#ff8800] flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+          >
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-lg bg-[#ff8800]/15 border border-[#ff8800]/40 flex items-center justify-center shrink-0 text-[#ff8800]">
+                <Lock className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="text-[11px] font-mono font-bold uppercase tracking-wider text-[#ff8800]">
+                  Challenge Phase Account • Withdrawals Locked
+                </div>
+                <p className="text-xs sm:text-sm font-bold text-white mt-0.5">
+                  Account <span className="font-mono text-[#ff8800]">{account.id}</span> is currently in the Evaluation Challenge phase ({account.tierName}). Withdrawals are strictly locked on Challenge accounts. Trade to hit your profit target to receive your Completion Certificate and unlock your Live Funded Account!
+                </p>
+              </div>
+            </div>
+            {onNavigateTab && (
+              <button
+                type="button"
+                onClick={() => onNavigateTab('terminal')}
+                className="px-3.5 py-2 rounded-lg bg-[#ff8800] hover:bg-[#ff9900] text-slate-950 font-bold text-xs shrink-0 cursor-pointer transition-colors whitespace-nowrap font-mono uppercase"
+              >
+                Trade to Pass Challenge →
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* =====================================================================
             VIEW 1: WITHDRAWAL INTERFACE (Desktop 2-Column Split / Mobile Stacked)
             ===================================================================== */}
         {activePortalTab === 'withdrawal' && (
@@ -1048,51 +1081,57 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
 
                   {latestRequestsExpanded && (
                     <div data-testid="latest-requests-list" className="mt-3 space-y-2">
-                      {allTransactions
-                        .filter((t) => t.type === 'Payout')
-                        .slice(0, 4)
-                        .map((req) => (
-                          <div
-                            key={req.id}
-                            className="p-3 rounded-lg bg-[#0e1017] border border-[#1e2330] flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
-                          >
-                            <div className="flex items-start sm:items-center gap-3">
-                              <div className="flex items-center gap-1.5 font-mono font-bold text-white">
-                                {req.status === 'Succeeded' ? (
-                                  <CheckCircle2 className="w-4 h-4 text-[#00c853] shrink-0" />
-                                ) : req.status === 'Canceled' ? (
-                                  <XCircle className="w-4 h-4 text-rose-500 shrink-0" />
-                                ) : (
-                                  <Clock className="w-4 h-4 text-[#ff8800] shrink-0" />
-                                )}
-                                <span>#{req.orderNumber}</span>
+                      {allTransactions.filter((t) => t.type === 'Payout').length === 0 ? (
+                        <div className="p-4 rounded-lg bg-[#0e1017] border border-[#1e2330] text-center text-xs text-[#8c96a6] font-mono">
+                          No withdrawal requests submitted yet.
+                        </div>
+                      ) : (
+                        allTransactions
+                          .filter((t) => t.type === 'Payout')
+                          .slice(0, 4)
+                          .map((req) => (
+                            <div
+                              key={req.id}
+                              className="p-3 rounded-lg bg-[#0e1017] border border-[#1e2330] flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
+                            >
+                              <div className="flex items-start sm:items-center gap-3">
+                                <div className="flex items-center gap-1.5 font-mono font-bold text-white">
+                                  {req.status === 'Succeeded' ? (
+                                    <CheckCircle2 className="w-4 h-4 text-[#00c853] shrink-0" />
+                                  ) : req.status === 'Canceled' ? (
+                                    <XCircle className="w-4 h-4 text-rose-500 shrink-0" />
+                                  ) : (
+                                    <Clock className="w-4 h-4 text-[#ff8800] shrink-0" />
+                                  )}
+                                  <span>#{req.orderNumber}</span>
+                                </div>
+                                <span className="text-[#8c96a6] font-mono tabular-nums">
+                                  {req.dateFormatted} {req.timeFormatted}
+                                </span>
+                                <span className="text-[#cbd5e1] font-medium">
+                                  {req.paymentSystem} ({req.network})
+                                </span>
                               </div>
-                              <span className="text-[#8c96a6] font-mono tabular-nums">
-                                {req.dateFormatted} {req.timeFormatted}
-                              </span>
-                              <span className="text-[#cbd5e1] font-medium">
-                                {req.paymentSystem} ({req.network})
-                              </span>
-                            </div>
 
-                            <div className="flex items-center justify-between sm:justify-end gap-3">
-                              <span
-                                className={`font-semibold ${
-                                  req.status === 'Succeeded'
-                                    ? 'text-[#00c853]'
-                                    : req.status === 'Canceled'
-                                    ? 'text-rose-400'
-                                    : 'text-[#ff8800]'
-                                }`}
-                              >
-                                {req.status}
-                              </span>
-                              <span className="font-mono tabular-nums font-bold text-rose-400">
-                                {req.signedAmountFormatted}
-                              </span>
+                              <div className="flex items-center justify-between sm:justify-end gap-3">
+                                <span
+                                  className={`font-semibold ${
+                                    req.status === 'Succeeded'
+                                      ? 'text-[#00c853]'
+                                      : req.status === 'Canceled'
+                                      ? 'text-rose-400'
+                                      : 'text-[#ff8800]'
+                                  }`}
+                                >
+                                  {req.status}
+                                </span>
+                                <span className="font-mono tabular-nums font-bold text-rose-400">
+                                  {req.signedAmountFormatted}
+                                </span>
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          ))
+                      )}
 
                       <div className="pt-1 flex justify-end">
                         <button

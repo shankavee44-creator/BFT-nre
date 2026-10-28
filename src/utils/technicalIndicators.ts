@@ -28,6 +28,7 @@ export interface IndicatorSettings {
   macdSignalColor: string;
 
   showVolume: boolean;
+  showFib?: boolean;
 }
 
 export const DEFAULT_INDICATOR_SETTINGS: IndicatorSettings = {
@@ -58,6 +59,7 @@ export const DEFAULT_INDICATOR_SETTINGS: IndicatorSettings = {
   macdSignalColor: '#ff334b',
 
   showVolume: true,
+  showFib: false,
 };
 
 /**

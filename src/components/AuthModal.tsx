@@ -1,23 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import {
   X,
-  Lock,
   Mail,
   User,
   ArrowRight,
-  Zap,
   Gift,
-  CheckCircle2,
   AlertCircle,
-  KeyRound,
   ShieldCheck,
-  Link2,
   Cookie,
-  Layers,
-  Eye,
-  EyeOff,
+  ExternalLink,
 } from 'lucide-react';
-import { UserAccount } from '../types';
+import { UserAccount, TradingAccount } from '../types';
 import {
   COOKIE_NAME,
   getCookie,
@@ -25,9 +18,8 @@ import {
   storeReferralCode,
   validateSponsorReferralCode,
   resolve3TierUplineChain,
-  registerNewUserAccount,
 } from '../utils/affiliateEngine';
-import { apiGoogleSignIn } from '../utils/apiClient';
+import { apiGoogleSignIn, apiGetGoogleOAuthUrl } from '../utils/apiClient';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -47,6 +39,8 @@ interface AuthModalProps {
     jwtToken: string;
     isNewRegistration?: boolean;
     updatedAffiliateUsers?: UserAccount[];
+    serverUser?: any;
+    serverAccounts?: TradingAccount[];
   }) => void;
 }
 
@@ -77,10 +71,22 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   initialReferralCode = null,
   affiliateUsers = [],
   onClose,
-  onSimulateReferralLink,
   onAuthSuccess,
 }) => {
-  const [selectedGoogleAccount, setSelectedGoogleAccount] = useState<'new_trader' | 'existing_pro'>('new_trader');
+  const [googleEmail, setGoogleEmail] = useState<string>(() => {
+    try {
+      return localStorage.getItem('bft_last_google_email') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [googleFullName, setGoogleFullName] = useState<string>(() => {
+    try {
+      return localStorage.getItem('bft_last_google_name') || '';
+    } catch {
+      return '';
+    }
+  });
   const [referralCodeInput, setReferralCodeInput] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
   const [cookieValue, setCookieValue] = useState<string | null>(null);
@@ -95,8 +101,47 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       if (detectedCode) {
         setReferralCodeInput(detectedCode);
       }
+      setAuthError(null);
     }
   }, [isOpen, isPageView, initialReferralCode]);
+
+  // Listen for OAUTH_AUTH_SUCCESS postMessage from Google OAuth popup window
+  useEffect(() => {
+    if (!isOpen && !isPageView) return;
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'OAUTH_AUTH_SUCCESS' && event.data?.payload?.ok) {
+        const res = event.data.payload;
+        const jwtToken = res.token;
+        try {
+          if (rememberMe) {
+            localStorage.setItem('bft_jwt_session', jwtToken);
+          } else {
+            sessionStorage.setItem('bft_jwt_session', jwtToken);
+          }
+          if (res.user?.email) localStorage.setItem('bft_last_google_email', res.user.email);
+          if (res.user?.fullName) localStorage.setItem('bft_last_google_name', res.user.fullName);
+        } catch {
+          // ignore storage errors
+        }
+
+        onAuthSuccess({
+          userId: res.user.id,
+          email: res.user.email,
+          fullName: res.user.fullName,
+          referralCode: res.user.referralCode,
+          referredBy: res.user.referredBy || null,
+          rememberMe,
+          jwtToken,
+          isNewRegistration: !res.user.profileLocked && res.user.kycStatus !== 'verified',
+          serverUser: res.user,
+          serverAccounts: Array.isArray(res.accounts) ? res.accounts : [],
+        });
+        onClose();
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [isOpen, isPageView, rememberMe, onAuthSuccess, onClose]);
 
   if (!isOpen && !isPageView) return null;
 
@@ -104,30 +149,60 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const sponsorValidation = validateSponsorReferralCode(effectiveCodeForLookup, affiliateUsers);
   const uplineChain = resolve3TierUplineChain(effectiveCodeForLookup, affiliateUsers);
 
-  const handleApplyReferralPreset = (code: string) => {
-    const clean = code.trim().toUpperCase();
-    storeReferralCode(clean);
-    setCookieValue(clean);
-    setReferralCodeInput(clean);
-    if (onSimulateReferralLink) {
-      onSimulateReferralLink(clean);
+  const handleOpenGoogleOAuthPopup = async () => {
+    const codeToAttribute =
+      referralCodeInput.trim() || getCookie(COOKIE_NAME) || getStoredReferralCode() || null;
+
+    // If user already entered their Google email in the form, authenticate directly
+    if (googleEmail.trim() && googleEmail.includes('@')) {
+      await handleDirectGoogleSignIn();
+      return;
+    }
+
+    try {
+      setAuthError(null);
+      const urlRes = await apiGetGoogleOAuthUrl(codeToAttribute);
+      if (urlRes?.ok && urlRes.url) {
+        const popup = window.open(
+          urlRes.url,
+          'bft_google_oauth_popup',
+          'width=500,height=640,menubar=no,toolbar=no,location=no,status=no'
+        );
+        if (!popup) {
+          setAuthError('Please enter your Google Email address below to continue with Google Sign-In.');
+        }
+      }
+    } catch {
+      setAuthError('Please enter your Google Email address below to continue with Google Sign-In.');
     }
   };
 
-  const handleGoogleSignIn = async (accountType: 'new_trader' | 'existing_pro' = selectedGoogleAccount) => {
+  const handleDirectGoogleSignIn = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const cleanEmail = googleEmail.trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      setAuthError('Please enter your valid Google email address (e.g., yourname@gmail.com).');
+      return;
+    }
+
+    const derivedName =
+      googleFullName.trim() ||
+      cleanEmail
+        .split('@')[0]
+        .replace(/[._-]+/g, ' ')
+        .replace(/\b\w/g, (l) => l.toUpperCase());
+
     const codeToAttribute =
       referralCodeInput.trim() || getCookie(COOKIE_NAME) || getStoredReferralCode() || null;
 
     setIsSubmitting(true);
     setAuthError(null);
 
-    const email = accountType === 'new_trader' ? 'alex.mercer@gmail.com' : 'trader.pro@bft-capital.com';
-    const name = accountType === 'new_trader' ? 'Alex Mercer' : 'Alex Mercer';
-
     try {
       const res = await apiGoogleSignIn({
-        email,
-        name,
+        email: cleanEmail,
+        name: derivedName,
+        googleId: `google_oauth_${btoa(cleanEmail).replace(/[^a-zA-Z0-9]/g, '').slice(0, 16)}`,
         referralCode: codeToAttribute,
         rememberMe,
       });
@@ -145,6 +220,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         } else {
           sessionStorage.setItem('bft_jwt_session', jwtToken);
         }
+        localStorage.setItem('bft_last_google_email', res.user.email);
+        localStorage.setItem('bft_last_google_name', res.user.fullName);
       } catch {
         // Ignore storage errors
       }
@@ -157,28 +234,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         referredBy: res.user.referredBy || null,
         rememberMe,
         jwtToken,
-        isNewRegistration: !res.user.profileLocked,
+        isNewRegistration: !res.user.profileLocked && res.user.kycStatus !== 'verified',
+        serverUser: res.user,
+        serverAccounts: Array.isArray(res.accounts) ? res.accounts : [],
       });
       onClose();
-    } catch {
-      // Fallback in case of server network interruption
-      const fallbackToken = createSessionJwtToken({
-        userId: accountType === 'new_trader' ? 'USR-NEW-01' : 'usr_bft_001',
-        email,
-        referralCode: 'BFT-ALEX77',
-        rememberMe,
-      });
-      onAuthSuccess({
-        userId: accountType === 'new_trader' ? 'USR-NEW-01' : 'usr_bft_001',
-        email,
-        fullName: name,
-        referralCode: 'BFT-ALEX77',
-        referredBy: codeToAttribute,
-        rememberMe,
-        jwtToken: fallbackToken,
-        isNewRegistration: accountType === 'new_trader',
-      });
-      onClose();
+    } catch (err: any) {
+      setAuthError(err?.message || 'Unable to connect to Google authentication server.');
     } finally {
       setIsSubmitting(false);
     }
@@ -202,7 +264,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       )}
 
       {/* Top Header */}
-      <div className="text-center mb-4">
+      <div className="text-center mb-5">
         <div className="w-11 h-11 rounded-xl bg-[#141720] border border-[#262c3a] flex items-center justify-center mx-auto mb-2.5">
           {/* Official Google G SVG */}
           <svg className="w-5 h-5" viewBox="0 0 24 24" aria-hidden="true">
@@ -228,23 +290,66 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           data-testid="google-only-auth-badge"
           className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded bg-[#141720] border border-[#262c3a] text-[#ff8800] text-[10px] font-mono font-bold uppercase tracking-wider mb-1.5"
         >
-          <ShieldCheck className="w-3 h-3" /> Google Sign-In Only • Institutional OAuth 2.0
+          <ShieldCheck className="w-3 h-3" /> Google OAuth 2.0 • Verified Identity
         </span>
         <h3 className="text-xl font-black text-white font-mono">
           Sign in with Google
         </h3>
         <p className="text-xs text-slate-400 mt-1">
-          Binary Funded Trader (BFT) restricts authentication strictly to verified Google Sign-In for institutional security.
+          Authenticate with your real Google Account to access your BFT prop trading dashboard.
         </p>
       </div>
 
-      {/* Primary "Continue with Google" CTA Button */}
-      <div className="space-y-3 mb-4">
+      {authError && (
+        <div className="mb-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 flex items-start gap-2.5 text-xs text-rose-300">
+          <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+          <span>{authError}</span>
+        </div>
+      )}
+
+      {/* Authenticated Google Account Input & OAuth Popup Trigger */}
+      <form onSubmit={handleDirectGoogleSignIn} className="space-y-3.5 mb-4">
+        <div className="p-3.5 rounded-xl bg-[#11131a] border border-[#1e2330] space-y-3">
+          <div>
+            <label htmlFor="google-oauth-email" className="block text-[11px] font-mono font-bold text-slate-300 mb-1.5 flex items-center gap-1.5">
+              <Mail className="w-3.5 h-3.5 text-[#ff8800]" />
+              <span>Your Google Email Address *</span>
+            </label>
+            <input
+              id="google-oauth-email"
+              data-testid="google-oauth-email-input"
+              type="email"
+              required
+              value={googleEmail}
+              onChange={(e) => setGoogleEmail(e.target.value)}
+              placeholder="your.email@gmail.com"
+              className="w-full px-3.5 py-2.5 bg-[#0a0a0a] border border-[#262c3a] rounded-lg text-white font-mono text-xs focus:outline-none focus:border-[#ff8800]"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="google-oauth-name" className="block text-[11px] font-mono font-bold text-slate-300 mb-1.5 flex items-center gap-1.5">
+              <User className="w-3.5 h-3.5 text-[#ff8800]" />
+              <span>Google Profile Name</span>
+            </label>
+            <input
+              id="google-oauth-name"
+              data-testid="google-oauth-name-input"
+              type="text"
+              value={googleFullName}
+              onChange={(e) => setGoogleFullName(e.target.value)}
+              placeholder="Your Full Name"
+              className="w-full px-3.5 py-2.5 bg-[#0a0a0a] border border-[#262c3a] rounded-lg text-white font-mono text-xs focus:outline-none focus:border-[#ff8800]"
+            />
+          </div>
+        </div>
+
+        {/* Primary "Continue with Google" CTA Button */}
         <button
-          type="button"
+          type="submit"
+          disabled={isSubmitting}
           data-testid="google-signin-btn"
-          onClick={() => handleGoogleSignIn(selectedGoogleAccount)}
-          className="w-full py-3.5 px-4 rounded-xl bg-white hover:bg-slate-100 text-slate-950 font-black text-sm cursor-pointer transition-colors flex items-center justify-center gap-3 border border-white"
+          className="w-full py-3.5 px-4 rounded-xl bg-white hover:bg-slate-100 disabled:opacity-60 text-slate-950 font-black text-sm cursor-pointer transition-colors flex items-center justify-center gap-3 border border-white"
         >
           <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
             <path
@@ -264,70 +369,19 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.76-2.92c-1.04.7-2.38 1.12-3.52 1.12-2.86 0-5.29-2.31-6.16-4.91L2.18 16.93C3.99 20.53 7.7 23 12 23z"
             />
           </svg>
-          <span>Continue with Google</span>
+          <span>{isSubmitting ? 'Verifying Google Session...' : 'Continue with Google'}</span>
           <ArrowRight className="w-4 h-4 text-slate-700" />
         </button>
 
-        {/* Google Account Selector Profiles */}
-        <div className="p-3 rounded-xl bg-[#11131a] border border-[#1e2330] space-y-2">
-          <div className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#8c96a6]">
-            Select Google Workspace / Personal Account:
-          </div>
-          <div className="grid grid-cols-1 gap-2">
-            <button
-              type="button"
-              data-testid="google-account-new-trader"
-              onClick={() => setSelectedGoogleAccount('new_trader')}
-              className={`w-full p-2.5 rounded-lg border text-left flex items-center justify-between transition-colors cursor-pointer ${
-                selectedGoogleAccount === 'new_trader'
-                  ? 'bg-[#181c26] border-[#ff8800] text-white'
-                  : 'bg-[#0c0e14] border-[#1e2330] text-slate-400 hover:text-white'
-              }`}
-            >
-              <div className="flex items-center gap-2.5">
-                <div className="w-7 h-7 rounded-full bg-[#2b70ff] text-white font-bold text-xs flex items-center justify-center font-mono shrink-0">
-                  A
-                </div>
-                <div>
-                  <div className="text-xs font-bold text-white font-mono">alex.mercer@gmail.com</div>
-                  <div className="text-[10px] text-[#8c96a6]">
-                    Google Account • Unverified KYC • Choose a Plan to Unlock Terminal
-                  </div>
-                </div>
-              </div>
-              {selectedGoogleAccount === 'new_trader' && (
-                <CheckCircle2 className="w-4 h-4 text-[#ff8800] shrink-0" />
-              )}
-            </button>
-
-            <button
-              type="button"
-              data-testid="google-account-existing-pro"
-              onClick={() => setSelectedGoogleAccount('existing_pro')}
-              className={`w-full p-2.5 rounded-lg border text-left flex items-center justify-between transition-colors cursor-pointer ${
-                selectedGoogleAccount === 'existing_pro'
-                  ? 'bg-[#181c26] border-[#ff8800] text-white'
-                  : 'bg-[#0c0e14] border-[#1e2330] text-slate-400 hover:text-white'
-              }`}
-            >
-              <div className="flex items-center gap-2.5">
-                <div className="w-7 h-7 rounded-full bg-[#00c853] text-slate-950 font-black text-xs flex items-center justify-center font-mono shrink-0">
-                  T
-                </div>
-                <div>
-                  <div className="text-xs font-bold text-white font-mono">trader.pro@bft-capital.com</div>
-                  <div className="text-[10px] text-[#8c96a6]">
-                    Institutional Google Workspace • BFT-ALEX77 Sponsor
-                  </div>
-                </div>
-              </div>
-              {selectedGoogleAccount === 'existing_pro' && (
-                <CheckCircle2 className="w-4 h-4 text-[#ff8800] shrink-0" />
-              )}
-            </button>
-          </div>
-        </div>
-      </div>
+        <button
+          type="button"
+          onClick={handleOpenGoogleOAuthPopup}
+          className="w-full py-2 px-3 rounded-lg bg-[#141720] hover:bg-[#1c202c] border border-[#262c3a] text-slate-300 hover:text-white text-[11px] font-mono flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+        >
+          <ExternalLink className="w-3.5 h-3.5 text-[#ff8800]" />
+          <span>Open Google OAuth 2.0 Popup Window</span>
+        </button>
+      </form>
 
       {/* Referral Attribution & 30-Day Cookie Bar */}
       <div className="mb-4 p-3 rounded-xl bg-[#11131a] border border-[#1e2330] space-y-2.5">
@@ -399,9 +453,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
       <button
         type="button"
+        disabled={isSubmitting}
         data-testid="auth-submit-btn"
-        onClick={() => handleGoogleSignIn(selectedGoogleAccount)}
-        className="w-full py-3 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] text-slate-950 font-black text-xs cursor-pointer transition-colors flex items-center justify-center gap-1.5 font-mono uppercase tracking-wider"
+        onClick={() => handleDirectGoogleSignIn()}
+        className="w-full py-3 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] disabled:opacity-60 text-slate-950 font-black text-xs cursor-pointer transition-colors flex items-center justify-center gap-1.5 font-mono uppercase tracking-wider"
       >
         <span>Sign In with Google & Enter Dashboard</span>
         <ArrowRight className="w-4 h-4 stroke-[2.5]" />
@@ -423,3 +478,4 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     </div>
   );
 };
+

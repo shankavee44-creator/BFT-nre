@@ -20,11 +20,18 @@ const getAuthHeaders = (): HeadersInit => {
   return headers;
 };
 
+export async function apiGetGoogleOAuthUrl(referralCode?: string | null) {
+  const query = referralCode ? `?referralCode=${encodeURIComponent(referralCode)}` : '';
+  const res = await fetch(`/api/auth/google/url${query}`);
+  return res.json();
+}
+
 export async function apiGoogleSignIn(params: {
   email: string;
   name: string;
   avatarUrl?: string;
   googleId?: string;
+  credential?: string;
   referralCode?: string | null;
   rememberMe?: boolean;
 }) {
@@ -73,9 +80,29 @@ export async function apiLockProfile(data: {
   return res.json();
 }
 
+export async function apiUpdateProfile(data: {
+  fullName?: string;
+  address?: string;
+  dateOfBirth?: string;
+  country?: string;
+  telegramHandle?: string;
+  avatarUrl?: string;
+}) {
+  const res = await fetch('/api/profile/update', {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(data),
+  });
+  return res.json();
+}
+
 export async function apiSubmitKyc(data: {
   docType: string;
   documentNumber?: string;
+  fullName?: string;
+  address?: string;
+  dateOfBirth?: string;
+  country?: string;
   autoVerify?: boolean;
 }) {
   const res = await fetch('/api/kyc/submit', {
@@ -113,6 +140,7 @@ export async function apiPurchaseAccount(params: {
   tierName: string;
   size: number;
   price: number;
+  invoiceUuid: string;
   referralCode?: string | null;
   dailyWithdrawalsUnlocked?: boolean;
 }) {
@@ -120,6 +148,40 @@ export async function apiPurchaseAccount(params: {
     method: 'POST',
     headers: getAuthHeaders(),
     body: JSON.stringify(params),
+  });
+  return res.json();
+}
+
+export async function apiPassChallenge(params: {
+  accountId: string;
+  provisionLiveDirectly?: boolean;
+}) {
+  const res = await fetch('/api/accounts/pass-challenge', {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(params),
+  });
+  return res.json();
+}
+
+export async function apiUpdateAccountState(
+  accountId: string,
+  updates: {
+    currentBalance?: number;
+    equity?: number;
+    startingDayEquity?: number;
+    status?: string;
+    phase?: string;
+    tradesCount?: number;
+    winRate?: number;
+    tradingDaysCompleted?: number;
+    certificateId?: string;
+  }
+) {
+  const res = await fetch(`/api/accounts/${encodeURIComponent(accountId)}`, {
+    method: 'PUT',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(updates),
   });
   return res.json();
 }
@@ -135,3 +197,4 @@ export async function apiGetLeaderboard() {
   const res = await fetch('/api/leaderboard');
   return res.json();
 }
+

@@ -6,10 +6,13 @@ import {
   getUserByEmail,
   getAccountsForUser,
   getAccountById,
+  createAccount,
+  passChallengePhaseInDb,
   processWithdrawalRequest,
   creditPurchaseCommissions,
   getAffiliateDashboardStats,
   getWeeklyLeaderboardQuery,
+  getCountryFlag,
 } from '../server/db';
 
 test('80% Profit Payout Ceiling Rule: blocks withdrawal exceeding 80% of net profit', () => {
@@ -20,6 +23,7 @@ test('80% Profit Payout Ceiling Rule: blocks withdrawal exceeding 80% of net pro
       current_balance = 10680.00,
       equity = 10680.00,
       status = 'active',
+      phase = 'funded',
       first_withdrawal_completed = 1,
       trading_days_completed = 15
     WHERE id = 'BFT-91823'
@@ -70,6 +74,46 @@ test('Minimum withdrawal threshold rule: enforces minimum $250.00 USD', () => {
   );
 });
 
+test('Challenge Phase Withdrawal Lock & Progression to Live Funded Account with Certificate', () => {
+  const challengeAcc = createAccount({
+    userId: 'usr_bft_001',
+    tier: 'one-step',
+    tierName: '1-Step Rapid Evaluation',
+    size: 10000,
+    dailyWithdrawalsUnlocked: false,
+  });
+  assert.ok(challengeAcc);
+  assert.equal(challengeAcc.phase, 'phase_1');
+
+  // Even if the challenge account has profit, withdrawal must be blocked while in phase_1
+  db.prepare(`
+    UPDATE accounts SET current_balance = 11200.00, equity = 11200.00, first_withdrawal_completed = 1
+    WHERE id = ?
+  `).run(challengeAcc.id);
+
+  assert.throws(
+    () => {
+      processWithdrawalRequest({
+        userId: 'usr_bft_001',
+        accountId: challengeAcc.id,
+        requestedAmount: 300,
+        walletAddress: 'TYsDj4BmVp8QW8r6F32Xnm9ZkE4G1A7L2',
+        network: 'TRON (TRC-20)',
+        paymentMethod: 'crypto_trc20',
+      });
+    },
+    (err: any) => err.message.includes('Withdrawals are locked during the Challenge Phase')
+  );
+
+  // Passing the challenge generates a Certificate ID and provisions a Live Funded Account
+  const passedResult = passChallengePhaseInDb('usr_bft_001', challengeAcc.id, true);
+  assert.ok(passedResult.certificateId.startsWith('CERT-'));
+  assert.equal(passedResult.lockedAccount?.status, 'passed');
+  assert.equal(passedResult.deployedAccount?.phase, 'funded');
+  assert.equal(passedResult.deployedAccount?.status, 'active');
+  assert.equal(passedResult.deployedAccount?.size, 10000);
+});
+
 test('3-Tier Affiliate Commission structure: 10% L1, 5% L2, 2% L3', () => {
   // Test purchase commission credit for a buyer with uplines
   const comms = creditPurchaseCommissions('usr_bft_001', '$10,000 Challenge', 100.0);
@@ -87,14 +131,15 @@ test('3-Tier Affiliate Commission structure: 10% L1, 5% L2, 2% L3', () => {
 });
 
 test('Direct Referral Payout Bonus: credits 8% bonus on direct referral withdrawal', () => {
-  // For user Alex Mercer whose sponsor is USR-PARENT-55
-  // When a $300 withdrawal is processed, sponsor receives 8% = $24.00 bonus
   const withdrawalAmount = 300.0;
   const expectedBonus = Number((withdrawalAmount * 0.08).toFixed(2));
   assert.equal(expectedBonus, 24.0);
 });
 
-test('Weekly Leaderboard query: normalizes Kasun Perera at rank 9 with Sri Lanka flag', () => {
+test('Weekly Leaderboard query & Country Flag mapping: normalizes Kasun Perera at rank 9 with Sri Lanka flag', () => {
+  assert.equal(getCountryFlag('Sri Lanka'), '🇱🇰');
+  assert.equal(getCountryFlag('United States'), '🇺🇸');
+
   const leaderboard = getWeeklyLeaderboardQuery();
   assert.equal(leaderboard.length >= 10, true);
 
@@ -105,3 +150,4 @@ test('Weekly Leaderboard query: normalizes Kasun Perera at rank 9 with Sri Lanka
   assert.equal(kasun?.flag, '🇱🇰');
   assert.equal(kasun?.profit, 18995.22);
 });
+

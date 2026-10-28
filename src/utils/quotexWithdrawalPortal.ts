@@ -297,8 +297,14 @@ export function mapWithdrawalRequestToQuotexTransaction(req: WithdrawalRequest):
   };
 }
 
-export function buildMergedTransactionLedger(withdrawals: WithdrawalRequest[]): QuotexTransactionItem[] {
+export function buildMergedTransactionLedger(
+  withdrawals: WithdrawalRequest[],
+  includeDemoHistory: boolean = true
+): QuotexTransactionItem[] {
   const mappedUserWithdrawals = withdrawals.map(mapWithdrawalRequestToQuotexTransaction);
+  if (!includeDemoHistory) {
+    return mappedUserWithdrawals.sort((a, b) => b.timestamp - a.timestamp);
+  }
   const existingIds = new Set(mappedUserWithdrawals.map((w) => w.id));
 
   const combined = [

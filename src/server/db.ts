@@ -491,7 +491,7 @@ export function mapAccountRowToTradingAccount(row: any) {
     ...row,
     id: row.id,
     loginId: row.id,
-    passwordHash: 'bft_live_' + Math.random().toString(36).substring(2, 8),
+    passwordHash: 'bft_live_' + String(row.id).replace(/[^a-zA-Z0-9]/g, '').toLowerCase(),
     tier: row.tier,
     tierName: row.tier_name,
     size: row.size,
@@ -509,11 +509,44 @@ export function mapAccountRowToTradingAccount(row: any) {
     winRate: row.win_rate,
     dailyWithdrawalsUnlocked: Boolean(row.daily_withdrawals_unlocked),
     firstWithdrawalCompleted: Boolean(row.first_withdrawal_completed),
-    monthsCompleted: row.months_completed,
+    monthsCompleted: row.months_completed || 1,
     scalingActive: Boolean(row.scaling_active),
     createdDate: row.created_date,
-    lastActiveDate: row.last_active_date,
+    lastActiveDate: row.last_active_date || row.created_date,
+    certificateId: row.certificate_id || undefined,
   };
+}
+
+try {
+  db.exec(`ALTER TABLE accounts ADD COLUMN certificate_id TEXT;`);
+} catch {
+  // Column already exists
+}
+
+export const COUNTRY_FLAGS: Record<string, string> = {
+  'United States': '🇺🇸',
+  'Sri Lanka': '🇱🇰',
+  'United Kingdom': '🇬🇧',
+  'United Arab Emirates': '🇦🇪',
+  'Dubai, UAE': '🇦🇪',
+  'India': '🇮🇳',
+  'Malaysia': '🇲🇾',
+  'Pakistan': '🇵🇰',
+  'Singapore': '🇸🇬',
+  'Canada': '🇨🇦',
+  'Australia': '🇦🇺',
+  'Germany': '🇩🇪',
+  'France': '🇫🇷',
+  'Japan': '🇯🇵',
+  'Switzerland': '🇨🇭',
+  'Brazil': '🇧🇷',
+  'Nigeria': '🇳🇬',
+  'South Africa': '🇿🇦',
+};
+
+export function getCountryFlag(country?: string | null): string {
+  if (!country) return '🇺🇸';
+  return COUNTRY_FLAGS[country.trim()] || '🌐';
 }
 
 export function getAccountsForUser(userId: string) {
@@ -526,12 +559,174 @@ export function getAccountById(accountId: string) {
   return mapAccountRowToTradingAccount(row);
 }
 
+export function createAccount(params: {
+  userId: string;
+  tier: 'two-step' | 'one-step' | 'instant';
+  tierName: string;
+  size: number;
+  dailyWithdrawalsUnlocked?: boolean;
+}) {
+  const now = Date.now();
+  const nowIso = new Date(now).toISOString().split('T')[0];
+  const newAccountId = `BFT-${Math.floor(10000 + Math.random() * 89999)}`;
+  const phase = params.tier === 'instant' ? 'funded' : 'phase_1';
+  const dailyLossLimit = params.tier === 'two-step' ? 8 : params.tier === 'one-step' ? 6 : 5;
+  const maxOverallLoss = params.tier === 'two-step' ? 20 : params.tier === 'one-step' ? 12 : 10;
+
+  db.prepare(`
+    INSERT INTO accounts (
+      id, user_id, tier, tier_name, size, initial_balance, current_balance, starting_day_equity, equity,
+      daily_loss_limit_percent, max_overall_loss_percent, max_risk_per_trade_percent, status, phase,
+      trading_days_completed, trades_count, win_rate, daily_withdrawals_unlocked, first_withdrawal_completed,
+      created_date, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 5, 'active', ?, 0, 0, 0, ?, 0, ?, ?, ?)
+  `).run(
+    newAccountId,
+    params.userId,
+    params.tier,
+    params.tierName,
+    params.size,
+    params.size,
+    params.size,
+    params.size,
+    params.size,
+    dailyLossLimit,
+    maxOverallLoss,
+    phase,
+    params.dailyWithdrawalsUnlocked ? 1 : 0,
+    nowIso,
+    now,
+    now
+  );
+
+  return getAccountById(newAccountId);
+}
+
+export function updateAccountStateInDb(
+  userId: string,
+  accountId: string,
+  updates: {
+    currentBalance?: number;
+    equity?: number;
+    startingDayEquity?: number;
+    status?: string;
+    phase?: string;
+    tradesCount?: number;
+    winRate?: number;
+    tradingDaysCompleted?: number;
+    certificateId?: string;
+  }
+) {
+  const existing = db.prepare('SELECT * FROM accounts WHERE id = ? AND user_id = ?').get(accountId, userId) as any;
+  if (!existing) throw new Error('Account not found or unauthorized.');
+
+  const now = Date.now();
+  db.prepare(`
+    UPDATE accounts SET
+      current_balance = COALESCE(?, current_balance),
+      equity = COALESCE(?, equity),
+      starting_day_equity = COALESCE(?, starting_day_equity),
+      status = COALESCE(?, status),
+      phase = COALESCE(?, phase),
+      trades_count = COALESCE(?, trades_count),
+      win_rate = COALESCE(?, win_rate),
+      trading_days_completed = COALESCE(?, trading_days_completed),
+      certificate_id = COALESCE(?, certificate_id),
+      updated_at = ?
+    WHERE id = ? AND user_id = ?
+  `).run(
+    updates.currentBalance !== undefined ? updates.currentBalance : null,
+    updates.equity !== undefined ? updates.equity : null,
+    updates.startingDayEquity !== undefined ? updates.startingDayEquity : null,
+    updates.status || null,
+    updates.phase || null,
+    updates.tradesCount !== undefined ? updates.tradesCount : null,
+    updates.winRate !== undefined ? updates.winRate : null,
+    updates.tradingDaysCompleted !== undefined ? updates.tradingDaysCompleted : null,
+    updates.certificateId || null,
+    now,
+    accountId,
+    userId
+  );
+
+  return getAccountById(accountId);
+}
+
+export function passChallengePhaseInDb(
+  userId: string,
+  accountId: string,
+  provisionLiveDirectly: boolean = false
+) {
+  const existing = db.prepare('SELECT * FROM accounts WHERE id = ? AND user_id = ?').get(accountId, userId) as any;
+  if (!existing) throw new Error('Challenge account not found or unauthorized.');
+
+  const now = Date.now();
+  const nowIso = new Date(now).toISOString().split('T')[0];
+  const certId = existing.certificate_id || `CERT-${existing.id}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+  // Mark the completed challenge phase as 'passed' with official certificateId
+  db.prepare(`
+    UPDATE accounts SET
+      status = 'passed',
+      certificate_id = ?,
+      updated_at = ?
+    WHERE id = ? AND user_id = ?
+  `).run(certId, now, accountId, userId);
+
+  const isToPhase2 = !provisionLiveDirectly && existing.tier === 'two-step' && existing.phase === 'phase_1';
+  const nextPrefix = isToPhase2 ? 'BFT-P2' : 'BFT-LIVE';
+  const nextAccountId = `${nextPrefix}-${Math.floor(10000 + Math.random() * 89999)}`;
+  const nextPhase = isToPhase2 ? 'phase_2' : 'funded';
+  const baseTierName = String(existing.tier_name || '').replace(/\s*\(Phase \d\)/i, '');
+  const nextTierName = isToPhase2
+    ? `${baseTierName} (Phase 2)`
+    : `Real Funded (${baseTierName})`;
+  const nextBalance = isToPhase2
+    ? Number(existing.size)
+    : Math.max(Number(existing.size), Number(existing.current_balance));
+
+  db.prepare(`
+    INSERT INTO accounts (
+      id, user_id, tier, tier_name, size, initial_balance, current_balance, starting_day_equity, equity,
+      daily_loss_limit_percent, max_overall_loss_percent, max_risk_per_trade_percent, status, phase,
+      trading_days_completed, trades_count, win_rate, daily_withdrawals_unlocked, first_withdrawal_completed,
+      certificate_id, created_date, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, 14, 0, 0, ?, 0, ?, ?, ?, ?)
+  `).run(
+    nextAccountId,
+    userId,
+    existing.tier,
+    nextTierName,
+    existing.size,
+    existing.size,
+    nextBalance,
+    nextBalance,
+    nextBalance,
+    existing.daily_loss_limit_percent,
+    existing.max_overall_loss_percent,
+    existing.max_risk_per_trade_percent || 5,
+    nextPhase,
+    existing.daily_withdrawals_unlocked || 0,
+    !isToPhase2 ? certId : null,
+    nowIso,
+    now + 1,
+    now + 1
+  );
+
+  return {
+    lockedAccount: getAccountById(accountId),
+    deployedAccount: getAccountById(nextAccountId),
+    certificateId: certId,
+    isRealFundedDeployed: !isToPhase2,
+  };
+}
+
 export function lockUserProfile(userId: string, data: { fullName: string; address: string; dateOfBirth: string; country?: string; telegramHandle?: string }) {
   const user = getUserById(userId);
   if (!user) throw new Error('User not found.');
 
   if (user.profile_locked === 1) {
-    // Only update mutable fields like telegram handle
+    // Only update mutable fields like telegram handle or country flag
     db.prepare(`
       UPDATE users SET
         telegram_handle = COALESCE(?, telegram_handle),
@@ -573,6 +768,7 @@ export function updateUserKycStatus(userId: string, data: { status: 'unverified'
       kyc_doc_type = COALESCE(?, kyc_doc_type),
       kyc_timer_ends_at = ?,
       kyc_verified_at = CASE WHEN ? = 'verified' THEN ? ELSE kyc_verified_at END,
+      profile_locked = CASE WHEN ? = 'verified' THEN 1 ELSE profile_locked END,
       updated_at = ?
     WHERE id = ?
   `).run(
@@ -581,6 +777,7 @@ export function updateUserKycStatus(userId: string, data: { status: 'unverified'
     data.timerEndsAt || null,
     data.status,
     now,
+    data.status,
     now,
     userId
   );
@@ -593,6 +790,7 @@ export function updateUserKycStatus(userId: string, data: { status: 'unverified'
 
 /**
  * Validates and records a withdrawal enforcing:
+ * 0. Strict Challenge Phase Lock (One-Step / Two-Step Challenges cannot withdraw until passed & funded)
  * 1. Strict KYC verified requirement
  * 2. 14-day mandatory waiting period on first withdrawal
  * 3. $250.00 minimum profit threshold
@@ -619,6 +817,14 @@ export function processWithdrawalRequest(params: {
   const account = getAccountById(params.accountId);
   if (!account || account.user_id !== params.userId) {
     throw new Error('Trading account not found or unauthorized.');
+  }
+
+  // STRICT CHALLENGE PHASE RULE: One-Step and Two-Step Challenge accounts cannot withdraw during challenge phase
+  const isLiveFunded = account.tier === 'instant' || account.phase === 'funded';
+  if (!isLiveFunded) {
+    throw new Error(
+      'Withdrawals are locked during the Challenge Phase. Trade to hit your profit target first to pass the challenge, earn your Completion Certificate, and unlock your Live Funded Account.'
+    );
   }
 
   if (account.status !== 'active') {
