@@ -17,6 +17,10 @@ import {
   calculateWithdrawalBreakdown,
   checkMaxRiskPerTradeViolation,
   advanceChallengeAccountPhase,
+  checkFirstWithdrawalWaitingPeriod,
+  MIN_WITHDRAWAL_PROFIT,
+  FIRST_WITHDRAWAL_WAITING_DAYS,
+  WITHDRAWAL_GUARANTEE_NOTICE,
   PACKAGES,
 } from './propRules';
 import { TradingAccount, WithdrawalRequest, BinaryTrade } from '../types';
@@ -134,7 +138,11 @@ test('advanceChallengeAccountPhase locks passed phase and deploys clean Phase 2 
   assert.equal(res.deployedAccount.currentBalance, 13000);
 });
 
-test('withdrawal validation requires minimum $50 profit threshold', () => {
+test('withdrawal validation requires strict minimum $250 profit threshold and enforces 14-day first withdrawal lock', () => {
+  assert.equal(MIN_WITHDRAWAL_PROFIT, 250);
+  assert.equal(FIRST_WITHDRAWAL_WAITING_DAYS, 14);
+  assert.equal(WITHDRAWAL_GUARANTEE_NOTICE, 'We process payouts within 3 minutes; if we fail, we pay double!');
+
   const mockAccount: TradingAccount = {
     id: 'BFT-1001',
     loginId: 'BFT-1001',
@@ -143,22 +151,23 @@ test('withdrawal validation requires minimum $50 profit threshold', () => {
     tierName: 'Instant Funded',
     size: 10000,
     initialBalance: 10000,
-    currentBalance: 10030, // Only $30 profit
+    currentBalance: 10180, // Only $180 profit (< $250 minimum)
     startingDayEquity: 10000,
-    equity: 10030,
+    equity: 10180,
     dailyLossLimitPercent: 6,
     maxOverallLossPercent: 12,
     status: 'active',
     createdDate: '2026-10-01',
     lastActiveDate: '2026-10-24',
     phase: 'funded',
-    tradingDaysCompleted: 5,
+    tradingDaysCompleted: 14,
     tradesCount: 12,
     winRate: 75,
+    dailyWithdrawalsUnlocked: true,
   };
 
-  // $30 profit is below $50 threshold
-  const result1 = validateWithdrawalRequest(mockAccount, 30);
+  // $180 profit is below $250 threshold
+  const result1 = validateWithdrawalRequest(mockAccount, 180);
   assert.equal(result1.valid, false);
   assert.equal(result1.code, 'BELOW_MIN_PROFIT');
 
@@ -166,22 +175,41 @@ test('withdrawal validation requires minimum $50 profit threshold', () => {
   mockAccount.currentBalance = 10450;
   mockAccount.equity = 10450;
 
-  // Requesting $25 is below minimum amount $50
-  const result2 = validateWithdrawalRequest(mockAccount, 25);
+  // Requesting $200 is below minimum amount $250
+  const result2 = validateWithdrawalRequest(mockAccount, 200);
   assert.equal(result2.valid, false);
   assert.equal(result2.code, 'AMOUNT_TOO_LOW');
 
-  // Requesting $50 (exact minimum threshold) or $200 (within profit of $450)
-  const resultMin = validateWithdrawalRequest(mockAccount, 50);
+  // Requesting $250 (exact minimum threshold) or $350 (within profit of $450)
+  const resultMin = validateWithdrawalRequest(mockAccount, 250);
   assert.equal(resultMin.valid, true);
 
-  const result3 = validateWithdrawalRequest(mockAccount, 200);
+  const result3 = validateWithdrawalRequest(mockAccount, 350);
   assert.equal(result3.valid, true);
 
   // Requesting more than total profits ($500 > $450)
   const result4 = validateWithdrawalRequest(mockAccount, 500);
   assert.equal(result4.valid, false);
   assert.equal(result4.code, 'EXCEEDS_PROFIT');
+
+  // Check mandatory 14-day waiting period on first withdrawal when tradingDaysCompleted < 14
+  const newFundedAcc: TradingAccount = {
+    ...mockAccount,
+    createdDate: '2026-10-25',
+    tradingDaysCompleted: 4,
+    firstWithdrawalCompleted: false,
+  };
+  const lockCheck = checkFirstWithdrawalWaitingPeriod(newFundedAcc, Date.UTC(2026, 9, 28));
+  assert.equal(lockCheck.eligible, false);
+  assert.equal(lockCheck.daysRemaining, 10);
+  assert.match(lockCheck.subsequentCycleLabel, /Daily Withdrawals/);
+
+  const blockedFirst = validateWithdrawalRequest(newFundedAcc, 250, {
+    enforceFirstWithdrawalLock: true,
+    nowMs: Date.UTC(2026, 9, 28),
+  });
+  assert.equal(blockedFirst.valid, false);
+  assert.equal(blockedFirst.code, 'FIRST_WITHDRAWAL_14_DAY_LOCK');
 });
 
 test('trade duration rule enforces >= 30 seconds to prevent tick scalping', () => {

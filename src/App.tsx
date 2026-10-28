@@ -335,8 +335,8 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-slate-100 flex flex-col selection:bg-[#ff8800] selection:text-slate-950">
-      {/* Top Header */}
-      {currentTab !== 'terminal' && (
+      {/* Top Header (Hidden on mobile when inside full-screen Trading Terminal) */}
+      <div className={currentTab === 'terminal' ? 'hidden md:block' : 'block'}>
         <Header
           currentTab={currentTab}
           setCurrentTab={handleNavigateTab}
@@ -353,7 +353,7 @@ export default function App() {
           onLogout={handleLogout}
           onOpenChallengeModal={() => setSelectedPackageToBuy(PACKAGES[2])}
         />
-      )}
+      </div>
 
       {/* Security Protected Route Notice Banner */}
       {protectedRouteNotice && (
@@ -462,7 +462,7 @@ export default function App() {
         {currentTab === 'rules' && <TradingRules />}
 
         {currentTab === 'withdrawals' && (
-          <div className="py-8 max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="py-4 sm:py-8 max-w-6xl mx-auto px-2 sm:px-6 lg:px-8">
             <WithdrawalModal
               account={activeAccount || null}
               accounts={userAccounts}
@@ -477,6 +477,9 @@ export default function App() {
               userProfile={userProfile}
               onNavigateToKyc={() => setCurrentTab('dashboard')}
               onOpenChallengeModal={() => setSelectedPackageToBuy(PACKAGES[2])}
+              onOpenDepositModal={() => setIsDepositModalOpen(true)}
+              onNavigateTab={handleNavigateTab}
+              trades={trades}
             />
           </div>
         )}
@@ -550,6 +553,15 @@ export default function App() {
             setIsWithdrawalModalOpen(false);
             setSelectedPackageToBuy(PACKAGES[2]);
           }}
+          onOpenDepositModal={() => {
+            setIsWithdrawalModalOpen(false);
+            setIsDepositModalOpen(true);
+          }}
+          onNavigateTab={(tab) => {
+            setIsWithdrawalModalOpen(false);
+            handleNavigateTab(tab);
+          }}
+          trades={trades}
         />
       )}
 
@@ -615,8 +627,10 @@ export default function App() {
         }}
       />
 
-      {/* Interactive Live Support Chat Widget */}
-      <LiveChatWidget />
+      {/* Interactive Live Support Chat Widget (Hidden on mobile terminal where bottom nav handles Support) */}
+      <div className={currentTab === 'terminal' ? 'hidden md:block' : 'block'}>
+        <LiveChatWidget />
+      </div>
 
       {/* Institutional Footer */}
       {currentTab !== 'terminal' && <Footer onNavigate={handleNavigateTab} />}

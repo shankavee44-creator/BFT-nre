@@ -98,6 +98,12 @@ import { QuotexMobileDock } from './QuotexMobileDock';
 import { QuotexMobileNav } from './QuotexMobileNav';
 import { PriceAlertModal, PriceAlert } from './PriceAlertModal';
 import { soundEngine } from '../utils/soundEffects';
+import {
+  calculateCandleCountdown,
+  calculatePinchZoomLevel,
+  calculateTouchPanOffset,
+  formatMobileAccountBalance,
+} from '../utils/quotexMobile';
 
 interface TradingTerminalProps {
   account?: TradingAccount | null;
@@ -204,10 +210,41 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   const [indicators, setIndicators] = useState<IndicatorSettings>(DEFAULT_INDICATOR_SETTINGS);
   const [zoomLevel, setZoomLevel] = useState<number>(1);
 
-  // Mobile Responsiveness & Drawer States
+  // Mobile Responsiveness, Practice Fallback Account & Canvas Resize State
   const [isMobileMoreMenuOpen, setIsMobileMoreMenuOpen] = useState<boolean>(false);
   const [mobileNavTab, setMobileNavTab] = useState<'chart' | 'signals' | 'chat' | 'hub'>('chart');
   const [isMobileQuickToolsOpen, setIsMobileQuickToolsOpen] = useState<boolean>(false);
+  const [candleCountdown, setCandleCountdown] = useState(() =>
+    calculateCandleCountdown(Date.now(), TIMEFRAME_SECONDS['1m'])
+  );
+  const [canvasSize, setCanvasSize] = useState<{ width: number; height: number }>({
+    width: 0,
+    height: 0,
+  });
+  const [demoPracticeAccount, setDemoPracticeAccount] = useState<TradingAccount>(() => ({
+    id: 'BFT-10000',
+    loginId: 'BFT-10000',
+    passwordHash: '',
+    tier: 'two-step',
+    tierName: 'Challenge Account',
+    size: 10000,
+    initialBalance: 10000.9,
+    currentBalance: 10000.9,
+    startingDayEquity: 10000.9,
+    equity: 10000.9,
+    dailyLossLimitPercent: 8,
+    maxOverallLossPercent: 20,
+    maxRiskPerTradePercent: 5,
+    status: 'active',
+    createdDate: '2026-10-27',
+    lastActiveDate: '2026-10-27',
+    phase: 'phase_1',
+    tradingDaysCompleted: 1,
+    tradesCount: 0,
+    winRate: 100,
+  }));
+  const effectiveAccount = account || demoPracticeAccount;
+  const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const touchStartDistRef = useRef<number | null>(null);
   const initialTouchZoomRef = useRef<number>(1);
 
@@ -314,8 +351,8 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
   const activeInspectedMarker = hoveredTradeMarker || selectedTradeMarker;
   const effectiveInvestment =
-    investmentMode === 'percent' && account
-      ? Math.max(1, Number(((account.currentBalance * investment) / 100).toFixed(2)))
+    investmentMode === 'percent'
+      ? Math.max(1, Number(((effectiveAccount.currentBalance * investment) / 100).toFixed(2)))
       : investment;
 
   // Calculate live unrealized P&L on every tick
@@ -327,37 +364,13 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     return sum + itemPnL;
   }, 0);
 
-  const liveEquity = Number(((account?.currentBalance || 0) + liveUnrealizedPnL).toFixed(2));
+  const liveEquity = Number(((effectiveAccount?.currentBalance || 0) + liveUnrealizedPnL).toFixed(2));
 
   // Real-time drawdown & barricade calculations synchronized with liveEquity on every tick
-  const metrics = calculateDrawdownMetrics(
-    account
-      ? {
-          ...account,
-          equity: liveEquity,
-        }
-      : {
-          id: 'BFT-DEMO',
-          loginId: 'BFT-DEMO',
-          passwordHash: '',
-          tier: 'instant',
-          tierName: 'Instant Funded',
-          size: 10000,
-          initialBalance: 10000,
-          currentBalance: 10000,
-          startingDayEquity: 10000,
-          equity: 10000,
-          dailyLossLimitPercent: 6,
-          maxOverallLossPercent: 12,
-          status: 'active',
-          createdDate: '',
-          lastActiveDate: '',
-          phase: 'funded',
-          tradingDaysCompleted: 0,
-          tradesCount: 0,
-          winRate: 0,
-        }
-  );
+  const metrics = calculateDrawdownMetrics({
+    ...effectiveAccount,
+    equity: liveEquity,
+  });
 
   // Dual-Breach System vs No Active Account State
   const hasNoAccount = !account;
@@ -529,6 +542,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       const updatedCandles = aggregateCandlesForTimeframe(selectedAsset, TIMEFRAME_SECONDS[timeframe]);
       setCandles(updatedCandles);
       setPayoutSeed(Math.floor(Date.now() / 3000));
+      setCandleCountdown(calculateCandleCountdown(Date.now(), TIMEFRAME_SECONDS[timeframe]));
     }, 180);
 
     return () => clearInterval(interval);
@@ -541,8 +555,8 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   const activeTradesRef = useRef(activeTrades);
   activeTradesRef.current = activeTrades;
 
-  const accountRef = useRef(account);
-  accountRef.current = account;
+  const accountRef = useRef(effectiveAccount);
+  accountRef.current = effectiveAccount;
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -598,13 +612,17 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             tradesCount: curAccount.tradesCount + 1,
             equity: newBalance,
           };
-          onUpdateAccount(updatedAccount);
+          if (account) {
+            onUpdateAccount(updatedAccount);
+          } else {
+            setDemoPracticeAccount(updatedAccount);
+          }
         }
       });
     }, 300);
 
     return () => clearInterval(timer);
-  }, [onUpdateTrade, onUpdateAccount]);
+  }, [account, onUpdateTrade, onUpdateAccount]);
 
   // Asset Tab Switching
   const handleSelectTabAsset = (asset: AssetInfo) => {
@@ -633,12 +651,13 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     targetDuration?: number,
     customInvestment?: number
   ) => {
-    if (!account) {
-      soundEngine.playTradeLoss();
-      setTradeError('No Active Account. Please choose a plan or buy a challenge to start trading.');
+    if (hasNoAccount) {
+      soundEngine.playErrorAlert();
+      setTradeError('Trading Terminal Locked: Please purchase a Challenge or Instant Funded plan to unlock live trading.');
       return;
     }
-    if (account.status === 'breached' || account.status === 'hard-breached') {
+    const activeAcc = effectiveAccount;
+    if (activeAcc.status === 'breached' || activeAcc.status === 'hard-breached') {
       soundEngine.playTradeLoss();
       setTradeError('Account is locked due to rule breach. Trading is disabled.');
       setIsBreachModalOpen(true);
@@ -669,20 +688,20 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       return;
     }
 
-    if (stakeToUse > account.currentBalance) {
-      setTradeError(`Insufficient balance. Available capital: $${account.currentBalance.toFixed(2)}`);
+    if (stakeToUse > activeAcc.currentBalance) {
+      setTradeError(`Insufficient balance. Available capital: $${activeAcc.currentBalance.toFixed(2)}`);
       return;
     }
 
     // Strict 5% Max Risk Per Trade Check (Hard Breach if violated)
     const maxRiskCheck = checkMaxRiskPerTradeViolation(
       stakeToUse,
-      account.initialBalance || account.size,
-      account.maxRiskPerTradePercent || 5
+      activeAcc.initialBalance || activeAcc.size,
+      activeAcc.maxRiskPerTradePercent || 5
     );
     if (maxRiskCheck.violated) {
       soundEngine.playTradeLoss();
-      const breachReason = `Max Risk Per Trade Violated: Stake of $${stakeToUse.toFixed(2)} (${maxRiskCheck.riskPercent}%) exceeds the strict ${account.maxRiskPerTradePercent || 5}% ($${maxRiskCheck.maxAllowedStake.toFixed(2)}) per-trade risk limit. Permanent Hard Breach enforced.`;
+      const breachReason = `Max Risk Per Trade Violated: Stake of $${stakeToUse.toFixed(2)} (${maxRiskCheck.riskPercent}%) exceeds the strict ${activeAcc.maxRiskPerTradePercent || 5}% ($${maxRiskCheck.maxAllowedStake.toFixed(2)}) per-trade risk limit. Permanent Hard Breach enforced.`;
       const breachLog = {
         id: `VIO-RISK5-${Date.now()}`,
         rule: 'MAX_RISK_PER_TRADE' as const,
@@ -692,15 +711,20 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         timestamp: Date.now(),
         details: `Stake: $${stakeToUse} / Max Allowed: $${maxRiskCheck.maxAllowedStake} (5% Rule)`,
       };
-      onUpdateAccount({
-        ...account,
+      const breachedUpdate: TradingAccount = {
+        ...activeAcc,
         status: 'hard-breached',
         breachType: 'hard',
         discountEligible: true,
         breachReason,
         breachedAt: Date.now(),
-        violationLogs: [...(account.violationLogs || []), breachLog],
-      });
+        violationLogs: [...(activeAcc.violationLogs || []), breachLog],
+      };
+      if (account) {
+        onUpdateAccount(breachedUpdate);
+      } else {
+        setDemoPracticeAccount(breachedUpdate);
+      }
       setTradeError(breachReason);
       setIsBreachModalOpen(true);
       return;
@@ -734,16 +758,21 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
     // Deduct stake optimistically
     soundEngine.playTradePlacement(direction);
-    const newBalance = Number((account.currentBalance - stakeToUse).toFixed(2));
-    onUpdateAccount({
-      ...account,
+    const newBalance = Number((activeAcc.currentBalance - stakeToUse).toFixed(2));
+    const deductedAcc: TradingAccount = {
+      ...activeAcc,
       currentBalance: newBalance,
       equity: newBalance,
-    });
+    };
+    if (account) {
+      onUpdateAccount(deductedAcc);
+    } else {
+      setDemoPracticeAccount(deductedAcc);
+    }
 
     const newTrade: BinaryTrade = {
       id: `TRD-${Date.now().toString().slice(-6)}`,
-      accountId: account.id,
+      accountId: activeAcc.id,
       asset: assetToTrade.symbol,
       direction,
       strikePrice: currentPrice,
@@ -1006,9 +1035,12 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     if (e.touches.length === 1 && isInteracting) {
       const touch = e.touches[0];
       const deltaX = touch.clientX - dragStartXRef.current;
-      const candleWidthEst = 12 * zoomLevel;
-      const offsetDiff = Math.round(deltaX / candleWidthEst);
-      const newOffset = Math.max(0, Math.min(candles.length - 20, initialPanOffsetRef.current + offsetDiff));
+      const newOffset = calculateTouchPanOffset(
+        initialPanOffsetRef.current,
+        deltaX,
+        zoomLevel,
+        candles.length
+      );
       setPanOffset(newOffset);
 
       const canvas = canvasRef.current;
@@ -1032,8 +1064,11 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       const dx = e.touches[0].clientX - e.touches[1].clientX;
       const dy = e.touches[0].clientY - e.touches[1].clientY;
       const dist = Math.hypot(dx, dy);
-      const scale = dist / touchStartDistRef.current;
-      const newZoom = Number(Math.max(0.35, Math.min(3.5, initialTouchZoomRef.current * scale)).toFixed(2));
+      const newZoom = calculatePinchZoomLevel(
+        initialTouchZoomRef.current,
+        touchStartDistRef.current,
+        dist
+      );
       setZoomLevel(newZoom);
     }
   };
@@ -1047,14 +1082,24 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || candles.length === 0) return;
+
+    const containerRect =
+      chartContainerRef.current?.getBoundingClientRect() || canvas.getBoundingClientRect();
+    const width = Math.max(300, Math.floor(containerRect.width || canvasSize.width || 390));
+    const height = Math.max(220, Math.floor(containerRect.height || canvasSize.height || 360));
+
+    if (canvas.width !== width) {
+      canvas.width = width;
+    }
+    if (canvas.height !== height) {
+      canvas.height = height;
+    }
+
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const width = canvas.width;
-    const height = canvas.height;
-
-    // Terminal Background: Exact Quotex Dark Canvas `#131722`
-    ctx.fillStyle = '#131722';
+    // Terminal Background: Deep Matte Black `#0a0a0a`
+    ctx.fillStyle = '#0a0a0a';
     ctx.fillRect(0, 0, width, height);
 
     // Compute visible slice of candles based on panOffset and zoomLevel
@@ -1283,7 +1328,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       ctx.stroke();
     }
 
-    // 4. Current Market Price Pulsating Line & Axis Badge
+    // 4. Current Market Price Pulsating Line, Axis Badge & Live Candle Expiry Countdown Timer
     const curY = getY(currentPrice);
     ctx.strokeStyle = '#ff8800'; // Solid BFT Neon Amber
     ctx.lineWidth = 1.3;
@@ -1301,6 +1346,47 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     ctx.font = 'bold 10px JetBrains Mono, monospace';
     ctx.textAlign = 'center';
     ctx.fillText(currentPrice.toFixed(selectedAsset.pipDecimals), width - 32, curY + 4);
+
+    // Live Candle Expiry Countdown Timer rendered directly next to/above the active live candle & on price axis
+    if (displayCandles.length > 0 && panOffset === 0) {
+      const liveCandle = displayCandles[displayCandles.length - 1];
+      const liveCandleCenterX = getCandleCenterX(displayCandles.length - 1);
+      const liveHighY = getY(liveCandle.high);
+      const timerBadgeW = 54;
+      const timerBadgeH = 17;
+      const timerBadgeX = Math.max(
+        10,
+        Math.min(width - 68 - timerBadgeW, liveCandleCenterX - timerBadgeW / 2)
+      );
+      const timerBadgeY = Math.max(14, liveHighY - 24);
+
+      ctx.save();
+      ctx.fillStyle = '#141722';
+      ctx.fillRect(timerBadgeX, timerBadgeY, timerBadgeW, timerBadgeH);
+      ctx.strokeStyle = '#ff8800';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(timerBadgeX, timerBadgeY, timerBadgeW, timerBadgeH);
+      ctx.fillStyle = '#ff8800';
+      ctx.font = 'bold 9.5px JetBrains Mono, monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(
+        `⏱ ${candleCountdown.formatted}`,
+        timerBadgeX + timerBadgeW / 2,
+        timerBadgeY + 12
+      );
+
+      // Right-axis synchronized candle expiry countdown tag right below live price pill
+      const axisTimerY = Math.min(chartHeight - 8, curY + 12);
+      ctx.fillStyle = '#141722';
+      ctx.fillRect(width - 65, axisTimerY, 65, 16);
+      ctx.strokeStyle = 'rgba(255, 136, 0, 0.65)';
+      ctx.strokeRect(width - 65, axisTimerY, 65, 16);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 9px JetBrains Mono, monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(candleCountdown.formatted, width - 32, axisTimerY + 11);
+      ctx.restore();
+    }
 
     // 5. Visual Trade Overlay ("Beginning of trade" and "End of trade" markers)
     activeTrades.forEach((trade) => {
@@ -1730,28 +1816,45 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     currentDrawing,
     activeDrawingTool,
     drawingColor,
+    canvasSize,
+    candleCountdown.formatted,
   ]);
 
-  // Handle canvas resize
+  // Observe chart container resize so canvas never collapses to 0x0 on mobile or desktop
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const resize = () => {
-      const rect = canvas.getBoundingClientRect();
-      canvas.width = rect.width;
-      canvas.height = rect.height;
+    const container = chartContainerRef.current;
+    if (!container) return;
+
+    const updateDimensions = () => {
+      const rect = container.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        setCanvasSize((prev) => {
+          const w = Math.floor(rect.width);
+          const h = Math.floor(rect.height);
+          return prev.width === w && prev.height === h ? prev : { width: w, height: h };
+        });
+      }
     };
-    resize();
-    window.addEventListener('resize', resize);
-    return () => window.removeEventListener('resize', resize);
+
+    updateDimensions();
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(() => updateDimensions());
+      observer.observe(container);
+    }
+    window.addEventListener('resize', updateDimensions);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', updateDimensions);
+    };
   }, []);
 
   return (
-    <div className="flex flex-col h-[100dvh] md:h-[calc(100vh-60px)] md:min-h-[720px] bg-[#131722] text-slate-100 overflow-hidden font-sans select-none">
-            {/* 0. COMPACT MOBILE TOP NAVIGATION HEADER (Quotex Mobile View) */}
+    <div className="flex flex-col h-[100dvh] md:h-[calc(100vh-60px)] md:min-h-[720px] bg-[#0a0a0a] text-slate-100 overflow-hidden font-sans select-none">
+      {/* 0. COMPACT MOBILE TOP NAVIGATION HEADER (Quotex Mobile View) */}
       <div
         data-testid="quotex-mobile-top-header"
-        className="flex md:hidden h-11 bg-[#131722] border-b border-[#1e222d] items-center justify-between px-2 shrink-0 z-30"
+        className="flex md:hidden h-11 bg-[#0e1015] border-b border-white/10 items-center justify-between px-2.5 shrink-0 z-30"
       >
         <div className="flex items-center gap-1.5">
           <button
@@ -1759,7 +1862,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               soundEngine.playUiClick();
               onNavigateTab?.('home');
             }}
-            className="flex items-center gap-1 px-2 py-1 rounded-lg bg-[#181b25] border border-[#2a2e39] text-xs font-mono font-bold text-slate-300"
+            className="flex items-center gap-1 px-2 py-1 rounded-lg bg-[#161922] border border-white/10 text-xs font-mono font-bold text-slate-300"
             title="Return to BFT Portal"
           >
             <span className="font-black text-[#ff8800]">BFT</span>
@@ -1771,27 +1874,23 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             <button
               onClick={() => setAccountDropdownOpen(!accountDropdownOpen)}
               data-testid="mobile-account-switcher"
-              className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[#181b25] border border-[#2a2e39] text-xs font-mono"
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#161922] border border-white/10 text-xs font-mono"
             >
               <div
                 className={`w-2 h-2 rounded-full ${
-                  !account
-                    ? 'bg-[#ff8800]'
-                    : isBreached
+                  isBreached
                     ? 'bg-rose-500 animate-pulse'
-                    : isLiveFundedAccount(account)
+                    : isLiveFundedAccount(effectiveAccount)
                     ? 'bg-[#00e676]'
                     : 'bg-[#ff8800]'
                 }`}
               />
-              <span className="font-bold text-white text-[11px] max-w-[95px] truncate">
-                {account ? account.id : 'No Active Account'}
+              <span className="text-[9px] uppercase font-black px-1 py-0.2 rounded bg-[#ff8800]/15 text-[#ff8800] border border-[#ff8800]/30">
+                {isLiveFundedAccount(effectiveAccount) ? 'LIVE' : 'CHALLENGE'}
               </span>
-              {account && (
-                <span className="text-[11px] font-black font-mono text-[#00e676]">
-                  ${(account.currentBalance ?? 0).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
-                </span>
-              )}
+              <span className="text-[11px] font-black font-mono text-white">
+                ${formatMobileAccountBalance(effectiveAccount.currentBalance, 2)}
+              </span>
               <ChevronDown className="w-3 h-3 text-slate-400" />
             </button>
 
@@ -2272,7 +2371,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         </div>
 
         {/* 3. CENTRAL SUPER-SMOOTH OTC ALGORITHMIC CHART ENGINE */}
-        <div className="flex-1 flex flex-col relative overflow-hidden bg-[#131722]">
+        <div className="flex-1 flex flex-col relative overflow-hidden bg-[#0a0a0a] min-h-[240px]">
           {/* Active Price Alert Floating Toast Notification */}
           {activeAlertToast && (
             <div className="absolute top-4 right-4 max-w-sm px-4 py-2.5 bg-slate-900/95 border border-cyan-400 text-cyan-300 font-bold text-xs font-mono rounded-xl shadow-2xl backdrop-blur-md flex items-center justify-between gap-3 z-40 animate-in slide-in-from-top-2">
@@ -2289,8 +2388,80 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             </div>
           )}
 
+          {/* MOBILE UPPER-LEFT QUICK ACTION FLOATING BUTTONS (Tools, Indicators, Timeframe, History) */}
+          <div className="flex md:hidden absolute top-2.5 left-2.5 z-20 items-center gap-1.5 font-mono text-xs select-none">
+            <button
+              type="button"
+              data-testid="mobile-chart-tools-btn"
+              onClick={() => {
+                soundEngine.playUiClick();
+                setIsMobileQuickToolsOpen((prev) => !prev);
+              }}
+              className={`w-8 h-8 rounded-lg border flex items-center justify-center transition-colors cursor-pointer ${
+                isMobileQuickToolsOpen || activeDrawingTool !== 'none'
+                  ? 'bg-[#ff8800] border-[#ff8800] text-slate-950'
+                  : 'bg-[#141722]/95 border-white/10 text-slate-200'
+              }`}
+              title="Drawing Tools & Chart Overlays"
+            >
+              <PenTool className="w-3.5 h-3.5" />
+            </button>
+
+            <button
+              type="button"
+              data-testid="mobile-chart-indicators-btn"
+              onClick={() => {
+                soundEngine.playUiClick();
+                setIsIndicatorModalOpen(true);
+              }}
+              className="w-8 h-8 rounded-lg bg-[#141722]/95 border border-white/10 flex items-center justify-center text-slate-200 cursor-pointer"
+              title="Technical Indicators"
+            >
+              <Sliders className="w-3.5 h-3.5" />
+            </button>
+
+            <button
+              type="button"
+              data-testid="mobile-chart-timeframe-cycle-btn"
+              onClick={() => {
+                soundEngine.playUiClick();
+                const order: Timeframe[] = ['5s', '15s', '30s', '1m', '5m', '15m'];
+                const next = order[(order.indexOf(timeframe) + 1) % order.length] || '1m';
+                setTimeframe(next);
+              }}
+              className="h-8 px-2.5 rounded-lg bg-[#141722]/95 border border-[#ff8800]/50 text-[#ff8800] font-black text-[11px] flex items-center gap-1 cursor-pointer"
+              title="Cycle Chart Timeframe"
+            >
+              <span>{timeframe}</span>
+            </button>
+          </div>
+
+          {/* LIVE CANDLE EXPIRY COUNTDOWN TIMER BADGE (Visible on Mobile & Desktop Chart Grid) */}
+          <div
+            data-testid="candle-expiry-timer"
+            className="absolute top-2.5 right-18 z-20 px-2.5 py-1 rounded-lg bg-[#141722]/95 border border-[#ff8800]/60 flex items-center gap-1.5 font-mono text-[11px] pointer-events-none select-none"
+            title="Remaining time until current candle closes"
+          >
+            <Clock className="w-3 h-3 text-[#ff8800] shrink-0" />
+            <span className="text-[9px] uppercase font-bold text-slate-400 hidden sm:inline">
+              Candle Close:
+            </span>
+            <span
+              data-testid="candle-expiry-timer-value"
+              className="font-black text-[#ff8800] tracking-wider"
+            >
+              {candleCountdown.formatted}
+            </span>
+          </div>
+
           {/* FLOATING QUICK-ACCESS INDICATORS & DRAWING TOOLBAR */}
-          <div className="absolute top-3 left-3 z-20 flex flex-wrap items-center gap-2 font-mono text-xs select-none">
+          <div
+            className={`${
+              isMobileQuickToolsOpen
+                ? 'flex top-12 left-2.5 right-2.5 bg-[#0e1015]/95 p-2 rounded-xl border border-white/15 shadow-2xl'
+                : 'hidden md:flex top-3 left-3'
+            } absolute z-20 flex-wrap items-center gap-2 font-mono text-xs select-none`}
+          >
             {/* Quick Indicators Bar */}
             <div className="flex items-center gap-1 p-1 rounded-xl bg-[#1e222d]/90 backdrop-blur-md border border-[#2a2e39] shadow-xl">
               <button
@@ -2580,11 +2751,11 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             return (
               <div
                 data-testid="chart-ohlc-bar"
-                className="absolute top-14 left-3 z-20 px-3 py-1.5 rounded-xl bg-[#141824]/90 backdrop-blur-md border border-[#2a2e39] flex flex-wrap items-center gap-3 font-mono text-[11px] pointer-events-none select-none shadow-lg"
+                className="absolute top-12 left-2.5 md:top-14 md:left-3 z-15 px-2.5 py-1 rounded-lg bg-[#141722]/90 backdrop-blur-md border border-white/10 flex flex-wrap items-center gap-2 md:gap-3 font-mono text-[10px] md:text-[11px] pointer-events-none select-none"
               >
                 <span className="font-black text-white flex items-center gap-1">
                   <span>{selectedAsset.symbol}</span>
-                  <span className="text-[9px] px-1.5 py-0.2 rounded bg-[#252b3d] text-cyan-400 font-bold">
+                  <span className="text-[9px] px-1.5 py-0.2 rounded bg-[#ff8800]/20 text-[#ff8800] font-bold">
                     {timeframe}
                   </span>
                 </span>
@@ -2613,7 +2784,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                   </strong>
                 </span>
                 <span
-                  className={`font-bold ${
+                  className={`font-bold hidden sm:inline ${
                     isBull ? 'text-[#00e676]' : 'text-[#ff334b]'
                   }`}
                 >
@@ -2621,16 +2792,15 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                   {changeAbs.toFixed(selectedAsset.pipDecimals)} ({changePct >= 0 ? '+' : ''}
                   {changePct.toFixed(2)}%)
                 </span>
-                <span className="text-slate-500 text-[10px]">
-                  Vol {inspectedCandle.volume}
-                </span>
               </div>
             );
           })()}
 
           {/* Canvas Chart Area with Wheel Zoom, Drag-to-Pan and Technical Drawings */}
           <div
-            className={`flex-1 relative w-full h-full cursor-${
+            ref={chartContainerRef}
+            data-testid="otc-chart-container"
+            className={`flex-1 relative w-full h-full min-h-[220px] touch-none select-none overflow-hidden cursor-${
               activeDrawingTool !== 'none'
                 ? 'crosshair'
                 : hoveredTradeMarker
@@ -2648,7 +2818,11 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             onTouchMove={handleTouchMove}
             onTouchEnd={handleTouchEnd}
           >
-            <canvas ref={canvasRef} className="w-full h-full block" />
+            <canvas
+              ref={canvasRef}
+              data-testid="otc-candlestick-canvas"
+              className="w-full h-full block"
+            />
             {/* Mobile Floating Action Button: Reset Pan / Center Chart */}
             <button
               type="button"
@@ -2657,7 +2831,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                 soundEngine.playUiClick();
                 setPanOffset(0);
               }}
-              className="md:hidden absolute top-12 right-2 z-20 w-8 h-8 rounded-full bg-[#181b25]/90 border border-[#2a2e39] flex items-center justify-center text-emerald-400 shadow-lg active:scale-95"
+              className="md:hidden absolute bottom-2.5 right-18 z-20 w-8 h-8 rounded-lg bg-[#141722]/95 border border-white/10 flex items-center justify-center text-[#ff8800] active:scale-95 cursor-pointer"
               title="Center Chart to Latest Price"
             >
               <Target className="w-4 h-4" />
@@ -2807,9 +2981,9 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             )}
 
             {/* Bottom-Left Chart Controls (Timeframe, Chart Type, Indicators, Zoom) */}
-            <div className="absolute bottom-4 left-4 z-10 flex items-center gap-2 bg-[#1e222d]/90 backdrop-blur-md border border-[#2a2e39] rounded-xl p-1.5 shadow-xl font-mono text-xs">
-              {/* Chart Type Selector */}
-              <div className="flex bg-[#131722] rounded-lg p-0.5 border border-[#2a2e39]">
+            <div className="absolute bottom-2.5 left-2.5 md:bottom-4 md:left-4 z-10 flex items-center gap-1.5 md:gap-2 bg-[#141722]/90 backdrop-blur-md border border-white/10 rounded-xl p-1 md:p-1.5 font-mono text-xs">
+              {/* Chart Type Selector (Desktop) */}
+              <div className="hidden md:flex bg-[#0a0a0a] rounded-lg p-0.5 border border-white/10">
                 {(['candles', 'heikin-ashi', 'line', 'bars'] as const).map((type) => (
                   <button
                     key={type}
@@ -2819,7 +2993,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                     }}
                     className={`px-2 py-1 rounded text-[10px] font-bold uppercase transition-all cursor-pointer ${
                       chartType === type
-                        ? 'bg-cyan-400 text-slate-950 font-black'
+                        ? 'bg-[#ff8800] text-slate-950 font-black'
                         : 'text-slate-400 hover:text-white'
                     }`}
                   >
@@ -2829,17 +3003,17 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               </div>
 
               {/* Timeframe Selector (TradingView 1m, 5m, 15m, 1h, 1D + Fast OTC Tick Timeframes) */}
-              <div className="flex bg-[#131722] rounded-lg p-0.5 border border-[#2a2e39]">
+              <div className="flex bg-[#0a0a0a] rounded-lg p-0.5 border border-white/10">
                 {(
                   [
-                    { tf: '5s' as const, key: '1' },
-                    { tf: '15s' as const, key: '2' },
-                    { tf: '30s' as const, key: '3' },
-                    { tf: '1m' as const, key: '4' },
-                    { tf: '5m' as const, key: '5' },
-                    { tf: '15m' as const, key: '6' },
-                    { tf: '1h' as const, key: '7' },
-                    { tf: '1D' as const, key: '8' },
+                    { tf: '5s' as const, key: '1', mobileVisible: true },
+                    { tf: '15s' as const, key: '2', mobileVisible: true },
+                    { tf: '30s' as const, key: '3', mobileVisible: false },
+                    { tf: '1m' as const, key: '4', mobileVisible: true },
+                    { tf: '5m' as const, key: '5', mobileVisible: true },
+                    { tf: '15m' as const, key: '6', mobileVisible: false },
+                    { tf: '1h' as const, key: '7', mobileVisible: false },
+                    { tf: '1D' as const, key: '8', mobileVisible: false },
                   ] as const
                 ).map((item) => (
                   <button
@@ -2850,9 +3024,11 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                       soundEngine.playUiClick();
                       setTimeframe(item.tf);
                     }}
-                    className={`px-2 py-1 rounded text-[10px] font-bold transition-all flex items-center gap-1 cursor-pointer ${
+                    className={`${
+                      item.mobileVisible ? 'flex' : 'hidden sm:flex'
+                    } px-1.5 md:px-2 py-1 rounded text-[10px] font-bold transition-all items-center gap-1 cursor-pointer ${
                       timeframe === item.tf
-                        ? 'bg-cyan-400 text-slate-950 font-black'
+                        ? 'bg-[#ff8800] text-slate-950 font-black'
                         : 'text-slate-400 hover:text-white'
                     }`}
                     title={`Switch timeframe (${item.tf})`}
@@ -2862,18 +3038,26 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                 ))}
               </div>
 
-              {/* Zoom Controls */}
-              <div className="flex items-center gap-1 pl-1 border-l border-[#2a2e39]">
+              {/* Zoom Controls (Smooth Touch-Friendly Zoom In / Zoom Out) */}
+              <div className="flex items-center gap-1 pl-1 border-l border-white/10">
                 <button
-                  onClick={() => setZoomLevel((z) => Math.min(2, z + 0.1))}
-                  className="p-1 rounded bg-[#131722] hover:bg-[#252b3b] text-slate-400 hover:text-white cursor-pointer"
+                  type="button"
+                  data-testid="chart-zoom-in-btn"
+                  onClick={() =>
+                    setZoomLevel((z) => Number(Math.min(3.5, z + 0.2).toFixed(2)))
+                  }
+                  className="p-1.5 rounded bg-[#0a0a0a] hover:bg-[#1e222d] text-slate-300 hover:text-white cursor-pointer"
                   title="Zoom In"
                 >
                   <ZoomIn className="w-3.5 h-3.5" />
                 </button>
                 <button
-                  onClick={() => setZoomLevel((z) => Math.max(0.5, z - 0.1))}
-                  className="p-1 rounded bg-[#131722] hover:bg-[#252b3b] text-slate-400 hover:text-white cursor-pointer"
+                  type="button"
+                  data-testid="chart-zoom-out-btn"
+                  onClick={() =>
+                    setZoomLevel((z) => Number(Math.max(0.35, z - 0.2).toFixed(2)))
+                  }
+                  className="p-1.5 rounded bg-[#0a0a0a] hover:bg-[#1e222d] text-slate-300 hover:text-white cursor-pointer"
                   title="Zoom Out"
                 >
                   <ZoomOut className="w-3.5 h-3.5" />
@@ -2925,41 +3109,33 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               </div>
             )}
 
-            {/* ABSOLUTE CHART & TERMINAL LOCKING OVERLAY (NO ACTIVE ACCOUNT vs DUAL BREACH SYSTEM) */}
+            {/* LOCKED TERMINAL OVERLAY WHEN USER HAS NOT YET PURCHASED AN ACCOUNT / BREACH OVERLAY */}
             {hasNoAccount ? (
               <div
                 data-testid="terminal-no-active-account-overlay"
-                className="absolute inset-0 z-30 flex items-center justify-center bg-black/85 backdrop-blur-xl p-4"
+                className="absolute inset-0 z-30 flex items-center justify-center bg-black/85 backdrop-blur-md p-4"
               >
-                <div className="max-w-md w-full rounded-2xl bg-[#0a0a0a] border-2 border-[#ff8800] p-6 sm:p-8 text-center font-mono">
-                  <div className="w-14 h-14 rounded-2xl bg-[#ff8800]/15 border border-[#ff8800]/40 flex items-center justify-center mx-auto mb-4 text-[#ff8800]">
-                    <Zap className="w-7 h-7" />
+                <div className="max-w-md w-full rounded-2xl bg-[#11131a] border border-[#262c3a] p-6 sm:p-8 text-center font-mono">
+                  <div className="w-14 h-14 rounded-2xl bg-[#181c26] border border-[#ff8800]/50 flex items-center justify-center mx-auto mb-4 text-[#ff8800]">
+                    <Lock className="w-7 h-7" />
                   </div>
-                  <span className="px-3 py-1 rounded bg-[#ff8800]/15 text-[#ff8800] border border-[#ff8800]/40 text-[10px] font-black uppercase tracking-wider">
-                    No Active Account
+                  <span className="inline-block px-3 py-1 rounded bg-[#ff8800]/15 text-[#ff8800] border border-[#ff8800]/40 text-[10px] font-black uppercase tracking-wider">
+                    Trading Terminal & Advanced Features Locked
                   </span>
-                  <h3 className="text-xl font-black text-white font-sans mt-3">
-                    No Active Account Purchased Yet
+                  <h3 className="text-lg sm:text-xl font-black text-white font-sans mt-3">
+                    No Active Funded or Challenge Account
                   </h3>
-                  <p className="text-xs text-slate-300 mt-2 font-sans leading-relaxed">
-                    Your trader profile is registered, but you do not currently have an active Challenge or Instant Funded account. Choose a plan to deploy your live OTC trading account immediately.
+                  <p className="text-xs text-[#94a3b8] mt-2 font-sans leading-relaxed">
+                    You are signed in via Google, but you have not yet purchased a Challenge (One-Step / Two-Step) or Instant Funded account. Choose a plan to unlock live OTC trading, advanced indicators, and 3-minute payouts.
                   </p>
-                  <div className="mt-6 space-y-2.5">
+                  <div className="mt-5 flex flex-col sm:flex-row items-center justify-center gap-2.5">
                     <button
                       type="button"
                       data-testid="terminal-choose-plan-btn"
                       onClick={() => onOpenChallengeModal?.()}
-                      className="w-full py-3.5 px-6 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] text-slate-950 font-black text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer uppercase font-mono tracking-wider transition-colors min-h-[48px]"
+                      className="w-full sm:w-auto px-6 py-3 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] text-slate-950 font-black text-xs uppercase cursor-pointer transition-colors"
                     >
-                      <Zap className="w-4 h-4 fill-slate-950" />
-                      <span>Choose a Plan / Buy Challenge</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onNavigateTab?.('dashboard')}
-                      className="w-full py-3 px-4 rounded-xl bg-[#141418] hover:bg-[#1c1c22] text-slate-200 border border-white/15 text-xs font-bold transition-colors cursor-pointer min-h-[44px]"
-                    >
-                      Open Account & KYC Dashboard
+                      Choose a Plan (SPOOKY40 - 40% OFF)
                     </button>
                   </div>
                 </div>
@@ -3689,8 +3865,8 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         </div>
       </div>
 
-      {/* 5. LIVE BOTTOM STATUS BAR (Drawdown & Capital Metrics) */}
-      <div className="h-10 bg-[#161923] border-t border-[#2a2e39] px-4 flex items-center justify-between font-mono text-[11px] shrink-0 z-20">
+      {/* 5. LIVE BOTTOM STATUS BAR (Drawdown & Capital Metrics - Desktop Only) */}
+      <div className="hidden md:flex h-10 bg-[#0e1015] border-t border-white/10 px-4 items-center justify-between font-mono text-[11px] shrink-0 z-20">
         {/* Left: Capital & Drawdown Metrics */}
         <div className="flex items-center gap-5 overflow-x-auto no-scrollbar">
           {/* Current Capital / Balance */}

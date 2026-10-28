@@ -102,11 +102,11 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
         {/* Double Payout Guarantee Card */}
         <div
           onClick={onOpenWithdrawals}
-          className="cursor-pointer max-w-2xl mx-auto mb-10 p-4 sm:p-5 rounded-2xl bg-[#111115] border-2 border-[#ff8800]/60 glow-gold hover:border-[#ffaa00] transition-all hover:scale-[1.01] duration-300 group shadow-2xl"
+          className="cursor-pointer max-w-2xl mx-auto mb-10 p-4 sm:p-5 rounded-2xl bg-[#111115] border-2 border-[#ff8800]/60 hover:border-[#ffaa00] transition-colors duration-200 group"
         >
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-4 text-left">
-              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-[#ff8800] to-[#ffaa00] flex items-center justify-center shadow-lg shrink-0">
+              <div className="w-12 h-12 rounded-xl bg-[#ff8800] flex items-center justify-center shrink-0">
                 <Clock className="w-6 h-6 text-slate-950 stroke-[2.5]" />
               </div>
               <div>
@@ -115,10 +115,11 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
                   Contractual 3-Minute Payout Warranty
                 </div>
                 <div className="text-sm sm:text-base font-extrabold text-white leading-tight">
-                  If your withdrawal is not processed within 3 minutes, we guarantee{' '}
+                  "We process payouts within 3 minutes; if we fail, we pay{' '}
                   <span className="text-[#ffaa00] underline decoration-[#ff8800] decoration-2 font-black">
-                    DOUBLE Payout!
+                    double!
                   </span>
+                  "
                 </div>
               </div>
             </div>
@@ -134,24 +135,24 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
         <div className="flex flex-wrap items-center justify-center gap-4 mb-16">
           <button
             onClick={onSelectTier}
-            className="px-8 py-4 rounded-xl bg-gradient-to-r from-[#ff8800] via-[#ff9900] to-[#ffaa00] hover:brightness-110 text-slate-950 font-black text-sm sm:text-base shadow-xl glow-gold cursor-pointer transition-all transform hover:-translate-y-0.5"
+            className="px-8 py-4 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] text-slate-950 font-black text-sm sm:text-base cursor-pointer transition-colors"
           >
             Claim {activePromoCode} Discounted Challenge
           </button>
           <button
             onClick={onOpenTerminal}
-            className="px-8 py-4 rounded-xl bg-[#141418] hover:bg-[#1c1c22] border border-white/15 hover:border-[#ff8800]/50 text-slate-100 hover:text-white font-bold text-sm sm:text-base shadow-lg transition-all cursor-pointer flex items-center gap-2"
+            className="px-8 py-4 rounded-xl bg-[#141418] hover:bg-[#1c1c22] border border-white/15 hover:border-[#ff8800]/50 text-slate-100 hover:text-white font-bold text-sm sm:text-base transition-colors cursor-pointer flex items-center gap-2"
           >
             <TrendingUp className="w-4 h-4 text-emerald-400" />
             Launch Live OTC Terminal
           </button>
           {onOpenAuthModal && (
             <button
-              onClick={() => onOpenAuthModal('register')}
-              className="px-6 py-4 rounded-xl bg-[#141418] hover:bg-[#1c1c22] border border-[#ff8800]/30 text-[#ffaa00] font-bold text-sm sm:text-base transition-all cursor-pointer flex items-center gap-2 font-mono"
+              onClick={() => onOpenAuthModal('login')}
+              className="px-6 py-4 rounded-xl bg-white hover:bg-slate-100 text-slate-950 font-black text-sm sm:text-base transition-colors cursor-pointer flex items-center gap-2 font-mono"
             >
               <UserPlus className="w-4 h-4" />
-              Direct Referral Sign Up
+              Sign in with Google
             </button>
           )}
         </div>

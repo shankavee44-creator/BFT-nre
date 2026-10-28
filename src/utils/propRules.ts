@@ -404,11 +404,84 @@ export const PACKAGES: EvaluationPackage[] = [
   },
 ];
 
-export const MIN_WITHDRAWAL_PROFIT = 50;
+export const MIN_WITHDRAWAL_PROFIT = 250; // Strict $250 Minimum Withdrawal Limit
+export const MIN_WITHDRAWAL_AMOUNT = 250;
+export const FIRST_WITHDRAWAL_WAITING_DAYS = 14; // Mandatory 14-day waiting period for the very first withdrawal across all account types
+export const WITHDRAWAL_GUARANTEE_NOTICE =
+  'We process payouts within 3 minutes; if we fail, we pay double!';
 export const MIN_TRADE_DURATION_SECONDS = 30;
 export const INACTIVITY_DAYS_LIMIT = 14;
 export const POSITION_SPIKE_FACTOR = 5;
 export const GUARANTEED_WITHDRAWAL_SECONDS = 180; // 3 minutes
+
+/**
+ * Evaluates the mandatory 14-day waiting period for the very first withdrawal across all account types.
+ * After the first withdrawal is completed, users who purchased the daily withdrawal add-on (+15%)
+ * or weekly plan (7-day cycle) proceed according to their package rules.
+ */
+export function checkFirstWithdrawalWaitingPeriod(
+  account?: TradingAccount | null,
+  nowMs: number = Date.now()
+): {
+  eligible: boolean;
+  isFirstWithdrawal: boolean;
+  daysElapsed: number;
+  daysRemaining: number;
+  subsequentCycleLabel: string;
+  reason?: string;
+} {
+  if (!account) {
+    return {
+      eligible: false,
+      isFirstWithdrawal: true,
+      daysElapsed: 0,
+      daysRemaining: FIRST_WITHDRAWAL_WAITING_DAYS,
+      subsequentCycleLabel: 'Weekly (7-Day Standard Plan)',
+      reason: 'No active trading account selected.',
+    };
+  }
+
+  const subsequentCycleLabel = account.dailyWithdrawalsUnlocked
+    ? 'Daily Withdrawals (24h Add-on Unlocked)'
+    : 'Weekly Withdrawals (7-Day Standard Plan)';
+
+  if (account.firstWithdrawalCompleted) {
+    return {
+      eligible: true,
+      isFirstWithdrawal: false,
+      daysElapsed: Math.max(FIRST_WITHDRAWAL_WAITING_DAYS, account.tradingDaysCompleted || 14),
+      daysRemaining: 0,
+      subsequentCycleLabel,
+    };
+  }
+
+  let createdMs = Date.parse(account.createdDate || '');
+  if (Number.isNaN(createdMs)) {
+    createdMs = nowMs;
+  }
+  const calendarDays = Math.max(0, Math.floor((nowMs - createdMs) / 86400000));
+  const daysElapsed = Math.max(calendarDays, account.tradingDaysCompleted || 0);
+  const daysRemaining = Math.max(0, FIRST_WITHDRAWAL_WAITING_DAYS - daysElapsed);
+
+  if (daysElapsed < FIRST_WITHDRAWAL_WAITING_DAYS) {
+    return {
+      eligible: false,
+      isFirstWithdrawal: true,
+      daysElapsed,
+      daysRemaining,
+      subsequentCycleLabel,
+      reason: `First Withdrawal 14-Day Lock: A mandatory 14-day waiting period applies to the very first withdrawal across all account types (${daysElapsed}/${FIRST_WITHDRAWAL_WAITING_DAYS} days completed, ${daysRemaining} day(s) remaining). After your first withdrawal, your ${subsequentCycleLabel} schedule applies.`,
+    };
+  }
+
+  return {
+    eligible: true,
+    isFirstWithdrawal: true,
+    daysElapsed,
+    daysRemaining: 0,
+    subsequentCycleLabel,
+  };
+}
 
 /**
  * Determines whether an account is a Live Funded Account (Instant Funded or Passed Evaluation)
@@ -576,12 +649,26 @@ export interface RuleValidationResult {
 
 /**
  * Validates if an account can request a withdrawal.
- * Rule: Minimum withdrawal threshold: $100 in account profits.
+ * Rules:
+ * - Minimum withdrawal threshold: strictly $250 in account profits.
+ * - Mandatory 14-day waiting period for the very first withdrawal across all account types.
  */
 export function validateWithdrawalRequest(
   account: TradingAccount,
-  requestedAmount: number
+  requestedAmount: number,
+  options?: { enforceFirstWithdrawalLock?: boolean; nowMs?: number }
 ): RuleValidationResult {
+  if (options?.enforceFirstWithdrawalLock) {
+    const firstLock = checkFirstWithdrawalWaitingPeriod(account, options.nowMs);
+    if (!firstLock.eligible) {
+      return {
+        valid: false,
+        reason: firstLock.reason,
+        code: 'FIRST_WITHDRAWAL_14_DAY_LOCK',
+      };
+    }
+  }
+
   const currentProfit = account.currentBalance - account.initialBalance;
 
   if (currentProfit <= 0) {

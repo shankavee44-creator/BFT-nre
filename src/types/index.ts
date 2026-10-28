@@ -63,6 +63,7 @@ export interface TradingAccount {
   dailyWithdrawalsUnlocked?: boolean; // Paid +15% add-on at checkout
   monthsCompleted?: number; // >= 3 upgrades split from 80% to 90% + scaling plan
   scalingActive?: boolean;
+  firstWithdrawalCompleted?: boolean; // Mandatory 14-day waiting period for very first withdrawal
   nextWithdrawalAvailableAt?: number; // 7-day standard cycle timer
   certificateId?: string;
   passedAt?: string;

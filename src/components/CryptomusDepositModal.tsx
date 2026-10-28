@@ -445,7 +445,7 @@ export const CryptomusDepositModal: React.FC<CryptomusDepositModalProps> = ({
                     setAmountInput(e.target.value);
                     if (errorMessage) setErrorMessage(null);
                   }}
-                  placeholder="Enter amount (min $10.00)"
+                  placeholder="Enter amount (USDT TRC-20)"
                   className="w-full pl-9 pr-20 py-3.5 rounded-xl bg-[#090b10] border border-[#2a3042] focus:border-[#ff8800] focus:outline-none text-xl font-black text-white font-mono"
                 />
                 <span className="absolute right-4 px-2 py-1 rounded bg-[#00e676]/15 text-[#00e676] border border-[#00e676]/30 text-xs font-mono font-black">

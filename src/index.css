@@ -31,36 +31,18 @@
 }
 
 /* BFT Institutional Zero-Glow Solid Accent Utilities */
-.glow-gold {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
-}
-
-.glow-gold-intense {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.55);
-}
-
-.glow-mint {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
-}
-
-.glow-mint-intense {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.55);
-}
-
+.glow-gold,
+.glow-gold-intense,
+.glow-mint,
+.glow-mint-intense,
 .glow-red {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+  box-shadow: none !important;
 }
 
-.text-glow-gold {
-  text-shadow: none;
-}
-
-.text-glow-mint {
-  text-shadow: none;
-}
-
+.text-glow-gold,
+.text-glow-mint,
 .text-glow-red {
-  text-shadow: none;
+  text-shadow: none !important;
 }
 
 /* BFT Institutional Dark Charcoal Grid */

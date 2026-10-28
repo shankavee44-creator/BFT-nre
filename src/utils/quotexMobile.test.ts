@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { formatSecondsToTimer } from '../components/QuotexMobileDock';
+import {
+  calculateCandleCountdown,
+  calculatePinchZoomLevel,
+  calculateTouchPanOffset,
+  formatMobileAccountBalance,
+} from './quotexMobile';
 
 test('formatSecondsToTimer formats durations accurately in Quotex MM:SS:00 style', () => {
   assert.equal(formatSecondsToTimer(30), '00:30:00');
@@ -36,6 +42,47 @@ test('Mobile touch zoom distance formula calculates organic scale factors accura
 
   assert.ok(scale > 1.3, 'Pinch out should expand zoom scale');
   assert.ok(scale < 1.5, 'Pinch out within expected geometric range');
+
+  const zoomedIn = calculatePinchZoomLevel(1.0, initialDist, pinchOutDist);
+  assert.equal(zoomedIn, 1.4);
+
+  const zoomedOut = calculatePinchZoomLevel(1.0, pinchOutDist, initialDist);
+  assert.equal(zoomedOut, 0.71);
+
+  // Clamping boundaries
+  assert.equal(calculatePinchZoomLevel(3.0, 50, 200), 3.5);
+  assert.equal(calculatePinchZoomLevel(0.5, 200, 20), 0.35);
+});
+
+test('calculateCandleCountdown computes exact seconds/minutes remaining before candle close', () => {
+  // 1m (60s) candle at t = 18 seconds into the minute -> 42s remaining ("00:42")
+  const c1 = calculateCandleCountdown(18_000, 60);
+  assert.equal(c1.remainingSeconds, 42);
+  assert.equal(c1.formatted, '00:42');
+
+  // 5m (300s) candle at t = 125 seconds -> 175s remaining ("02:55")
+  const c2 = calculateCandleCountdown(125_000, 300);
+  assert.equal(c2.remainingSeconds, 175);
+  assert.equal(c2.formatted, '02:55');
+
+  // 5s candle at exact boundary t = 10_000ms -> 5s remaining ("00:05")
+  const c3 = calculateCandleCountdown(10_000, 5);
+  assert.equal(c3.remainingSeconds, 5);
+  assert.equal(c3.formatted, '00:05');
+});
+
+test('calculateTouchPanOffset pans smoothly through historical candles and clamps safely', () => {
+  // Dragging right (+110px at zoom 1.0) shifts panOffset back in history by 10 candles
+  const p1 = calculateTouchPanOffset(0, 110, 1.0, 120);
+  assert.equal(p1, 10);
+
+  // Dragging left (-200px from panOffset 5) clamps at 0 (live edge)
+  const p2 = calculateTouchPanOffset(5, -200, 1.0, 120);
+  assert.equal(p2, 0);
+
+  // Dragging far right clamps at totalCandles - 20
+  const p3 = calculateTouchPanOffset(90, 500, 1.0, 120);
+  assert.equal(p3, 100);
 });
 
 test('Safe balance helper guards against null, undefined, and non-numeric balances', () => {
@@ -51,6 +98,7 @@ test('Safe balance helper guards against null, undefined, and non-numeric balanc
   assert.equal(formatBalance({}), '0.0');
   assert.equal(formatBalance({ currentBalance: 10000.9 }), '10,000.9');
   assert.equal(formatBalance({ currentBalance: 5000 }), '5,000.0');
+  assert.equal(formatMobileAccountBalance(10000.9, 2), '10,000.90');
 });
 
 test('Duration boundary validation enforces minimum 30s rule and upper bound', () => {
