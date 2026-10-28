@@ -80,7 +80,7 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   return (
-    <header className="sticky top-0 z-40 w-full border-b border-white/10 bg-[#0a0a0a]/95 backdrop-blur-xl">
+    <header className="sticky top-0 z-40 w-full max-w-[100vw] overflow-x-hidden border-b border-white/10 bg-[#0a0a0a]/95 backdrop-blur-xl">
       {/* Top Promotional Banner & Discount Codes — BFT Institutional Amber Styling */}
       <div className="bg-[#0d0b08] border-b border-[#ff8800]/30 px-4 py-2 text-xs">
         <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">

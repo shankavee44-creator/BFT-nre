@@ -50,7 +50,7 @@ export const QuotexMobileNav: React.FC<QuotexMobileNavProps> = ({
       {/* Fixed Bottom Navigation Bar for Mobile */}
       <nav
         data-testid="quotex-mobile-nav"
-        className="md:hidden flex items-center justify-around bg-[#0c0e14] border-t border-[#1e222d] py-1.5 px-1 z-40 shrink-0 select-none safe-area-pb"
+        className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-[#0c0e14] border-t border-[#1e222d] py-1 px-1 flex items-center justify-around select-none safe-area-pb max-w-[100vw] overflow-x-hidden w-full shadow-2xl"
       >
         {/* Chart Button */}
         <button

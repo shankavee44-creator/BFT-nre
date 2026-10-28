@@ -463,7 +463,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   const kycWithdrawalCheck = canUserWithdraw(userProfile);
 
   return (
-    <div className="py-8 sm:py-10 max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 font-sans">
+    <div className="py-8 sm:py-10 max-w-6xl mx-auto px-3 sm:px-6 lg:px-8 font-sans w-full max-w-full overflow-x-hidden">
       {/* Trader Profile Header Card */}
       <div className="p-5 sm:p-8 rounded-3xl bg-[#0a0a0a] border border-[#ff8800]/40 mb-6">
         <div className="flex flex-col lg:flex-row items-center lg:items-start justify-between gap-6">

@@ -512,7 +512,7 @@ export default function App() {
     userAccounts.find((acc) => acc.id === activeAccountId) || userAccounts[0] || undefined;
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-slate-100 flex flex-col selection:bg-[#ff8800] selection:text-slate-950">
+    <div className="min-h-screen bg-[#0a0a0a] text-slate-100 flex flex-col selection:bg-[#ff8800] selection:text-slate-950 w-full max-w-[100vw] overflow-x-hidden relative">
       {/* Top Header (Hidden on mobile when inside full-screen Trading Terminal) */}
       <div className={currentTab === 'terminal' ? 'hidden md:block' : 'block'}>
         <Header
@@ -588,7 +588,7 @@ export default function App() {
       )}
 
       {/* Main View Switcher */}
-      <main className="flex-1">
+      <main className="flex-1 w-full max-w-full overflow-x-hidden">
         {currentTab === 'home' && (
           <div>
             <HeroBanner

@@ -249,7 +249,7 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
     });
 
   return (
-    <div data-testid="affiliate-dashboard" className="space-y-8 font-sans">
+    <div data-testid="affiliate-dashboard" className="space-y-8 font-sans w-full max-w-full overflow-x-hidden">
       {/* 1. HERO BANNER WITH 3-TIER PACKAGE (10% L1 / 5% L2 / 2% L3) + 8% DIRECT PAYOUT BONUS */}
       <div className="relative rounded-3xl bg-[#111115] border border-[#ff8800]/40 p-6 sm:p-8 overflow-hidden">
         <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
