@@ -116,20 +116,6 @@ export const Header: React.FC<HeaderProps> = ({
             >
               Code: <strong className="text-white">"SPOOKY20"</strong> (Flat 20% OFF Existing Users)
             </button>
-
-            {onSimulateReferralUrl && (
-              <button
-                onClick={() => {
-                  soundEngine.playUiClick();
-                  onSimulateReferralUrl('BFT-ALEX77');
-                }}
-                className="px-2.5 py-0.5 rounded font-mono text-[11px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 transition-all cursor-pointer flex items-center gap-1"
-                title="Simulate visiting https://bft.com/?ref=BFT-ALEX77 to test 30-day cookie & auto Sign-Up routing"
-              >
-                <UserPlus className="w-3 h-3" />
-                <span>Test Direct Ref Link (?ref=BFT-ALEX77)</span>
-              </button>
-            )}
           </div>
 
           <div className="hidden xl:flex items-center gap-4 text-slate-300 text-[11px] font-mono">
@@ -137,14 +123,14 @@ export const Header: React.FC<HeaderProps> = ({
               Split: <strong className="text-[#ffaa00]">80% (M1-3) → 90% + Scaling</strong>
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="w-2 h-2 rounded-full bg-emerald-400" />
               <span className="text-emerald-400">3-Min TRC-20 SLA</span>
             </span>
           </div>
         </div>
       </div>
 
-      {/* Live Crypto Prices Scrolling Ticker */}
+      {/* Live Institutional Payout Ticker Feed */}
       <CryptoTickerBar onSelectPair={() => setCurrentTab('terminal')} />
 
       {/* Main Navigation Bar */}
@@ -187,7 +173,7 @@ export const Header: React.FC<HeaderProps> = ({
             { id: 'home', label: 'Challenges & Pricing' },
             { id: 'terminal', label: 'Trading Terminal' },
             { id: 'rules', label: 'Prop Rules' },
-            { id: 'affiliate', label: 'Affiliates (17%+8%)' },
+            { id: 'affiliate', label: 'Affiliates (10%/5%/2% + 8%)' },
             { id: 'withdrawals', label: 'Withdrawals' },
             { id: 'dashboard', label: 'Trader Hub & KYC' },
             { id: 'faq', label: 'FAQ' },
@@ -197,6 +183,7 @@ export const Header: React.FC<HeaderProps> = ({
             return (
               <button
                 key={tab.id}
+                data-testid={`nav-${tab.id}-btn`}
                 onClick={() => handleNavClick(tab.id)}
                 className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
                   currentTab === tab.id
@@ -359,18 +346,20 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           )}
 
-          {/* Auth Buttons (Login / Sign Up) OR Logged-in Profile */}
+          {/* Dynamic Auth State: Logged-In User Profile & Logout vs Logged-Out Sign In & Register */}
           {userProfile.isLoggedIn ? (
             <div className="flex items-center gap-1.5">
               <button
+                type="button"
+                data-testid="header-user-profile-btn"
                 onClick={() => handleNavClick('dashboard')}
-                className="flex items-center gap-1.5 p-1 pr-2 rounded-xl bg-[#121216] border border-white/10 hover:border-[#ff8800]/40 transition-all cursor-pointer whitespace-nowrap"
+                className="flex items-center gap-1.5 p-1 pr-2.5 rounded-xl bg-[#121216] border border-white/10 hover:border-[#ff8800]/40 transition-all cursor-pointer whitespace-nowrap"
                 title="Open Trader Profile & KYC"
               >
                 <div className="relative">
                   <img
                     src={userProfile.avatarUrl}
-                    alt={userProfile.fullName}
+                    alt={userProfile.fullName || userProfile.email}
                     className="w-6 h-6 rounded-lg object-cover ring-1 ring-[#ff8800]/50"
                   />
                   <span
@@ -380,27 +369,21 @@ export const Header: React.FC<HeaderProps> = ({
                   />
                 </div>
                 <span className="hidden md:inline text-xs font-bold text-white font-mono">
-                  {userProfile.fullName.split(' ')[0]}
+                  {(userProfile.fullName || userProfile.email).split(' ')[0]}
                 </span>
-              </button>
-
-              <button
-                onClick={() => onOpenAuthModal('register')}
-                className="px-2 py-1.5 rounded-xl bg-[#141418] hover:bg-white/10 border border-[#ff8800]/40 text-xs font-bold text-[#ff8800] flex items-center gap-1 cursor-pointer font-mono whitespace-nowrap"
-                title="Open Login / Sign Up Modal"
-              >
-                <UserPlus className="w-3.5 h-3.5 text-[#ff8800]" />
-                <span className="hidden xl:inline">Auth</span>
               </button>
 
               {onLogout && (
                 <button
+                  type="button"
+                  data-testid="header-logout-btn"
                   onClick={onLogout}
-                  className="p-1.5 rounded-xl bg-[#121216] hover:bg-rose-950/60 border border-white/10 hover:border-rose-500/40 text-slate-400 hover:text-rose-300 transition-all cursor-pointer"
+                  className="px-2.5 py-1.5 rounded-xl bg-[#121216] hover:bg-rose-950/60 border border-white/10 hover:border-rose-500/40 text-slate-300 hover:text-rose-300 transition-all cursor-pointer flex items-center gap-1 text-xs font-mono font-bold"
                   title="Sign Out"
                   aria-label="Sign Out"
                 >
                   <LogOut className="w-3.5 h-3.5" />
+                  <span className="hidden xl:inline">Logout</span>
                 </button>
               )}
             </div>
@@ -430,7 +413,7 @@ export const Header: React.FC<HeaderProps> = ({
                     d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.76-2.92c-1.04.7-2.38 1.12-3.52 1.12-2.86 0-5.29-2.31-6.16-4.91L2.18 16.93C3.99 20.53 7.7 23 12 23z"
                   />
                 </svg>
-                <span>Google Sign-In</span>
+                <span>Sign In</span>
               </button>
               <button
                 type="button"
@@ -438,8 +421,8 @@ export const Header: React.FC<HeaderProps> = ({
                 onClick={() => onOpenAuthModal('register')}
                 className="px-4 py-1.5 rounded-xl bg-[#ff8800] hover:bg-[#ffaa00] text-slate-950 text-xs font-black flex items-center gap-1.5 cursor-pointer font-mono whitespace-nowrap transition-colors"
               >
-                <LogIn className="w-3.5 h-3.5 stroke-[2.5]" />
-                <span>Get Started</span>
+                <UserPlus className="w-3.5 h-3.5 stroke-[2.5]" />
+                <span>Register</span>
               </button>
             </div>
           )}
@@ -507,7 +490,7 @@ export const Header: React.FC<HeaderProps> = ({
                   }}
                   className="px-2.5 py-1 rounded-lg bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[11px] font-bold font-mono cursor-pointer"
                 >
-                  Sign Out
+                  Logout
                 </button>
               )}
             </div>
@@ -522,7 +505,7 @@ export const Header: React.FC<HeaderProps> = ({
                 className="py-2.5 px-3 rounded-xl bg-[#141418] border border-white/20 text-xs font-bold text-white font-mono flex items-center justify-center gap-1.5"
               >
                 <LogIn className="w-3.5 h-3.5 text-[#ff8800]" />
-                <span>Login</span>
+                <span>Sign In</span>
               </button>
               <button
                 type="button"
@@ -544,7 +527,7 @@ export const Header: React.FC<HeaderProps> = ({
               { id: 'home', label: 'Challenges & Pricing' },
               { id: 'terminal', label: 'Trading Terminal' },
               { id: 'rules', label: 'Prop Rules & Objectives' },
-              { id: 'affiliate', label: 'Affiliates (17%+8%)' },
+              { id: 'affiliate', label: 'Affiliates (10%/5%/2% + 8%)' },
               { id: 'withdrawals', label: 'Withdrawal Portal' },
               { id: 'dashboard', label: 'Trader Hub & KYC' },
               { id: 'faq', label: 'FAQ & Support' },

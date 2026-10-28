@@ -2282,6 +2282,8 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
             {/* Tournaments & Leaderboard */}
             <button
+              type="button"
+              data-testid="desktop-leaderboard-btn"
               onClick={() => {
                 soundEngine.playUiClick();
                 setIsLeaderboardOpen(true);
@@ -2323,10 +2325,10 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                 onNavigateTab?.('affiliate');
               }}
               className="w-10 h-10 rounded-xl hover:bg-[#252a37] flex items-center justify-center text-slate-400 hover:text-purple-400 transition-all cursor-pointer relative"
-              title="3-Tier Affiliate System (Earn up to 17%)"
+              title="3-Tier Affiliate System (10% / 5% / 2% + 8%)"
             >
               <Users className="w-5 h-5" />
-              <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-purple-400 animate-pulse" />
+              <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-purple-400" />
             </button>
           </div>
 
@@ -4037,6 +4039,12 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       <QuotexLeaderboardModal
         isOpen={isLeaderboardOpen}
         onClose={() => setIsLeaderboardOpen(false)}
+        userProfit={
+          account ? Math.max(0, Number((account.currentBalance - account.initialBalance).toFixed(2))) : 0
+        }
+        weeklyTradesCount={trades.filter((t) => t.status === 'won' || t.status === 'lost').length}
+        userName={userProfile?.fullName || userProfile?.email || 'Trader'}
+        userAccountId={account?.id || 'UNRANKED'}
       />
 
       {/* Indicator Settings Modal */}

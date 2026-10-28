@@ -523,7 +523,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           { id: 'kyc', label: `KYC Verification (${userProfile.kycStatus.toUpperCase()})` },
           { id: 'profile', label: 'Profile & Personal Details' },
           { id: 'analytics', label: 'Performance Analytics' },
-          { id: 'affiliate', label: 'Affiliate Program (17% + 8%)' },
+          { id: 'affiliate', label: 'Affiliate Program (10%/5%/2% + 8%)' },
           { id: 'security', label: 'Security & 2FA' },
         ].map((tab) => (
           <button
@@ -626,8 +626,6 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {accounts.map((acc) => {
                 const profit = Number((acc.currentBalance - acc.initialBalance).toFixed(2));
-                const isChallengePhase =
-                  (acc.phase === 'phase_1' || acc.phase === 'phase_2') && acc.status === 'active';
 
                 return (
                   <div
@@ -766,18 +764,6 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                             )}
                             <span>Withdraw</span>
                           </button>
-
-                          {isChallengePhase && onPassChallengePhase && (
-                            <button
-                              type="button"
-                              onClick={() => onPassChallengePhase(acc)}
-                              className="px-3.5 py-2.5 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 cursor-pointer font-mono bg-emerald-500 hover:bg-emerald-400 text-slate-950"
-                              title="Simulate Passing Target & Claim Achievement Certificate"
-                            >
-                              <Award className="w-3.5 h-3.5" />
-                              <span>Pass Phase</span>
-                            </button>
-                          )}
                         </>
                       )}
                     </div>
@@ -1050,14 +1036,6 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                       <span className="text-[11px] text-slate-400">
                         Status will automatically update to <strong>VERIFIED</strong> when the 2-minute timer finishes.
                       </span>
-                      <button
-                        type="button"
-                        data-testid="kyc-fast-forward-btn"
-                        onClick={handleFastForwardKycTimer}
-                        className="px-3 py-1.5 rounded-lg bg-[#ff8800] hover:bg-[#ff9900] text-slate-950 font-black text-[11px] uppercase cursor-pointer shrink-0"
-                      >
-                        Complete 2m Timer Instantly →
-                      </button>
                     </div>
                   </div>
                 )}
@@ -1189,23 +1167,6 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                         <label className="block text-xs font-mono text-slate-300">
                           Upload High-Resolution {docType} Scan (Front & Back) *
                         </label>
-                        <button
-                          type="button"
-                          data-testid="attach-sample-id-btn"
-                          onClick={() => {
-                            soundEngine.playUiClick();
-                            setUploadedFileName(
-                              `${(userProfile.fullName || 'trader').toLowerCase().replace(/\s+/g, '_')}_${docType
-                                .toLowerCase()
-                                .replace(/\s+/g, '_')}_verified.pdf`
-                            );
-                            setExtractedDocName(userProfile.fullName);
-                            setExtractedDocDob(userProfile.dateOfBirth || '');
-                          }}
-                          className="text-[11px] font-mono text-[#ff8800] hover:underline cursor-pointer font-bold"
-                        >
-                          + Attach Sample Matching {docType} Scan
-                        </button>
                       </div>
 
                       <div className="border-2 border-dashed border-white/15 hover:border-[#ff8800] rounded-2xl p-5 text-center transition-colors bg-[#111115]">

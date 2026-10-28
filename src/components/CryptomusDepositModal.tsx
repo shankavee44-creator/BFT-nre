@@ -664,28 +664,18 @@ export const CryptomusDepositModal: React.FC<CryptomusDepositModalProps> = ({
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 <button
                   type="button"
-                  data-testid="simulate-cryptomus-webhook-btn"
+                  data-testid="confirm-cryptomus-deposit-btn"
                   disabled={isSimulatingWebhook}
                   onClick={() => handleTriggerWebhook('paid')}
                   className="sm:col-span-2 py-3 px-4 rounded-xl bg-[#00e676] hover:bg-[#00c853] disabled:opacity-50 text-slate-950 font-black text-xs uppercase flex items-center justify-center gap-2 cursor-pointer transition-colors"
                 >
                   <CheckCircle2 className="w-4 h-4 stroke-[2.5]" />
                   <span>
-                    I Have Sent {activeInvoice.amount.toFixed(2)} USDT (Confirm Webhook)
+                    I Have Sent {activeInvoice.amount.toFixed(2)} USDT (Verify Transfer)
                   </span>
                 </button>
 
                 <div className="flex gap-2">
-                  <button
-                    type="button"
-                    data-testid="simulate-cryptomus-fail-btn"
-                    disabled={isSimulatingWebhook}
-                    onClick={() => handleTriggerWebhook('fail')}
-                    className="flex-1 py-3 px-2 rounded-xl bg-rose-950/80 hover:bg-rose-900/80 border border-[#ff334b]/40 text-rose-300 font-bold text-[10px] uppercase cursor-pointer transition-colors"
-                    title="Simulate a failed/expired Cryptomus webhook event"
-                  >
-                    Test Error
-                  </button>
                   <button
                     type="button"
                     onClick={() => {

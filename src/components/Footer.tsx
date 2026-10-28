@@ -17,13 +17,13 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
           {/* Brand Info */}
           <div className="space-y-4">
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center text-slate-950 font-mono font-black text-sm glow-gold shadow-md">
+              <div className="w-8 h-8 rounded-lg bg-[#ff8800] flex items-center justify-center text-slate-950 font-mono font-black text-sm">
                 BFT
               </div>
               <span className="text-base font-black text-white font-mono">Binary Funded Trader</span>
             </div>
             <p className="text-slate-400 text-xs leading-relaxed">
-              Institutional proprietary trading firm specializing in automated binary options risk evaluation, simulated live market capital, and 3-minute guaranteed instant USDT payouts.
+              Institutional proprietary trading firm specializing in binary options risk evaluation, funded capital allocation, and 3-minute guaranteed instant USDT payouts.
             </p>
             <div className="flex items-center gap-2 text-[11px] text-amber-400 font-mono font-bold">
               <Zap className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
@@ -115,7 +115,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
           <div className="flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
             <p>
-              <strong className="text-slate-300">High Risk & Regulatory Notice:</strong> Binary options and leveraged prop evaluations involve significant financial risk and may not be suitable for all investors. All accounts provided by Binary Funded Trader (BFT) are evaluated under simulated conditions with live institutional market data feeds. Simulated trading performance does not guarantee real-world results. BFT does not offer brokerage services or solicit retail investments.
+              <strong className="text-slate-300">High Risk & Regulatory Notice:</strong> Binary options and leveraged prop evaluations involve significant financial risk and may not be suitable for all investors. All accounts provided by Binary Funded Trader (BFT) operate with live institutional OTC market data feeds and strict drawdown protection rules. Past trading performance does not guarantee future results.
             </p>
           </div>
           <div className="flex flex-col sm:flex-row items-center justify-between text-slate-500 pt-2 font-mono">

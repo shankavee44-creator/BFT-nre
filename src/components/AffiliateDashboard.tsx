@@ -143,32 +143,32 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
     });
 
   return (
-    <div className="space-y-8 font-sans">
-      {/* 1. HERO BANNER WITH COMMUNITY TAGLINE & 3-TIER PACKAGE (17% L1 / 5% L2 / 2% L3) + 8% WITHDRAWAL COMMISSION */}
-      <div className="relative rounded-3xl bg-[#111115] border border-[#ff8800]/40 p-6 sm:p-8 overflow-hidden shadow-2xl">
+    <div data-testid="affiliate-dashboard" className="space-y-8 font-sans">
+      {/* 1. HERO BANNER WITH 3-TIER PACKAGE (10% L1 / 5% L2 / 2% L3) + 8% DIRECT PAYOUT BONUS */}
+      <div className="relative rounded-3xl bg-[#111115] border border-[#ff8800]/40 p-6 sm:p-8 overflow-hidden">
         <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
           <div className="space-y-2 max-w-2xl">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#ff8800]/15 border border-[#ff8800]/40 text-[#ff8800] text-xs font-mono font-bold">
               <Sparkles className="w-3.5 h-3.5" />
-              <span>MULTI-LEVEL AFFILIATE & PAYOUT ROYALTY SYSTEM</span>
+              <span>3-TIER AFFILIATE & DIRECT PAYOUT BONUS SYSTEM</span>
             </div>
             <h2 className="text-2xl sm:text-4xl font-black text-white tracking-tight">
               "Let's trade, profit, and earn more together"
             </h2>
             <p className="text-sm text-slate-300 leading-relaxed">
-              Earn <strong className="text-[#ff8800]">Multi-Level Package Commissions</strong> (17% Direct L1, 5% Sub-Affiliate L2, 2% Network L3) when referrals purchase challenges, PLUS an ongoing{' '}
-              <strong className="text-emerald-400">8% Withdrawal Commission</strong> every time your direct referrals withdraw their trading profits!
+              Earn <strong className="text-[#ff8800]">3-Tier Challenge Commissions</strong> (<strong>10% Level 1 Direct Referrals</strong>, <strong>5% Level 2 Sub-referrals</strong>, <strong>2% Level 3 Network</strong>) on every challenge purchase, PLUS an extra{' '}
+              <strong className="text-emerald-400">8% Direct Payout Bonus</strong> every time your direct referrals withdraw their trading profits!
             </p>
           </div>
 
           <div className="flex items-center gap-3 p-4 rounded-2xl bg-[#0a0a0d] border border-[#ff8800]/40 shrink-0">
-            <div className="w-12 h-12 rounded-xl bg-[#ff8800] flex items-center justify-center text-slate-950 shadow-lg">
+            <div className="w-12 h-12 rounded-xl bg-[#ff8800] flex items-center justify-center text-slate-950">
               <Award className="w-6 h-6 stroke-[2.5]" />
             </div>
             <div>
-              <div className="text-[10px] uppercase font-bold text-slate-400 font-mono">Partner Dual-Stream</div>
-              <div className="text-base font-black text-white">17% L1 + 5% L2 + 2% L3 + 8% Payout</div>
-              <div className="text-[11px] text-emerald-400 font-mono font-bold">● Direct Registration Routing</div>
+              <div className="text-[10px] uppercase font-bold text-slate-400 font-mono">3-Tier + Payout Bonus</div>
+              <div className="text-base font-black text-white">10% L1 • 5% L2 • 2% L3 + 8% Payout</div>
+              <div className="text-[11px] text-emerald-400 font-mono font-bold">● Real-Time Commission Ledger</div>
             </div>
           </div>
         </div>
@@ -188,7 +188,7 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
           <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={handleCopyLink}
-              className="flex-1 md:flex-initial px-5 py-3 rounded-2xl bg-gradient-to-r from-[#ff8800] to-[#ffaa00] text-slate-950 font-black text-xs font-mono uppercase tracking-wide flex items-center justify-center gap-2 shadow-lg glow-gold cursor-pointer"
+              className="flex-1 md:flex-initial px-5 py-3 rounded-2xl bg-[#ff8800] hover:bg-[#ffaa00] text-slate-950 font-black text-xs font-mono uppercase tracking-wide flex items-center justify-center gap-2 cursor-pointer transition-colors"
             >
               {copiedLink ? <Check className="w-4 h-4 stroke-[3]" /> : <Copy className="w-4 h-4 stroke-[2.5]" />}
               <span>{copiedLink ? 'Copied Link!' : 'Copy Direct Link'}</span>
@@ -216,7 +216,7 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
 
       {/* 2. PRIMARY METRICS */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="p-5 rounded-2xl bg-[#111115] border border-[#ff8800]/40 shadow-xl">
+        <div className="p-5 rounded-2xl bg-[#111115] border border-[#ff8800]/40">
           <div className="flex items-center justify-between text-slate-400 text-xs font-mono mb-2">
             <span>Available Balance</span>
             <Wallet className="w-4 h-4 text-[#ffaa00]" />
@@ -227,7 +227,7 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
           <div className="text-[11px] text-slate-400 mt-2">Ready for instant TRC-20 withdrawal</div>
         </div>
 
-        <div className="p-5 rounded-2xl bg-[#111115] border border-white/10 shadow-xl">
+        <div className="p-5 rounded-2xl bg-[#111115] border border-white/10">
           <div className="flex items-center justify-between text-slate-400 text-xs font-mono mb-2">
             <span>Lifetime Earned</span>
             <DollarSign className="w-4 h-4 text-emerald-400" />
@@ -235,12 +235,15 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
           <div className="text-3xl font-black text-white font-mono">
             ${stats.lifetimeEarnings.toFixed(2)}
           </div>
-          <div className="text-[11px] text-slate-400 mt-2">17% Package + 8% Withdrawal Royalties</div>
+          <div className="text-[11px] text-slate-400 mt-2">10%/5%/2% Package + 8% Payout Bonus</div>
         </div>
 
-        <div className="p-5 rounded-2xl bg-[#111115] border border-white/10 shadow-xl">
+        <div
+          data-testid="affiliate-withdrawal-royalties"
+          className="p-5 rounded-2xl bg-[#111115] border border-white/10"
+        >
           <div className="flex items-center justify-between text-slate-400 text-xs font-mono mb-2">
-            <span>8% Payout Royalties</span>
+            <span>8% Direct Payout Bonus</span>
             <Percent className="w-4 h-4 text-emerald-400" />
           </div>
           <div className="text-3xl font-black text-emerald-400 font-mono">
@@ -250,10 +253,10 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
               .reduce((s, r) => s + r.commissionAmount, 0)
               .toFixed(2)}
           </div>
-          <div className="text-[11px] text-slate-400 mt-2">Earned from direct referrals' withdrawals</div>
+          <div className="text-[11px] text-slate-400 mt-2">8% earned from direct referrals' withdrawals</div>
         </div>
 
-        <div className="p-5 rounded-2xl bg-[#111115] border border-white/10 shadow-xl">
+        <div className="p-5 rounded-2xl bg-[#111115] border border-white/10">
           <div className="flex items-center justify-between text-slate-400 text-xs font-mono mb-2">
             <span>Referred Network</span>
             <Users className="w-4 h-4 text-[#ffaa00]" />
@@ -265,48 +268,60 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
         </div>
       </div>
 
-      {/* 3. COMMISSION STRUCTURE CARDS (17% L1 / 5% L2 / 2% L3 PACKAGE + 8% WITHDRAWAL) */}
+      {/* 3. COMMISSION STRUCTURE CARDS (10% L1 / 5% L2 / 2% L3 PACKAGE + 8% DIRECT PAYOUT BONUS) */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="p-5 rounded-2xl bg-[#111115] border border-emerald-500/40 font-mono">
+        <div
+          data-testid="affiliate-l1-card"
+          className="p-5 rounded-2xl bg-[#111115] border border-emerald-500/40 font-mono"
+        >
           <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-black text-xs">
-            LEVEL 1 • 17%
+            LEVEL 1 • 10%
           </span>
-          <h4 className="text-sm font-black text-white mt-3 font-sans">Direct Package Sales</h4>
+          <h4 className="text-sm font-black text-white mt-3 font-sans">Direct Referrals (10%)</h4>
           <p className="text-xs text-slate-400 mt-1 mb-3 font-sans">
-            17% instant commission on every direct referral challenge purchase.
+            10% instant commission on every direct referral challenge purchase.
           </p>
           <div className="text-lg font-black text-emerald-400">${stats.level1Earnings.toFixed(2)}</div>
         </div>
 
-        <div className="p-5 rounded-2xl bg-[#111115] border border-cyan-500/40 font-mono">
+        <div
+          data-testid="affiliate-l2-card"
+          className="p-5 rounded-2xl bg-[#111115] border border-cyan-500/40 font-mono"
+        >
           <span className="px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-400 font-black text-xs">
             LEVEL 2 • 5%
           </span>
-          <h4 className="text-sm font-black text-white mt-3 font-sans">Sub-Affiliate Sales</h4>
+          <h4 className="text-sm font-black text-white mt-3 font-sans">Sub-Referrals (5%)</h4>
           <p className="text-xs text-slate-400 mt-1 mb-3 font-sans">
-            5% commission on packages purchased by Level 2 traders.
+            5% commission on challenge packages purchased by Level 2 sub-referrals.
           </p>
           <div className="text-lg font-black text-cyan-400">${stats.level2Earnings.toFixed(2)}</div>
         </div>
 
-        <div className="p-5 rounded-2xl bg-[#111115] border border-purple-500/40 font-mono">
+        <div
+          data-testid="affiliate-l3-card"
+          className="p-5 rounded-2xl bg-[#111115] border border-purple-500/40 font-mono"
+        >
           <span className="px-2 py-0.5 rounded bg-purple-500/20 text-purple-400 font-black text-xs">
             LEVEL 3 • 2%
           </span>
-          <h4 className="text-sm font-black text-white mt-3 font-sans">Extended Network</h4>
+          <h4 className="text-sm font-black text-white mt-3 font-sans">Level 3 Network (2%)</h4>
           <p className="text-xs text-slate-400 mt-1 mb-3 font-sans">
-            2% commission on packages purchased by Level 3 traders.
+            2% commission on challenge packages purchased by Level 3 traders.
           </p>
           <div className="text-lg font-black text-purple-400">${stats.level3Earnings.toFixed(2)}</div>
         </div>
 
-        <div className="p-5 rounded-2xl bg-[#16120c] border-2 border-[#ff8800] font-mono glow-gold">
+        <div
+          data-testid="affiliate-payout-bonus-card"
+          className="p-5 rounded-2xl bg-[#16120c] border-2 border-[#ff8800] font-mono"
+        >
           <span className="px-2 py-0.5 rounded bg-[#ff8800] text-slate-950 font-black text-xs">
-            ROYALTY • 8%
+            PAYOUT BONUS • 8%
           </span>
-          <h4 className="text-sm font-black text-white mt-3 font-sans">Direct Payout Commission</h4>
+          <h4 className="text-sm font-black text-white mt-3 font-sans">Direct Payout Bonus (8%)</h4>
           <p className="text-xs text-slate-300 mt-1 mb-3 font-sans">
-            Earn 8% bonus every time your direct referrals withdraw profits!
+            Extra 8% commission on direct referrals' withdrawal amounts in real-time!
           </p>
           <div className="text-lg font-black text-[#ffaa00]">Recurring 8% Bonus</div>
         </div>
@@ -400,7 +415,7 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
             <button
               type="submit"
               disabled={isSubmittingPayout || stats.availableBalance < 50}
-              className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-[#ff8800] to-[#ffaa00] text-slate-950 font-black text-xs font-mono uppercase tracking-wide flex items-center justify-center gap-2 shadow-xl glow-gold cursor-pointer"
+              className="w-full py-3.5 rounded-2xl bg-[#ff8800] hover:bg-[#ffaa00] text-slate-950 font-black text-xs font-mono uppercase tracking-wide flex items-center justify-center gap-2 cursor-pointer transition-colors"
             >
               <ArrowUpRight className="w-4 h-4 stroke-[3]" />
               <span>Withdraw ${payoutAmount.toFixed(2)} Now</span>
@@ -409,16 +424,16 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
         </div>
 
         {/* Right: Commission Ledger */}
-        <div className="lg:col-span-7 rounded-3xl bg-[#111115] border border-white/10 p-6 shadow-xl">
+        <div className="lg:col-span-7 rounded-3xl bg-[#111115] border border-white/10 p-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
             <h3 className="text-base font-black text-white flex items-center gap-2">
               <FileText className="w-5 h-5 text-[#ffaa00]" />
-              <span>17% Package & 8% Withdrawal Commission Ledger</span>
+              <span>3-Tier (10% / 5% / 2%) & 8% Payout Bonus Ledger</span>
             </h3>
             <div className="flex gap-1 p-1 rounded-xl bg-[#09090c] border border-white/10 text-[11px] font-mono">
               {[
                 { id: 'all', label: 'All' },
-                { id: '1', label: 'L1 (17%)' },
+                { id: '1', label: 'L1 (10%)' },
                 { id: '2', label: 'L2 (5%)' },
                 { id: '3', label: 'L3 (2%)' },
                 { id: 'withdrawal', label: 'Payout (8%)' },
@@ -464,7 +479,7 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
                         }`}
                       >
                         {ref.commissionType === 'withdrawal'
-                          ? '8% PAYOUT ROYALTY'
+                          ? '8% PAYOUT BONUS'
                           : `L${ref.level} (${(ref.commissionRate * 100).toFixed(0)}%)`}
                       </span>
                     </td>

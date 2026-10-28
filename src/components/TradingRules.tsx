@@ -234,89 +234,64 @@ export const TradingRules: React.FC = () => {
           </div>
         </div>
 
-        {/* Interactive Compliance Simulator */}
-        <div className="p-6 sm:p-8 rounded-3xl bg-[#111115] border border-[#ff8800]/30 shadow-xl">
+        {/* Institutional 3-Tier Affiliate & Direct Payout Bonus Schedule */}
+        <div
+          data-testid="rules-affiliate-schedule"
+          className="p-6 sm:p-8 rounded-3xl bg-[#111115] border border-[#ff8800]/30"
+        >
           <div className="flex items-center gap-3 mb-6">
             <div className="w-9 h-9 rounded-xl bg-[#ff8800]/20 border border-[#ff8800]/40 flex items-center justify-center text-[#ffaa00]">
               <TrendingUp className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-lg font-bold text-white">Interactive Prop Rule Compliance Simulator</h3>
+              <h3 className="text-lg font-bold text-white">
+                3-Tier Affiliate & Direct Payout Bonus Schedule
+              </h3>
               <p className="text-xs text-slate-400">
-                Test your trade stake against the strict 5% Max Risk Per Trade rule, 30s expiry, and 5 profitable days requirement.
+                Transparent multi-level referral commissions on challenge purchases plus real-time direct referral withdrawal bonuses.
               </p>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {/* Test 1: 5% Max Risk Per Trade */}
-            <div className="p-4 rounded-xl bg-[#09090c] border border-white/10">
-              <div className="flex justify-between text-xs font-mono mb-2">
-                <span className="text-slate-300">Account: ${testAccountSize.toLocaleString()}</span>
-                <span className="text-[#ffaa00] font-bold">Stake: ${testStake} ({riskCheck.riskPercent}%)</span>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 font-mono text-xs">
+            <div className="p-4 rounded-xl bg-[#09090c] border border-emerald-500/30">
+              <div className="text-emerald-400 font-black uppercase text-[11px] mb-1">
+                Level 1 (Direct Referrals)
               </div>
-              <input
-                type="range"
-                min="50"
-                max="1000"
-                step="25"
-                value={testStake}
-                onChange={(e) => setTestStake(Number(e.target.value))}
-                className="w-full accent-[#ff8800] mb-3"
-              />
-              <div className="flex items-center justify-between text-xs font-mono">
-                <span className="text-slate-400">Max 5% (${riskCheck.maxAllowedStake}):</span>
-                <span className={`font-bold flex items-center gap-1 ${!riskCheck.violated ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  {!riskCheck.violated ? <CheckCircle className="w-3.5 h-3.5" /> : <Ban className="w-3.5 h-3.5" />}
-                  {!riskCheck.violated ? 'Compliant (≤5%)' : 'Hard Breach (>5%)'}
-                </span>
-              </div>
+              <div className="text-2xl font-black text-white mb-1">10%</div>
+              <p className="text-[11px] text-slate-400 font-sans">
+                Instant 10% commission on all challenge and instant funded purchases by direct referrals.
+              </p>
             </div>
 
-            {/* Test 2: Trade Expiry */}
-            <div className="p-4 rounded-xl bg-[#09090c] border border-white/10">
-              <label className="text-xs font-semibold text-slate-300 block mb-2 font-mono">
-                Trade Expiry Duration: <span className="text-[#ffaa00] font-bold">{testDuration}s</span>
-              </label>
-              <input
-                type="range"
-                min="10"
-                max="300"
-                step="5"
-                value={testDuration}
-                onChange={(e) => setTestDuration(Number(e.target.value))}
-                className="w-full accent-[#ff8800] mb-3"
-              />
-              <div className="flex items-center justify-between text-xs font-mono">
-                <span className="text-slate-400">Minimum 30s rule:</span>
-                <span className={`font-bold flex items-center gap-1 ${isDurationValid ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  {isDurationValid ? <CheckCircle className="w-3.5 h-3.5" /> : <Ban className="w-3.5 h-3.5" />}
-                  {isDurationValid ? 'Compliant' : 'Rejected (<30s)'}
-                </span>
+            <div className="p-4 rounded-xl bg-[#09090c] border border-cyan-500/30">
+              <div className="text-cyan-400 font-black uppercase text-[11px] mb-1">
+                Level 2 (Sub-Referrals)
               </div>
+              <div className="text-2xl font-black text-white mb-1">5%</div>
+              <p className="text-[11px] text-slate-400 font-sans">
+                5% commission on challenge purchases completed by your Level 2 sub-referral network.
+              </p>
             </div>
 
-            {/* Test 3: Profitable Days */}
-            <div className="p-4 rounded-xl bg-[#09090c] border border-white/10">
-              <label className="text-xs font-semibold text-slate-300 block mb-2 font-mono">
-                Profitable Days (≥0.5%): <span className="text-emerald-400 font-bold">{testProfitDays} / 5 Days</span>
-              </label>
-              <input
-                type="range"
-                min="1"
-                max="10"
-                step="1"
-                value={testProfitDays}
-                onChange={(e) => setTestProfitDays(Number(e.target.value))}
-                className="w-full accent-emerald-500 mb-3"
-              />
-              <div className="flex items-center justify-between text-xs font-mono">
-                <span className="text-slate-400">Min 5 Days to Pass:</span>
-                <span className={`font-bold flex items-center gap-1 ${isDaysValid ? 'text-emerald-400' : 'text-[#ffaa00]'}`}>
-                  {isDaysValid ? <CheckCircle className="w-3.5 h-3.5" /> : <Clock className="w-3.5 h-3.5" />}
-                  {isDaysValid ? 'Certificate Ready' : `${5 - testProfitDays} More Needed`}
-                </span>
+            <div className="p-4 rounded-xl bg-[#09090c] border border-purple-500/30">
+              <div className="text-purple-400 font-black uppercase text-[11px] mb-1">
+                Level 3 (Extended Tier)
               </div>
+              <div className="text-2xl font-black text-white mb-1">2%</div>
+              <p className="text-[11px] text-slate-400 font-sans">
+                2% commission on challenge purchases across your Level 3 extended trader tier.
+              </p>
+            </div>
+
+            <div className="p-4 rounded-xl bg-[#16120a] border border-[#ff8800]">
+              <div className="text-[#ff8800] font-black uppercase text-[11px] mb-1">
+                Direct Payout Bonus
+              </div>
+              <div className="text-2xl font-black text-[#ffaa00] mb-1">+8%</div>
+              <p className="text-[11px] text-slate-300 font-sans">
+                Extra 8% commission earned in real-time on direct referrals' profit withdrawal amounts.
+              </p>
             </div>
           </div>
         </div>

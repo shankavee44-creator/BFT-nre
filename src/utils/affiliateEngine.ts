@@ -294,11 +294,12 @@ export const INITIAL_REFERRALS: ReferralRecord[] = [
     referredUserName: 'Marco Rossi',
     referredUserEmail: 'm***i@milan-fx.it',
     level: 1,
+    commissionType: 'package',
     packageTier: 'one-step',
     packageName: 'One-Step Challenge ($10,000)',
     packagePrice: 89,
-    commissionRate: 0.17,
-    commissionAmount: 15.13,
+    commissionRate: 0.10,
+    commissionAmount: 8.90,
     status: 'paid',
     createdAt: '2026-09-18T14:22:00Z',
   },
@@ -309,11 +310,12 @@ export const INITIAL_REFERRALS: ReferralRecord[] = [
     referredUserName: 'Liam Davies',
     referredUserEmail: 'l***s@london-capital.uk',
     level: 1,
+    commissionType: 'package',
     packageTier: 'instant',
     packageName: 'Instant Funded ($25,000)',
     packagePrice: 499,
-    commissionRate: 0.17,
-    commissionAmount: 84.83,
+    commissionRate: 0.10,
+    commissionAmount: 49.90,
     status: 'paid',
     createdAt: '2026-09-29T10:15:00Z',
   },
@@ -324,6 +326,7 @@ export const INITIAL_REFERRALS: ReferralRecord[] = [
     referredUserName: 'Sophia Chen',
     referredUserEmail: 's***n@sg-wealth.sg',
     level: 2,
+    commissionType: 'package',
     packageTier: 'two-step',
     packageName: 'Two-Step Challenge ($50,000)',
     packagePrice: 279,
@@ -339,6 +342,7 @@ export const INITIAL_REFERRALS: ReferralRecord[] = [
     referredUserName: 'Lucas Bernard',
     referredUserEmail: 'l***d@paris-quant.fr',
     level: 2,
+    commissionType: 'package',
     packageTier: 'instant',
     packageName: 'Instant Funded ($10,000)',
     packagePrice: 249,
@@ -354,6 +358,7 @@ export const INITIAL_REFERRALS: ReferralRecord[] = [
     referredUserName: 'David Miller',
     referredUserEmail: 'd***r@austin-trader.us',
     level: 3,
+    commissionType: 'package',
     packageTier: 'instant',
     packageName: 'Instant Funded ($50,000)',
     packagePrice: 899,
@@ -369,6 +374,7 @@ export const INITIAL_REFERRALS: ReferralRecord[] = [
     referredUserName: 'Kaito Tanaka',
     referredUserEmail: 'k***a@tokyo-options.jp',
     level: 3,
+    commissionType: 'package',
     packageTier: 'one-step',
     packageName: 'One-Step Challenge ($100,000)',
     packagePrice: 549,
@@ -388,8 +394,8 @@ export const INITIAL_REFERRALS: ReferralRecord[] = [
     packageTier: 'two-step',
     packageName: 'Two-Step Challenge ($100,000)',
     packagePrice: 469,
-    commissionRate: 0.17,
-    commissionAmount: 79.73,
+    commissionRate: 0.10,
+    commissionAmount: 46.90,
     status: 'paid',
     createdAt: '2026-10-22T08:14:00Z',
   },
@@ -402,12 +408,28 @@ export const INITIAL_REFERRALS: ReferralRecord[] = [
     level: 1,
     commissionType: 'withdrawal',
     packageTier: 'instant',
-    packageName: 'Profit Payout Royalty (8% of $500 Withdrawal)',
+    packageName: 'Direct Referral Payout Bonus (8% of $500 Withdrawal)',
     packagePrice: 500,
     commissionRate: 0.08,
     commissionAmount: 40.00,
     status: 'paid',
     createdAt: '2026-10-24T15:30:00Z',
+  },
+  {
+    id: 'REF-1009',
+    referrerId: 'usr_bft_001',
+    referredUserId: 'USR-SUB-101',
+    referredUserName: 'Marco Rossi',
+    referredUserEmail: 'm***i@milan-fx.it',
+    level: 1,
+    commissionType: 'withdrawal',
+    packageTier: 'two-step',
+    packageName: 'Direct Referral Payout Bonus (8% of $450 Withdrawal)',
+    packagePrice: 450,
+    commissionRate: 0.08,
+    commissionAmount: 36.00,
+    status: 'paid',
+    createdAt: '2026-10-26T11:20:00Z',
   },
 ];
 
@@ -430,9 +452,9 @@ export const INITIAL_PAYOUTS: AffiliatePayout[] = [
 // ==========================================
 
 const AFFILIATE_KEYS = {
-  USERS: 'bft_affiliate_users',
-  REFERRALS: 'bft_affiliate_referrals',
-  PAYOUTS: 'bft_affiliate_payouts',
+  USERS: 'bft_affiliate_users_v2',
+  REFERRALS: 'bft_affiliate_referrals_v2',
+  PAYOUTS: 'bft_affiliate_payouts_v2',
 };
 
 export function loadAffiliateUsers(): UserAccount[] {
@@ -506,11 +528,11 @@ export function saveAffiliatePayouts(payouts: AffiliatePayout[]): void {
 // ==========================================
 
 export const COMMISSION_RATES = {
-  LEVEL_1: 0.17, // 17% Direct Referrer
-  LEVEL_2: 0.05, // 5% Sub-Affiliate
+  LEVEL_1: 0.10, // 10% Direct Referrals
+  LEVEL_2: 0.05, // 5% Sub-referrals
   LEVEL_3: 0.02, // 2% Extended Network
-  TOTAL_PACKAGE: 0.24, // 17% + 5% + 2% = 24% Total 3-Tier Package Commission
-  WITHDRAWAL_ROYALTY: 0.08, // 8% Referral Profit Withdrawal Commission
+  TOTAL_PACKAGE: 0.17, // 10% + 5% + 2% = 17% Total 3-Tier Package Commission
+  WITHDRAWAL_ROYALTY: 0.08, // 8% Direct Referral Withdrawal Commission
 };
 
 export interface ProcessCommissionsResult {

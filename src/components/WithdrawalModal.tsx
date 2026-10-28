@@ -684,18 +684,6 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                     <strong className="text-white">Weekly Plan</strong> can proceed according to their package rules (Current Account Schedule:{' '}
                     <strong className="text-[#2b70ff] font-mono">{firstWithdrawalCheck.subsequentCycleLabel}</strong>).
                   </p>
-                  {!firstWithdrawalCheck.eligible && account && (
-                    <div className="pt-1 flex justify-end">
-                      <button
-                        type="button"
-                        data-testid="simulate-14-days-btn"
-                        onClick={handleSimulate14DaysCompleted}
-                        className="px-3 py-1.5 rounded-lg bg-[#181c26] hover:bg-[#222836] border border-[#ff8800]/50 text-[#ff8800] font-mono font-bold text-[11px] cursor-pointer transition-colors"
-                      >
-                        Fast-Forward 14-Day Waiting Period (Test Unlock)
-                      </button>
-                    </div>
-                  )}
                 </div>
 
                 {/* Account Balance Summary Rows (Exact Quotex Layout) */}

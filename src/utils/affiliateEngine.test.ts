@@ -29,7 +29,7 @@ test('isSelfReferral blocks user from referring themselves', () => {
   assert.strictEqual(isSelfReferral('BFT-OTHER99', 'USR-01', users), false);
 });
 
-test('process3TierCommissions distributes 17%, 5%, and 2% correctly down the chain', () => {
+test('process3TierCommissions distributes 10%, 5%, and 2% correctly down the chain', () => {
   // Setup 3-tier chain:
   // Master (L3) -> Parent (L2) -> Direct (L1) -> Buyer
   const mockUsers: UserAccount[] = [
@@ -85,11 +85,11 @@ test('process3TierCommissions distributes 17%, 5%, and 2% correctly down the cha
   const l2 = result.newReferrals.find((r) => r.level === 2);
   const l3 = result.newReferrals.find((r) => r.level === 3);
 
-  // Check L1: 17% of $89 = $15.13
+  // Check L1: 10% of $89 = $8.90
   assert.ok(l1);
   assert.strictEqual(l1.referrerId, 'USR-DIRECT');
-  assert.strictEqual(l1.commissionRate, 0.17);
-  assert.strictEqual(l1.commissionAmount, 15.13);
+  assert.strictEqual(l1.commissionRate, 0.10);
+  assert.strictEqual(l1.commissionAmount, 8.90);
 
   // Check L2: 5% of $89 = $4.45
   assert.ok(l2);

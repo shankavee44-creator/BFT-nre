@@ -358,34 +358,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             }
           }}
           className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#262c3a] rounded-lg text-[#ff8800] font-mono font-bold text-xs focus:outline-none focus:border-[#ff8800]"
-          placeholder="e.g. BFT-ALEX77"
+          placeholder="Enter sponsor referral code (e.g. BFT-ALEX77)"
         />
-
-        <div className="flex flex-wrap gap-1.5">
-          {[
-            { code: 'BFT-ALEX77', label: '?ref=BFT-ALEX77' },
-            { code: 'BFT-MARCO101', label: '?ref=BFT-MARCO101' },
-            { code: 'BFT-ELENA55', label: '?ref=BFT-ELENA55' },
-          ].map((preset) => (
-            <button
-              key={preset.code}
-              type="button"
-              onClick={() => handleApplyReferralPreset(preset.code)}
-              className={`px-2 py-1 rounded text-[10px] font-mono font-bold transition-colors cursor-pointer border ${
-                referralCodeInput === preset.code
-                  ? 'bg-[#ff8800]/20 text-[#ff8800] border-[#ff8800]'
-                  : 'bg-[#0a0a0a] text-slate-400 border-[#262c3a] hover:text-white'
-              }`}
-            >
-              {preset.label}
-            </button>
-          ))}
-        </div>
 
         {effectiveCodeForLookup && uplineChain.level1 && (
           <div className="pt-2 border-t border-[#1e2330] grid grid-cols-3 gap-1.5 text-[10px] font-mono">
             <div className="p-1.5 rounded bg-[#0a0a0a] border border-[#262c3a]">
-              <div className="text-[#ff8800] font-bold">L1 (17% + 8%)</div>
+              <div className="text-[#ff8800] font-bold">L1 (10% + 8%)</div>
               <div className="text-white truncate">{uplineChain.level1.name}</div>
             </div>
             <div className="p-1.5 rounded bg-[#0a0a0a] border border-[#262c3a]">

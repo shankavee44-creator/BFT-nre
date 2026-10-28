@@ -315,20 +315,6 @@ export default function App() {
     setCurrentTab('home');
   };
 
-  const handleSimulateReferralUrl = (refCode: string) => {
-    const clean = refCode.trim().toUpperCase();
-    storeReferralCode(clean);
-    setActiveReferralNotification(clean);
-    try {
-      const nextUrl = `${window.location.pathname}?ref=${encodeURIComponent(clean)}`;
-      window.history.replaceState({}, '', nextUrl);
-    } catch {
-      // Ignore history API errors in restricted frames
-    }
-    setAuthModalMode('register');
-    setIsAuthModalOpen(true);
-  };
-
   const userAccounts = filterAccountsForUser(accounts, userProfile);
   const activeAccount =
     userAccounts.find((acc) => acc.id === activeAccountId) || userAccounts[0] || undefined;
@@ -349,7 +335,6 @@ export default function App() {
           onOpenWithdrawalModal={() => handleNavigateTab('withdrawals')}
           onOpenDepositModal={() => setIsDepositModalOpen(true)}
           onOpenAuthModal={handleOpenAuthModal}
-          onSimulateReferralUrl={handleSimulateReferralUrl}
           onLogout={handleLogout}
           onOpenChallengeModal={() => setSelectedPackageToBuy(PACKAGES[2])}
         />
@@ -571,7 +556,6 @@ export default function App() {
         initialReferralCode={activeReferralNotification}
         affiliateUsers={affiliateUsers}
         onClose={() => setIsAuthModalOpen(false)}
-        onSimulateReferralLink={handleSimulateReferralUrl}
         onAuthSuccess={({
           userId,
           email,

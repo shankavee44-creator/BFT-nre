@@ -312,14 +312,14 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                   </span>
                 </div>
                 <span className="text-[10px] text-emerald-400 font-mono font-bold">
-                  17% 3-Tier + 8% Payout
+                  10%/5%/2% 3-Tier + 8% Payout
                 </span>
               </div>
             )}
 
             <button
               onClick={handleSimulatePayment}
-              className="w-full py-4 rounded-xl bg-gradient-to-r from-[#ff8800] to-[#ffaa00] hover:brightness-110 text-slate-950 font-black text-sm shadow-xl glow-gold flex items-center justify-center gap-2 cursor-pointer transition-all font-mono uppercase"
+              className="w-full py-4 rounded-xl bg-[#ff8800] hover:bg-[#ffaa00] text-slate-950 font-black text-sm flex items-center justify-center gap-2 cursor-pointer transition-colors font-mono uppercase"
             >
               <span>I Have Sent ${finalPrice.toFixed(2)} USDT (Confirm Payment)</span>
               <ArrowRight className="w-4 h-4 stroke-[2.5]" />
@@ -329,7 +329,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
 
         {step === 'verifying' && (
           <div className="py-12 text-center">
-            <div className="w-16 h-16 rounded-2xl bg-[#ff8800]/15 border border-[#ff8800]/40 flex items-center justify-center mx-auto mb-6 glow-gold animate-pulse">
+            <div className="w-16 h-16 rounded-2xl bg-[#ff8800]/15 border border-[#ff8800]/40 flex items-center justify-center mx-auto mb-6">
               <RefreshCw className="w-8 h-8 text-[#ffaa00] animate-spin" />
             </div>
             <h3 className="text-xl font-bold text-white mb-2 font-mono">Scanning TRON Blockchain...</h3>
@@ -342,7 +342,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         {step === 'completed' && generatedAccount && (
           <div>
             <div className="text-center mb-6">
-              <div className="w-16 h-16 rounded-full bg-emerald-950/80 border-2 border-emerald-500 flex items-center justify-center mx-auto mb-4 shadow-xl glow-mint">
+              <div className="w-16 h-16 rounded-full bg-emerald-950/80 border-2 border-emerald-500 flex items-center justify-center mx-auto mb-4">
                 <CheckCircle2 className="w-8 h-8 text-emerald-400" />
               </div>
               <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-400 bg-emerald-950/80 px-2.5 py-1 rounded-full border border-emerald-500/30 font-mono">
