@@ -6,6 +6,8 @@ import {
   computeTradeHistoryChartMarkers,
   findHoveredTradeMarker,
   generateSeededPastTradesForCandles,
+  formatInlineTradeResultBadge,
+  computeInlineTradeResultBadgeBox,
 } from './tradeChartOverlay';
 import { AssetInfo, BinaryTrade, Candle } from '../types';
 
@@ -154,3 +156,24 @@ test('findHoveredTradeMarker accurately detects cursor proximity to execution an
   const miss = findHoveredTradeMarker(5, 5, markers, 11);
   assert.equal(miss, null);
 });
+
+test('formatInlineTradeResultBadge and computeInlineTradeResultBadgeBox format exact +1.80 $ win and loss boxes at trade coordinates', () => {
+  assert.equal(formatInlineTradeResultBadge(true, 1.8, 1), '+1.80 $');
+  assert.equal(formatInlineTradeResultBadge(false, -15, 15), '-15.00 $');
+
+  const winBox = computeInlineTradeResultBadgeBox({
+    anchorX: 420,
+    anchorY: 180,
+    canvasWidth: 900,
+    chartHeight: 440,
+    isWin: true,
+    profitOrPnl: 1.8,
+    investment: 1,
+    direction: 'CALL',
+  });
+  assert.equal(winBox.label, '+1.80 $');
+  assert.equal(winBox.bgColor, '#00e676');
+  assert.ok(winBox.boxX > 0 && winBox.boxX < 900 - 72);
+  assert.ok(winBox.boxY < 180, 'Badge should sit directly above anchor point when room is available');
+});
+

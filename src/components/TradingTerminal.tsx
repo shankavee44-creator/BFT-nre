@@ -41,6 +41,8 @@ import {
   ChevronUp,
   MoreHorizontal,
   Target,
+  Pencil,
+  Copy,
 } from 'lucide-react';
 import {
   TradingAccount,
@@ -87,7 +89,26 @@ import {
   findHoveredTradeMarker,
   generateSeededPastTradesForCandles,
   TradeChartMarkerPoint,
+  computeInlineTradeResultBadgeBox,
+  formatInlineTradeResultBadge,
+  priceToCanvasY,
+  timestampToCanvasX,
 } from '../utils/tradeChartOverlay';
+import {
+  DrawingToolId,
+  DrawingLineStyle,
+  ChartDrawingObject,
+  QUOTEX_DRAWING_TOOLS,
+  DRAWING_COLOR_PALETTE,
+  createInitialDrawing,
+  updateDrawingOnDrag,
+  finalizeDrawingObject,
+  translateDrawing,
+  updateDrawingHandle,
+  findHitDrawing,
+  findHitDrawingHandle,
+  renderDrawingOnCanvas,
+} from '../utils/drawingToolsEngine';
 import { IndicatorSettingsModal } from './IndicatorSettingsModal';
 import { TradingDrawer } from './TradingDrawer';
 import { AccountBreachModal } from './AccountBreachModal';
@@ -123,26 +144,8 @@ interface TradingTerminalProps {
 
 export type ChartType = 'candles' | 'heikin-ashi' | 'line' | 'bars';
 export type Timeframe = '5s' | '15s' | '30s' | '1m' | '5m' | '15m' | '1h' | '4h' | '1D';
-export type DrawingTool =
-  | 'none'
-  | 'trendline'
-  | 'horizontal-ray'
-  | 'support-resistance'
-  | 'vertical-ray'
-  | 'fibonacci'
-  | 'brush';
-
-export interface ChartDrawing {
-  id: string;
-  type: DrawingTool;
-  startX: number;
-  startY: number;
-  endX?: number;
-  endY?: number;
-  color: string;
-  width: number;
-  points?: { x: number; y: number }[];
-}
+export type DrawingTool = DrawingToolId;
+export type ChartDrawing = ChartDrawingObject;
 
 const TIMEFRAME_SECONDS: Record<Timeframe, number> = {
   '5s': 5,
@@ -248,11 +251,27 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   const touchStartDistRef = useRef<number | null>(null);
   const initialTouchZoomRef = useRef<number>(1);
 
-  // Technical Drawing Suite State
+  // Technical Drawing Suite & Pencil Side-Drawer State
+  const [isDrawingDrawerOpen, setIsDrawingDrawerOpen] = useState<boolean>(false);
   const [activeDrawingTool, setActiveDrawingTool] = useState<DrawingTool>('none');
-  const [drawingColor, setDrawingColor] = useState<string>('#00e5ff');
+  const [lastUsedDrawingTool, setLastUsedDrawingTool] = useState<DrawingTool>('trendline');
+  const [drawingColor, setDrawingColor] = useState<string>('#ff8800');
+  const [drawingWidth, setDrawingWidth] = useState<number>(2);
+  const [drawingLineStyle, setDrawingLineStyle] = useState<DrawingLineStyle>('solid');
   const [drawings, setDrawings] = useState<ChartDrawing[]>([]);
   const [currentDrawing, setCurrentDrawing] = useState<ChartDrawing | null>(null);
+  const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null);
+  const [hoveredDrawingId, setHoveredDrawingId] = useState<string | null>(null);
+  const draggingDrawingRef = useRef<{
+    id: string;
+    mode: 'move' | 'start' | 'end' | 'control';
+    lastX: number;
+    lastY: number;
+  } | null>(null);
+
+  // Smooth 60fps interpolated price state
+  const [smoothPrice, setSmoothPrice] = useState<number>(DEFAULT_ASSETS[0].basePrice);
+  const targetPriceRef = useRef<number>(DEFAULT_ASSETS[0].basePrice);
 
   // Chart Navigation, Panning & TradingView Crosshair / OHLC Inspector
   const [panOffset, setPanOffset] = useState<number>(0);
@@ -312,7 +331,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   ]);
   const [activeAlertToast, setActiveAlertToast] = useState<string | null>(null);
 
-  // Celebratory On-Chart Trade Result Notification Overlay State
+  // Precise Inline Trade Outcome Badge State (Anchored at exact trade entry/expiration coordinate)
   const [tradeResultOverlay, setTradeResultOverlay] = useState<{
     id: string;
     isWin: boolean;
@@ -323,6 +342,8 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     strikePrice: number;
     closePrice: number;
     payoutPercentage: number;
+    startTime: number;
+    endTime: number;
   } | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -489,8 +510,30 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     const aggregated = aggregateCandlesForTimeframe(selectedAsset, TIMEFRAME_SECONDS[timeframe]);
     setCandles(aggregated);
     setCurrentPrice(store.lastPrice);
+    setSmoothPrice(store.lastPrice);
+    targetPriceRef.current = store.lastPrice;
     setPanOffset(0);
   }, [selectedAsset, timeframe]);
+
+  // 1b. Butter-Smooth 60fps Price & Candle Micro-Interpolation Loop
+  useEffect(() => {
+    targetPriceRef.current = currentPrice;
+  }, [currentPrice]);
+
+  useEffect(() => {
+    let rafId: number;
+    const animate60fps = () => {
+      setSmoothPrice((prev) => {
+        const target = targetPriceRef.current;
+        const diff = target - prev;
+        if (Math.abs(diff) < 1e-8) return target;
+        return prev + diff * 0.24;
+      });
+      rafId = requestAnimationFrame(animate60fps);
+    };
+    rafId = requestAnimationFrame(animate60fps);
+    return () => cancelAnimationFrame(rafId);
+  }, []);
 
   // 2. Real-time Price Pulse & Alert Evaluation
   const alertsRef = useRef(alerts);
@@ -500,6 +543,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     const interval = setInterval(() => {
       const newPrice = stepOrganicLiveTick(selectedAsset);
       setCurrentPrice(newPrice);
+      targetPriceRef.current = newPrice;
 
       // Check real-time price alerts
       const currentAlerts = alertsRef.current;
@@ -543,12 +587,12 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       setCandles(updatedCandles);
       setPayoutSeed(Math.floor(Date.now() / 3000));
       setCandleCountdown(calculateCandleCountdown(Date.now(), TIMEFRAME_SECONDS[timeframe]));
-    }, 180);
+    }, 150);
 
     return () => clearInterval(interval);
   }, [selectedAsset, timeframe]);
 
-  // 3. Trade resolution timer with stable refs & Celebratory On-Chart Win/Loss Notification
+  // 3. Trade resolution timer with stable refs & Inline On-Chart Coordinate Outcome Badge
   const currentPriceRef = useRef(currentPrice);
   currentPriceRef.current = currentPrice;
 
@@ -581,21 +625,23 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             soundEngine.playTradeLoss();
           }
 
-          // Trigger on-chart celebratory Win (+$X.XX WIN) or Loss ($0.00) animation
+          // Trigger inline floating badge anchored directly at trade entry/expiration coordinate on the chart
           setTradeResultOverlay({
             id: trade.id,
             isWin,
-            profitAmount: isWin ? Number(profitReturn.toFixed(2)) : 0,
+            profitAmount: isWin ? Number(profitReturn.toFixed(2)) : -trade.investment,
             investment: trade.investment,
             asset: trade.asset,
             direction: trade.direction,
             strikePrice: trade.strikePrice,
             closePrice: currentPriceVal,
             payoutPercentage: trade.payoutPercentage,
+            startTime: trade.startTime,
+            endTime: trade.endTime,
           });
           setTimeout(() => {
             setTradeResultOverlay((prev) => (prev?.id === trade.id ? null : prev));
-          }, 3600);
+          }, 4200);
 
           const updatedTrade: BinaryTrade = {
             ...trade,
@@ -873,6 +919,26 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [oneClickTrading, duration, investment, selectedAsset, account, activeTrades, trades]);
 
+  // Helper to arm any technical analysis drawing tool from the side drawer or toolbar
+  const handleSelectDrawingTool = (tool: DrawingTool) => {
+    soundEngine.playUiClick();
+    if (tool === 'none') {
+      setActiveDrawingTool('none');
+      setCurrentDrawing(null);
+      return;
+    }
+    setLastUsedDrawingTool(tool);
+    setCurrentDrawing(null);
+    setSelectedDrawingId(null);
+    // Always arm the tool immediately for a fresh drawing action on the canvas
+    setActiveDrawingTool(tool);
+  };
+
+  const selectedDrawing = React.useMemo(
+    () => drawings.find((d) => d.id === selectedDrawingId) || null,
+    [drawings, selectedDrawingId]
+  );
+
   // 5. Interactive Mouse Handlers for Panning & Technical Drawing Suite
   const getCanvasCoords = (e: React.MouseEvent) => {
     const canvas = canvasRef.current;
@@ -886,9 +952,59 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
   const handleMouseDown = (e: React.MouseEvent) => {
     const coords = getCanvasCoords(e);
+    const canvas = canvasRef.current;
+    const width = canvas?.width || 900;
+    const height = canvas?.height || 500;
 
-    // Check if user clicked an execution or settlement dot marker on the chart history overlay
-    if (activeDrawingTool === 'none' && showHistoryOverlay) {
+    // 1. If a drawing tool is armed, begin drawing immediately on canvas
+    if (activeDrawingTool !== 'none') {
+      setIsInteracting(true);
+      const newDraw = createInitialDrawing(
+        activeDrawingTool,
+        coords.x,
+        coords.y,
+        drawingColor,
+        drawingWidth,
+        drawingLineStyle
+      );
+      setCurrentDrawing(newDraw);
+      setSelectedDrawingId(null);
+      return;
+    }
+
+    // 2. Check if user clicked a resize handle of the currently selected drawing
+    if (selectedDrawing) {
+      const hitHandle = findHitDrawingHandle(coords.x, coords.y, selectedDrawing, 12);
+      if (hitHandle) {
+        soundEngine.playUiClick();
+        draggingDrawingRef.current = {
+          id: selectedDrawing.id,
+          mode: hitHandle,
+          lastX: coords.x,
+          lastY: coords.y,
+        };
+        setIsInteracting(true);
+        return;
+      }
+    }
+
+    // 3. Check if user clicked on any drawn object on the chart to select/move it
+    const hitDrawing = findHitDrawing(coords.x, coords.y, drawings, width, height, 10);
+    if (hitDrawing) {
+      soundEngine.playUiClick();
+      setSelectedDrawingId(hitDrawing.id);
+      draggingDrawingRef.current = {
+        id: hitDrawing.id,
+        mode: 'move',
+        lastX: coords.x,
+        lastY: coords.y,
+      };
+      setIsInteracting(true);
+      return;
+    }
+
+    // 4. Check if user clicked an execution or settlement dot marker on the chart history overlay
+    if (showHistoryOverlay) {
       const hitMarker = findHoveredTradeMarker(coords.x, coords.y, tradeMarkersRef.current, 13);
       if (hitMarker) {
         soundEngine.playUiClick();
@@ -897,24 +1013,13 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       }
     }
 
+    // Deselect drawing when clicking empty chart background & start panning
+    if (selectedDrawingId) {
+      setSelectedDrawingId(null);
+    }
     setIsInteracting(true);
     dragStartXRef.current = e.clientX;
     initialPanOffsetRef.current = panOffset;
-
-    if (activeDrawingTool !== 'none') {
-      const newDraw: ChartDrawing = {
-        id: `DRW-${Date.now()}`,
-        type: activeDrawingTool,
-        startX: coords.x,
-        startY: coords.y,
-        endX: coords.x,
-        endY: coords.y,
-        color: drawingColor,
-        width: 2,
-        points: activeDrawingTool === 'brush' ? [{ x: coords.x, y: coords.y }] : undefined,
-      };
-      setCurrentDrawing(newDraw);
-    }
   };
 
   const handleWheel = (e: React.WheelEvent) => {
@@ -943,6 +1048,20 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     }
 
     if (!isInteracting) {
+      if (activeDrawingTool === 'none') {
+        const hitDraw = findHitDrawing(
+          coords.x,
+          coords.y,
+          drawings,
+          canvas?.width || 900,
+          canvas?.height || 500,
+          10
+        );
+        setHoveredDrawingId((prev) => (prev === (hitDraw?.id || null) ? prev : hitDraw?.id || null));
+      } else if (hoveredDrawingId) {
+        setHoveredDrawingId(null);
+      }
+
       if (showHistoryOverlay && activeDrawingTool === 'none') {
         const hitMarker = findHoveredTradeMarker(coords.x, coords.y, tradeMarkersRef.current, 13);
         setHoveredTradeMarker((prev) => (prev?.id === hitMarker?.id ? prev : hitMarker));
@@ -952,50 +1071,67 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       return;
     }
 
+    // Moving or resizing an existing selected drawing
+    if (draggingDrawingRef.current) {
+      const dragState = draggingDrawingRef.current;
+      const dx = coords.x - dragState.lastX;
+      const dy = coords.y - dragState.lastY;
+      draggingDrawingRef.current = {
+        ...dragState,
+        lastX: coords.x,
+        lastY: coords.y,
+      };
+      setDrawings((prev) =>
+        prev.map((d) => {
+          if (d.id !== dragState.id) return d;
+          if (dragState.mode === 'move') {
+            return translateDrawing(d, dx, dy);
+          }
+          return updateDrawingHandle(d, dragState.mode, coords.x, coords.y);
+        })
+      );
+      return;
+    }
+
     if (activeDrawingTool === 'none') {
-      // Pan chart history
+      // Pan chart history smoothly
       const deltaX = e.clientX - dragStartXRef.current;
       const candleWidthEst = 12 * zoomLevel;
       const offsetDiff = Math.round(deltaX / candleWidthEst);
       const newOffset = Math.max(0, Math.min(candles.length - 20, initialPanOffsetRef.current + offsetDiff));
       setPanOffset(newOffset);
     } else if (currentDrawing) {
-      if (activeDrawingTool === 'brush') {
-        setCurrentDrawing((prev) =>
-          prev
-            ? {
-                ...prev,
-                points: [...(prev.points || []), { x: coords.x, y: coords.y }],
-              }
-            : null
-        );
-      } else {
-        setCurrentDrawing((prev) =>
-          prev
-            ? {
-                ...prev,
-                endX: coords.x,
-                endY: coords.y,
-              }
-            : null
-        );
-      }
+      setCurrentDrawing((prev) => (prev ? updateDrawingOnDrag(prev, coords.x, coords.y) : null));
     }
   };
 
   const handleMouseUp = () => {
+    if (draggingDrawingRef.current) {
+      draggingDrawingRef.current = null;
+    }
     if (currentDrawing) {
-      setDrawings((prev) => [...prev, currentDrawing]);
+      const finalized = finalizeDrawingObject(currentDrawing);
+      setDrawings((prev) => [...prev, finalized]);
+      setSelectedDrawingId(finalized.id);
       setCurrentDrawing(null);
+      // Disarm after completing the drawing; clicking the tool again in the drawer immediately re-arms it
+      setActiveDrawingTool('none');
     }
     setIsInteracting(false);
   };
 
   const handleMouseLeave = () => {
-    if (currentDrawing) {
-      setDrawings((prev) => [...prev, currentDrawing]);
-      setCurrentDrawing(null);
+    if (draggingDrawingRef.current) {
+      draggingDrawingRef.current = null;
     }
+    if (currentDrawing) {
+      const finalized = finalizeDrawingObject(currentDrawing);
+      setDrawings((prev) => [...prev, finalized]);
+      setSelectedDrawingId(finalized.id);
+      setCurrentDrawing(null);
+      setActiveDrawingTool('none');
+    }
+    setHoveredDrawingId(null);
     setHoveredTradeMarker(null);
     setHoveredCandle(null);
     setCrosshairPos(null);
@@ -1107,14 +1243,28 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     const totalCandles = candles.length;
     const endIndex = Math.max(maxVisibleCandles, totalCandles - panOffset);
     const startIndex = Math.max(0, endIndex - maxVisibleCandles);
-    const visibleCandles = candles.slice(startIndex, endIndex);
+    const rawVisibleCandles = candles.slice(startIndex, endIndex);
+    // Apply 60fps smoothPrice interpolation to the active live candle when at latest view
+    const visibleCandles =
+      panOffset === 0 && rawVisibleCandles.length > 0
+        ? rawVisibleCandles.map((c, idx) =>
+            idx === rawVisibleCandles.length - 1
+              ? {
+                  ...c,
+                  close: smoothPrice,
+                  high: Math.max(c.high, smoothPrice),
+                  low: Math.min(c.low, smoothPrice),
+                }
+              : c
+          )
+        : rawVisibleCandles;
 
     const displayCandles = chartType === 'heikin-ashi' ? calculateHeikinAshi(visibleCandles) : visibleCandles;
 
     // Price scaling
     const prices = displayCandles.map((c) => [c.high, c.low]).flat();
     if (panOffset === 0) {
-      prices.push(currentPrice);
+      prices.push(smoothPrice);
       activeTrades.forEach((t) => prices.push(t.strikePrice));
     }
 
@@ -1328,8 +1478,8 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       ctx.stroke();
     }
 
-    // 4. Current Market Price Pulsating Line, Axis Badge & Live Candle Expiry Countdown Timer
-    const curY = getY(currentPrice);
+    // 4. Current Market Price 60fps Line, Axis Badge & Live Candle Expiry Countdown Timer
+    const curY = getY(smoothPrice);
     ctx.strokeStyle = '#ff8800'; // Solid BFT Neon Amber
     ctx.lineWidth = 1.3;
     ctx.setLineDash([4, 2]);
@@ -1423,12 +1573,12 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       // Countdown badge attached to price line
       const secondsLeft = Math.max(0, Math.ceil((trade.endTime - Date.now()) / 1000));
       const pnlVal = isITM ? (trade.investment * trade.payoutPercentage) / 100 : -trade.investment;
-      const pnlText = isITM ? `+$${pnlVal.toFixed(2)}` : `-$${trade.investment.toFixed(2)}`;
+      const pnlText = isITM ? `+${pnlVal.toFixed(2)} $` : `-${trade.investment.toFixed(2)} $`;
       const badgeText = `${isCall ? '▲ CALL' : '▼ PUT'} ${secondsLeft}s | ${pnlText}`;
 
       ctx.fillStyle = tradeColor;
       ctx.fillRect(width - 250, strikeY - 12, 175, 24);
-      ctx.fillStyle = '#131722';
+      ctx.fillStyle = '#0a0a0a';
       ctx.font = 'bold 11px JetBrains Mono, monospace';
       ctx.textAlign = 'center';
       ctx.fillText(badgeText, width - 162, strikeY + 4);
@@ -1450,7 +1600,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       ctx.fillText('⚑ End of trade', endLineX - 4, 20);
     });
 
-    // 5b. Interactive Trade History Overlay (Small Green/Red Execution & Settlement Dots at Exact Timestamps)
+    // 5b. Interactive Trade History Overlay & Inline Coordinate Win/Loss Floating Badges (+1.80 $)
     if (showHistoryOverlay) {
       const { markers, trajectories } = computeTradeHistoryChartMarkers({
         trades: closedTrades,
@@ -1469,8 +1619,8 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         const isHighlighted = activeInspectedMarker?.tradeId === traj.tradeId;
         ctx.save();
         ctx.strokeStyle = traj.color;
-        ctx.globalAlpha = isHighlighted ? 0.95 : 0.55;
-        ctx.lineWidth = isHighlighted ? 2.2 : 1.4;
+        ctx.globalAlpha = isHighlighted ? 0.95 : 0.65;
+        ctx.lineWidth = isHighlighted ? 2.2 : 1.5;
         ctx.setLineDash([3, 3]);
         ctx.beginPath();
         ctx.moveTo(traj.entryPoint.x, traj.entryPoint.y);
@@ -1479,14 +1629,14 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         ctx.restore();
       });
 
-      // Draw crisp green (#00e676) and red (#ff334b) execution & settlement indicator dots
+      // Draw crisp green (#00e676) and red (#ff334b) execution & settlement indicator dots + Inline Floating Profit/Loss Boxes
       markers.forEach((marker) => {
         const isExactHover = activeInspectedMarker?.id === marker.id;
         const isSameTradeHover = activeInspectedMarker?.tradeId === marker.tradeId;
         const dotRadius = isExactHover ? 6 : isSameTradeHover ? 5.2 : 4.2;
 
         ctx.save();
-        // Outer subtle pulse ring
+        // Outer subtle ring
         ctx.beginPath();
         ctx.arc(marker.x, marker.y, isExactHover ? 10 : 7, 0, Math.PI * 2);
         ctx.fillStyle = marker.isWin
@@ -1504,7 +1654,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         ctx.fillStyle = marker.color;
         ctx.fill();
         ctx.lineWidth = 1.5;
-        ctx.strokeStyle = '#131722';
+        ctx.strokeStyle = '#0a0a0a';
         ctx.stroke();
 
         if (marker.pointType === 'execution') {
@@ -1514,31 +1664,45 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
           ctx.fillStyle = '#ffffff';
           ctx.fill();
         } else {
-          // Settlement dot outer ring + compact P/L tag
+          // Settlement coordinate: Render Quotex-exact floating box badge ("+44.00 $" / "+1.80 $" bright green for wins, red/muted box for losses)
+          const badgeBox = computeInlineTradeResultBadgeBox({
+            anchorX: marker.x,
+            anchorY: marker.y,
+            canvasWidth: width,
+            chartHeight,
+            isWin: marker.isWin,
+            profitOrPnl: marker.pnl,
+            investment: marker.investment,
+            direction: marker.direction,
+          });
+
+          // Connector stem from settlement coordinate to floating badge
           ctx.beginPath();
-          ctx.arc(marker.x, marker.y, dotRadius + 2.2, 0, Math.PI * 2);
-          ctx.strokeStyle = marker.color;
-          ctx.lineWidth = 1.1;
+          ctx.strokeStyle = badgeBox.borderColor;
+          ctx.lineWidth = 1.2;
+          ctx.moveTo(marker.x, marker.y);
+          ctx.lineTo(
+            Math.max(badgeBox.boxX + 6, Math.min(badgeBox.boxX + badgeBox.boxWidth - 6, marker.x)),
+            badgeBox.boxY < marker.y ? badgeBox.boxY + badgeBox.boxHeight : badgeBox.boxY
+          );
           ctx.stroke();
 
-          const pnlText = marker.isWin
-            ? `+$${Math.abs(marker.pnl).toFixed(0)}`
-            : `-$${Math.abs(marker.pnl).toFixed(0)}`;
-          const tagW = 34;
-          const tagH = 14;
-          const tagX = Math.max(8, Math.min(width - 75 - tagW, marker.x - tagW / 2));
-          const tagY = marker.y > 32 ? marker.y - 21 : marker.y + 9;
+          // Floating Box Fill & Crisp Border
+          ctx.fillStyle = badgeBox.bgColor;
+          ctx.fillRect(badgeBox.boxX, badgeBox.boxY, badgeBox.boxWidth, badgeBox.boxHeight);
+          ctx.strokeStyle = badgeBox.borderColor;
+          ctx.lineWidth = 1.2;
+          ctx.strokeRect(badgeBox.boxX, badgeBox.boxY, badgeBox.boxWidth, badgeBox.boxHeight);
 
-          ctx.fillStyle = 'rgba(19, 23, 34, 0.92)';
-          ctx.fillRect(tagX, tagY, tagW, tagH);
-          ctx.strokeStyle = marker.color;
-          ctx.lineWidth = 1;
-          ctx.strokeRect(tagX, tagY, tagW, tagH);
-
-          ctx.fillStyle = marker.color;
-          ctx.font = 'bold 8.5px JetBrains Mono, monospace';
+          // Exact Profit / Loss Text (e.g. "+44.00 $" or "+1.80 $")
+          ctx.fillStyle = badgeBox.textColor;
+          ctx.font = 'bold 10px JetBrains Mono, monospace';
           ctx.textAlign = 'center';
-          ctx.fillText(pnlText, tagX + tagW / 2, tagY + 10);
+          ctx.fillText(
+            badgeBox.label,
+            badgeBox.boxX + badgeBox.boxWidth / 2,
+            badgeBox.boxY + 14.5
+          );
         }
         ctx.restore();
       });
@@ -1546,88 +1710,21 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       tradeMarkersRef.current = [];
     }
 
-    // 6. User Technical Drawings Render (Trendlines, Rays, Fibonacci, Brush)
+    // 6. User Technical Drawings Render (All 11 Quotex Drawing Tools + Selection Handles)
     const allDrawings = [...drawings, ...(currentDrawing ? [currentDrawing] : [])];
     allDrawings.forEach((d) => {
-      ctx.strokeStyle = d.color;
-      ctx.lineWidth = d.width || 2;
-
-      if (d.type === 'trendline' && d.endX !== undefined && d.endY !== undefined) {
-        ctx.beginPath();
-        ctx.moveTo(d.startX, d.startY);
-        ctx.lineTo(d.endX, d.endY);
-        ctx.stroke();
-      } else if (d.type === 'horizontal-ray') {
-        ctx.setLineDash([5, 3]);
-        ctx.beginPath();
-        ctx.moveTo(0, d.startY);
-        ctx.lineTo(width, d.startY);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      } else if (d.type === 'support-resistance') {
-        // Institutional Support / Resistance Level Marker with Shaded Liquidity Zone & Price Label
-        ctx.save();
-        ctx.fillStyle = 'rgba(255, 136, 0, 0.12)';
-        ctx.fillRect(0, d.startY - 5, width - 65, 10);
-        ctx.strokeStyle = d.color || '#ff8800';
-        ctx.lineWidth = 1.8;
-        ctx.setLineDash([6, 4]);
-        ctx.beginPath();
-        ctx.moveTo(0, d.startY);
-        ctx.lineTo(width - 65, d.startY);
-        ctx.stroke();
-        ctx.setLineDash([]);
-
-        const srPrice =
-          maxPrice - ((d.startY - 10) / Math.max(1, chartHeight)) * (maxPrice - minPrice);
-        ctx.fillStyle = '#131722';
-        ctx.fillRect(12, d.startY - 17, 132, 15);
-        ctx.strokeStyle = d.color || '#ff8800';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(12, d.startY - 17, 132, 15);
-        ctx.fillStyle = d.color || '#ff8800';
-        ctx.font = 'bold 9px JetBrains Mono, monospace';
-        ctx.textAlign = 'left';
-        ctx.fillText(
-          `S/R LEVEL • ${srPrice.toFixed(selectedAsset.pipDecimals)}`,
-          16,
-          d.startY - 6
-        );
-        ctx.restore();
-      } else if (d.type === 'vertical-ray') {
-        ctx.setLineDash([5, 3]);
-        ctx.beginPath();
-        ctx.moveTo(d.startX, 0);
-        ctx.lineTo(d.startX, height);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      } else if (d.type === 'fibonacci' && d.endY !== undefined) {
-        const topY = Math.min(d.startY, d.endY);
-        const bottomY = Math.max(d.startY, d.endY);
-        const fibLevels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0];
-        fibLevels.forEach((lvl) => {
-          const y = bottomY - (bottomY - topY) * lvl;
-          ctx.strokeStyle = lvl === 0.618 ? '#ff9800' : d.color;
-          ctx.setLineDash([3, 3]);
-          ctx.beginPath();
-          ctx.moveTo(0, y);
-          ctx.lineTo(width - 65, y);
-          ctx.stroke();
-
-          ctx.fillStyle = lvl === 0.618 ? '#ff9800' : d.color;
-          ctx.font = '9px JetBrains Mono, monospace';
-          ctx.textAlign = 'left';
-          ctx.fillText(`Fib ${(lvl * 100).toFixed(1)}%`, 15, y - 3);
-        });
-        ctx.setLineDash([]);
-      } else if (d.type === 'brush' && d.points && d.points.length > 1) {
-        ctx.beginPath();
-        ctx.moveTo(d.points[0].x, d.points[0].y);
-        for (let i = 1; i < d.points.length; i++) {
-          ctx.lineTo(d.points[i].x, d.points[i].y);
-        }
-        ctx.stroke();
-      }
+      const isSelectedOrHovered = d.id === selectedDrawingId || d.id === hoveredDrawingId;
+      renderDrawingOnCanvas(
+        ctx,
+        d,
+        width,
+        height,
+        chartHeight,
+        minPrice,
+        maxPrice,
+        selectedAsset.pipDecimals,
+        isSelectedOrHovered
+      );
     });
 
     // 7. RSI Sub-Pane at Bottom (if enabled)
@@ -1801,6 +1898,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   }, [
     candles,
     currentPrice,
+    smoothPrice,
     selectedAsset,
     timeframe,
     chartType,
@@ -1814,6 +1912,8 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     panOffset,
     drawings,
     currentDrawing,
+    selectedDrawingId,
+    hoveredDrawingId,
     activeDrawingTool,
     drawingColor,
     canvasSize,
@@ -2332,8 +2432,31 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             </button>
           </div>
 
-          {/* Bottom Icons: Indicators, Support & FAQ, User Profile */}
+          {/* Bottom Icons: Drawing Pencil Drawer, Indicators, Support & FAQ, User Profile */}
           <div className="flex flex-col items-center gap-3">
+            {/* Dedicated Pencil Icon Tool Drawer Toggle */}
+            <button
+              type="button"
+              data-testid="sidebar-pencil-drawer-btn"
+              onClick={() => {
+                soundEngine.playUiClick();
+                setIsDrawingDrawerOpen((prev) => !prev);
+              }}
+              className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer relative ${
+                isDrawingDrawerOpen || activeDrawingTool !== 'none'
+                  ? 'bg-[#ff8800] text-slate-950 border border-[#ff8800]'
+                  : 'hover:bg-[#252a37] text-slate-400 hover:text-[#ff8800]'
+              }`}
+              title="Drawing Tools Side-Drawer (11 Technical Tools)"
+            >
+              <Pencil className="w-4 h-4" />
+              {drawings.length > 0 && (
+                <span className="absolute -top-1 -right-1 px-1 min-w-[15px] h-[15px] rounded-full bg-[#00e676] text-slate-950 font-mono font-black text-[9px] flex items-center justify-center">
+                  {drawings.length}
+                </span>
+              )}
+            </button>
+
             {/* Indicator Parameters */}
             <button
               onClick={() => {
@@ -2390,6 +2513,353 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             </div>
           )}
 
+          {/* SLEEK TECHNICAL ANALYSIS DRAWING TOOLS SIDE-DRAWER MENU (11 QUOTEX TOOLS) */}
+          {isDrawingDrawerOpen && (
+            <div
+              data-testid="drawing-tools-side-drawer"
+              className="absolute top-0 left-0 bottom-0 z-30 w-72 sm:w-80 bg-[#0d1017]/98 border-r border-[#262b38] flex flex-col font-mono text-xs text-slate-200 select-none"
+            >
+              {/* Drawer Header */}
+              <div className="px-3.5 py-3 border-b border-[#222735] flex items-center justify-between bg-[#121620]">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-[#ff8800]/15 border border-[#ff8800]/50 flex items-center justify-center text-[#ff8800]">
+                    <Pencil className="w-3.5 h-3.5" />
+                  </div>
+                  <div>
+                    <div className="font-black text-white text-xs tracking-wide uppercase">
+                      Drawing Tools
+                    </div>
+                    <div className="text-[10px] text-slate-400">
+                      Click tool to arm • Click canvas to draw
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  data-testid="close-drawing-drawer-btn"
+                  onClick={() => setIsDrawingDrawerOpen(false)}
+                  className="p-1.5 rounded-lg bg-[#1a1f2e] hover:bg-[#252c40] text-slate-400 hover:text-white cursor-pointer"
+                  title="Close Drawing Drawer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              {/* Active Tool Status Banner & Pointer Reset */}
+              <div className="px-3.5 py-2 bg-[#10141d] border-b border-[#1f2433] flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  <span
+                    className={`w-2 h-2 rounded-full ${
+                      activeDrawingTool !== 'none' ? 'bg-[#00e676]' : 'bg-slate-500'
+                    }`}
+                  />
+                  <span className="text-[10px] font-bold text-slate-300">
+                    {activeDrawingTool !== 'none'
+                      ? `Armed: ${
+                          QUOTEX_DRAWING_TOOLS.find((t) => t.id === activeDrawingTool)?.label ||
+                          activeDrawingTool
+                        }`
+                      : 'Mode: Pointer / Select'}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  data-testid="drawer-pointer-mode-btn"
+                  onClick={() => handleSelectDrawingTool('none')}
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold border cursor-pointer ${
+                    activeDrawingTool === 'none'
+                      ? 'bg-[#ff8800] text-slate-950 border-[#ff8800]'
+                      : 'bg-[#181d2a] text-slate-300 border-[#2a3042] hover:text-white'
+                  }`}
+                >
+                  Pointer
+                </button>
+              </div>
+
+              {/* Default Styling Controls (Color, Thickness, Line Style) */}
+              <div className="px-3.5 py-2.5 border-b border-[#222735] space-y-2 bg-[#0f131c]">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] uppercase font-bold text-slate-400">Stroke Color</span>
+                  <div className="flex items-center gap-1.5">
+                    {DRAWING_COLOR_PALETTE.map((c) => (
+                      <button
+                        key={c}
+                        type="button"
+                        data-testid={`drawer-color-${c.replace('#', '')}`}
+                        onClick={() => {
+                          setDrawingColor(c);
+                          if (selectedDrawingId) {
+                            setDrawings((prev) =>
+                              prev.map((d) => (d.id === selectedDrawingId ? { ...d, color: c } : d))
+                            );
+                          }
+                        }}
+                        className={`w-4 h-4 rounded-full border transition-transform cursor-pointer ${
+                          (selectedDrawing?.color || drawingColor) === c
+                            ? 'scale-125 border-white'
+                            : 'border-white/20'
+                        }`}
+                        style={{ backgroundColor: c }}
+                        title={`Select color ${c}`}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1">
+                    <span className="text-[10px] uppercase font-bold text-slate-400 mr-1">Width</span>
+                    {[1, 2, 3, 4].map((w) => (
+                      <button
+                        key={w}
+                        type="button"
+                        data-testid={`drawer-width-${w}`}
+                        onClick={() => {
+                          setDrawingWidth(w);
+                          if (selectedDrawingId) {
+                            setDrawings((prev) =>
+                              prev.map((d) => (d.id === selectedDrawingId ? { ...d, width: w } : d))
+                            );
+                          }
+                        }}
+                        className={`px-1.5 py-0.5 rounded text-[10px] font-bold border cursor-pointer ${
+                          (selectedDrawing?.width || drawingWidth) === w
+                            ? 'bg-[#ff8800] text-slate-950 border-[#ff8800]'
+                            : 'bg-[#161b26] text-slate-400 border-[#262c3d] hover:text-white'
+                        }`}
+                      >
+                        {w}px
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    {(['solid', 'dashed', 'dotted'] as const).map((st) => (
+                      <button
+                        key={st}
+                        type="button"
+                        data-testid={`drawer-style-${st}`}
+                        onClick={() => {
+                          setDrawingLineStyle(st);
+                          if (selectedDrawingId) {
+                            setDrawings((prev) =>
+                              prev.map((d) =>
+                                d.id === selectedDrawingId ? { ...d, lineStyle: st } : d
+                              )
+                            );
+                          }
+                        }}
+                        className={`px-1.5 py-0.5 rounded text-[9px] uppercase font-bold border cursor-pointer ${
+                          (selectedDrawing?.lineStyle || drawingLineStyle) === st
+                            ? 'bg-[#ff8800] text-slate-950 border-[#ff8800]'
+                            : 'bg-[#161b26] text-slate-400 border-[#262c3d] hover:text-white'
+                        }`}
+                      >
+                        {st}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Scrollable List of All 11 Technical Analysis Drawing Tools */}
+              <div className="flex-1 overflow-y-auto p-2.5 space-y-1.5">
+                {QUOTEX_DRAWING_TOOLS.map((tool) => {
+                  const isArmed = activeDrawingTool === tool.id;
+                  const countOfType = drawings.filter((d) => d.type === tool.id).length;
+                  return (
+                    <button
+                      key={tool.id}
+                      type="button"
+                      data-testid={`drawing-tool-${tool.id}`}
+                      onClick={() => handleSelectDrawingTool(tool.id)}
+                      className={`w-full flex items-center justify-between p-2.5 rounded-xl border text-left transition-colors cursor-pointer ${
+                        isArmed
+                          ? 'bg-[#ff8800] text-slate-950 border-[#ff8800] font-black'
+                          : 'bg-[#141822] hover:bg-[#1c2230] text-slate-200 border-[#242a38]'
+                      }`}
+                    >
+                      <div className="min-w-0 pr-2">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-xs">{tool.label}</span>
+                          {countOfType > 0 && (
+                            <span
+                              className={`px-1.5 py-0.2 rounded text-[9px] font-black ${
+                                isArmed
+                                  ? 'bg-slate-950 text-[#ff8800]'
+                                  : 'bg-[#ff8800]/20 text-[#ff8800]'
+                              }`}
+                            >
+                              {countOfType} on chart
+                            </span>
+                          )}
+                        </div>
+                        <div
+                          className={`text-[10px] truncate mt-0.5 ${
+                            isArmed ? 'text-slate-900 font-semibold' : 'text-slate-400'
+                          }`}
+                        >
+                          {tool.description}
+                        </div>
+                      </div>
+                      <span
+                        className={`px-2 py-1 rounded text-[9px] font-black uppercase shrink-0 ${
+                          isArmed
+                            ? 'bg-slate-950 text-[#ff8800]'
+                            : 'bg-[#1c2232] text-[#ff8800] border border-[#ff8800]/30'
+                        }`}
+                      >
+                        {isArmed ? 'ARMED' : 'DRAW'}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Active Drawn Objects List & Footer Clear Controls */}
+              <div className="p-3 border-t border-[#222735] bg-[#121620] space-y-2">
+                <div className="flex items-center justify-between text-[10px] text-slate-400">
+                  <span>Drawn Objects on Chart: {drawings.length}</span>
+                  {selectedDrawing && (
+                    <span className="text-[#ff8800] font-bold">
+                      Selected: {QUOTEX_DRAWING_TOOLS.find((t) => t.id === selectedDrawing.type)?.label || selectedDrawing.type}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  {selectedDrawing && (
+                    <button
+                      type="button"
+                      data-testid="drawer-delete-selected-btn"
+                      onClick={() => {
+                        soundEngine.playUiClick();
+                        setDrawings((prev) => prev.filter((d) => d.id !== selectedDrawing.id));
+                        setSelectedDrawingId(null);
+                      }}
+                      className="flex-1 py-1.5 px-2.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 font-bold text-[11px] flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Delete Selected</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    data-testid="clear-all-drawings-btn"
+                    disabled={drawings.length === 0}
+                    onClick={() => {
+                      soundEngine.playUiClick();
+                      setDrawings([]);
+                      setSelectedDrawingId(null);
+                      setCurrentDrawing(null);
+                    }}
+                    className={`flex-1 py-1.5 px-2.5 rounded-lg border font-bold text-[11px] flex items-center justify-center gap-1 ${
+                      drawings.length > 0
+                        ? 'bg-[#1a202e] hover:bg-rose-950/60 border-[#2e364a] text-slate-200 hover:text-rose-300 cursor-pointer'
+                        : 'bg-[#131722] border-[#1f2433] text-slate-600 cursor-not-allowed'
+                    }`}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Clear All ({drawings.length})</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* FLOATING ON-CHART DRAWING OBJECT CUSTOMIZATION & MOVE/DELETE BAR */}
+          {selectedDrawing && (
+            <div
+              data-testid="drawing-customization-toolbar"
+              className="absolute top-14 right-20 z-30 px-3 py-2 rounded-xl bg-[#121620]/95 border border-[#ff8800]/60 flex flex-wrap items-center gap-2 font-mono text-xs text-slate-200 select-none"
+            >
+              <span className="text-[10px] font-black uppercase text-[#ff8800]">
+                {QUOTEX_DRAWING_TOOLS.find((t) => t.id === selectedDrawing.type)?.label ||
+                  selectedDrawing.type}
+              </span>
+
+              {/* Quick Color Swatches */}
+              <div className="flex items-center gap-1 pl-1.5 border-l border-[#262c3d]">
+                {DRAWING_COLOR_PALETTE.slice(0, 5).map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    data-testid={`customize-drawing-color-${c.replace('#', '')}`}
+                    onClick={() =>
+                      setDrawings((prev) =>
+                        prev.map((d) => (d.id === selectedDrawing.id ? { ...d, color: c } : d))
+                      )
+                    }
+                    className={`w-3.5 h-3.5 rounded-full border cursor-pointer ${
+                      selectedDrawing.color === c ? 'scale-125 border-white' : 'border-transparent'
+                    }`}
+                    style={{ backgroundColor: c }}
+                  />
+                ))}
+              </div>
+
+              {/* Nudge / Move Controls */}
+              <div className="flex items-center gap-1 pl-1.5 border-l border-[#262c3d]">
+                <button
+                  type="button"
+                  data-testid="move-drawing-up-btn"
+                  onClick={() =>
+                    setDrawings((prev) =>
+                      prev.map((d) =>
+                        d.id === selectedDrawing.id ? translateDrawing(d, 0, -12) : d
+                      )
+                    )
+                  }
+                  className="px-1.5 py-0.5 rounded bg-[#1b2130] hover:bg-[#262e42] text-[10px] font-bold text-slate-200 cursor-pointer"
+                  title="Move Drawing Up"
+                >
+                  ↑
+                </button>
+                <button
+                  type="button"
+                  data-testid="move-drawing-down-btn"
+                  onClick={() =>
+                    setDrawings((prev) =>
+                      prev.map((d) =>
+                        d.id === selectedDrawing.id ? translateDrawing(d, 0, 12) : d
+                      )
+                    )
+                  }
+                  className="px-1.5 py-0.5 rounded bg-[#1b2130] hover:bg-[#262e42] text-[10px] font-bold text-slate-200 cursor-pointer"
+                  title="Move Drawing Down"
+                >
+                  ↓
+                </button>
+              </div>
+
+              {/* Re-Arm Same Tool for Continuous Drawing */}
+              <button
+                type="button"
+                data-testid="rearm-drawing-tool-btn"
+                onClick={() => handleSelectDrawingTool(selectedDrawing.type)}
+                className="px-2 py-0.5 rounded bg-[#ff8800] text-slate-950 font-black text-[10px] flex items-center gap-1 cursor-pointer"
+                title="Arm tool to draw another instance"
+              >
+                <Copy className="w-3 h-3" />
+                <span>Draw Again</span>
+              </button>
+
+              {/* Delete Selected Drawing */}
+              <button
+                type="button"
+                data-testid="delete-selected-drawing-btn"
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  setDrawings((prev) => prev.filter((d) => d.id !== selectedDrawing.id));
+                  setSelectedDrawingId(null);
+                }}
+                className="p-1 rounded bg-rose-500/20 hover:bg-rose-500/35 text-rose-400 hover:text-rose-200 border border-rose-500/40 cursor-pointer"
+                title="Delete Selected Drawing"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
           {/* MOBILE UPPER-LEFT QUICK ACTION FLOATING BUTTONS (Tools, Indicators, Timeframe, History) */}
           <div className="flex md:hidden absolute top-2.5 left-2.5 z-20 items-center gap-1.5 font-mono text-xs select-none">
             <button
@@ -2397,16 +2867,16 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               data-testid="mobile-chart-tools-btn"
               onClick={() => {
                 soundEngine.playUiClick();
-                setIsMobileQuickToolsOpen((prev) => !prev);
+                setIsDrawingDrawerOpen((prev) => !prev);
               }}
               className={`w-8 h-8 rounded-lg border flex items-center justify-center transition-colors cursor-pointer ${
-                isMobileQuickToolsOpen || activeDrawingTool !== 'none'
+                isDrawingDrawerOpen || activeDrawingTool !== 'none'
                   ? 'bg-[#ff8800] border-[#ff8800] text-slate-950'
                   : 'bg-[#141722]/95 border-white/10 text-slate-200'
               }`}
-              title="Drawing Tools & Chart Overlays"
+              title="Drawing Tools Side-Drawer"
             >
-              <PenTool className="w-3.5 h-3.5" />
+              <Pencil className="w-3.5 h-3.5" />
             </button>
 
             <button
@@ -2533,13 +3003,28 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               </button>
             </div>
 
-            {/* Drawing Tools Suite */}
+            {/* Drawing Tools Suite with Dedicated Pencil Drawer Button */}
             <div className="flex items-center gap-1 p-1 rounded-xl bg-[#1e222d]/90 backdrop-blur-md border border-[#2a2e39] shadow-xl">
               <button
+                type="button"
+                data-testid="drawing-tools-pencil-btn"
                 onClick={() => {
                   soundEngine.playUiClick();
-                  setActiveDrawingTool('none');
+                  setIsDrawingDrawerOpen((prev) => !prev);
                 }}
+                className={`px-2 py-1 rounded text-[10px] font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                  isDrawingDrawerOpen || activeDrawingTool !== 'none'
+                    ? 'bg-[#ff8800] text-slate-950 font-black'
+                    : 'text-slate-200 hover:text-white bg-[#141722]'
+                }`}
+                title="Open Technical Analysis Drawing Tools Side-Drawer"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+                <span>Drawing Tools</span>
+              </button>
+
+              <button
+                onClick={() => handleSelectDrawingTool('none')}
                 className={`p-1.5 rounded transition-all cursor-pointer ${
                   activeDrawingTool === 'none' ? 'bg-cyan-500 text-slate-950' : 'text-slate-400 hover:text-white'
                 }`}
@@ -2548,36 +3033,27 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                 <Move className="w-3.5 h-3.5" />
               </button>
               <button
-                onClick={() => {
-                  soundEngine.playUiClick();
-                  setActiveDrawingTool('trendline');
-                }}
+                onClick={() => handleSelectDrawingTool('trendline')}
                 className={`p-1.5 rounded transition-all cursor-pointer ${
-                  activeDrawingTool === 'trendline' ? 'bg-cyan-500 text-slate-950' : 'text-slate-400 hover:text-white'
+                  activeDrawingTool === 'trendline' ? 'bg-[#ff8800] text-slate-950' : 'text-slate-400 hover:text-white'
                 }`}
-                title="Draw Trendline"
+                title="Draw Trend Line"
               >
                 <TrendingUp className="w-3.5 h-3.5" />
               </button>
               <button
-                onClick={() => {
-                  soundEngine.playUiClick();
-                  setActiveDrawingTool('horizontal-ray');
-                }}
+                onClick={() => handleSelectDrawingTool('horizontal-line')}
                 className={`p-1.5 rounded transition-all cursor-pointer ${
-                  activeDrawingTool === 'horizontal-ray' ? 'bg-cyan-500 text-slate-950' : 'text-slate-400 hover:text-white'
+                  activeDrawingTool === 'horizontal-line' ? 'bg-[#ff8800] text-slate-950' : 'text-slate-400 hover:text-white'
                 }`}
-                title="Horizontal Price Line"
+                title="Horizontal Line"
               >
                 <Minus className="w-3.5 h-3.5" />
               </button>
               <button
                 type="button"
                 data-testid="tool-support-resistance"
-                onClick={() => {
-                  soundEngine.playUiClick();
-                  setActiveDrawingTool('support-resistance');
-                }}
+                onClick={() => handleSelectDrawingTool('support-resistance')}
                 className={`px-2 py-1 rounded text-[10px] font-bold transition-all cursor-pointer ${
                   activeDrawingTool === 'support-resistance'
                     ? 'bg-[#ff8800] text-slate-950 font-black'
@@ -2587,34 +3063,10 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               >
                 S/R
               </button>
-              <button
-                onClick={() => {
-                  soundEngine.playUiClick();
-                  setActiveDrawingTool('fibonacci');
-                }}
-                className={`p-1.5 rounded transition-all cursor-pointer ${
-                  activeDrawingTool === 'fibonacci' ? 'bg-cyan-500 text-slate-950' : 'text-slate-400 hover:text-white'
-                }`}
-                title="Fibonacci Retracement"
-              >
-                <Layers className="w-3.5 h-3.5" />
-              </button>
-              <button
-                onClick={() => {
-                  soundEngine.playUiClick();
-                  setActiveDrawingTool('brush');
-                }}
-                className={`p-1.5 rounded transition-all cursor-pointer ${
-                  activeDrawingTool === 'brush' ? 'bg-cyan-500 text-slate-950' : 'text-slate-400 hover:text-white'
-                }`}
-                title="Freehand Brush"
-              >
-                <PenTool className="w-3.5 h-3.5" />
-              </button>
 
               {/* Color picker */}
               <div className="flex items-center gap-1 pl-1 border-l border-[#2a2e39]">
-                {['#00e5ff', '#00e676', '#ff9800', '#ff334b'].map((c) => (
+                {['#ff8800', '#00e676', '#00e5ff', '#ff334b'].map((c) => (
                   <button
                     key={c}
                     onClick={() => setDrawingColor(c)}
@@ -2632,6 +3084,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                   onClick={() => {
                     soundEngine.playUiClick();
                     setDrawings([]);
+                    setSelectedDrawingId(null);
                   }}
                   className="p-1 text-rose-400 hover:text-rose-300 ml-1 cursor-pointer"
                   title="Clear All Drawings"
@@ -2719,9 +3172,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                           }`}
                         />
                         <span>
-                          {isWin
-                            ? `+$${Math.abs(t.pnl ?? 0).toFixed(0)}`
-                            : `-$${Math.abs(t.pnl ?? t.investment).toFixed(0)}`}
+                          {formatInlineTradeResultBadge(isWin, t.pnl ?? 0, t.investment)}
                         </span>
                       </button>
                     );
@@ -2805,7 +3256,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             className={`flex-1 relative w-full h-full min-h-[220px] touch-none select-none overflow-hidden cursor-${
               activeDrawingTool !== 'none'
                 ? 'crosshair'
-                : hoveredTradeMarker
+                : hoveredDrawingId || hoveredTradeMarker
                 ? 'pointer'
                 : isInteracting
                 ? 'grabbing'
@@ -2959,9 +3410,11 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                       activeInspectedMarker.isWin ? 'text-[#00e676]' : 'text-[#ff334b]'
                     }`}
                   >
-                    {activeInspectedMarker.isWin
-                      ? `+$${Math.abs(activeInspectedMarker.pnl).toFixed(2)}`
-                      : `-$${Math.abs(activeInspectedMarker.pnl).toFixed(2)}`}
+                    {formatInlineTradeResultBadge(
+                      activeInspectedMarker.isWin,
+                      activeInspectedMarker.pnl,
+                      activeInspectedMarker.investment
+                    )}
                   </div>
                 </div>
               </div>
@@ -2982,8 +3435,26 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               </button>
             )}
 
-            {/* Bottom-Left Chart Controls (Timeframe, Chart Type, Indicators, Zoom) */}
+            {/* Bottom-Left Chart Controls (Pencil Drawing Drawer, Timeframe, Chart Type, Zoom) */}
             <div className="absolute bottom-2.5 left-2.5 md:bottom-4 md:left-4 z-10 flex items-center gap-1.5 md:gap-2 bg-[#141722]/90 backdrop-blur-md border border-white/10 rounded-xl p-1 md:p-1.5 font-mono text-xs">
+              {/* Dedicated Pencil Icon Tool Drawer Button on Chart Toolbar */}
+              <button
+                type="button"
+                data-testid="chart-toolbar-pencil-btn"
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  setIsDrawingDrawerOpen((prev) => !prev);
+                }}
+                className={`p-1.5 rounded-lg border flex items-center justify-center transition-colors cursor-pointer ${
+                  isDrawingDrawerOpen || activeDrawingTool !== 'none'
+                    ? 'bg-[#ff8800] border-[#ff8800] text-slate-950 font-black'
+                    : 'bg-[#0a0a0a] border-white/10 text-slate-300 hover:text-[#ff8800]'
+                }`}
+                title="Open Technical Analysis Drawing Tools Side-Drawer"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+              </button>
+
               {/* Chart Type Selector (Desktop) */}
               <div className="hidden md:flex bg-[#0a0a0a] rounded-lg p-0.5 border border-white/10">
                 {(['candles', 'heikin-ashi', 'line', 'bars'] as const).map((type) => (
@@ -3067,49 +3538,73 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               </div>
             </div>
 
-            {/* CELEBRATORY ON-CHART TRADE RESULT ANIMATION OVERLAY (WIN +$X.XX WIN / LOSS $0.00) */}
-            {tradeResultOverlay && (
-              <div
-                data-testid="trade-result-chart-overlay"
-                className="absolute inset-0 z-25 pointer-events-none flex items-center justify-center p-4 animate-bft-modal"
-              >
-                {tradeResultOverlay.isWin ? (
-                  <div className="pointer-events-auto relative px-8 py-6 rounded-3xl bg-[#071a12]/95 border-2 border-[#00e676] shadow-2xl text-center font-mono max-w-sm w-full">
-                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#00e676]/20 border border-[#00e676]/50 text-[#00e676] text-[10px] font-black uppercase tracking-widest mb-2">
-                      <Trophy className="w-3.5 h-3.5" />
-                      <span>CONTRACT SETTLED IN THE MONEY</span>
-                    </div>
-                    <div className="text-4xl sm:text-5xl font-black text-[#00e676] tracking-tight my-1">
-                      +${tradeResultOverlay.profitAmount.toFixed(2)} WIN
-                    </div>
-                    <div className="text-xs text-emerald-200 font-bold mt-1">
-                      {tradeResultOverlay.asset} • {tradeResultOverlay.direction} (+{tradeResultOverlay.payoutPercentage}% Payout)
-                    </div>
-                    <div className="mt-3 pt-2.5 border-t border-[#00e676]/25 flex items-center justify-between text-[11px] text-slate-300">
-                      <span>Strike: {tradeResultOverlay.strikePrice.toFixed(selectedAsset.pipDecimals)}</span>
-                      <span>Close: {tradeResultOverlay.closePrice.toFixed(selectedAsset.pipDecimals)}</span>
+            {/* PRECISE INLINE TRADE WIN/LOSS RESULT BADGE ANCHORED AT EXACT CHART COORDINATE (NO FULL-SCREEN OVERLAY) */}
+            {tradeResultOverlay &&
+              (() => {
+                const canvasW = canvasRef.current?.width || canvasSize.width || 800;
+                const canvasH = canvasRef.current?.height || canvasSize.height || 440;
+                const subPaneH = (indicators.showRsi ? 60 : 0) + (indicators.showMacd ? 70 : 0);
+                const chartH = Math.max(180, canvasH - subPaneH - 25);
+
+                const maxVis = Math.max(18, Math.floor((canvasW - 75) / (11 * zoomLevel)));
+                const endIdx = Math.max(maxVis, candles.length - panOffset);
+                const startIdx = Math.max(0, endIdx - maxVis);
+                const visSlice = candles.slice(startIdx, endIdx);
+                const priceList = visSlice.map((c) => [c.high, c.low]).flat();
+                priceList.push(tradeResultOverlay.closePrice, tradeResultOverlay.strikePrice);
+                let minP = Math.min(...priceList);
+                let maxP = Math.max(...priceList);
+                const pad = (maxP - minP) * 0.14 || 0.0005;
+                minP -= pad;
+                maxP += pad;
+
+                const coordX =
+                  timestampToCanvasX(
+                    tradeResultOverlay.endTime,
+                    visSlice,
+                    TIMEFRAME_SECONDS[timeframe],
+                    canvasW
+                  ) ?? canvasW - 140;
+                const coordY = priceToCanvasY(tradeResultOverlay.closePrice, minP, maxP, chartH);
+
+                const inlineBox = computeInlineTradeResultBadgeBox({
+                  anchorX: coordX,
+                  anchorY: coordY,
+                  canvasWidth: canvasW,
+                  chartHeight: chartH,
+                  isWin: tradeResultOverlay.isWin,
+                  profitOrPnl: tradeResultOverlay.profitAmount,
+                  investment: tradeResultOverlay.investment,
+                  direction: tradeResultOverlay.direction,
+                });
+
+                return (
+                  <div
+                    data-testid="trade-result-chart-overlay"
+                    style={{
+                      left: `${inlineBox.boxX}px`,
+                      top: `${inlineBox.boxY}px`,
+                    }}
+                    className="absolute z-25 pointer-events-none select-none"
+                  >
+                    <div
+                      data-testid="inline-trade-result-badge"
+                      className={`px-2.5 py-1 rounded-md font-mono text-xs font-black flex items-center gap-1.5 border ${
+                        tradeResultOverlay.isWin
+                          ? 'bg-[#00e676] border-[#00e676] text-[#05140b]'
+                          : 'bg-[#1c1015]/95 border-[#ff334b] text-[#ff4d63]'
+                      }`}
+                    >
+                      <span
+                        className={`w-1.5 h-1.5 rounded-full ${
+                          tradeResultOverlay.isWin ? 'bg-[#05140b]' : 'bg-[#ff334b]'
+                        }`}
+                      />
+                      <span>{inlineBox.label}</span>
                     </div>
                   </div>
-                ) : (
-                  <div className="pointer-events-auto relative px-8 py-6 rounded-3xl bg-[#1c090d]/95 border-2 border-[#ff334b] shadow-2xl text-center font-mono max-w-sm w-full transition-opacity duration-500">
-                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#ff334b]/20 border border-[#ff334b]/50 text-[#ff334b] text-[10px] font-black uppercase tracking-widest mb-2">
-                      <AlertCircle className="w-3.5 h-3.5" />
-                      <span>OUT OF THE MONEY • EXPIRED</span>
-                    </div>
-                    <div className="text-4xl sm:text-5xl font-black text-[#ff334b] tracking-tight my-1">
-                      $0.00
-                    </div>
-                    <div className="text-xs text-rose-200 font-bold mt-1">
-                      {tradeResultOverlay.asset} • {tradeResultOverlay.direction} (-${tradeResultOverlay.investment.toFixed(2)} Stake)
-                    </div>
-                    <div className="mt-3 pt-2.5 border-t border-[#ff334b]/25 flex items-center justify-between text-[11px] text-slate-300">
-                      <span>Strike: {tradeResultOverlay.strikePrice.toFixed(selectedAsset.pipDecimals)}</span>
-                      <span>Close: {tradeResultOverlay.closePrice.toFixed(selectedAsset.pipDecimals)}</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
+                );
+              })()}
 
             {/* LOCKED TERMINAL OVERLAY WHEN USER HAS NOT YET PURCHASED AN ACCOUNT / BREACH OVERLAY */}
             {hasNoAccount ? (

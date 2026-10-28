@@ -328,3 +328,90 @@ export function generateSeededPastTradesForCandles(
     };
   });
 }
+
+export interface InlineTradeBadgeLayout {
+  label: string;
+  subLabel: string;
+  boxX: number;
+  boxY: number;
+  boxWidth: number;
+  boxHeight: number;
+  anchorX: number;
+  anchorY: number;
+  isWin: boolean;
+  bgColor: string;
+  borderColor: string;
+  textColor: string;
+}
+
+/**
+ * Formats the inline trade outcome badge text to match the Quotex chart coordinate badge
+ * (e.g. "+1.80 $" for winning trades, "-1.00 $" for losing trades).
+ */
+export function formatInlineTradeResultBadge(
+  isWin: boolean,
+  profitOrPnl: number,
+  investment: number = 0
+): string {
+  if (isWin) {
+    const val = Math.abs(profitOrPnl);
+    return `+${val.toFixed(2)} $`;
+  }
+  const lossVal = Math.abs(profitOrPnl !== 0 ? profitOrPnl : investment);
+  return `-${lossVal.toFixed(2)} $`;
+}
+
+/**
+ * Computes the exact non-overlapping inline badge box geometry anchored at a trade's
+ * execution/expiration point (x, y) on the chart canvas.
+ */
+export function computeInlineTradeResultBadgeBox(params: {
+  anchorX: number;
+  anchorY: number;
+  canvasWidth: number;
+  chartHeight: number;
+  isWin: boolean;
+  profitOrPnl: number;
+  investment: number;
+  direction?: 'CALL' | 'PUT';
+}): InlineTradeBadgeLayout {
+  const {
+    anchorX,
+    anchorY,
+    canvasWidth,
+    chartHeight,
+    isWin,
+    profitOrPnl,
+    investment,
+    direction = 'CALL',
+  } = params;
+
+  const label = formatInlineTradeResultBadge(isWin, profitOrPnl, investment);
+  const subLabel = `${direction === 'CALL' ? '▲' : '▼'} ${isWin ? 'WIN' : 'LOSS'}`;
+  const boxWidth = Math.max(66, label.length * 7.2 + 18);
+  const boxHeight = 22;
+
+  const clampedX = Math.max(
+    10,
+    Math.min(Math.max(20, canvasWidth - 72 - boxWidth), anchorX - boxWidth / 2)
+  );
+  const preferAbove = anchorY > 44;
+  const rawY = preferAbove ? anchorY - boxHeight - 10 : anchorY + 10;
+  const clampedY = Math.max(12, Math.min(Math.max(24, chartHeight - boxHeight - 4), rawY));
+
+  return {
+    label,
+    subLabel,
+    boxX: Math.round(clampedX),
+    boxY: Math.round(clampedY),
+    boxWidth: Math.round(boxWidth),
+    boxHeight,
+    anchorX,
+    anchorY,
+    isWin,
+    bgColor: isWin ? '#00e676' : '#1f1218',
+    borderColor: isWin ? '#00e676' : '#ff334b',
+    textColor: isWin ? '#06150d' : '#ff4d63',
+  };
+}
+
