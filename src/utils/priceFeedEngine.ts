@@ -49,7 +49,7 @@ function gaussianRandom(rand: () => number): number {
 function generateOrganicCandleSeries(
   asset: AssetInfo,
   timeframeSeconds: number,
-  count: number = 160,
+  count: number = 1500,
   targetEndPrice?: number
 ): Candle[] {
   const rand = createSeededRandom(`${asset.symbol}:${timeframeSeconds}:v2`);
@@ -222,14 +222,14 @@ function generateOrganicCandleSeries(
 
 /**
  * Initializes or retrieves a persistent, deterministic master candle history for an asset.
- * Switching timeframes preserves market price continuity and provides 160+ organic candles on every timeframe.
+ * Switching timeframes preserves market price continuity and provides 1,500+ organic candles on every timeframe.
  */
 export function getOrCreateMasterHistory(asset: AssetInfo): AssetMasterHistory {
   if (masterStores.has(asset.symbol)) {
     return masterStores.get(asset.symbol)!;
   }
 
-  const baseTicks = generateOrganicCandleSeries(asset, 5, 240);
+  const baseTicks = generateOrganicCandleSeries(asset, 5, 1500);
   const lastPrice =
     baseTicks.length > 0 ? baseTicks[baseTicks.length - 1].close : asset.basePrice;
 
@@ -327,10 +327,80 @@ function updateCandleArrayWithTick(
       volume: Math.floor(15 + Math.random() * 25),
     });
 
-    if (candles.length > 300) {
+    if (candles.length > 5000) {
       candles.shift();
     }
   }
+}
+
+/**
+ * Dynamically generates and prepends an older chunk of organic historical candles
+ * when the trader pans deep into the past.
+ * Preserves exact price continuity at the seam (open of earliest candle == close of new chunk).
+ */
+export function prependHistoricalCandles(
+  asset: AssetInfo,
+  timeframeSeconds: number,
+  chunkCount: number = 500
+): Candle[] {
+  const store = getOrCreateMasterHistory(asset);
+  const tf = Math.max(5, timeframeSeconds);
+
+  if (!store.timeframeSeries.has(tf)) {
+    return aggregateCandlesForTimeframe(asset, tf);
+  }
+
+  const existing = store.timeframeSeries.get(tf)!;
+  if (existing.length >= 5000 || existing.length === 0) {
+    return existing;
+  }
+
+  const earliest = existing[0];
+  const bucketMs = tf * 1000;
+  const rand = createSeededRandom(`${asset.symbol}:${tf}:past:${earliest.time}`);
+
+  const tfMultiplier = Math.pow(Math.max(1, tf / 5), 0.32);
+  const unitVol = asset.volatility * tfMultiplier;
+  const minPip = Math.pow(10, -asset.pipDecimals);
+
+  const olderCandles: Candle[] = [];
+  let currentTargetClose = earliest.open;
+  let volCluster = 1.0;
+
+  for (let i = 1; i <= chunkCount; i++) {
+    const shock = Math.abs(gaussianRandom(rand));
+    volCluster = Math.max(0.45, Math.min(2.4, 0.68 * volCluster + 0.32 * shock));
+    const close = currentTargetClose;
+    const candleSign = rand() > 0.49 ? 1 : -1;
+    const bodyMagnitude = Math.max(
+      minPip * 2,
+      (0.25 + Math.abs(gaussianRandom(rand)) * 0.75) * unitVol * volCluster
+    );
+    const open = close - candleSign * bodyMagnitude;
+
+    const bodyMax = Math.max(open, close);
+    const bodyMin = Math.min(open, close);
+    const upperWick = (0.35 + rand() * 0.95) * unitVol * volCluster;
+    const lowerWick = (0.35 + rand() * 0.95) * unitVol * volCluster;
+
+    const high = bodyMax + Math.max(minPip * 2, upperWick);
+    const low = bodyMin - Math.max(minPip * 2, lowerWick);
+
+    olderCandles.unshift({
+      time: earliest.time - i * bucketMs,
+      open: Number(open.toFixed(asset.pipDecimals)),
+      high: Number(high.toFixed(asset.pipDecimals)),
+      low: Number(low.toFixed(asset.pipDecimals)),
+      close: Number(close.toFixed(asset.pipDecimals)),
+      volume: Math.floor(50 + volCluster * 80 + rand() * 120),
+    });
+
+    currentTargetClose = open;
+  }
+
+  const combined = [...olderCandles, ...existing];
+  store.timeframeSeries.set(tf, combined);
+  return combined;
 }
 
 /**
@@ -347,7 +417,7 @@ export function appendLiveTick(asset: AssetInfo, newPrice: number): void {
 }
 
 /**
- * Returns a rich, natural 160+ candlestick series for the requested timeframe,
+ * Returns a rich, natural 1,500+ candlestick series for the requested timeframe,
  * synchronized with the current live price and preserving all historical price action.
  */
 export function aggregateCandlesForTimeframe(
@@ -358,7 +428,7 @@ export function aggregateCandlesForTimeframe(
   const tf = Math.max(5, timeframeSeconds);
 
   if (!store.timeframeSeries.has(tf)) {
-    const generated = generateOrganicCandleSeries(asset, tf, 160, store.lastPrice);
+    const generated = generateOrganicCandleSeries(asset, tf, 1500, store.lastPrice);
     store.timeframeSeries.set(tf, generated);
   }
 

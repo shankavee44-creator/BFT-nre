@@ -83,7 +83,16 @@ import {
   getOrCreateMasterHistory,
   stepOrganicLiveTick,
   aggregateCandlesForTimeframe,
+  prependHistoricalCandles,
 } from '../utils/priceFeedEngine';
+import {
+  calculateVisibleWindow,
+  computeReleaseVelocity,
+  stepMomentum,
+  calculateAnchoredZoom,
+  translatePanOffsetForTimeframe,
+  DragSample,
+} from '../utils/chartVirtualizationEngine';
 import {
   computeTradeHistoryChartMarkers,
   findHoveredTradeMarker,
