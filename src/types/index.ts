@@ -111,10 +111,12 @@ export type AssetCategory =
   | 'Forex (OTC)'
   | 'Crypto (OTC)'
   | 'Commodities (OTC)'
+  | 'Indices (OTC)'
   | 'Stocks (OTC)'
   | 'Forex'
   | 'Crypto'
   | 'Commodities'
+  | 'Indices'
   | 'Stocks'
   | 'OTC';
 

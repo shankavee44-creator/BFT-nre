@@ -41,10 +41,8 @@ function gaussianRandom(rand: () => number): number {
 
 /**
  * Generates a realistic series of OHLCV candles using Stochastic / Brownian Motion
- * with GARCH-style volatility clustering, natural intra-trend pullbacks (preventing artificial
- * same-color stair-step streaks), and explicit candlestick archetypes (Marubozu, Hammer,
- * Shooting Star, Spinning Top, Doji, Trend/Pullback) so every single candle has organic
- * body variation and prominent upper & lower wicks.
+ * with GARCH-style volatility clustering, natural intra-trend pullbacks,
+ * and explicit candlestick archetypes.
  */
 function generateOrganicCandleSeries(
   asset: AssetInfo,
@@ -52,11 +50,9 @@ function generateOrganicCandleSeries(
   count: number = 1500,
   targetEndPrice?: number
 ): Candle[] {
-  const rand = createSeededRandom(`${asset.symbol}:${timeframeSeconds}:v2`);
+  const rand = createSeededRandom(`${asset.symbol}:${timeframeSeconds}:v3`);
   const bucketMs = Math.max(5, timeframeSeconds) * 1000;
-  const nowBucket = Math.floor(Date.now() / bucketMs) * bucketMs;
 
-  // Scale volatility naturally with timeframe
   const tfMultiplier = Math.pow(Math.max(1, timeframeSeconds / 5), 0.32);
   const unitVol = asset.volatility * tfMultiplier;
   const minPip = Math.pow(10, -asset.pipDecimals);
@@ -72,64 +68,52 @@ function generateOrganicCandleSeries(
   for (let i = count - 1; i >= 0; i--) {
     const open = currentPrice;
 
-    // 1. Short, realistic market structure waves (3 to 9 candles per wave)
     regimeTicksLeft--;
     if (regimeTicksLeft <= 0) {
       const r = rand();
       if (r < 0.36) {
-        regimeDirection = 1; // Bullish structure
+        regimeDirection = 1;
       } else if (r < 0.72) {
-        regimeDirection = -1; // Bearish structure
+        regimeDirection = -1;
       } else {
-        regimeDirection = 0; // Range / consolidation structure
+        regimeDirection = 0;
       }
       regimeTicksLeft = Math.floor(rand() * 6) + 3;
     }
 
-    // 2. GARCH-like volatility clustering
     const shock = Math.abs(gaussianRandom(rand));
     volCluster = Math.max(0.45, Math.min(2.4, 0.68 * volCluster + 0.32 * shock));
 
-    // 3. Gentle mean reversion toward basePrice so price stays in realistic range
     const deviationFromAnchor = (asset.basePrice - open) / Math.max(unitVol * 18, minPip);
     const meanReversionBias = Math.max(-0.22, Math.min(0.22, deviationFromAnchor * 0.14));
 
-    // 4. Candlestick archetype selection for rich body & wick diversity
     const archetypeRoll = rand();
     let bodyMultiplier = 1.0;
     let upperWickMultiplier = 1.0;
     let lowerWickMultiplier = 1.0;
 
     if (archetypeRoll < 0.16) {
-      // Doji / Spinning Top (tight body, tall upper and lower wicks)
       bodyMultiplier = 0.12 + rand() * 0.22;
       upperWickMultiplier = 1.25 + rand() * 1.65;
       lowerWickMultiplier = 1.25 + rand() * 1.65;
     } else if (archetypeRoll < 0.34) {
-      // Hammer / Bullish Liquidity Rejection (long lower shadow)
       bodyMultiplier = 0.45 + rand() * 0.65;
       upperWickMultiplier = 0.35 + rand() * 0.65;
       lowerWickMultiplier = 1.95 + rand() * 2.15;
     } else if (archetypeRoll < 0.52) {
-      // Shooting Star / Bearish Liquidity Rejection (long upper shadow)
       bodyMultiplier = 0.45 + rand() * 0.65;
       upperWickMultiplier = 1.95 + rand() * 2.15;
       lowerWickMultiplier = 0.35 + rand() * 0.65;
     } else if (archetypeRoll < 0.72) {
-      // Institutional Expansion / Marubozu Candle (large body, distinct wicks)
       bodyMultiplier = 1.55 + rand() * 1.35;
       upperWickMultiplier = 0.45 + rand() * 0.85;
       lowerWickMultiplier = 0.45 + rand() * 0.85;
     } else {
-      // Standard organic market candle with asymmetric wicks
       bodyMultiplier = 0.65 + rand() * 0.95;
       upperWickMultiplier = 0.75 + rand() * 1.45;
       lowerWickMultiplier = 0.75 + rand() * 1.45;
     }
 
-    // 5. Determine candle direction with natural pullbacks inside trends
-    // Even during a bullish regime, ~38% of candles are bearish pullback candles,
-    // and after 2-3 consecutive same-color candles, profit-taking pullbacks kick in.
     let dirProbBullish = 0.5 + regimeDirection * 0.11 + meanReversionBias * 0.35;
     if (consecutiveSameColor >= 2 && lastColorSign === 1) {
       dirProbBullish = consecutiveSameColor >= 3 ? 0.12 : 0.26;
@@ -145,112 +129,59 @@ function generateOrganicCandleSeries(
       consecutiveSameColor = 1;
     }
 
-    // Pullback candles against the primary regime tend to have slightly smaller or medium bodies
-    // compared to impulse candles with the regime, creating organic higher-highs / lower-lows
-    const trendAlignmentFactor =
-      regimeDirection !== 0 && candleSign !== regimeDirection
-        ? 0.58 + rand() * 0.55
-        : 0.85 + rand() * 0.65;
-
-    // Simulate 16 intra-candle Brownian micro-ticks
-    let subPrice = open;
-    let intraHigh = open;
-    let intraLow = open;
-    const subSteps = 16;
-    const stepVol = (unitVol * volCluster) / Math.sqrt(subSteps);
-
-    for (let s = 0; s < subSteps; s++) {
-      const dW = gaussianRandom(rand);
-      subPrice += dW * stepVol;
-      if (subPrice > intraHigh) intraHigh = subPrice;
-      if (subPrice < intraLow) intraLow = subPrice;
-    }
-
     const bodyMagnitude = Math.max(
       minPip * 2,
-      (0.22 + Math.abs(gaussianRandom(rand)) * 0.78) *
-        unitVol *
-        volCluster *
-        bodyMultiplier *
-        trendAlignmentFactor
+      (0.25 + Math.abs(gaussianRandom(rand)) * 0.75) * unitVol * volCluster * bodyMultiplier
     );
-    const close = open + candleSign * bodyMagnitude;
 
-    // Prominent, realistic upper and lower wicks beyond open/close
+    const close = open + candleSign * bodyMagnitude;
     const bodyMax = Math.max(open, close);
     const bodyMin = Math.min(open, close);
 
-    const extraUpper =
-      Math.max(intraHigh - bodyMax, 0) * 0.45 +
-      (0.32 + rand() * 0.95) * unitVol * volCluster * upperWickMultiplier;
+    const upperWick = upperWickMultiplier * unitVol * volCluster * (0.35 + rand() * 0.75);
+    const lowerWick = lowerWickMultiplier * unitVol * volCluster * (0.35 + rand() * 0.75);
 
-    const extraLower =
-      Math.max(bodyMin - intraLow, 0) * 0.45 +
-      (0.32 + rand() * 0.95) * unitVol * volCluster * lowerWickMultiplier;
-
-    const high = bodyMax + Math.max(minPip * 2, extraUpper);
-    const low = bodyMin - Math.max(minPip * 2, extraLower);
-
-    currentPrice = close;
+    const high = bodyMax + Math.max(minPip * 2, upperWick);
+    const low = bodyMin - Math.max(minPip * 2, lowerWick);
 
     rawCandles.push({
-      time: nowBucket - i * bucketMs,
+      time: 0, // Assigned below
       open: Number(open.toFixed(asset.pipDecimals)),
       high: Number(high.toFixed(asset.pipDecimals)),
       low: Number(low.toFixed(asset.pipDecimals)),
       close: Number(close.toFixed(asset.pipDecimals)),
-      volume: Math.floor(60 + volCluster * 95 + rand() * 140),
+      volume: Math.floor(40 + volCluster * 60 + rand() * 100),
+    });
+
+    currentPrice = close;
+  }
+
+  const nowBucket = Math.floor(Date.now() / bucketMs) * bucketMs;
+  return rawCandles.map((c, idx) => ({
+    ...c,
+    time: nowBucket - (rawCandles.length - 1 - idx) * bucketMs,
+  }));
+}
+
+export function getOrCreateMasterHistory(asset: AssetInfo): AssetMasterHistory {
+  if (!masterStores.has(asset.symbol)) {
+    const candles = generateOrganicCandleSeries(asset, 5, 1500, asset.basePrice);
+    const lastPrice = candles.length > 0 ? candles[candles.length - 1].close : asset.basePrice;
+    masterStores.set(asset.symbol, {
+      baseTicks: candles,
+      timeframeSeries: new Map([[5, candles]]),
+      lastPrice,
+      momentum: 0,
+      volatilityRegime: 1.0,
+      tickCounter: 0,
     });
   }
-
-  // If a targetEndPrice is specified, shift the series smoothly so the latest close aligns with targetEndPrice
-  // while preserving every candle's exact OHLC continuity and wick geometry.
-  if (typeof targetEndPrice === 'number' && rawCandles.length > 0) {
-    const lastClose = rawCandles[rawCandles.length - 1].close;
-    const delta = targetEndPrice - lastClose;
-    for (let i = 0; i < rawCandles.length; i++) {
-      const c = rawCandles[i];
-      c.open = Number((c.open + delta).toFixed(asset.pipDecimals));
-      c.high = Number((c.high + delta).toFixed(asset.pipDecimals));
-      c.low = Number((c.low + delta).toFixed(asset.pipDecimals));
-      c.close = Number((c.close + delta).toFixed(asset.pipDecimals));
-    }
-  }
-
-  return rawCandles;
+  return masterStores.get(asset.symbol)!;
 }
 
 /**
- * Initializes or retrieves a persistent, deterministic master candle history for an asset.
- * Switching timeframes preserves market price continuity and provides 1,500+ organic candles on every timeframe.
- */
-export function getOrCreateMasterHistory(asset: AssetInfo): AssetMasterHistory {
-  if (masterStores.has(asset.symbol)) {
-    return masterStores.get(asset.symbol)!;
-  }
-
-  const baseTicks = generateOrganicCandleSeries(asset, 5, 1500);
-  const lastPrice =
-    baseTicks.length > 0 ? baseTicks[baseTicks.length - 1].close : asset.basePrice;
-
-  const timeframeSeries = new Map<number, Candle[]>();
-  timeframeSeries.set(5, baseTicks);
-
-  const store: AssetMasterHistory = {
-    baseTicks,
-    timeframeSeries,
-    lastPrice,
-    momentum: 0,
-    volatilityRegime: 1.0,
-    tickCounter: 0,
-  };
-  masterStores.set(asset.symbol, store);
-  return store;
-}
-
-/**
- * Generates the next organic real-time market tick using Stochastic Brownian Motion
- * with volatility clustering, micro-pullbacks, and intra-candle wick rejections.
+ * Generates the next organic real-time market tick with High-Volatility Engine
+ * for 90% - 97% payout assets during the final seconds of candle expiry.
  */
 export function stepOrganicLiveTick(asset: AssetInfo): number {
   const store = getOrCreateMasterHistory(asset);
@@ -261,19 +192,34 @@ export function stepOrganicLiveTick(asset: AssetInfo): number {
   const u2 = Math.max(1e-7, Math.random());
   const z = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
 
-  // Update volatility cluster smoothly
   store.volatilityRegime = Math.max(
     0.55,
-    Math.min(2.2, 0.88 * store.volatilityRegime + 0.12 * Math.abs(z))
+    Math.min(2.5, 0.88 * store.volatilityRegime + 0.12 * Math.abs(z))
   );
 
-  // Mean reversion toward basePrice if price drifts far away
   const distFromBase = (asset.basePrice - store.lastPrice) / Math.max(asset.volatility * 25, minPip);
   const reversionPull = Math.max(-0.25, Math.min(0.25, distFromBase * 0.14));
 
-  // Periodic micro-pullback / liquidity wick impulse so active candle forms visible upper & lower wicks
   const waveCycle = Math.sin(store.tickCounter * 0.55) * 0.22;
-  const stepScale = asset.volatility * 0.34 * store.volatilityRegime;
+  let stepScale = asset.volatility * 0.34 * store.volatilityRegime;
+
+  // ==========================================================================
+  // HIGH-VOLATILITY ENGINE (90% - 97% Payouts)
+  // During the final seconds of candle expiry (e.g. final 6 seconds),
+  // introduce sharp, unpredictable price spikes and high volatility so the final
+  // outcome remains thrilling and intense ("hard to guess in the last second").
+  // ==========================================================================
+  if (asset.payout >= 90) {
+    const secInMinute = Math.floor(Date.now() / 1000) % 60;
+    if (secInMinute >= 54) {
+      stepScale *= 3.8; // Aggressive volatility multiplier
+      const sharpSpike = (Math.random() - 0.5) * asset.volatility * 5.2;
+      const delta = (reversionPull + waveCycle + z * 2.8 + sharpSpike) * stepScale;
+      const nextPrice = Number((store.lastPrice + delta).toFixed(asset.pipDecimals));
+      appendLiveTick(asset, nextPrice);
+      return nextPrice;
+    }
+  }
 
   const delta = (reversionPull + waveCycle + z * 0.9) * stepScale;
   const nextPrice = Number((store.lastPrice + delta).toFixed(asset.pipDecimals));
@@ -282,10 +228,6 @@ export function stepOrganicLiveTick(asset: AssetInfo): number {
   return nextPrice;
 }
 
-/**
- * Helper to update a single timeframe candle array with a new live tick,
- * ensuring the active candle has realistic upper and lower wicks and opens at the exact previous close.
- */
 function updateCandleArrayWithTick(
   candles: Candle[],
   asset: AssetInfo,
@@ -333,11 +275,6 @@ function updateCandleArrayWithTick(
   }
 }
 
-/**
- * Dynamically generates and prepends an older chunk of organic historical candles
- * when the trader pans deep into the past.
- * Preserves exact price continuity at the seam (open of earliest candle == close of new chunk).
- */
 export function prependHistoricalCandles(
   asset: AssetInfo,
   timeframeSeconds: number,
@@ -403,9 +340,6 @@ export function prependHistoricalCandles(
   return combined;
 }
 
-/**
- * Adds a new live tick to the master history and updates all active timeframe series.
- */
 export function appendLiveTick(asset: AssetInfo, newPrice: number): void {
   const store = getOrCreateMasterHistory(asset);
   store.lastPrice = newPrice;
@@ -416,10 +350,6 @@ export function appendLiveTick(asset: AssetInfo, newPrice: number): void {
   });
 }
 
-/**
- * Returns a rich, natural 1,500+ candlestick series for the requested timeframe,
- * synchronized with the current live price and preserving all historical price action.
- */
 export function aggregateCandlesForTimeframe(
   asset: AssetInfo,
   timeframeSeconds: number
