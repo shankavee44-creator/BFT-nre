@@ -21,6 +21,7 @@ import {
   createCryptomusInvoiceObject,
 } from '../utils/cryptomusEngine';
 import { CRYPTOMUS_CONFIG } from '../config/cryptomus';
+import { supabase } from '../utils/supabase';
 
 interface CryptomusDepositModalProps {
   isOpen: boolean;
@@ -212,7 +213,9 @@ export const CryptomusDepositModal: React.FC<CryptomusDepositModalProps> = ({
     setTimeout(() => setCopiedField(null), 2000);
   };
 
-  // Step 1 -> Step 2: Call POST /api/cryptomus/create-invoice
+  const [depositSlipFile, setDepositSlipFile] = useState<File | null>(null);
+
+  // Step 1 -> Step 2: Call POST /api/cryptomus/create-invoice and record deposit in Supabase
   const handleCreateInvoice = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
@@ -225,6 +228,36 @@ export const CryptomusDepositModal: React.FC<CryptomusDepositModalProps> = ({
 
     setIsCreatingInvoice(true);
     try {
+      // Record deposit in Supabase deposits table & upload slip image if provided
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          let slipUrl: string | null = null;
+          if (depositSlipFile) {
+            const filePath = `${user.id}/${Date.now()}_${depositSlipFile.name}`;
+            const { error: uploadErr } = await supabase.storage
+              .from('deposit-slips')
+              .upload(filePath, depositSlipFile, { upsert: true });
+
+            if (!uploadErr) {
+              const { data: publicUrlData } = supabase.storage
+                .from('deposit-slips')
+                .getPublicUrl(filePath);
+              slipUrl = publicUrlData?.publicUrl || null;
+            }
+          }
+
+          await supabase.from('deposits').insert({
+            user_id: user.id,
+            amount: parsedAmount,
+            slip_url: slipUrl,
+            status: 'pending',
+          });
+        }
+      } catch (dbErr) {
+        console.warn('Supabase deposit recording notice:', dbErr);
+      }
+
       const response = await fetch('/api/cryptomus/create-invoice', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -483,16 +516,21 @@ export const CryptomusDepositModal: React.FC<CryptomusDepositModalProps> = ({
                 ))}
               </div>
 
-              <div className="mt-4 pt-3 border-t border-[#222736] flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono text-slate-400">
-                <span>Network: TRON (TRC-20)</span>
-                <span>Gateway Fee: $0.00 (0%)</span>
-                <span className="text-[#00e676] font-bold">
-                  Net Credited: $
-                  {Number.isFinite(parsedAmount) && parsedAmount > 0
-                    ? parsedAmount.toFixed(2)
-                    : '0.00'}{' '}
-                  USDT
-                </span>
+              {/* Deposit Payment Slip Upload (Optional) */}
+              <div className="mt-3 pt-3 border-t border-[#222736]">
+                <label className="block text-[10px] font-mono uppercase tracking-wider text-slate-400 font-bold mb-1">
+                  Payment Slip Image (Optional • Uploads to deposit-slips bucket)
+                </label>
+                <input
+                  type="file"
+                  accept="image/*,.pdf"
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files[0]) {
+                      setDepositSlipFile(e.target.files[0]);
+                    }
+                  }}
+                  className="w-full text-xs font-mono text-slate-300 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-[#ff8800] file:text-slate-950 hover:file:bg-[#ff9900] cursor-pointer"
+                />
               </div>
             </div>
 

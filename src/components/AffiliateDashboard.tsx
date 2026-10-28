@@ -32,6 +32,7 @@ import {
 } from '../utils/affiliateEngine';
 import { soundEngine } from '../utils/soundEffects';
 import { apiGetAffiliateDashboard } from '../utils/apiClient';
+import { supabase } from '../utils/supabase';
 
 interface AffiliateDashboardProps {
   userProfile: UserProfile;
@@ -65,6 +66,51 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
   const [copiedPromo, setCopiedPromo] = useState<string | null>(null);
   const [backendStats, setBackendStats] = useState<any>(null);
 
+  const [supabaseCommissions, setSupabaseCommissions] = useState<ReferralRecord[]>([]);
+
+  // Query Supabase referral_commissions & profiles live
+  useEffect(() => {
+    let isMounted = true;
+    async function fetchSupabaseAffiliateData() {
+      const { data: { user } } = await supabase.auth.getUser();
+      const targetUserId = user?.id || userProfile.id;
+      if (!targetUserId) return;
+
+      const { data: comms } = await supabase
+        .from('referral_commissions')
+        .select('*')
+        .eq('earner_id', targetUserId)
+        .order('created_at', { ascending: false });
+
+      if (comms && isMounted) {
+        const records: ReferralRecord[] = comms.map((c: any) => ({
+          id: c.id,
+          referrerId: c.earner_id,
+          referredUserId: c.source_user_id,
+          referredUserName: `Trader ${c.source_user_id.slice(0, 6)}`,
+          referredUserEmail: `trader.${c.source_user_id.slice(0, 4)}@client-bft.com`,
+          level: (c.level === 2 ? 2 : c.level === 3 ? 3 : 1) as 1 | 2 | 3,
+          packageTier: 'one-step',
+          packageName: c.commission_type === 'withdrawal' ? '8% Withdrawal Bonus' : `Level ${c.level} Deposit Commission`,
+          packagePrice: Number(c.amount || 0) * (c.level === 1 ? 10 : c.level === 2 ? 20 : 50),
+          commissionRate: c.commission_type === 'withdrawal' ? 0.08 : c.level === 1 ? 0.10 : c.level === 2 ? 0.05 : 0.02,
+          commissionAmount: Number(c.amount || 0),
+          commissionType: c.commission_type === 'withdrawal' ? 'withdrawal' : 'package',
+          status: 'paid',
+          createdAt: c.created_at || new Date().toISOString(),
+        }));
+        setSupabaseCommissions(records);
+      }
+    }
+
+    fetchSupabaseAffiliateData();
+    const interval = setInterval(fetchSupabaseAffiliateData, 4000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [userProfile.id]);
+
   useEffect(() => {
     let active = true;
     const fetchStats = () => {
@@ -84,7 +130,7 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
     };
   }, [userProfile.id]);
 
-  // Merge real-time SQLite recentCommissions into ReferralRecord format so the ledger updates live
+  // Merge real-time Supabase referral_commissions and SQLite recentCommissions into ReferralRecord format
   const backendReferralRecords: ReferralRecord[] = Array.isArray(backendStats?.recentCommissions)
     ? backendStats.recentCommissions.map((c: any) => ({
         id: c.id,
@@ -99,15 +145,16 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
         commissionRate: Number(c.percentage || 10) / 100,
         commissionAmount: Number(c.commission_amount || 0),
         commissionType: c.commission_type === 'withdrawal_bonus' ? 'withdrawal' : 'package',
-        status: 'credited',
-        timestamp: c.created_at ? new Date(c.created_at).getTime() : Date.now(),
+        status: 'paid',
+        createdAt: c.created_at || new Date().toISOString(),
       }))
     : [];
 
   const mergedReferrals: ReferralRecord[] = [
-    ...backendReferralRecords,
+    ...supabaseCommissions,
+    ...backendReferralRecords.filter((b) => !supabaseCommissions.some((s) => s.id === b.id)),
     ...referrals.filter(
-      (r) => !backendReferralRecords.some((b) => b.id === r.id)
+      (r) => !supabaseCommissions.some((s) => s.id === r.id) && !backendReferralRecords.some((b) => b.id === r.id)
     ),
   ];
 

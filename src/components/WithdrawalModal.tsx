@@ -50,6 +50,7 @@ import {
 } from '../utils/quotexWithdrawalPortal';
 import { soundEngine } from '../utils/soundEffects';
 import { apiSubmitWithdrawal } from '../utils/apiClient';
+import { supabase } from '../utils/supabase';
 
 interface WithdrawalModalProps {
   account?: TradingAccount | null;
@@ -298,6 +299,27 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
         : `${bankName.trim()} • ${accountNumber.trim()}`;
 
     try {
+      // Supabase persistent insertion into withdrawals table
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        const currentUserId = user?.id || userProfile?.id;
+        if (currentUserId) {
+          const bankDetailsPayload =
+            paymentMethod === 'bank_transfer'
+              ? { bankName: bankName.trim(), accountHolder: accountHolder.trim(), accountNumber: accountNumber.trim(), swiftCode: swiftCode.trim().toUpperCase() }
+              : { trc20Address: purseAddress.trim(), network, quotexMethod };
+
+          await supabase.from('withdrawals').insert({
+            user_id: currentUserId,
+            amount: amount,
+            bank_details: bankDetailsPayload,
+            status: 'pending',
+          });
+        }
+      } catch (e) {
+        console.warn('Supabase withdrawal insert notice:', e);
+      }
+
       const apiRes = await apiSubmitWithdrawal({
         accountId: account.id,
         amount,

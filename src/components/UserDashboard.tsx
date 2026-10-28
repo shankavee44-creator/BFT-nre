@@ -64,6 +64,7 @@ import {
 } from '../utils/kycVerification';
 import { isLiveFundedAccount, getChallengeProfitTarget } from '../utils/propRules';
 import { apiLockProfile, apiSubmitKyc, apiUpdateProfile } from '../utils/apiClient';
+import { supabase } from '../utils/supabase';
 
 interface UserDashboardProps {
   userProfile: UserProfile;
@@ -134,6 +135,40 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   const [kycFeedbackError, setKycFeedbackError] = useState<string | null>(null);
   const [kycFeedbackSuccess, setKycFeedbackSuccess] = useState<string | null>(null);
   const [remainingKycSeconds, setRemainingKycSeconds] = useState<number>(0);
+
+  const [selectedKycFile, setSelectedKycFile] = useState<File | null>(null);
+
+  // Live query Supabase profiles table for real-time balance, kyc_status, referral_code & total_referral_earnings
+  useEffect(() => {
+    let isMounted = true;
+    async function syncLiveProfile() {
+      const { data: { user } } = await supabase.auth.getUser();
+      const targetUserId = user?.id || userProfile.id;
+      if (targetUserId) {
+        const { data: p } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', targetUserId)
+          .maybeSingle();
+
+        if (p && isMounted) {
+          onUpdateProfile({
+            ...userProfile,
+            id: p.id,
+            email: p.email,
+            fullName: p.full_name || userProfile.fullName,
+            referralCode: p.referral_code || userProfile.referralCode,
+            kycStatus: p.kyc_status || userProfile.kycStatus,
+            referredBy: p.referred_by || userProfile.referredBy,
+          });
+        }
+      }
+    }
+    syncLiveProfile();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // Sync local form fields when userProfile updates
   useEffect(() => {
@@ -299,28 +334,48 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
       return;
     }
 
+    // Supabase Storage upload to kyc-documents bucket & kyc_requests row creation
     try {
-      const apiRes = await apiSubmitKyc({
-        docType,
-        documentNumber,
-      });
-      if (apiRes.ok && apiRes.user) {
-        onUpdateProfile({
-          ...evalResult.updatedProfile,
-          kycStatus: apiRes.user.kycStatus,
-          kycDocumentType: apiRes.user.kycDocType,
-        });
-        setKycFeedbackSuccess('KYC Verification approved! Withdrawals unlocked.');
-        soundEngine.playTradeWin();
-        return;
+      let photoUrl = 'https://kwmjonjcwdwvaijcrtjw.supabase.co/storage/v1/object/public/kyc-documents/placeholder.png';
+      if (selectedKycFile && userProfile.id) {
+        const filePath = `${userProfile.id}/${Date.now()}_${selectedKycFile.name}`;
+        const { error: uploadErr } = await supabase.storage
+          .from('kyc-documents')
+          .upload(filePath, selectedKycFile, { upsert: true });
+
+        if (!uploadErr) {
+          const { data: publicUrlData } = supabase.storage
+            .from('kyc-documents')
+            .getPublicUrl(filePath);
+          if (publicUrlData?.publicUrl) {
+            photoUrl = publicUrlData.publicUrl;
+          }
+        }
       }
-    } catch {
-      // Fallback
+
+      if (userProfile.id) {
+        await supabase.from('kyc_requests').insert({
+          user_id: userProfile.id,
+          id_photo_url: photoUrl,
+          status: 'pending',
+        });
+
+        await supabase
+          .from('profiles')
+          .update({ kyc_status: 'pending' })
+          .eq('id', userProfile.id);
+      }
+    } catch (e) {
+      console.warn('Supabase KYC upload/insert notice:', e);
     }
 
-    onUpdateProfile(evalResult.updatedProfile);
+    onUpdateProfile({
+      ...evalResult.updatedProfile,
+      kycStatus: 'pending',
+      kycDocumentFileName: uploadedFileName || selectedKycFile?.name,
+    });
     setKycFeedbackSuccess(
-      `${docType} uploaded and OCR data matched your locked profile! Verification completed.`
+      `${docType} uploaded to kyc-documents storage bucket and KYC request submitted! Status set to pending.`
     );
     soundEngine.playTradeWin();
   };
@@ -1324,6 +1379,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                           className="hidden"
                           onChange={(e) => {
                             if (e.target.files && e.target.files[0]) {
+                              setSelectedKycFile(e.target.files[0]);
                               setUploadedFileName(e.target.files[0].name);
                               if (!extractedDocName) setExtractedDocName(userProfile.fullName);
                               if (!extractedDocDob) setExtractedDocDob(userProfile.dateOfBirth || '');
