@@ -2358,64 +2358,22 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         </div>
       </div>
 
-      {/* 1. TOP SCROLLABLE ASSET & PAYOUT BAR (Quotex Exact OTC Ticker) */}
+      {/* 1. MAIN NAVIGATION HEADER */}
       <div className="hidden md:flex h-12 bg-[#1e222d] border-b border-[#2a2e39] flex items-center justify-between px-3 shrink-0 z-20">
-        {/* Left: Brand Badge & Horizontal OTC Asset Tabs with Green Payout Badges */}
-        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1">
+        {/* Left: Brand / Portal Button */}
+        <div className="flex items-center gap-1.5">
           <button
             onClick={() => {
               soundEngine.playUiClick();
               onNavigateTab?.('home');
             }}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#161923] hover:bg-[#252a37] border border-[#2a2e39] text-xs font-mono font-bold shrink-0 cursor-pointer transition-colors mr-1 text-slate-300 hover:text-white"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#161923] hover:bg-[#252a37] border border-[#2a2e39] text-xs font-mono font-bold cursor-pointer transition-colors text-slate-300 hover:text-white"
             title="Return to BFT Portal"
           >
-            <span className="font-black text-cyan-400">BFT</span>
-            <span className="text-[9px] px-1 py-0.2 rounded bg-cyan-500/20 text-cyan-300 font-bold">
-              OTC
+            <span className="font-black text-[#ff8800]">BFT</span>
+            <span className="text-[9px] px-1 py-0.2 rounded bg-[#ff8800]/20 text-[#ff8800] font-bold">
+              TRADING TERMINAL
             </span>
-          </button>
-
-          {openTabs.map((tab) => {
-            const isActive = tab.symbol === selectedAsset.symbol;
-            const liveTabPayout = getLivePayoutPercentage(tab, payoutSeed);
-            return (
-              <div
-                key={tab.symbol}
-                onClick={() => handleSelectTabAsset({ ...tab, payout: liveTabPayout })}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-mono font-bold transition-all cursor-pointer border shrink-0 ${
-                  isActive
-                    ? 'bg-[#252b3b] border-[#ff8800] text-white shadow-md'
-                    : 'bg-[#181b25] border-[#2a2e39] text-slate-400 hover:text-slate-200 hover:bg-[#202533]'
-                }`}
-              >
-                <span>{tab.flag || '📈'}</span>
-                <span>{tab.symbol}</span>
-                <span className="text-[10px] font-black px-1.5 py-0.2 rounded bg-emerald-950/80 text-[#00e676] border border-[#00e676]/40">
-                  +{liveTabPayout}%
-                </span>
-                {openTabs.length > 1 && (
-                  <button
-                    onClick={(e) => handleCloseTab(e, tab.symbol)}
-                    className="p-0.5 rounded hover:bg-slate-700 text-slate-500 hover:text-white"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                )}
-              </div>
-            );
-          })}
-
-          {/* Plus (+) Button to open Quotex Asset Picker Modal */}
-          <button
-            onClick={() => {
-              soundEngine.playUiClick();
-              setIsAssetModalOpen(true);
-            }}
-            className="w-8 h-8 rounded-lg bg-[#181b25] hover:bg-cyan-500 hover:text-slate-950 border border-[#2a2e39] flex items-center justify-center text-slate-400 transition-all cursor-pointer shrink-0"
-            title="Add OTC Trading Asset"
-          >
-            <Plus className="w-4 h-4" />
           </button>
         </div>
 
