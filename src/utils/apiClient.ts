@@ -1,7 +1,7 @@
 /**
  * Binary Funded Trader (BFT) - Unified Full-Stack API Client
- * Connects frontend React components directly to live SQLite database endpoints
- * with JWT bearer authentication and cookie session persistence.
+ * Connects frontend React components directly to live backend endpoints
+ * with safe JSON parsing and JWT bearer authentication.
  */
 
 const getAuthHeaders = (): HeadersInit => {
@@ -20,10 +20,32 @@ const getAuthHeaders = (): HeadersInit => {
   return headers;
 };
 
+async function safeJsonResponse(res: Response) {
+  const contentType = res.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    try {
+      return await res.json();
+    } catch {
+      return { ok: false, error: 'Server returned invalid JSON response.' };
+    }
+  }
+  const text = await res.text();
+  return {
+    ok: false,
+    error: res.ok
+      ? 'Server returned HTML instead of JSON.'
+      : `Server returned error (${res.status}): ${res.statusText || 'Request failed'}`,
+  };
+}
+
 export async function apiGetGoogleOAuthUrl(referralCode?: string | null) {
-  const query = referralCode ? `?referralCode=${encodeURIComponent(referralCode)}` : '';
-  const res = await fetch(`/api/auth/google/url${query}`);
-  return res.json();
+  try {
+    const query = referralCode ? `?referralCode=${encodeURIComponent(referralCode)}` : '';
+    const res = await fetch(`/api/auth/google/url${query}`);
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Unable to fetch Google OAuth URL' };
+  }
 }
 
 export async function apiGoogleSignIn(params: {
@@ -35,34 +57,45 @@ export async function apiGoogleSignIn(params: {
   referralCode?: string | null;
   rememberMe?: boolean;
 }) {
-  const res = await fetch('/api/auth/google', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(params),
-  });
-  return res.json();
+  try {
+    const res = await fetch('/api/auth/google', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Google Sign-In request failed' };
+  }
 }
 
 export async function apiGetMe() {
-  const res = await fetch('/api/auth/me', {
-    headers: getAuthHeaders(),
-  });
-  if (!res.ok) return { ok: false, error: 'Unauthenticated' };
-  return res.json();
+  try {
+    const res = await fetch('/api/auth/me', {
+      headers: getAuthHeaders(),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Unauthenticated' };
+  }
 }
 
 export async function apiLogout() {
-  const res = await fetch('/api/auth/logout', {
-    method: 'POST',
-    headers: getAuthHeaders(),
-  });
   try {
-    localStorage.removeItem('bft_jwt_session');
-    sessionStorage.removeItem('bft_jwt_session');
-  } catch {
-    // ignore
+    const res = await fetch('/api/auth/logout', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    });
+    try {
+      localStorage.removeItem('bft_jwt_session');
+      sessionStorage.removeItem('bft_jwt_session');
+    } catch {
+      // ignore
+    }
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Logout failed' };
   }
-  return res.json();
 }
 
 export async function apiLockProfile(data: {
@@ -72,12 +105,16 @@ export async function apiLockProfile(data: {
   country?: string;
   telegramHandle?: string;
 }) {
-  const res = await fetch('/api/profile/lock', {
-    method: 'POST',
-    headers: getAuthHeaders(),
-    body: JSON.stringify(data),
-  });
-  return res.json();
+  try {
+    const res = await fetch('/api/profile/lock', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(data),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Failed to lock profile' };
+  }
 }
 
 export async function apiUpdateProfile(data: {
@@ -88,12 +125,16 @@ export async function apiUpdateProfile(data: {
   telegramHandle?: string;
   avatarUrl?: string;
 }) {
-  const res = await fetch('/api/profile/update', {
-    method: 'POST',
-    headers: getAuthHeaders(),
-    body: JSON.stringify(data),
-  });
-  return res.json();
+  try {
+    const res = await fetch('/api/profile/update', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(data),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Failed to update profile' };
+  }
 }
 
 export async function apiSubmitKyc(data: {
@@ -105,12 +146,16 @@ export async function apiSubmitKyc(data: {
   country?: string;
   autoVerify?: boolean;
 }) {
-  const res = await fetch('/api/kyc/submit', {
-    method: 'POST',
-    headers: getAuthHeaders(),
-    body: JSON.stringify(data),
-  });
-  return res.json();
+  try {
+    const res = await fetch('/api/kyc/submit', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(data),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Failed to submit KYC' };
+  }
 }
 
 export async function apiSubmitWithdrawal(params: {
@@ -120,19 +165,27 @@ export async function apiSubmitWithdrawal(params: {
   network: string;
   paymentMethod: string;
 }) {
-  const res = await fetch('/api/withdrawals', {
-    method: 'POST',
-    headers: getAuthHeaders(),
-    body: JSON.stringify(params),
-  });
-  return res.json();
+  try {
+    const res = await fetch('/api/withdrawals', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(params),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Withdrawal submission failed' };
+  }
 }
 
 export async function apiGetWithdrawals() {
-  const res = await fetch('/api/withdrawals', {
-    headers: getAuthHeaders(),
-  });
-  return res.json();
+  try {
+    const res = await fetch('/api/withdrawals', {
+      headers: getAuthHeaders(),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Failed to fetch withdrawals' };
+  }
 }
 
 export async function apiPurchaseAccount(params: {
@@ -144,24 +197,32 @@ export async function apiPurchaseAccount(params: {
   referralCode?: string | null;
   dailyWithdrawalsUnlocked?: boolean;
 }) {
-  const res = await fetch('/api/accounts/purchase', {
-    method: 'POST',
-    headers: getAuthHeaders(),
-    body: JSON.stringify(params),
-  });
-  return res.json();
+  try {
+    const res = await fetch('/api/accounts/purchase', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(params),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Account purchase failed' };
+  }
 }
 
 export async function apiPassChallenge(params: {
   accountId: string;
   provisionLiveDirectly?: boolean;
 }) {
-  const res = await fetch('/api/accounts/pass-challenge', {
-    method: 'POST',
-    headers: getAuthHeaders(),
-    body: JSON.stringify(params),
-  });
-  return res.json();
+  try {
+    const res = await fetch('/api/accounts/pass-challenge', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(params),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Pass challenge failed' };
+  }
 }
 
 export async function apiUpdateAccountState(
@@ -178,23 +239,34 @@ export async function apiUpdateAccountState(
     certificateId?: string;
   }
 ) {
-  const res = await fetch(`/api/accounts/${encodeURIComponent(accountId)}`, {
-    method: 'PUT',
-    headers: getAuthHeaders(),
-    body: JSON.stringify(updates),
-  });
-  return res.json();
+  try {
+    const res = await fetch(`/api/accounts/${encodeURIComponent(accountId)}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(updates),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Failed to update account state' };
+  }
 }
 
 export async function apiGetAffiliateDashboard() {
-  const res = await fetch('/api/affiliate/dashboard', {
-    headers: getAuthHeaders(),
-  });
-  return res.json();
+  try {
+    const res = await fetch('/api/affiliate/dashboard', {
+      headers: getAuthHeaders(),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Failed to fetch affiliate metrics' };
+  }
 }
 
 export async function apiGetLeaderboard() {
-  const res = await fetch('/api/leaderboard');
-  return res.json();
+  try {
+    const res = await fetch('/api/leaderboard');
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Failed to fetch leaderboard' };
+  }
 }
-
