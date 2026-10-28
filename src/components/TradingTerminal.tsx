@@ -1241,8 +1241,43 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     }
     if (currentDrawing) {
       const finalized = finalizeDrawingObject(currentDrawing);
-      setDrawings((prev) => [...prev, finalized]);
-      setSelectedDrawingId(finalized.id);
+      const canvas = canvasRef.current;
+      const width = canvas?.width || 800;
+      const height = canvas?.height || 500;
+      const subPaneH = (indicators.showRsi ? 60 : 0) + (indicators.showMacd ? 70 : 0);
+      const chartH = Math.max(180, height - subPaneH - 25);
+      const maxVis = Math.max(18, Math.floor((width - 75) / (11 * zoomLevel)));
+      const endIdx = Math.max(maxVis, candles.length - panOffset);
+      const startIdx = Math.max(0, endIdx - maxVis);
+      const visibleSlice = candles.slice(startIdx, endIdx);
+      const slotW = (width - 78) / Math.max(1, visibleSlice.length);
+
+      const prices = visibleSlice.map((c) => [c.high, c.low]).flat();
+      let minP = Math.min(...prices);
+      let maxP = Math.max(...prices);
+      const pad = (maxP - minP) * 0.14 || 0.0005;
+      minP -= pad;
+      maxP += pad;
+
+      const sCandle = startIdx + Math.max(0, (finalized.startX - 10) / Math.max(0.001, slotW));
+      const sPrice = maxP - ((finalized.startY - 10) / Math.max(1, chartH)) * (maxP - minP);
+      const eCandle = startIdx + Math.max(0, (finalized.endX - 10) / Math.max(0.001, slotW));
+      const ePrice = maxP - ((finalized.endY - 10) / Math.max(1, chartH)) * (maxP - minP);
+      let cCandle = finalized.controlX !== undefined ? startIdx + Math.max(0, (finalized.controlX - 10) / Math.max(0.001, slotW)) : undefined;
+      let cPrice = finalized.controlY !== undefined ? maxP - ((finalized.controlY - 10) / Math.max(1, chartH)) * (maxP - minP) : undefined;
+
+      const lockedDrawing = {
+        ...finalized,
+        startCandleIndex: sCandle,
+        startPrice: sPrice,
+        endCandleIndex: eCandle,
+        endPrice: ePrice,
+        controlCandleIndex: cCandle,
+        controlPrice: cPrice,
+      };
+
+      setDrawings((prev) => [...prev, lockedDrawing]);
+      setSelectedDrawingId(lockedDrawing.id);
       setCurrentDrawing(null);
       // Disarm after completing the drawing; clicking the tool again in the drawer immediately re-arms it
       setActiveDrawingTool('none');
@@ -1893,8 +1928,63 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       tradeMarkersRef.current = [];
     }
 
-    // 6. User Technical Drawings Render (All 11 Quotex Drawing Tools + Selection Handles)
-    const allDrawings = [...drawings, ...(currentDrawing ? [currentDrawing] : [])];
+    // 6. User Technical Drawings Render (All 11 Quotex Drawing Tools + Selection Handles with Zoom/Pan Coordinate Lock)
+    const allDrawings = [...drawings, ...(currentDrawing ? [currentDrawing] : [])].map((d) => {
+      const maxVis = Math.max(18, Math.floor((width - 75) / (11 * zoomLevel)));
+      const endIdx = Math.max(maxVis, candles.length - panOffset);
+      const startIdx = Math.max(0, endIdx - maxVis);
+      const visibleSlice = candles.slice(startIdx, endIdx);
+      const slotW = (width - 78) / Math.max(1, visibleSlice.length);
+
+      let sCandle = d.startCandleIndex;
+      let sPrice = d.startPrice;
+      let eCandle = d.endCandleIndex;
+      let ePrice = d.endPrice;
+      let cCandle = d.controlCandleIndex;
+      let cPrice = d.controlPrice;
+
+      if (sCandle === undefined || sPrice === undefined) {
+        sCandle = startIdx + Math.max(0, (d.startX - 10) / Math.max(0.001, slotW));
+        sPrice = maxPrice - ((d.startY - 10) / Math.max(1, chartHeight)) * (maxPrice - minPrice);
+      }
+      if (eCandle === undefined || ePrice === undefined) {
+        eCandle = startIdx + Math.max(0, (d.endX - 10) / Math.max(0.001, slotW));
+        ePrice = maxPrice - ((d.endY - 10) / Math.max(1, chartHeight)) * (maxPrice - minPrice);
+      }
+      if (d.controlX !== undefined && d.controlY !== undefined && (cCandle === undefined || cPrice === undefined)) {
+        cCandle = startIdx + Math.max(0, (d.controlX - 10) / Math.max(0.001, slotW));
+        cPrice = maxPrice - ((d.controlY - 10) / Math.max(1, chartHeight)) * (maxPrice - minPrice);
+      }
+
+      const startPx = (sCandle - startIdx) * slotW + 10;
+      const startPy = chartHeight - ((sPrice - minPrice) / Math.max(1e-8, maxPrice - minPrice)) * chartHeight + 10;
+      const endPx = (eCandle - startIdx) * slotW + 10;
+      const endPy = chartHeight - ((ePrice - minPrice) / Math.max(1e-8, maxPrice - minPrice)) * chartHeight + 10;
+
+      let ctrlPx = d.controlX;
+      let ctrlPy = d.controlY;
+      if (cCandle !== undefined && cPrice !== undefined) {
+        ctrlPx = (cCandle - startIdx) * slotW + 10;
+        ctrlPy = chartHeight - ((cPrice - minPrice) / Math.max(1e-8, maxPrice - minPrice)) * chartHeight + 10;
+      }
+
+      return {
+        ...d,
+        startCandleIndex: sCandle,
+        startPrice: sPrice,
+        endCandleIndex: eCandle,
+        endPrice: ePrice,
+        controlCandleIndex: cCandle,
+        controlPrice: cPrice,
+        startX: startPx,
+        startY: startPy,
+        endX: endPx,
+        endY: endPy,
+        controlX: ctrlPx,
+        controlY: ctrlPy,
+      };
+    });
+
     allDrawings.forEach((d) => {
       const isSelectedOrHovered = d.id === selectedDrawingId || d.id === hoveredDrawingId;
       renderDrawingOnCanvas(
@@ -2680,6 +2770,69 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
         {/* 3. CENTRAL SUPER-SMOOTH OTC ALGORITHMIC CHART ENGINE */}
         <div className="flex-1 flex flex-col relative overflow-hidden bg-[#0a0a0a] min-h-[240px]">
+          {/* 1. TOP MULTI-ASSET SCROLLING TICKER BAR (Quotex Style) */}
+          <div
+            data-testid="top-multi-asset-ticker-bar"
+            className="flex items-center gap-1.5 overflow-x-auto px-3 py-2 bg-[#121620] border-b border-[#262b38] shrink-0 z-25 font-mono text-xs select-none no-scrollbar"
+          >
+            {openTabs.map((tabAsset) => {
+              const isTabActive = tabAsset.symbol === selectedAsset.symbol;
+              const livePayout = getLivePayoutPercentage(tabAsset, payoutSeed);
+              return (
+                <div
+                  key={tabAsset.symbol}
+                  onClick={() => {
+                    soundEngine.playUiClick();
+                    setSelectedAsset(tabAsset);
+                  }}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border transition-all cursor-pointer shrink-0 ${
+                    isTabActive
+                      ? 'bg-[#1c2230] border-[#ff8800] text-white shadow-md'
+                      : 'bg-[#141822] hover:bg-[#191f2d] border-[#222735] text-slate-300'
+                  }`}
+                >
+                  <span className="text-sm shrink-0">{tabAsset.flag || '📈'}</span>
+                  <span className="font-bold text-xs whitespace-nowrap">{tabAsset.symbol}</span>
+                  <span className="text-[11px] font-black text-[#00e676] shrink-0">
+                    {livePayout}%
+                  </span>
+                  {openTabs.length > 1 && (
+                    <button
+                      type="button"
+                      aria-label={`Close tab ${tabAsset.symbol}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        soundEngine.playUiClick();
+                        const nextTabs = openTabs.filter((t) => t.symbol !== tabAsset.symbol);
+                        setOpenTabs(nextTabs);
+                        if (isTabActive && nextTabs.length > 0) {
+                          setSelectedAsset(nextTabs[0]);
+                        }
+                      }}
+                      className="p-0.5 rounded hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer ml-1"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+
+            <button
+              type="button"
+              data-testid="add-asset-ticker-btn"
+              onClick={() => {
+                soundEngine.playUiClick();
+                setIsAssetModalOpen(true);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#141822] hover:bg-[#1e2536] border border-dashed border-[#ff8800]/50 text-[#ff8800] font-bold text-xs cursor-pointer shrink-0 transition-colors"
+              title="Add Asset Pair"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add Asset</span>
+            </button>
+          </div>
+
           {/* Active Price Alert Floating Toast Notification */}
           {activeAlertToast && (
             <div className="absolute top-4 right-4 max-w-sm px-4 py-2.5 bg-slate-900/95 border border-cyan-400 text-cyan-300 font-bold text-xs font-mono rounded-xl shadow-2xl backdrop-blur-md flex items-center justify-between gap-3 z-40 animate-in slide-in-from-top-2">
@@ -3665,38 +3818,8 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                 );
               })()}
 
-            {/* LOCKED TERMINAL OVERLAY WHEN USER HAS NOT YET PURCHASED AN ACCOUNT / BREACH OVERLAY */}
-            {hasNoAccount ? (
-              <div
-                data-testid="terminal-no-active-account-overlay"
-                className="absolute inset-0 z-30 flex items-center justify-center bg-black/85 backdrop-blur-md p-4"
-              >
-                <div className="max-w-md w-full rounded-2xl bg-[#11131a] border border-[#262c3a] p-6 sm:p-8 text-center font-mono">
-                  <div className="w-14 h-14 rounded-2xl bg-[#181c26] border border-[#ff8800]/50 flex items-center justify-center mx-auto mb-4 text-[#ff8800]">
-                    <Lock className="w-7 h-7" />
-                  </div>
-                  <span className="inline-block px-3 py-1 rounded bg-[#ff8800]/15 text-[#ff8800] border border-[#ff8800]/40 text-[10px] font-black uppercase tracking-wider">
-                    Trading Terminal & Advanced Features Locked
-                  </span>
-                  <h3 className="text-lg sm:text-xl font-black text-white font-sans mt-3">
-                    No Active Funded or Challenge Account
-                  </h3>
-                  <p className="text-xs text-[#94a3b8] mt-2 font-sans leading-relaxed">
-                    You are signed in via Google, but you have not yet purchased a Challenge (One-Step / Two-Step) or Instant Funded account. Choose a plan to unlock live OTC trading, advanced indicators, and 3-minute payouts.
-                  </p>
-                  <div className="mt-5 flex flex-col sm:flex-row items-center justify-center gap-2.5">
-                    <button
-                      type="button"
-                      data-testid="terminal-choose-plan-btn"
-                      onClick={() => onOpenChallengeModal?.()}
-                      className="w-full sm:w-auto px-6 py-3 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] text-slate-950 font-black text-xs uppercase cursor-pointer transition-colors"
-                    >
-                      Choose a Plan (SPOOKY40 - 40% OFF)
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ) : isSoftBreached ? (
+            {/* BREACH OVERLAY */}
+            {isSoftBreached ? (
               <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/85 backdrop-blur-xl p-4 animate-in fade-in duration-200">
                 <div className="max-w-md w-full rounded-3xl bg-[#1e222d]/95 border-2 border-amber-500/80 p-8 shadow-[0_0_80px_rgba(245,158,11,0.35)] text-center font-mono">
                   <div className="w-16 h-16 rounded-2xl bg-amber-500/20 border border-amber-500/50 flex items-center justify-center mx-auto mb-4 text-amber-400">
@@ -4109,7 +4232,23 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             )}
 
             {/* QUOTEX ACTION BUTTONS (Big Bright Green "Buy" -> Live Payout Display -> Big Bright Red "Sell") */}
-            {isSoftBreached ? (
+            {hasNoAccount ? (
+              <div className="p-4 rounded-xl bg-[#141722] border border-[#ff8800]/50 text-center space-y-3 font-mono">
+                <Lock className="w-6 h-6 text-[#ff8800] mx-auto" />
+                <div className="font-black text-white text-xs uppercase">Trading Panel Locked</div>
+                <p className="text-[11px] text-slate-300 font-sans">
+                  Chart viewing is fully unlocked. Choose a plan to trade and execute live orders.
+                </p>
+                <button
+                  type="button"
+                  data-testid="choose-plan-to-trade-btn"
+                  onClick={() => onOpenChallengeModal?.()}
+                  className="w-full py-3.5 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] text-slate-950 font-black text-xs uppercase tracking-wider cursor-pointer transition-colors font-sans shadow-lg"
+                >
+                  Choose a Plan to Trade
+                </button>
+              </div>
+            ) : isSoftBreached ? (
               <div className="p-4 rounded-xl bg-amber-950/60 border border-amber-500/60 text-center space-y-2.5 font-mono">
                 <Clock className="w-6 h-6 text-amber-400 mx-auto animate-pulse" />
                 <div className="font-black text-white text-xs uppercase">Daily Pause (Soft Breach)</div>

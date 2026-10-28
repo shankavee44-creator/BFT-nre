@@ -28,6 +28,12 @@ export interface ChartDrawingObject {
   endY: number;
   controlX?: number;
   controlY?: number;
+  startCandleIndex?: number;
+  startPrice?: number;
+  endCandleIndex?: number;
+  endPrice?: number;
+  controlCandleIndex?: number;
+  controlPrice?: number;
   color: string;
   width: number;
   lineStyle?: DrawingLineStyle;
