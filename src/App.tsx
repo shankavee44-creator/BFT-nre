@@ -60,6 +60,7 @@ import {
   processWithdrawalCommission,
 } from './utils/affiliateEngine';
 import { PACKAGES, advanceChallengeAccountPhase } from './utils/propRules';
+import { apiGetMe, apiLogout } from './utils/apiClient';
 import { Gift, X, UserPlus, ShieldAlert, LogIn } from 'lucide-react';
 
 export default function App() {
@@ -113,6 +114,33 @@ export default function App() {
     setAffiliateUsers(loadAffiliateUsers());
     setAffiliateReferrals(loadAffiliateReferrals());
     setAffiliatePayouts(loadAffiliatePayouts());
+
+    // Check live database session on backend
+    apiGetMe().then((res) => {
+      if (res && res.ok && res.user) {
+        setUserProfile((prev) => ({
+          ...prev,
+          id: res.user.id,
+          email: res.user.email,
+          fullName: res.user.fullName || prev.fullName,
+          referralCode: res.user.referralCode || prev.referralCode,
+          referredBy: res.user.referredBy || prev.referredBy,
+          kycStatus: res.user.kycStatus || prev.kycStatus,
+          profileLocked: Boolean(res.user.profileLocked),
+          address: res.user.address || prev.address,
+          dateOfBirth: res.user.dateOfBirth || prev.dateOfBirth,
+          country: res.user.country || prev.country,
+          telegramHandle: res.user.telegramHandle || prev.telegramHandle,
+          isLoggedIn: true,
+        }));
+        if (Array.isArray(res.accounts) && res.accounts.length > 0) {
+          setAccounts(res.accounts);
+          setActiveAccountId(res.accounts[0].id);
+        }
+      }
+    }).catch(() => {
+      // offline or storage fallback
+    });
 
     // Check if user visited with ?ref=USERCODE
     const directUrlRef = hasDirectReferralUrlParam();
@@ -309,6 +337,7 @@ export default function App() {
   }, [currentTab, userProfile.isLoggedIn]);
 
   const handleLogout = () => {
+    apiLogout().catch(() => {});
     clearAuthSession();
     handleUpdateProfile({ ...userProfile, isLoggedIn: false });
     setProtectedRouteNotice(null);

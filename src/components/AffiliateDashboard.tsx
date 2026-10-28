@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Users,
   Copy,
@@ -31,6 +31,7 @@ import {
   requestAffiliatePayout,
 } from '../utils/affiliateEngine';
 import { soundEngine } from '../utils/soundEffects';
+import { apiGetAffiliateDashboard } from '../utils/apiClient';
 
 interface AffiliateDashboardProps {
   userProfile: UserProfile;
@@ -62,8 +63,34 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
   const [payoutSuccess, setPayoutSuccess] = useState<string | null>(null);
   const [isSubmittingPayout, setIsSubmittingPayout] = useState(false);
   const [copiedPromo, setCopiedPromo] = useState<string | null>(null);
+  const [backendStats, setBackendStats] = useState<any>(null);
 
-  const stats: AffiliateStats = calculateAffiliateStats(userProfile.id, referrals, payouts);
+  useEffect(() => {
+    let active = true;
+    apiGetAffiliateDashboard()
+      .then((res) => {
+        if (active && res && res.ok && res.stats) {
+          setBackendStats(res.stats);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [userProfile.id]);
+
+  const rawStats: AffiliateStats = calculateAffiliateStats(userProfile.id, referrals, payouts);
+  const stats: AffiliateStats = backendStats
+    ? {
+        ...rawStats,
+        availableBalance: backendStats.paidEarnings ?? rawStats.availableBalance,
+        lifetimeEarnings: backendStats.totalEarnings ?? rawStats.lifetimeEarnings,
+        level1Earnings: backendStats.levelCommissions?.level1 ?? rawStats.level1Earnings,
+        level2Earnings: backendStats.levelCommissions?.level2 ?? rawStats.level2Earnings,
+        level3Earnings: backendStats.levelCommissions?.level3 ?? rawStats.level3Earnings,
+        totalReferralsCount: backendStats.totalReferrals ?? rawStats.totalReferralsCount,
+      }
+    : rawStats;
 
   const handleCopyLink = () => {
     navigator.clipboard.writeText(referralLink);

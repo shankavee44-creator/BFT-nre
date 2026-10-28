@@ -237,7 +237,6 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
         {/* Top 20 Weekly Traders List (Zero Profile Photos — Strictly Rank, Flag, Name, and Profit) */}
         <div className="p-3 sm:p-4 overflow-y-auto divide-y divide-white/5 flex-1 text-xs space-y-1">
           {traders.map((trader) => {
-            const isKasun = trader.id === KASUN_PERERA_ENTRY.id || trader.name === 'Kasun Perera';
             const wasJustUpdated = lastUpdatedTraderId === trader.id;
 
             return (
@@ -245,9 +244,7 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
                 key={trader.id}
                 data-testid={`leaderboard-row-${trader.rank}`}
                 className={`flex items-center justify-between p-3 rounded-xl transition-colors ${
-                  isKasun
-                    ? 'bg-[#101c15] border-2 border-[#00e676]/60'
-                    : wasJustUpdated
+                  wasJustUpdated
                     ? 'bg-white/5 border border-white/15'
                     : 'hover:bg-white/[0.02]'
                 }`}
@@ -261,8 +258,6 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
                         ? 'text-slate-200'
                         : trader.rank === 3
                         ? 'text-amber-500'
-                        : isKasun
-                        ? 'text-[#00e676]'
                         : 'text-slate-400'
                     }`}
                   >
@@ -282,14 +277,6 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
                       <span className="text-xs text-slate-400 font-mono">
                         ({trader.country})
                       </span>
-                      {isKasun && (
-                        <span
-                          data-testid="kasun-perera-badge"
-                          className="px-2 py-0.5 rounded bg-[#00c853]/20 text-[#00e676] border border-[#00e676]/40 text-[9px] font-black uppercase tracking-wider"
-                        >
-                          Verified #9 🇱🇰
-                        </span>
-                      )}
                       {wasJustUpdated && (
                         <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-[9px] font-bold">
                           +Trade
@@ -305,9 +292,7 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
                 <div className="text-right">
                   <div
                     data-testid={`trader-profit-${trader.rank}`}
-                    className={`text-sm sm:text-base font-black font-mono ${
-                      isKasun ? 'text-[#00e676] text-base sm:text-lg' : 'text-emerald-400'
-                    }`}
+                    className="text-sm sm:text-base font-black font-mono text-emerald-400"
                   >
                     +${trader.profit.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>

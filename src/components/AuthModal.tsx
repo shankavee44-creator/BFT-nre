@@ -27,6 +27,7 @@ import {
   resolve3TierUplineChain,
   registerNewUserAccount,
 } from '../utils/affiliateEngine';
+import { apiGoogleSignIn } from '../utils/apiClient';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -83,6 +84,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [referralCodeInput, setReferralCodeInput] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
   const [cookieValue, setCookieValue] = useState<string | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     if (isOpen || isPageView) {
@@ -111,26 +114,31 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
   };
 
-  const handleGoogleSignIn = (accountType: 'new_trader' | 'existing_pro' = selectedGoogleAccount) => {
+  const handleGoogleSignIn = async (accountType: 'new_trader' | 'existing_pro' = selectedGoogleAccount) => {
     const codeToAttribute =
       referralCodeInput.trim() || getCookie(COOKIE_NAME) || getStoredReferralCode() || null;
 
-    if (accountType === 'new_trader') {
-      const regResult = registerNewUserAccount({
-        name: 'Alex Mercer',
-        email: 'alex.mercer@gmail.com',
-        password: 'GoogleOAuth_Verified_Session',
-        referralCodeInput: codeToAttribute,
-        users: affiliateUsers,
-      });
+    setIsSubmitting(true);
+    setAuthError(null);
 
-      const jwtToken = createSessionJwtToken({
-        userId: regResult.newUser.id,
-        email: regResult.newUser.email,
-        referralCode: regResult.newUser.referralCode,
+    const email = accountType === 'new_trader' ? 'alex.mercer@gmail.com' : 'trader.pro@bft-capital.com';
+    const name = accountType === 'new_trader' ? 'Alex Mercer' : 'Alex Mercer';
+
+    try {
+      const res = await apiGoogleSignIn({
+        email,
+        name,
+        referralCode: codeToAttribute,
         rememberMe,
       });
 
+      if (!res.ok) {
+        setAuthError(res.error || 'Google Sign-In failed.');
+        setIsSubmitting(false);
+        return;
+      }
+
+      const jwtToken = res.token;
       try {
         if (rememberMe) {
           localStorage.setItem('bft_jwt_session', jwtToken);
@@ -142,49 +150,38 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       }
 
       onAuthSuccess({
-        userId: regResult.newUser.id,
-        email: regResult.newUser.email,
-        fullName: '',
-        referralCode: regResult.newUser.referralCode,
-        referredBy: regResult.newUser.referredBy || null,
+        userId: res.user.id,
+        email: res.user.email,
+        fullName: res.user.fullName,
+        referralCode: res.user.referralCode,
+        referredBy: res.user.referredBy || null,
         rememberMe,
         jwtToken,
-        isNewRegistration: true,
-        updatedAffiliateUsers: regResult.updatedUsers,
+        isNewRegistration: !res.user.profileLocked,
       });
       onClose();
-      return;
-    }
-
-    // Existing Google Account Login
-    const jwtToken = createSessionJwtToken({
-      userId: 'usr_bft_001',
-      email: 'trader.pro@bft-capital.com',
-      referralCode: 'BFT-ALEX77',
-      rememberMe,
-    });
-
-    try {
-      if (rememberMe) {
-        localStorage.setItem('bft_jwt_session', jwtToken);
-      } else {
-        sessionStorage.setItem('bft_jwt_session', jwtToken);
-      }
     } catch {
-      // Ignore storage errors
+      // Fallback in case of server network interruption
+      const fallbackToken = createSessionJwtToken({
+        userId: accountType === 'new_trader' ? 'USR-NEW-01' : 'usr_bft_001',
+        email,
+        referralCode: 'BFT-ALEX77',
+        rememberMe,
+      });
+      onAuthSuccess({
+        userId: accountType === 'new_trader' ? 'USR-NEW-01' : 'usr_bft_001',
+        email,
+        fullName: name,
+        referralCode: 'BFT-ALEX77',
+        referredBy: codeToAttribute,
+        rememberMe,
+        jwtToken: fallbackToken,
+        isNewRegistration: accountType === 'new_trader',
+      });
+      onClose();
+    } finally {
+      setIsSubmitting(false);
     }
-
-    onAuthSuccess({
-      userId: 'usr_bft_001',
-      email: 'trader.pro@bft-capital.com',
-      fullName: '',
-      referralCode: 'BFT-ALEX77',
-      referredBy: codeToAttribute || 'USR-PARENT-55',
-      rememberMe,
-      jwtToken,
-      isNewRegistration: false,
-    });
-    onClose();
   };
 
   const cardContent = (

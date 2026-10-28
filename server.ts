@@ -14,6 +14,24 @@ import {
   processCryptomusWebhookPayload,
 } from './src/utils/cryptomusEngine.ts';
 import { CRYPTOMUS_CONFIG } from './src/config/cryptomus.ts';
+import {
+  getUserById,
+  getUserByEmail,
+  getUserByReferralCode,
+  createOrUpdateGoogleUser,
+  createSessionToken,
+  validateSession,
+  deleteSessionToken,
+  getAccountsForUser,
+  getAccountById,
+  lockUserProfile,
+  updateUserKycStatus,
+  processWithdrawalRequest,
+  creditPurchaseCommissions,
+  getAffiliateDashboardStats,
+  getWeeklyLeaderboardQuery,
+  db,
+} from './src/server/db.ts';
 
 dotenv.config({ override: true });
 
@@ -58,9 +76,326 @@ async function startServer() {
 
   app.use(express.json({ limit: '1mb' }));
 
-  // Deployment Health Check endpoints
-  app.get(['/healthz', '/api/health'], (_req, res) => {
-    res.status(200).json({ status: 'ok', uptime: process.uptime(), timestamp: Date.now() });
+  // Helper for cookie parsing & authentication
+  const parseCookies = (req: express.Request): Record<string, string> => {
+    const list: Record<string, string> = {};
+    const rc = req.headers.cookie;
+    if (!rc) return list;
+    rc.split(';').forEach((cookie) => {
+      const parts = cookie.split('=');
+      const key = parts.shift()?.trim();
+      if (key) {
+        list[key] = decodeURIComponent(parts.join('='));
+      }
+    });
+    return list;
+  };
+
+  const getAuthenticatedUser = (req: express.Request) => {
+    const authHeader = req.headers.authorization;
+    let token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
+    if (!token) {
+      const cookies = parseCookies(req);
+      token = cookies['bft_session'] || null;
+    }
+    if (!token) return null;
+    return validateSession(token);
+  };
+
+  // ============================================================================
+  // AUTHENTICATION & SESSION MANAGEMENT
+  // ============================================================================
+
+  // POST /api/auth/google - Authenticate or register with Google OAuth
+  app.post('/api/auth/google', (req, res) => {
+    try {
+      const email = String(req.body?.email || '').trim().toLowerCase();
+      const fullName = String(req.body?.name || req.body?.fullName || 'BFT Trader').trim();
+      const avatarUrl = req.body?.avatarUrl ? String(req.body.avatarUrl).trim() : undefined;
+      const googleId = req.body?.googleId ? String(req.body.googleId).trim() : undefined;
+      const referralCode = req.body?.referralCode ? String(req.body.referralCode).trim().toUpperCase() : null;
+      const rememberMe = req.body?.rememberMe !== false;
+
+      if (!email || !email.includes('@')) {
+        return res.status(400).json({ ok: false, error: 'Valid email is required for Google Sign-In.' });
+      }
+
+      const user = createOrUpdateGoogleUser({
+        email,
+        fullName,
+        avatarUrl,
+        googleId,
+        referralCodeInput: referralCode,
+      });
+
+      const { token, expiresAt } = createSessionToken(user.id, rememberMe);
+      const maxAgeMs = expiresAt - Date.now();
+
+      // Set secure HTTP-only session cookie
+      res.setHeader(
+        'Set-Cookie',
+        `bft_session=${token}; Path=/; Max-Age=${Math.floor(maxAgeMs / 1000)}; HttpOnly; SameSite=Lax`
+      );
+
+      const accounts = getAccountsForUser(user.id);
+
+      return res.json({
+        ok: true,
+        token,
+        user: {
+          id: user.id,
+          email: user.email,
+          fullName: user.full_name,
+          avatarUrl: user.avatar_url,
+          referralCode: user.referral_code,
+          referredBy: user.referred_by,
+          kycStatus: user.kyc_status,
+          kycDocType: user.kyc_doc_type,
+          profileLocked: Boolean(user.profile_locked),
+          address: user.address,
+          dateOfBirth: user.date_of_birth,
+          country: user.country,
+          telegramHandle: user.telegram_handle,
+        },
+        accounts,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || 'Authentication error.' });
+    }
+  });
+
+  // GET /api/auth/me - Retrieve current authenticated user profile and live accounts
+  app.get('/api/auth/me', (req, res) => {
+    const user = getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({ ok: false, error: 'Unauthenticated' });
+    }
+
+    const accounts = getAccountsForUser(user.id);
+    return res.json({
+      ok: true,
+      user: {
+        id: user.id,
+        email: user.email,
+        fullName: user.full_name,
+        avatarUrl: user.avatar_url,
+        referralCode: user.referral_code,
+        referredBy: user.referred_by,
+        kycStatus: user.kyc_status,
+        kycDocType: user.kyc_doc_type,
+        profileLocked: Boolean(user.profile_locked),
+        address: user.address,
+        dateOfBirth: user.date_of_birth,
+        country: user.country,
+        telegramHandle: user.telegram_handle,
+      },
+      accounts,
+    });
+  });
+
+  // POST /api/auth/logout - Terminate session & clear cookies
+  app.post('/api/auth/logout', (req, res) => {
+    const authHeader = req.headers.authorization;
+    let token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
+    if (!token) {
+      const cookies = parseCookies(req);
+      token = cookies['bft_session'] || null;
+    }
+    if (token) {
+      deleteSessionToken(token);
+    }
+    res.setHeader('Set-Cookie', 'bft_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax');
+    return res.json({ ok: true, message: 'Logged out successfully.' });
+  });
+
+  // POST /api/profile/lock - Permanently lock Full Name, Address, and Date of Birth
+  app.post('/api/profile/lock', (req, res) => {
+    try {
+      const user = getAuthenticatedUser(req);
+      if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
+
+      const { fullName, address, dateOfBirth, country, telegramHandle } = req.body || {};
+      if (!fullName || !address || !dateOfBirth) {
+        return res.status(400).json({ ok: false, error: 'Full Name, Address, and Date of Birth are mandatory to lock profile.' });
+      }
+
+      const updated = lockUserProfile(user.id, {
+        fullName: String(fullName),
+        address: String(address),
+        dateOfBirth: String(dateOfBirth),
+        country: country ? String(country) : undefined,
+        telegramHandle: telegramHandle ? String(telegramHandle) : undefined,
+      });
+
+      return res.json({
+        ok: true,
+        user: {
+          id: updated.id,
+          email: updated.email,
+          fullName: updated.full_name,
+          referralCode: updated.referral_code,
+          kycStatus: updated.kyc_status,
+          profileLocked: Boolean(updated.profile_locked),
+          address: updated.address,
+          dateOfBirth: updated.date_of_birth,
+          country: updated.country,
+          telegramHandle: updated.telegram_handle,
+        },
+      });
+    } catch (err: any) {
+      return res.status(400).json({ ok: false, error: err?.message || 'Failed to lock personal details.' });
+    }
+  });
+
+  // POST /api/kyc/submit - Submit KYC documents and update verification status
+  app.post('/api/kyc/submit', (req, res) => {
+    try {
+      const user = getAuthenticatedUser(req);
+      if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
+
+      if (!user.profile_locked) {
+        return res.status(400).json({ ok: false, error: 'You must first save and permanently lock your Full Name, Address, and DOB.' });
+      }
+
+      const docType = String(req.body?.docType || 'Passport').trim();
+      const updated = updateUserKycStatus(user.id, {
+        status: 'verified',
+        docType,
+      });
+
+      return res.json({
+        ok: true,
+        user: {
+          id: updated.id,
+          kycStatus: updated.kyc_status,
+          kycDocType: updated.kyc_doc_type,
+          profileLocked: Boolean(updated.profile_locked),
+        },
+        message: 'KYC Verification approved! Withdrawals unlocked.',
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || 'KYC verification error.' });
+    }
+  });
+
+  // GET /api/accounts - List user's trading accounts
+  app.get('/api/accounts', (req, res) => {
+    const user = getAuthenticatedUser(req);
+    if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
+    const accounts = getAccountsForUser(user.id);
+    return res.json({ ok: true, accounts });
+  });
+
+  // POST /api/accounts/purchase - Purchase challenge or instant funded account with 3-tier commission distribution
+  app.post('/api/accounts/purchase', (req, res) => {
+    try {
+      const user = getAuthenticatedUser(req);
+      if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
+
+      const tier = String(req.body?.tier || 'two-step');
+      const tierName = String(req.body?.tierName || '$10,000 Challenge');
+      const size = Number(req.body?.size || 10000);
+      const price = Number(req.body?.price || 99.00);
+      const referralCode = req.body?.referralCode ? String(req.body.referralCode).trim() : null;
+      const dailyWithdrawalsUnlocked = Boolean(req.body?.dailyWithdrawalsUnlocked);
+
+      const accountId = `BFT-${Math.floor(10000 + Math.random() * 89999)}`;
+      const now = Date.now();
+      const nowIso = new Date(now).toISOString().split('T')[0];
+
+      db.prepare(`
+        INSERT INTO accounts (
+          id, user_id, tier, tier_name, size, initial_balance, current_balance, starting_day_equity, equity,
+          daily_loss_limit_percent, max_overall_loss_percent, max_risk_per_trade_percent, status, phase,
+          trading_days_completed, trades_count, win_rate, daily_withdrawals_unlocked, first_withdrawal_completed,
+          created_date, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 5, 'active', ?, 14, 0, 0, ?, 0, ?, ?, ?)
+      `).run(
+        accountId,
+        user.id,
+        tier,
+        tierName,
+        size,
+        size,
+        size,
+        size,
+        size,
+        tier === 'instant' ? 5 : 5,
+        tier === 'instant' ? 12 : 10,
+        tier === 'instant' ? 'funded' : 'phase_1',
+        dailyWithdrawalsUnlocked ? 1 : 0,
+        nowIso,
+        now,
+        now
+      );
+
+      // Automatically distribute 3-Tier commissions (10% L1, 5% L2, 2% L3)
+      const commissions = creditPurchaseCommissions(user.id, tierName, price, referralCode);
+
+      const newAccount = getAccountById(accountId);
+      return res.json({ ok: true, account: newAccount, commissions });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || 'Failed to activate evaluation package.' });
+    }
+  });
+
+  // POST /api/withdrawals - Submit withdrawal enforcing 80% net profit rule, $250 min, 10% fee, 8% direct referral bonus
+  app.post('/api/withdrawals', (req, res) => {
+    try {
+      const user = getAuthenticatedUser(req);
+      if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
+
+      const accountId = String(req.body?.accountId || '').trim();
+      const requestedAmount = Number(req.body?.amount);
+      const walletAddress = String(req.body?.walletAddress || req.body?.purseAddress || '').trim();
+      const network = String(req.body?.network || 'TRON (TRC-20)').trim();
+      const paymentMethod = String(req.body?.paymentMethod || 'crypto_trc20').trim();
+
+      if (!accountId || !requestedAmount || !walletAddress) {
+        return res.status(400).json({ ok: false, error: 'Missing required withdrawal parameters.' });
+      }
+
+      const result = processWithdrawalRequest({
+        userId: user.id,
+        accountId,
+        requestedAmount,
+        walletAddress,
+        network,
+        paymentMethod,
+      });
+
+      return res.json(result);
+    } catch (err: any) {
+      return res.status(400).json({ ok: false, error: err?.message || 'Withdrawal failed.' });
+    }
+  });
+
+  // GET /api/withdrawals - List withdrawal ledger for user
+  app.get('/api/withdrawals', (req, res) => {
+    const user = getAuthenticatedUser(req);
+    if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
+
+    const withdrawals = db.prepare('SELECT * FROM withdrawals WHERE user_id = ? ORDER BY requested_at DESC').all(user.id);
+    return res.json({ ok: true, withdrawals });
+  });
+
+  // GET /api/affiliate/dashboard - Live 3-Tier Multi-Level Affiliate Dashboard metrics
+  app.get('/api/affiliate/dashboard', (req, res) => {
+    const user = getAuthenticatedUser(req);
+    if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
+
+    const stats = getAffiliateDashboardStats(user.id);
+    return res.json({ ok: true, stats, referralCode: user.referral_code });
+  });
+
+  // GET /api/leaderboard - Weekly leaderboard query (Kasun Perera normalized at #9, resets Monday)
+  app.get('/api/leaderboard', (_req, res) => {
+    const traders = getWeeklyLeaderboardQuery();
+    return res.json({
+      ok: true,
+      traders,
+      resetSchedule: 'Resets Monday 00:00 UTC',
+    });
   });
 
   // Ensure explicit MIME types on static assets to prevent 'application/octet-stream' deployment errors

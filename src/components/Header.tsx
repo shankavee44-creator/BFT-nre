@@ -229,7 +229,7 @@ export const Header: React.FC<HeaderProps> = ({
                       </span>
                     </div>
                     <div className="text-[10px] font-mono text-emerald-400 font-bold leading-tight">
-                      ${activeAccount.currentBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                      ${Number(activeAccount.currentBalance ?? (activeAccount as any).current_balance ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </div>
                   </div>
                   <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
@@ -269,7 +269,7 @@ export const Header: React.FC<HeaderProps> = ({
                               </span>
                             </div>
                             <div className="text-[11px] font-mono text-emerald-400 font-semibold mt-0.5">
-                              ${acc.currentBalance.toFixed(2)} • {acc.tierName}
+                              ${Number(acc.currentBalance ?? (acc as any).current_balance ?? 0).toFixed(2)} • {acc.tierName}
                             </div>
                           </div>
                           {acc.id === activeAccount.id && (

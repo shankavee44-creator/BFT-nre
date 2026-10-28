@@ -49,6 +49,7 @@ import {
   validateQuotexPurseAddress,
 } from '../utils/quotexWithdrawalPortal';
 import { soundEngine } from '../utils/soundEffects';
+import { apiSubmitWithdrawal } from '../utils/apiClient';
 
 interface WithdrawalModalProps {
   account?: TradingAccount | null;
@@ -242,18 +243,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
     setActivePortalTab(tab);
   };
 
-  const handleSimulate14DaysCompleted = () => {
-    if (!account) return;
-    soundEngine.playUiClick();
-    onUpdateAccount({
-      ...account,
-      tradingDaysCompleted: Math.max(FIRST_WITHDRAWAL_WAITING_DAYS, account.tradingDaysCompleted || 0),
-    });
-    setError(null);
-    setSuccessBanner('14-Day Mandatory First Withdrawal Waiting Period completed for this account.');
-  };
-
-  const handleRequestWithdrawal = (e: React.FormEvent) => {
+  const handleRequestWithdrawal = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setSuccessBanner(null);
@@ -277,6 +267,16 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
       return;
     }
 
+    // Enforce strict 80% Net Generated Profit Payout Ceiling Rule
+    const maxAllowedProfitCeiling = Math.max(0, Number((netProfit * 0.80).toFixed(2)));
+    if (amount > maxAllowedProfitCeiling) {
+      setError(
+        `Withdrawal exceeds the 80% profit payout ceiling. Maximum allowable withdrawal is $${maxAllowedProfitCeiling.toFixed(2)} (80% of $${netProfit.toFixed(2)} net generated profit).`
+      );
+      soundEngine.playErrorAlert();
+      return;
+    }
+
     if (paymentMethod === 'crypto_trc20') {
       const purseValidation = validateQuotexPurseAddress(purseAddress, network, quotexMethod);
       if (!purseValidation.valid) {
@@ -292,59 +292,93 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
       }
     }
 
-    const newBalance = Number((account.currentBalance - amount).toFixed(2));
-    const newEquity = Number((account.equity - amount).toFixed(2));
-    onUpdateAccount({
-      ...account,
-      currentBalance: newBalance,
-      equity: newEquity,
-      monthsCompleted: monthsActive,
-      scalingActive: monthsActive >= 3,
-      firstWithdrawalCompleted: true,
-    });
-
-    const reqId = `5194${Math.floor(1000000 + Math.random() * 8999999)}`;
-    const refNum =
+    const walletAddr =
       paymentMethod === 'crypto_trc20'
-        ? `0x${Math.random().toString(16).substring(2, 14)}${Math.random().toString(16).substring(2, 14)}`
-        : `SWIFT-BFT-${Math.floor(100000 + Math.random() * 900000)}`;
+        ? purseAddress.trim()
+        : `${bankName.trim()} • ${accountNumber.trim()}`;
 
-    const newRequest: WithdrawalRequest = {
-      id: reqId,
-      accountId: account.id,
-      amount: breakdown.requestedAmount,
-      withdrawalFee: breakdown.withdrawalFeeAmount,
-      netReceivedAmount: breakdown.netPayoutToReceive,
-      profitSplitApplied: breakdown.profitSplitPercent,
-      paymentMethod,
-      trc20Address:
-        paymentMethod === 'crypto_trc20'
-          ? purseAddress.trim()
-          : `${bankName.trim()} • ${accountNumber.trim()}`,
-      bankDetails:
-        paymentMethod === 'bank_transfer'
-          ? {
-              bankName: bankName.trim(),
-              accountHolder: accountHolder.trim(),
-              accountNumber: accountNumber.trim(),
-              swiftCode: swiftCode.trim().toUpperCase(),
-            }
-          : undefined,
-      referenceNumber: refNum,
-      requestedAt: Date.now(),
-      status: 'paid',
-      completedAt: Date.now(),
-      txHash: refNum,
-      isDoublePayoutEligible: true,
-      timeElapsedSeconds: 42,
-    };
+    try {
+      const apiRes = await apiSubmitWithdrawal({
+        accountId: account.id,
+        amount,
+        walletAddress: walletAddr,
+        network: paymentMethod === 'crypto_trc20' ? network : 'SWIFT/SEPA',
+        paymentMethod,
+      });
 
-    onAddWithdrawal(newRequest);
-    onWithdrawalCommissionTriggered?.(breakdown.traderShareBeforeFee);
-    soundEngine.playWithdrawalSuccess();
-    setSuccessBanner(
-      `Payout Order #${reqId} confirmed! ${newRequest.netReceivedAmount?.toFixed(2)} $ net payout (after 10% withdrawal fee of $${breakdown.withdrawalFeeAmount.toFixed(2)}) dispatched via ${quotexMethod} (${network}).`
-    );
+      if (!apiRes.ok) {
+        setError(apiRes.error || 'Withdrawal validation failed.');
+        soundEngine.playErrorAlert();
+        return;
+      }
+
+      if (apiRes.updatedAccount) {
+        onUpdateAccount({
+          ...account,
+          currentBalance: apiRes.updatedAccount.current_balance,
+          equity: apiRes.updatedAccount.equity,
+          firstWithdrawalCompleted: Boolean(apiRes.updatedAccount.first_withdrawal_completed),
+          monthsCompleted: monthsActive,
+          scalingActive: monthsActive >= 3,
+        });
+      } else {
+        const newBalance = Number((account.currentBalance - amount).toFixed(2));
+        const newEquity = Number((account.equity - amount).toFixed(2));
+        onUpdateAccount({
+          ...account,
+          currentBalance: newBalance,
+          equity: newEquity,
+          monthsCompleted: monthsActive,
+          scalingActive: monthsActive >= 3,
+          firstWithdrawalCompleted: true,
+        });
+      }
+
+      const reqId = apiRes.withdrawal?.id || `5194${Math.floor(1000000 + Math.random() * 8999999)}`;
+      const refNum =
+        apiRes.withdrawal?.reference_number ||
+        apiRes.withdrawal?.tx_hash ||
+        (paymentMethod === 'crypto_trc20'
+          ? `0x${Math.random().toString(16).substring(2, 14)}${Math.random().toString(16).substring(2, 14)}`
+          : `SWIFT-BFT-${Math.floor(100000 + Math.random() * 900000)}`);
+
+      const newRequest: WithdrawalRequest = {
+        id: reqId,
+        accountId: account.id,
+        amount: breakdown.requestedAmount,
+        withdrawalFee: breakdown.withdrawalFeeAmount,
+        netReceivedAmount: breakdown.netPayoutToReceive,
+        profitSplitApplied: breakdown.profitSplitPercent,
+        paymentMethod,
+        trc20Address: walletAddr,
+        bankDetails:
+          paymentMethod === 'bank_transfer'
+            ? {
+                bankName: bankName.trim(),
+                accountHolder: accountHolder.trim(),
+                accountNumber: accountNumber.trim(),
+                swiftCode: swiftCode.trim().toUpperCase(),
+              }
+            : undefined,
+        referenceNumber: refNum,
+        requestedAt: Date.now(),
+        status: 'paid',
+        completedAt: Date.now(),
+        txHash: refNum,
+        isDoublePayoutEligible: true,
+        timeElapsedSeconds: 42,
+      };
+
+      onAddWithdrawal(newRequest);
+      onWithdrawalCommissionTriggered?.(breakdown.traderShareBeforeFee);
+      soundEngine.playWithdrawalSuccess();
+      setSuccessBanner(
+        `Payout Order #${reqId} confirmed! ${newRequest.netReceivedAmount?.toFixed(2)} $ net payout (after 10% withdrawal fee of $${breakdown.withdrawalFeeAmount.toFixed(2)}) dispatched via ${quotexMethod} (${network}).`
+      );
+    } catch (err: any) {
+      setError(err?.message || 'Failed to submit withdrawal request.');
+      soundEngine.playErrorAlert();
+    }
   };
 
   const portalNavTabs: { id: QuotexPortalTab; label: string }[] = [
@@ -703,9 +737,23 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                       data-testid="card-available-balance"
                       className="flex items-center justify-between px-4 py-3 text-xs sm:text-sm"
                     >
-                      <span className="text-[#8c96a6]">Available for withdrawal:</span>
+                      <span className="text-[#8c96a6]">Available for withdrawal (Net Profit):</span>
                       <span className="font-bold font-mono tabular-nums text-white">
                         {accountSummary.availableForWithdrawalFormatted}
+                      </span>
+                    </div>
+                    <div
+                      data-testid="card-profit-ceiling-80"
+                      className="flex items-center justify-between px-4 py-3 text-xs sm:text-sm bg-[#121622]/60"
+                    >
+                      <span className="text-[#8c96a6] flex items-center gap-1.5">
+                        <span>80% Profit Ceiling:</span>
+                        <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-[#ff8800]/15 text-[#ff8800] border border-[#ff8800]/30 font-bold">
+                          Max 80%
+                        </span>
+                      </span>
+                      <span className="font-bold font-mono tabular-nums text-[#ff8800]">
+                        ${Math.max(0, Number((netProfit * 0.8).toFixed(2))).toFixed(2)} USD
                       </span>
                     </div>
                     <div
