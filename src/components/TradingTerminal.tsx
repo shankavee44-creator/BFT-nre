@@ -208,6 +208,33 @@ function getClockExpiry(seconds: number): string {
   return d.toTimeString().split(' ')[0];
 }
 
+function drawRoundedRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number
+): void {
+  if (typeof ctx.roundRect === 'function') {
+    ctx.beginPath();
+    ctx.roundRect(x, y, width, height, radius);
+  } else {
+    const r = Math.min(radius, width / 2, height / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + width - r, y);
+    ctx.arcTo(x + width, y, x + width, y + r, r);
+    ctx.lineTo(x + width, y + height - r);
+    ctx.arcTo(x + width, y + height, x + width - r, y + height, r);
+    ctx.lineTo(x + r, y + height);
+    ctx.arcTo(x, y + height, x, y + height - r, r);
+    ctx.lineTo(x, y + r);
+    ctx.arcTo(x, y, x + r, y, r);
+    ctx.closePath();
+  }
+}
+
 export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   account,
   accounts = [],
@@ -1032,8 +1059,8 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     };
 
     onAddTrade(newTrade);
-    setTradeSuccess(`Executed ${direction} on ${assetToTrade.symbol} for $${stakeToUse} (${durationToUse}s)`);
-    setTimeout(() => setTradeSuccess(null), 3000);
+    setTradeSuccess(`Trade opened with price: ${assetLivePrice.toFixed(assetToTrade.pipDecimals)} ${assetToTrade.symbol}`);
+    setTimeout(() => setTradeSuccess(null), 4000);
   };
 
   // Quotex "Double up (x2)" Feature: Replicate an open trade
@@ -1875,67 +1902,179 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       ctx.restore();
     }
 
-    // 5. Visual Trade Overlay ("Beginning of trade" and "End of trade" markers for selected asset)
-    currentAssetActiveTrades.forEach((trade) => {
-      const strikeY = getY(trade.strikePrice);
-      const isCall = trade.direction === 'CALL';
-      const isITM = isCall ? currentPrice > trade.strikePrice : currentPrice < trade.strikePrice;
-      const tradeColor = isITM ? '#00e676' : '#ff334b';
+    // 5. Sleek Visual Trade Overlay (Quotex-style minimal compact badge, clean entry level, and unobtrusive markers)
+    if (currentAssetActiveTrades.length > 0) {
+      const isMobile = width < 560;
+      const isCompactMobile = width < 420;
 
-      // Horizontal dashed strike line
-      ctx.strokeStyle = tradeColor;
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([5, 3]);
-      ctx.beginPath();
-      ctx.moveTo(0, strikeY);
-      ctx.lineTo(width - 65, strikeY);
-      ctx.stroke();
-      ctx.setLineDash([]);
+      const liveX = displayCandles.length > 0 ? getCandleCenterX(displayCandles.length - 1) : width - 120;
+      const endLineX = Math.min(width - (isMobile ? 70 : 75), Math.max(liveX + (isMobile ? 36 : 55), width - (isMobile ? 80 : 95)));
 
-      // "Beginning of trade" marker pill on the left
-      ctx.fillStyle = tradeColor;
-      ctx.beginPath();
-      ctx.arc(14, strikeY, 4, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.fillStyle = 'rgba(19, 23, 34, 0.9)';
-      ctx.fillRect(22, strikeY - 10, 145, 20);
-      ctx.strokeStyle = tradeColor;
-      ctx.strokeRect(22, strikeY - 10, 145, 20);
-      ctx.fillStyle = tradeColor;
-      ctx.font = 'bold 9px JetBrains Mono, monospace';
-      ctx.textAlign = 'left';
-      ctx.fillText(`● Beginning of trade: ${trade.strikePrice.toFixed(selectedAsset.pipDecimals)}`, 26, strikeY + 4);
-
-      // Countdown badge attached to price line
-      const secondsLeft = Math.max(0, Math.ceil((trade.endTime - Date.now()) / 1000));
-      const pnlVal = isITM ? (trade.investment * trade.payoutPercentage) / 100 : -trade.investment;
-      const pnlText = isITM ? `+${pnlVal.toFixed(2)} $` : `-${trade.investment.toFixed(2)} $`;
-      const badgeText = `${isCall ? '▲ CALL' : '▼ PUT'} ${secondsLeft}s | ${pnlText}`;
-
-      ctx.fillStyle = tradeColor;
-      ctx.fillRect(width - 250, strikeY - 12, 175, 24);
-      ctx.fillStyle = '#0a0a0a';
-      ctx.font = 'bold 11px JetBrains Mono, monospace';
-      ctx.textAlign = 'center';
-      ctx.fillText(badgeText, width - 162, strikeY + 4);
-
-      // "End of trade" vertical marker at the right boundary
-      const endLineX = width - 75;
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+      // Expiration vertical marker line ("End of trade")
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
       ctx.lineWidth = 1;
-      ctx.setLineDash([4, 4]);
+      ctx.setLineDash([3, 3]);
       ctx.beginPath();
       ctx.moveTo(endLineX, 10);
       ctx.lineTo(endLineX, chartHeight + 10);
       ctx.stroke();
       ctx.setLineDash([]);
 
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
-      ctx.font = 'bold 9px JetBrains Mono, monospace';
-      ctx.textAlign = 'right';
-      ctx.fillText('⚑ End of trade', endLineX - 4, 20);
-    });
+      // Responsive top header for expiration vertical line (concise or hidden on tight mobile screens)
+      if (width >= 350) {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.38)';
+        ctx.font = isMobile ? '8px JetBrains Mono, monospace' : '8.5px JetBrains Mono, monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(isMobile ? 'End' : 'End of trade', endLineX, 18);
+      }
+      ctx.restore();
+
+      currentAssetActiveTrades.forEach((trade, index) => {
+        const strikeY = getY(trade.strikePrice);
+        const isCall = trade.direction === 'CALL';
+        const tradeColor = isCall ? '#00c26f' : '#ff334b';
+
+        // Check if trade entry point (startTime) is visible on canvas
+        const timeframeSec = TIMEFRAME_SECONDS[timeframe] || 60;
+        const entryX = timestampToCanvasX(trade.startTime, displayCandles, timeframeSec, width);
+
+        // 1. If entry candle is in view, draw subtle vertical "Beginning of trade" line and entry node
+        if (entryX && entryX >= 10 && entryX <= width - 70) {
+          ctx.save();
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([3, 3]);
+          ctx.beginPath();
+          ctx.moveTo(entryX, 10);
+          ctx.lineTo(entryX, chartHeight + 10);
+          ctx.stroke();
+
+          // Subtle top header for entry line (suppressed if too close to expiration header)
+          const headerDistance = Math.abs(endLineX - entryX);
+          if (width >= 380 && headerDistance >= 60) {
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+            ctx.font = isMobile ? '8px JetBrains Mono, monospace' : '8.5px JetBrains Mono, monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText(isMobile ? 'Start' : 'Beginning of trade', entryX, 18);
+          }
+
+          // Entry node at execution price
+          ctx.fillStyle = tradeColor;
+          ctx.beginPath();
+          ctx.arc(entryX, strikeY, isMobile ? 2.5 : 3, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+
+        // 2. Clean, thin dashed entry price line across chart (low opacity, thin dashed, never occludes candles)
+        const lineStartX = entryX && entryX >= 10 && entryX <= width - 70 ? entryX : 0;
+        ctx.save();
+        ctx.strokeStyle = isCall ? 'rgba(0, 194, 111, 0.45)' : 'rgba(255, 51, 75, 0.45)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(lineStartX, strikeY);
+        ctx.lineTo(width - 65, strikeY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.restore();
+
+        // 3. Clean Entry Level Tag on Right Price Scale (Y-axis) - Scaled for mobile
+        ctx.save();
+        const axisTagW = isCompactMobile ? 58 : isMobile ? 60 : 63;
+        const axisTagH = isCompactMobile ? 15 : 17;
+        const axisTagX = width - axisTagW - 1;
+        const axisTagY = Math.max(8, Math.min(chartHeight - axisTagH - 4, strikeY - axisTagH / 2));
+        ctx.fillStyle = '#0084ff'; // Quotex standard clean blue entry level badge on price axis
+        drawRoundedRect(ctx, axisTagX, axisTagY, axisTagW, axisTagH, 3);
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.font = isCompactMobile ? 'bold 8px JetBrains Mono, monospace' : isMobile ? 'bold 8.5px JetBrains Mono, monospace' : 'bold 9.5px JetBrains Mono, monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(trade.strikePrice.toFixed(selectedAsset.pipDecimals), axisTagX + axisTagW / 2, axisTagY + axisTagH / 2 + 3);
+        ctx.restore();
+
+        // 4. Responsive compact badge displaying trade direction (PUT/CALL), amount, and live countdown timer
+        const secondsLeft = Math.max(0, Math.ceil((trade.endTime - Date.now()) / 1000));
+        const mm = Math.floor(secondsLeft / 60).toString().padStart(2, '0');
+        const ss = (secondsLeft % 60).toString().padStart(2, '0');
+        const timeFormatted = `${mm}:${ss}`;
+        const dirLabel = isCall ? '▲ CALL' : '▼ PUT';
+
+        // Adaptive typography & label sizing for mobile viewports
+        const fontSize = isCompactMobile ? 8 : isMobile ? 8.5 : 9.5;
+        ctx.save();
+        ctx.font = `bold ${fontSize}px JetBrains Mono, -apple-system, monospace`;
+
+        const badgeText = isCompactMobile && width < 360
+          ? `${isCall ? '▲' : '▼'} $${trade.investment} ${timeFormatted}`
+          : `${dirLabel} $${trade.investment}  ${timeFormatted}`;
+
+        const textMetrics = ctx.measureText(badgeText);
+        const pillPaddingH = isCompactMobile ? 10 : isMobile ? 12 : 16;
+        const pillWidth = Math.ceil(textMetrics.width + pillPaddingH);
+        const pillHeight = isCompactMobile ? 17 : isMobile ? 18.5 : 20;
+        const pillRadius = isCompactMobile ? 8.5 : isMobile ? 9.2 : 10;
+
+        // Position badge right next to the current price level or entry point without overflowing into axis or blocking candles
+        const maxPillX = width - 66 - pillWidth;
+        let pillX: number;
+        if (liveX + 6 + pillWidth <= maxPillX) {
+          pillX = liveX + 6;
+        } else if (liveX - pillWidth - 6 >= 10) {
+          pillX = liveX - pillWidth - 6;
+        } else {
+          pillX = Math.max(8, maxPillX);
+        }
+
+        // Slight vertical offset if multiple active trades share similar strike prices
+        const yOffset = currentAssetActiveTrades.length > 1
+          ? (index - (currentAssetActiveTrades.length - 1) / 2) * (pillHeight + 3)
+          : 0;
+        const pillY = Math.max(16, Math.min(chartHeight - pillHeight - 4, strikeY - pillHeight / 2 + yOffset));
+
+        // Draw sleek pill background with subtle shadow
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
+        ctx.shadowBlur = isMobile ? 4 : 6;
+        ctx.shadowOffsetY = 1;
+        ctx.fillStyle = tradeColor;
+        drawRoundedRect(ctx, pillX, pillY, pillWidth, pillHeight, pillRadius);
+        ctx.fill();
+        ctx.shadowColor = 'transparent';
+
+        // Crisp white text inside badge: direction (PUT/CALL), amount, and live countdown timer
+        ctx.fillStyle = '#ffffff';
+        ctx.textAlign = 'center';
+        ctx.fillText(badgeText, pillX + pillWidth / 2, pillY + pillHeight / 2 + (fontSize >= 9 ? 3.5 : 3));
+
+        // Small connection node circle at current price level / line
+        ctx.fillStyle = tradeColor;
+        ctx.beginPath();
+        ctx.arc(liveX, strikeY + yOffset, isMobile ? 2 : 2.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Micro countdown tag on the vertical expiration line (shown when space allows on larger displays)
+        if (!isCompactMobile && endLineX > pillX + pillWidth + 8 && endLineX + 38 < width - 66) {
+          const microTagW = 34;
+          const microTagH = 15;
+          const microTagX = endLineX + 3;
+          const microTagY = strikeY + yOffset - microTagH / 2;
+          ctx.fillStyle = '#141722';
+          drawRoundedRect(ctx, microTagX, microTagY, microTagW, microTagH, 3);
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
+          ctx.lineWidth = 0.8;
+          ctx.stroke();
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+          ctx.font = 'bold 8.5px JetBrains Mono, monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText(timeFormatted, microTagX + microTagW / 2, strikeY + yOffset + 3);
+        }
+
+        ctx.restore();
+      });
+    }
 
     // 5b. Interactive Trade History Overlay & Inline Coordinate Win/Loss Floating Badges (+1.80 $)
     if (showHistoryOverlay) {
@@ -3607,6 +3746,24 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               data-testid="otc-candlestick-canvas"
               className="w-full h-full block"
             />
+            {/* Quotex-style sleek floating notification pill when trade is opened */}
+            {tradeSuccess && (
+              <div
+                data-testid="chart-trade-opened-toast"
+                className="absolute top-2.5 left-2.5 sm:top-3.5 sm:left-3.5 max-w-[calc(100%-70px)] sm:max-w-md z-30 flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-lg bg-[#00c26f] text-slate-950 font-sans text-[11px] sm:text-xs font-semibold shadow-xl border border-[#00e676]/40 backdrop-blur-md animate-in fade-in slide-in-from-top-2 duration-200"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-slate-950" />
+                <span className="truncate">{tradeSuccess}</span>
+                <button
+                  type="button"
+                  onClick={() => setTradeSuccess(null)}
+                  className="ml-1 sm:ml-1.5 p-0.5 rounded hover:bg-black/15 text-slate-950/70 hover:text-slate-950 cursor-pointer transition-colors shrink-0"
+                  aria-label="Close notification"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
             {/* Mobile Floating Action Button: Reset Pan / Center Chart */}
             <button
               type="button"
