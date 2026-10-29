@@ -267,6 +267,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
 
     try {
+      // 1. Attempt Supabase Auth Sign Up
       let { data, error } = await supabase.auth.signUp({
         email: cleanEmail,
         password,
@@ -278,69 +279,90 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         },
       });
 
+      // If database trigger on auth.users failed, retry sign up without metadata or try sign in if created
       if (error) {
-        if (error.message?.includes('Database error saving new user') || error.message?.includes('trigger') || error.message?.includes('already registered')) {
-          // If user already registered or trigger failed, try signing in directly
-          const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({
+        const errorMsg = error.message || '';
+        if (
+          errorMsg.includes('Database error saving new user') ||
+          errorMsg.includes('trigger') ||
+          errorMsg.includes('500')
+        ) {
+          // Retry signUp without metadata options in case the DB trigger broke on metadata
+          const retrySignUp = await supabase.auth.signUp({
             email: cleanEmail,
             password,
           });
-          if (signInData?.user) {
-            data = { user: signInData.user, session: signInData.session };
+          if (retrySignUp.data?.user) {
+            data = retrySignUp.data;
             error = null;
           } else {
-            setAuthError(error.message);
-            setIsSubmitting(false);
-            return;
+            // Attempt direct sign-in in case user record was inserted despite trigger error
+            const signInRes = await supabase.auth.signInWithPassword({
+              email: cleanEmail,
+              password,
+            });
+            if (signInRes.data?.user) {
+              data = { user: signInRes.data.user, session: signInRes.data.session };
+              error = null;
+            } else {
+              setAuthError(`Database error during sign up: ${errorMsg}`);
+              setIsSubmitting(false);
+              return;
+            }
           }
         } else {
-          setAuthError(error.message);
+          setAuthError(errorMsg);
           setIsSubmitting(false);
           return;
         }
       }
 
-      const user = data.user;
+      const user = data?.user;
       if (!user) {
-        setAuthError('Sign up succeeded but no session was returned. Please try signing in.');
+        setAuthError('Sign up succeeded but no user session was returned. Please try signing in.');
         setIsSubmitting(false);
         return;
       }
 
+      // 2. Explicitly and manually insert a new row into the profiles table
       const userRefCode = `BFT-${user.id.slice(0, 6).toUpperCase()}`;
+      const profileRow = {
+        id: user.id,
+        email: cleanEmail,
+        full_name: cleanFullName,
+        referral_code: userRefCode,
+        referred_by: codeToAttribute || null,
+        balance: 0,
+        kyc_status: 'unverified',
+      };
 
-      // Gracefully ensure profile exists in profiles table (handle trigger failures)
-      let profile = null;
-      for (let attempt = 0; attempt < 3; attempt++) {
-        const { data: p } = await supabase
+      const { data: insertedProfile, error: profileErr } = await supabase
+        .from('profiles')
+        .upsert(profileRow, { onConflict: 'id' })
+        .select()
+        .maybeSingle();
+
+      let activeProfile = insertedProfile;
+
+      // Catch and handle profile insertion error (e.g. invalid referred_by constraint)
+      if (profileErr) {
+        console.warn('Primary profile upsert failed, retrying without referred_by:', profileErr.message);
+        const { data: retryProfile, error: retryErr } = await supabase
           .from('profiles')
-          .select('*')
-          .eq('id', user.id)
+          .upsert({ ...profileRow, referred_by: null }, { onConflict: 'id' })
+          .select()
           .maybeSingle();
-        if (p) {
-          profile = p;
-          break;
+
+        if (retryErr && !retryProfile) {
+          setAuthError(`Account created, but database profile error occurred: ${profileErr.message || retryErr.message}`);
+          setIsSubmitting(false);
+          return;
         }
-        if (attempt === 1) {
-          // Insert directly into profiles table as robust fallback if trigger didn't create profile
-          try {
-            await supabase.from('profiles').upsert({
-              id: user.id,
-              email: cleanEmail,
-              full_name: cleanFullName,
-              referral_code: userRefCode,
-              referred_by: codeToAttribute || null,
-              balance: 0,
-              kyc_status: 'unverified',
-            }, { onConflict: 'id' });
-          } catch {
-            // ignore
-          }
-        }
-        await new Promise((r) => setTimeout(r, 400));
+        activeProfile = retryProfile;
       }
 
-      const finalRefCode = profile?.referral_code || userRefCode;
+      // 3. Finalize JWT Session & Auth Callback
+      const finalRefCode = activeProfile?.referral_code || userRefCode;
       const jwtToken = createSessionJwtToken({
         userId: user.id,
         email: cleanEmail,
@@ -351,24 +373,24 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       onAuthSuccess({
         userId: user.id,
         email: cleanEmail,
-        fullName: profile?.full_name || cleanFullName,
+        fullName: activeProfile?.full_name || cleanFullName,
         referralCode: finalRefCode,
-        referredBy: profile?.referred_by || codeToAttribute || null,
+        referredBy: activeProfile?.referred_by || codeToAttribute || null,
         rememberMe,
         jwtToken,
         isNewRegistration: true,
         serverUser: {
           id: user.id,
           email: cleanEmail,
-          fullName: profile?.full_name || cleanFullName,
+          fullName: activeProfile?.full_name || cleanFullName,
           referralCode: finalRefCode,
-          kycStatus: profile?.kyc_status || 'unverified',
-          balance: profile?.balance || 0,
+          kycStatus: activeProfile?.kyc_status || 'unverified',
+          balance: activeProfile?.balance || 0,
         },
       });
       onClose();
     } catch (err: any) {
-      setAuthError(err?.message || 'Registration failed.');
+      setAuthError(err?.message || 'Unexpected registration error occurred.');
     } finally {
       setIsSubmitting(false);
     }
