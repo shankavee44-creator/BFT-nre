@@ -5,7 +5,7 @@ import { SupabaseMarketSyncEngine, MarketTickPayload } from './supabaseMarketSyn
 test('SupabaseMarketSyncEngine subscribes and broadcasts ticks correctly', async () => {
   const syncEngine = new SupabaseMarketSyncEngine();
 
-  let receivedTick: MarketTickPayload | null = null;
+  let receivedTick: any = null;
   const unsubscribe = syncEngine.subscribeTicks((tick) => {
     receivedTick = tick;
   });

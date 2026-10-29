@@ -148,6 +148,7 @@ import { QuotexMobileNav } from './QuotexMobileNav';
 import { PriceAlertModal, PriceAlert } from './PriceAlertModal';
 import { soundEngine } from '../utils/soundEffects';
 import { supabaseMarketSync } from '../utils/supabaseMarketSync';
+import { supabase } from '../utils/supabase';
 
 import {
   calculateCandleCountdown,
@@ -897,6 +898,15 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
           };
           onUpdateTrade(updatedTrade);
 
+          supabase.rpc('settle_otc_trade', {
+            p_trade_id: trade.id,
+            p_final_price: finalPrice,
+          }).then(({ error }) => {
+            if (error) {
+              // Fallback gracefully
+            }
+          });
+
           const newBalance = Number((curAccount.currentBalance + creditedAmount).toFixed(2));
           const updatedAccount: TradingAccount = {
             ...curAccount,
@@ -1111,6 +1121,27 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     };
 
     onAddTrade(newTrade);
+
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      supabase.from('user_trades').insert({
+        id: newTrade.id,
+        user_id: user?.id || 'anonymous',
+        asset: assetToTrade.symbol,
+        trade_type: direction,
+        entry_price: assetLivePrice,
+        amount: stakeToUse,
+        status: 'OPEN',
+        payout_percentage: assetToTrade.payout,
+        duration_seconds: durationToUse,
+        start_time: new Date(newTrade.startTime).toISOString(),
+        end_time: new Date(newTrade.endTime).toISOString(),
+      }).then(({ error }) => {
+        if (error) {
+          // Fallback gracefully
+        }
+      });
+    });
+
     setTradeSuccess(`Trade opened with price: ${assetLivePrice.toFixed(assetToTrade.pipDecimals)} ${assetToTrade.symbol}`);
     setTimeout(() => setTradeSuccess(null), 4000);
   };

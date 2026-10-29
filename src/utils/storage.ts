@@ -1,4 +1,4 @@
-import { TradingAccount, UserProfile, WithdrawalRequest, BinaryTrade, AssetInfo } from '../types';
+import { TradingAccount, UserProfile, WithdrawalRequest, BinaryTrade, AssetInfo, Candle } from '../types';
 
 export const DEFAULT_ASSETS: AssetInfo[] = [
   // ============================================================================

@@ -437,3 +437,146 @@ CREATE POLICY "Users can view earned commissions" ON public.referral_commissions
 GRANT USAGE ON SCHEMA public TO anon, authenticated;
 GRANT ALL ON ALL TABLES IN SCHEMA public TO authenticated;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO authenticated;
+
+-- ============================================================================
+-- 7. 24/7 BACKEND MARKET PRICES & OTC TRADES SCHEMA
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS public.market_prices (
+  symbol TEXT PRIMARY KEY,
+  last_price NUMERIC(15, 6) NOT NULL,
+  prev_price NUMERIC(15, 6) NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Seed initial market prices for common assets
+INSERT INTO public.market_prices (symbol, last_price, prev_price, updated_at)
+VALUES 
+  ('EUR/USD (OTC)', 1.08542, 1.08538, NOW()),
+  ('GBP/USD (OTC)', 1.26420, 1.26415, NOW()),
+  ('USD/BRL (OTC)', 5.74210, 5.74180, NOW()),
+  ('USD/JPY (OTC)', 154.210, 154.195, NOW()),
+  ('BTC/USD (OTC)', 67450.00, 67420.00, NOW())
+ON CONFLICT (symbol) DO NOTHING;
+
+-- Function to continuously update market prices on the backend (Brownian motion simulation)
+CREATE OR REPLACE FUNCTION public.update_market_prices()
+RETURNS VOID AS $$
+DECLARE
+  rec RECORD;
+  delta NUMERIC;
+  new_p NUMERIC;
+BEGIN
+  FOR rec IN SELECT symbol, last_price FROM public.market_prices LOOP
+    delta := (random() - 0.495) * (rec.last_price * 0.0004);
+    new_p := ROUND(GREATEST(0.0001, rec.last_price + delta), 5);
+    
+    UPDATE public.market_prices
+    SET prev_price = rec.last_price,
+        last_price = new_p,
+        updated_at = NOW()
+    WHERE symbol = rec.symbol;
+  END LOOP;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+-- Optional pg_cron scheduling (if extension is available)
+-- SELECT cron.schedule('update-market-every-second', '* * * * * *', $$SELECT public.update_market_prices();$$);
+
+-- USER TRADES TABLE FOR OTC BINARY OPTIONS
+CREATE TABLE IF NOT EXISTS public.user_trades (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  symbol TEXT NOT NULL,
+  trade_type TEXT NOT NULL CHECK (trade_type IN ('CALL', 'PUT', 'HIGHER', 'LOWER')),
+  amount NUMERIC(15, 2) NOT NULL CHECK (amount > 0),
+  entry_price NUMERIC(15, 6) NOT NULL,
+  exit_price NUMERIC(15, 6),
+  payout_multiplier NUMERIC(5, 2) NOT NULL DEFAULT 1.80,
+  status TEXT NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN', 'WON', 'LOST', 'TIE')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  settled_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_trades_user_status ON public.user_trades(user_id, status);
+
+-- RPC FUNCTION TO SETTLE OTC TRADE UPON EXPIRATION
+CREATE OR REPLACE FUNCTION public.settle_otc_trade(
+  p_trade_id UUID,
+  p_final_price NUMERIC
+)
+RETURNS JSONB AS $$
+DECLARE
+  v_trade RECORD;
+  v_payout NUMERIC(15, 2);
+  v_won BOOLEAN;
+  v_result TEXT;
+BEGIN
+  SELECT * INTO v_trade FROM public.user_trades WHERE id = p_trade_id FOR UPDATE;
+  
+  IF NOT FOUND THEN
+    RETURN json_build_object('ok', false, 'error', 'Trade not found');
+  END IF;
+
+  IF v_trade.status <> 'OPEN' THEN
+    RETURN json_build_object('ok', false, 'error', 'Trade already settled', 'trade', v_trade);
+  END IF;
+
+  IF v_trade.trade_type IN ('CALL', 'HIGHER') THEN
+    v_won := p_final_price > v_trade.entry_price;
+  ELSE
+    v_won := p_final_price < v_trade.entry_price;
+  END IF;
+
+  IF p_final_price = v_trade.entry_price THEN
+    v_result := 'TIE';
+    v_payout := v_trade.amount;
+  ELSIF v_won THEN
+    v_result := 'WON';
+    v_payout := ROUND(v_trade.amount * v_trade.payout_multiplier, 2);
+  ELSE
+    v_result := 'LOST';
+    v_payout := 0.00;
+  END IF;
+
+  UPDATE public.user_trades
+  SET exit_price = p_final_price,
+      status = v_result,
+      settled_at = NOW()
+  WHERE id = p_trade_id;
+
+  IF v_payout > 0 THEN
+    UPDATE public.profiles
+    SET balance = balance + v_payout,
+        updated_at = NOW()
+    WHERE id = v_trade.user_id;
+  END IF;
+
+  SELECT * INTO v_trade FROM public.user_trades WHERE id = p_trade_id;
+
+  RETURN json_build_object(
+    'ok', true,
+    'result', v_result,
+    'payout', v_payout,
+    'trade', v_trade
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+-- Enable RLS on user_trades & market_prices
+ALTER TABLE public.market_prices ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.user_trades ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Public read access to market_prices" ON public.market_prices;
+CREATE POLICY "Public read access to market_prices" ON public.market_prices FOR SELECT TO public USING (true);
+
+DROP POLICY IF EXISTS "Users can view own trades" ON public.user_trades;
+CREATE POLICY "Users can view own trades" ON public.user_trades FOR SELECT USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can insert own trades" ON public.user_trades;
+CREATE POLICY "Users can insert own trades" ON public.user_trades FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+GRANT ALL ON public.market_prices TO anon, authenticated;
+GRANT ALL ON public.user_trades TO authenticated;
+
