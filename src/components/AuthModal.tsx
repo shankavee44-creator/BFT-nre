@@ -257,8 +257,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setIsSubmitting(true);
 
     const cleanEmail = email.trim().toLowerCase();
-    const codeToAttribute = referralCodeInput.trim().toUpperCase() || getStoredReferralCode() || null;
     const cleanFullName = fullName.trim() || cleanEmail.split('@')[0];
+    const sponsorCode = referralCodeInput.trim().toUpperCase() || getStoredReferralCode() || null;
+    
+    // Generate 6-character referral code for user metadata
+    const myReferralCode = Math.random().toString(36).substring(2, 8).toUpperCase();
 
     if (!cleanEmail || !password) {
       setAuthError('Please enter a valid email and password (min 6 characters).');
@@ -267,134 +270,95 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
 
     try {
-      // 1. Attempt Supabase Auth Sign Up
-      let { data, error } = await supabase.auth.signUp({
+      // 1. Attempt Supabase Auth Sign Up with metadata for the trigger (full_name & referral_code)
+      let { data, error: signUpError } = await supabase.auth.signUp({
         email: cleanEmail,
         password,
         options: {
           data: {
             full_name: cleanFullName,
-            referral_code: codeToAttribute,
-          },
-        },
+            referral_code: myReferralCode,
+          }
+        }
       });
 
-      // If database trigger on auth.users failed, retry sign up without metadata or try sign in if created
-      if (error) {
-        const errorMsg = error.message || '';
-        if (
-          errorMsg.includes('Database error saving new user') ||
-          errorMsg.includes('trigger') ||
-          errorMsg.includes('500')
-        ) {
-          // Retry signUp without metadata options in case the DB trigger broke on metadata
-          const retrySignUp = await supabase.auth.signUp({
-            email: cleanEmail,
-            password,
-          });
-          if (retrySignUp.data?.user) {
-            data = retrySignUp.data;
-            error = null;
-          } else {
-            // Attempt direct sign-in in case user record was inserted despite trigger error
-            const signInRes = await supabase.auth.signInWithPassword({
-              email: cleanEmail,
-              password,
-            });
-            if (signInRes.data?.user) {
-              data = { user: signInRes.data.user, session: signInRes.data.session };
-              error = null;
-            } else {
-              setAuthError(`Database error during sign up: ${errorMsg}`);
-              setIsSubmitting(false);
-              return;
-            }
-          }
-        } else {
-          setAuthError(errorMsg);
-          setIsSubmitting(false);
-          return;
+      // If a database trigger error occurs, retry without metadata payload as fallback
+      if (signUpError && (signUpError.message?.includes('Database error') || signUpError.message?.includes('AuthRetryableFetchError'))) {
+        console.warn('Supabase DB trigger error encountered, retrying with fallback payload...', signUpError);
+        const retry = await supabase.auth.signUp({
+          email: cleanEmail,
+          password,
+        });
+        if (retry.data?.user && !retry.error) {
+          data = retry.data;
+          signUpError = null;
         }
       }
 
-      const user = data?.user;
-      if (!user) {
-        setAuthError('Sign up succeeded but no user session was returned. Please try signing in.');
+      if (signUpError) {
+        let msg = signUpError.message || 'An unexpected error occurred during registration.';
+        if (msg.includes('already registered') || msg.includes('already exists') || msg.includes('User already registered')) {
+          msg = 'An account with this email address already exists. Please sign in instead.';
+        } else if (msg.includes('Database error') || msg.includes('AuthRetryableFetchError')) {
+          msg = 'Database error saving user profile. If you already have an account, please try signing in.';
+        } else if (msg.includes('Failed to fetch')) {
+          msg = 'Network Error: Connection to authentication server failed. Please check your internet connection or disable ad-blockers.';
+        }
+        setAuthError(msg);
         setIsSubmitting(false);
         return;
       }
 
-      // 2. Explicitly and manually insert a new row into the profiles table
-      const userRefCode = `BFT-${user.id.slice(0, 6).toUpperCase()}`;
-      const profileRow = {
-        id: user.id,
-        email: cleanEmail,
-        full_name: cleanFullName,
-        referral_code: userRefCode,
-        referred_by: codeToAttribute || null,
-        balance: 0,
-        kyc_status: 'unverified',
-      };
-
-      const { data: insertedProfile, error: profileErr } = await supabase
-        .from('profiles')
-        .upsert(profileRow, { onConflict: 'id' })
-        .select()
-        .maybeSingle();
-
-      let activeProfile = insertedProfile;
-
-      // Catch and handle profile insertion error (e.g. invalid referred_by constraint)
-      if (profileErr) {
-        console.warn('Primary profile upsert failed, retrying without referred_by:', profileErr.message);
-        const { data: retryProfile, error: retryErr } = await supabase
-          .from('profiles')
-          .upsert({ ...profileRow, referred_by: null }, { onConflict: 'id' })
-          .select()
-          .maybeSingle();
-
-        if (retryErr && !retryProfile) {
-          setAuthError(`Account created, but database profile error occurred: ${profileErr.message || retryErr.message}`);
-          setIsSubmitting(false);
-          return;
-        }
-        activeProfile = retryProfile;
+      const user = data?.user;
+      if (!user) {
+        setAuthError('Registration completed, but no user profile was returned. Please try signing in.');
+        setIsSubmitting(false);
+        return;
       }
 
-      // 3. Finalize JWT Session & Auth Callback
-      const finalRefCode = activeProfile?.referral_code || userRefCode;
+      // 2. Finalize JWT Session & Auth Callback
       const jwtToken = createSessionJwtToken({
         userId: user.id,
         email: cleanEmail,
-        referralCode: finalRefCode,
+        referralCode: myReferralCode,
         rememberMe,
       });
 
       onAuthSuccess({
         userId: user.id,
         email: cleanEmail,
-        fullName: activeProfile?.full_name || cleanFullName,
-        referralCode: finalRefCode,
-        referredBy: activeProfile?.referred_by || codeToAttribute || null,
+        fullName: cleanFullName,
+        referralCode: myReferralCode,
+        referredBy: sponsorCode,
         rememberMe,
         jwtToken,
         isNewRegistration: true,
         serverUser: {
           id: user.id,
           email: cleanEmail,
-          fullName: activeProfile?.full_name || cleanFullName,
-          referralCode: finalRefCode,
-          kycStatus: activeProfile?.kyc_status || 'unverified',
-          balance: activeProfile?.balance || 0,
+          fullName: cleanFullName,
+          referralCode: myReferralCode,
+          kycStatus: 'unverified',
+          balance: 0,
         },
       });
       onClose();
     } catch (err: any) {
-      setAuthError(err?.message || 'Unexpected registration error occurred.');
+      console.error('Auth Error:', err);
+      let msg = err?.message || 'An unexpected error occurred during registration.';
+      if (msg.includes('already registered') || msg.includes('User already registered')) {
+        msg = 'An account with this email address already exists. Please sign in instead.';
+      } else if (msg.includes('Failed to fetch')) {
+        msg = 'Network Error: Connection to authentication server failed. Please check your internet connection or disable ad-blockers.';
+      } else if (msg.includes('Database error') || msg.includes('AuthRetryableFetchError')) {
+        msg = 'Database error saving new user. If your account was created, please try signing in.';
+      }
+      setAuthError(msg);
     } finally {
       setIsSubmitting(false);
     }
   };
+
 
   const handleOpenGoogleOAuthPopup = async () => {
     const codeToAttribute =

@@ -53,15 +53,6 @@ body {
   background: #ff8800;
 }
 
-/* BFT Institutional Zero-Glow Solid Accent Utilities */
-.glow-gold,
-.glow-gold-intense,
-.glow-mint,
-.glow-mint-intense,
-.glow-red {
-  box-shadow: none !important;
-}
-
 .text-glow-gold,
 .text-glow-mint,
 .text-glow-red {
@@ -213,31 +204,8 @@ button:active:not(:disabled),
   }
 }
 
-@keyframes bftPulseGlow {
-  0%, 100% {
-    opacity: 0.4;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.75;
-    transform: scale(1.1);
-  }
-}
-
-.animate-bft-bg-1 {
-  animation: bftCrossFadeLayer1 16s ease-in-out infinite;
-}
-
-.animate-bft-bg-2 {
-  animation: bftCrossFadeLayer2 16s ease-in-out infinite;
-}
-
 .animate-spooky-ember {
   animation: bftSpookyEmber 6s ease-out infinite;
-}
-
-.animate-pulse-glow {
-  animation: bftPulseGlow 5s ease-in-out infinite;
 }
 
 /* Mobile Responsive Spooky Background Tuning */

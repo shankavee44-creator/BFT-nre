@@ -56,8 +56,8 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
         <div className="absolute inset-0 bg-gradient-to-r from-[#0a0a0a]/80 via-transparent to-[#0a0a0a]/80" />
         <div className="absolute inset-0 bg-cyber-grid opacity-30 mix-blend-overlay" />
 
-        {/* Ambient Pulsing Orange Glow */}
-        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[320px] sm:w-[600px] h-[200px] sm:h-[300px] bg-[#ff8800]/25 rounded-full blur-[90px] sm:blur-[120px] pointer-events-none animate-pulse-glow" />
+        {/* Ambient Solid Orange Accent Background */}
+        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[320px] sm:w-[600px] h-[200px] sm:h-[300px] bg-[#ff8800]/10 rounded-full blur-[120px] pointer-events-none" />
 
         {/* Floating Spooky Ember Particles */}
         <div className="absolute inset-0 overflow-hidden pointer-events-none">

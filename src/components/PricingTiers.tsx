@@ -138,7 +138,7 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
               onClick={() => setSelectedTier(tier.id)}
               className={`flex-1 min-w-[170px] py-3 px-4 rounded-xl text-xs sm:text-sm font-bold transition-all relative cursor-pointer ${
                 selectedTier === tier.id
-                  ? 'bg-gradient-to-r from-[#ff8800] to-[#ffaa00] text-slate-950 font-black shadow-lg glow-gold scale-[1.02]'
+                  ? 'bg-gradient-to-r from-[#ff8800] to-[#ffaa00] text-slate-950 font-black shadow-lg scale-[1.02]'
                   : 'text-slate-300 hover:text-white hover:bg-white/5'
               }`}
             >
@@ -216,7 +216,7 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
                   onClick={() => setSelectedSize(pkg.size)}
                   className={`relative rounded-3xl transition-all duration-300 cursor-pointer overflow-hidden p-6 sm:p-7 flex flex-col justify-between ${
                     isSelected
-                      ? 'bg-gradient-to-b from-[#1a130b] via-[#111115] to-[#0b0b0e] border-2 border-[#ff8800] glow-gold'
+                      ? 'bg-gradient-to-b from-[#1a130b] via-[#111115] to-[#0b0b0e] border-2 border-[#ff8800]'
                       : 'bg-[#101014] hover:bg-[#141419] border border-white/10 hover:border-[#ff8800]/50 shadow-xl'
                   }`}
                 >
@@ -354,7 +354,7 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
                     }}
                     className={`w-full py-3.5 px-4 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer transition-all font-mono uppercase ${
                       isSelected
-                        ? 'bg-gradient-to-r from-[#ff8800] to-[#ffaa00] text-slate-950 shadow-xl glow-gold hover:brightness-110'
+                        ? 'bg-gradient-to-r from-[#ff8800] to-[#ffaa00] text-slate-950 shadow-xl hover:brightness-110'
                         : 'bg-[#18181f] hover:bg-[#22222c] text-white border border-[#ff8800]/30'
                     }`}
                   >
