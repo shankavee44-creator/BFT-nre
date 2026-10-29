@@ -12,28 +12,9 @@ export interface LivePayoutNotification {
   highlight?: boolean;
 }
 
-const INITIAL_PAYOUT_NOTIFICATIONS: LivePayoutNotification[] = [
-  { id: 'pay_01', traderName: 'Ahamed K.', flag: '🇦🇪', country: 'Dubai, UAE', amount: 450.00, method: 'USDT', timeAgo: 'Just now' },
-  { id: 'pay_02', traderName: 'Kasun P.', flag: '🇱🇰', country: 'Sri Lanka', amount: 1250.00, method: 'USDT', timeAgo: '1m ago' },
-  { id: 'pay_03', traderName: 'Rajesh S.', flag: '🇮🇳', country: 'India', amount: 680.00, method: 'USDT', timeAgo: '2m ago' },
-  { id: 'pay_04', traderName: 'Zainab A.', flag: '🇵🇰', country: 'Pakistan', amount: 920.00, method: 'USDT', timeAgo: '3m ago' },
-  { id: 'pay_05', traderName: 'Nurul H.', flag: '🇲🇾', country: 'Malaysia', amount: 540.00, method: 'USDT', timeAgo: '4m ago' },
-  { id: 'pay_06', traderName: 'Tariq M.', flag: '🇦🇪', country: 'Dubai, UAE', amount: 1840.00, method: 'USDT', timeAgo: '5m ago' },
-  { id: 'pay_07', traderName: 'Bilal R.', flag: '🇵🇰', country: 'Pakistan', amount: 760.00, method: 'USDT', timeAgo: '6m ago' },
-  { id: 'pay_08', traderName: 'Faizal Z.', flag: '🇲🇾', country: 'Malaysia', amount: 1120.00, method: 'USDT', timeAgo: '8m ago' },
-  { id: 'pay_09', traderName: 'Vikram P.', flag: '🇮🇳', country: 'India', amount: 1490.00, method: 'USDT', timeAgo: '9m ago' },
-  { id: 'pay_10', traderName: 'Hamza Q.', flag: '🇵🇰', country: 'Pakistan', amount: 615.00, method: 'USDT', timeAgo: '11m ago' },
-];
+const INITIAL_PAYOUT_NOTIFICATIONS: LivePayoutNotification[] = [];
 
-const STREAMING_POOL: Omit<LivePayoutNotification, 'id' | 'timeAgo' | 'highlight'>[] = [
-  { traderName: 'Ahamed K.', flag: '🇦🇪', country: 'Dubai, UAE', amount: 450.00, method: 'USDT' },
-  { traderName: 'Arjun M.', flag: '🇮🇳', country: 'India', amount: 810.00, method: 'USDT' },
-  { traderName: 'Usman K.', flag: '🇵🇰', country: 'Pakistan', amount: 530.00, method: 'USDT' },
-  { traderName: 'Syafiq R.', flag: '🇲🇾', country: 'Malaysia', amount: 975.00, method: 'USDT' },
-  { traderName: 'Rashid K.', flag: '🇦🇪', country: 'Dubai, UAE', amount: 1620.00, method: 'USDT' },
-  { traderName: 'Kasun P.', flag: '🇱🇰', country: 'Sri Lanka', amount: 1180.00, method: 'USDT' },
-  { traderName: 'Ananya D.', flag: '🇮🇳', country: 'India', amount: 495.00, method: 'USDT' },
-];
+const STREAMING_POOL: Omit<LivePayoutNotification, 'id' | 'timeAgo' | 'highlight'>[] = [];
 
 interface CryptoTickerBarProps {
   onSelectPair?: (symbol: string) => void;

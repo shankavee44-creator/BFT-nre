@@ -63,6 +63,13 @@ import {
   processWithdrawalCommission,
 } from './utils/affiliateEngine';
 import {
+  fetchUserTrades,
+  createSupabaseTrade,
+  updateSupabaseTrade,
+  subscribeUserTrades,
+  mapFromSupabaseRow,
+} from './utils/supabaseTradeSync';
+import {
   PACKAGES,
   advanceChallengeAccountPhase,
   createDefaultPersonalLiveAccount,
@@ -263,7 +270,42 @@ export default function App() {
     } else if (refCode) {
       setActiveReferralNotification(refCode);
     }
-  }, []);
+
+    // Initial fetch of trades from Supabase if logged in
+    if (userProfile.id && userProfile.isLoggedIn) {
+      fetchUserTrades(userProfile.id).then((fetchedTrades) => {
+        if (fetchedTrades.length > 0) {
+          setTrades(fetchedTrades);
+          saveTrades(fetchedTrades);
+        }
+      });
+    }
+  }, [userProfile.id, userProfile.isLoggedIn]);
+
+  // Real-time Trade Subscription
+  useEffect(() => {
+    if (!userProfile.id || !userProfile.isLoggedIn) return;
+
+    const subscription = subscribeUserTrades(userProfile.id, (payload) => {
+      const { eventType, new: newRecord, old: oldRecord } = payload;
+      
+      if (eventType === 'INSERT') {
+        const trade = mapFromSupabaseRow(newRecord);
+        setTrades((prev) => (prev.some((t) => t.id === trade.id) ? prev : [trade, ...prev]));
+      } else if (eventType === 'UPDATE') {
+        const trade = mapFromSupabaseRow(newRecord);
+        setTrades((prev) => 
+          prev.map((t) => (t.id === trade.id ? trade : t))
+        );
+      } else if (eventType === 'DELETE') {
+        setTrades((prev) => prev.filter((t) => t.id === oldRecord.id));
+      }
+    });
+
+    return () => {
+      subscription?.unsubscribe();
+    };
+  }, [userProfile.id, userProfile.isLoggedIn]);
 
   // Multi-Tab & Multi-View State Synchronization (BroadcastChannel & Storage Event bus)
   useEffect(() => {
@@ -584,6 +626,11 @@ export default function App() {
       return updated;
     });
     broadcastSyncEvent('TRADE_ADDED', trade);
+
+    // Persist to Supabase
+    if (userProfile.id && userProfile.isLoggedIn) {
+      createSupabaseTrade(trade, userProfile.id);
+    }
   };
 
   const handleUpdateTrade = (trade: BinaryTrade) => {
@@ -593,6 +640,11 @@ export default function App() {
       return updated;
     });
     broadcastSyncEvent('TRADE_UPDATED', trade);
+
+    // Update in Supabase
+    if (userProfile.id && userProfile.isLoggedIn) {
+      updateSupabaseTrade(trade, userProfile.id);
+    }
   };
 
   const handleAddAffiliatePayout = (payout: AffiliatePayout) => {

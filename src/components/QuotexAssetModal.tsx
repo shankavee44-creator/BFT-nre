@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Search, X, Star, TrendingUp, Sparkles, Activity } from 'lucide-react';
 import { AssetInfo } from '../types';
-import { DEFAULT_ASSETS, getLivePayoutPercentage } from '../utils/storage';
+import { getDynamicAssets, getLivePayoutPercentage } from '../utils/storage';
 import { getAssetMarketState } from '../utils/priceFeedEngine';
 import { soundEngine } from '../utils/soundEffects';
 
@@ -27,7 +27,7 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
   currentAssetSymbol,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeCategory, setActiveCategory] = useState<ModalCategoryTab>('Forex (OTC)');
+  const [activeCategory, setActiveCategory] = useState<ModalCategoryTab>('All');
   const [favorites, setFavorites] = useState<string[]>([
     'EUR/USD (OTC)',
     'GBP/JPY (OTC)',
@@ -40,8 +40,8 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
   useEffect(() => {
     if (!isOpen) return;
     const interval = setInterval(() => {
-      setPayoutSeed(Math.floor(Date.now() / 2500));
-    }, 2500);
+      setPayoutSeed(Math.floor(Date.now() / 500));
+    }, 500);
     return () => clearInterval(interval);
   }, [isOpen]);
 
@@ -59,29 +59,9 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
 
   const categoryTabs: { id: ModalCategoryTab; label: string; count: number }[] = [
     {
-      id: 'Forex (OTC)',
-      label: 'Forex (OTC)',
-      count: DEFAULT_ASSETS.filter((a) => a.category === 'Forex (OTC)').length,
-    },
-    {
-      id: 'Crypto (OTC)',
-      label: 'Crypto (OTC)',
-      count: DEFAULT_ASSETS.filter((a) => a.category === 'Crypto (OTC)').length,
-    },
-    {
-      id: 'Commodities (OTC)',
-      label: 'Commodities (OTC)',
-      count: DEFAULT_ASSETS.filter((a) => a.category === 'Commodities (OTC)').length,
-    },
-    {
-      id: 'Stocks (OTC)',
-      label: 'Stocks (OTC)',
-      count: DEFAULT_ASSETS.filter((a) => a.category === 'Stocks (OTC)').length,
-    },
-    {
       id: 'All',
       label: 'All Markets',
-      count: DEFAULT_ASSETS.length,
+      count: getDynamicAssets().length,
     },
     {
       id: 'Favorites',
@@ -90,19 +70,17 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
     },
   ];
 
-  const filteredAssets = DEFAULT_ASSETS.filter((asset) => {
+  const filteredAssets = getDynamicAssets().filter((asset) => {
     const matchesSearch =
       asset.symbol.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      asset.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      asset.category.toLowerCase().includes(searchQuery.toLowerCase());
+      asset.name.toLowerCase().includes(searchQuery.toLowerCase());
 
     if (searchQuery.trim().length > 0) {
       return matchesSearch;
     }
 
-    if (activeCategory === 'All') return true;
     if (activeCategory === 'Favorites') return favorites.includes(asset.symbol);
-    return asset.category === activeCategory;
+    return true; // Show all for 'All' or any other tab
   });
 
   return (
@@ -118,11 +96,11 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
               <h3 className="text-base font-black text-white font-mono flex items-center gap-2">
                 Select OTC Trading Instrument
                 <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30">
-                  104+ Live OTC Feeds • Up to 95% Payout
+                  {getDynamicAssets().length}+ Live OTC Feeds • Up to 95% Payout
                 </span>
               </h3>
               <p className="text-xs text-slate-400">
-                25+ instruments per category — Forex (OTC), Crypto (OTC), Commodities (OTC) &amp; Stocks (OTC)
+                Explore a wide range of institutional OTC instruments including Forex, Crypto, and Commodities.
               </p>
             </div>
           </div>
@@ -270,9 +248,9 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
         {/* Footer info */}
         <div className="p-3 bg-[#0a0a0d] border-t border-white/10 flex items-center justify-between text-[11px] text-slate-400 font-mono">
           <span className="flex items-center gap-1.5 text-[#ffaa00]">
-            <Sparkles className="w-3.5 h-3.5 text-[#ff8800]" /> 24/7 Institutional Algorithmic OTC Feeds ({filteredAssets.length} shown)
+            <Sparkles className="w-3.5 h-3.5 text-[#ff8800]" /> 24/7 Institutional Algorithmic OTC Feeds ({filteredAssets.length} active)
           </span>
-          <span className="text-emerald-400 font-bold">Zero Slippage • Instant Execution</span>
+          <span className="text-emerald-400 font-bold">Zero Slippage • Global Sync Enabled</span>
         </div>
       </div>
     </div>

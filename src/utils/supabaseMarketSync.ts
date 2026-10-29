@@ -1,7 +1,7 @@
 import { supabase } from './supabase';
-import { Candle, AssetInfo } from '../types';
+import { Candle, AssetInfo, AssetCategory } from '../types';
 import { normalizeAssetSymbol } from './storage';
-import { getOrCreateMasterHistory } from './priceFeedEngine';
+import { getOrCreateMasterHistory, setMarketBroadcastListener } from './priceFeedEngine';
 
 
 export interface MarketTickPayload {
@@ -24,12 +24,17 @@ export type MarketTickCallback = (payload: MarketTickPayload) => void;
 
 export class SupabaseMarketSyncEngine {
   private channel: ReturnType<typeof supabase.channel> | null = null;
+  private assetSubscription: ReturnType<typeof supabase.channel> | null = null;
   private listeners: Set<MarketTickCallback> = new Set();
   private lastBroadcastMs: Record<string, number> = {};
   private isSubscribed = false;
 
   constructor() {
-    this.initRealtimeChannel();
+    if (typeof window !== 'undefined') {
+      this.initRealtimeChannel();
+      // Register this instance as the global broadcast handler for the price engine
+      setMarketBroadcastListener((payload) => this.broadcastTick(payload));
+    }
   }
 
   /**
@@ -60,6 +65,87 @@ export class SupabaseMarketSyncEngine {
     } catch (e) {
       console.warn('Supabase Realtime channel init failed, using fail-safe sync mode:', e);
     }
+  }
+
+  /**
+   * Fetches all 250+ assets directly from Supabase 'otc_assets' table.
+   */
+  public async fetchAllOtcAssets(): Promise<AssetInfo[]> {
+    try {
+      const { data, error } = await supabase
+        .from('otc_assets')
+        .select('*')
+        .order('symbol', { ascending: true });
+
+      if (error) throw error;
+      if (!data) return [];
+
+      return data.map((item: any) => {
+        const symbol = item.symbol || 'UNKNOWN';
+        return {
+          symbol,
+          name: item.name || symbol,
+          payout: Number(item.payout_rate) || 92,
+          category: (item.category as AssetCategory) || 'OTC',
+          basePrice: Number(item.current_price) || 1.0,
+          volatility: Number(item.volatility) || 0.00012,
+          pipDecimals: Number(item.pip_decimals) || (symbol.includes('JPY') ? 3 : symbol.includes('/') ? 5 : 2),
+          flag: item.flag || '📈',
+        };
+      });
+    } catch (err) {
+      console.error('Failed to fetch OTC assets from Supabase:', err);
+      return [];
+    }
+  }
+
+  /**
+   * Enables Global Realtime Sync: Subscribes to 'otc_assets' table updates so every visitor
+   * sees the exact same price movement simultaneously.
+   */
+  public initGlobalMarketSync(onUpdate?: (asset: Partial<AssetInfo>) => void) {
+    if (typeof window === 'undefined') return;
+    if (this.assetSubscription) return;
+
+    this.assetSubscription = supabase
+      .channel('global-otc-sync')
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'otc_assets' },
+        (payload) => {
+          const updated = payload.new;
+          if (!updated || !updated.symbol) return;
+
+          const price = Number(updated.current_price);
+          if (Number.isNaN(price)) return;
+
+          const payout = updated.payout_rate ? Number(updated.payout_rate) : undefined;
+          
+          // Apply to local market engine
+          const store = getOrCreateMasterHistory({ symbol: updated.symbol } as AssetInfo);
+          if (store) {
+            store.prevPrice = store.lastPrice;
+            store.lastPrice = price;
+          }
+
+          // Notify UI components
+          this.notifySubscribers({
+            symbol: updated.symbol,
+            price: price,
+            prevPrice: store?.prevPrice || price,
+            timestamp: Date.now(),
+          });
+
+          if (onUpdate) {
+            onUpdate({
+              symbol: updated.symbol,
+              payout: payout,
+              basePrice: price,
+            });
+          }
+        }
+      )
+      .subscribe();
   }
 
   /**
@@ -100,8 +186,13 @@ export class SupabaseMarketSyncEngine {
       }
     }
 
-    // Persist snapshot to Supabase DB asynchronously (throttled every 3s)
-    if (!this.lastBroadcastMs[`${symKey}:db`] || now - this.lastBroadcastMs[`${symKey}:db`] > 3000) {
+    // Persist snapshot to Supabase DB asynchronously (throttled every 3s in browser runtime)
+    // Note: If prices are managed by a backend cron/edge function, this client-side persist
+    // might be redundant, but we keep it as a fallback for user-driven ticks.
+    if (
+      typeof window !== 'undefined' &&
+      (!this.lastBroadcastMs[`${symKey}:db`] || now - this.lastBroadcastMs[`${symKey}:db`] > 3000)
+    ) {
       this.lastBroadcastMs[`${symKey}:db`] = now;
       this.persistSnapshotToSupabase(payload);
     }
@@ -191,6 +282,10 @@ export class SupabaseMarketSyncEngine {
       }
       this.channel = null;
       this.isSubscribed = false;
+    }
+    if (this.assetSubscription) {
+      supabase.removeChannel(this.assetSubscription);
+      this.assetSubscription = null;
     }
     this.listeners.clear();
   }

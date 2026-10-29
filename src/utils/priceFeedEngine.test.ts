@@ -7,6 +7,8 @@ import {
   resetAssetMarketState,
   getAssetMarketState,
   getAssetTimeOffsetMs,
+  calculateCandleCloseDynamics,
+  calculateRiskManagementOffset,
 } from './priceFeedEngine';
 import { AssetInfo } from '../types';
 import {
@@ -436,6 +438,99 @@ test('Asset-Specific Volatility: Crypto and Gold exhibit higher relative body va
   assert.ok(btcAvgPct > eurAvgPct, 'Crypto average percentage body size should be higher than Forex');
 });
 
+test('Candle Expiration Dynamics: pre-close tightening compresses volatility and last-second close triggers volatility spikes', () => {
+  const symbol = 'EUR/USD (OTC)';
+  const tf = 15; // 15s candle (15000ms bucket)
+  const bucketMs = tf * 1000;
+  const offsetMs = getAssetTimeOffsetMs(symbol, tf);
+  const baseBucketStart = 1710000000000 - offsetMs;
 
+  // 1. Early/Mid candle (30% progress -> 4500ms into 15000ms bucket)
+  const midCandle = calculateCandleCloseDynamics(symbol, tf, baseBucketStart + 4500);
+  assert.equal(midCandle.isTighteningPhase, false);
+  assert.equal(midCandle.isLastSecondSpike, false);
+  assert.equal(midCandle.volatilityMultiplier, 1.0);
 
+  // 2. Pre-close tightening phase (74% progress -> 11100ms into 15000ms bucket)
+  const tighteningCandle = calculateCandleCloseDynamics(symbol, tf, baseBucketStart + 11100);
+  assert.equal(tighteningCandle.isTighteningPhase, true);
+  assert.equal(tighteningCandle.isLastSecondSpike, false);
+  assert.ok(
+    tighteningCandle.volatilityMultiplier < 1.0 && tighteningCandle.volatilityMultiplier >= 0.75,
+    `Expected tightening multiplier < 1.0, got ${tighteningCandle.volatilityMultiplier}`
+  );
 
+  // 3. Last-second volatility spike (95% progress -> 14250ms into 15000ms bucket, 750ms remaining)
+  const spikeCandle = calculateCandleCloseDynamics(symbol, tf, baseBucketStart + 14250);
+  assert.equal(spikeCandle.isLastSecondSpike, true);
+  assert.ok(
+    spikeCandle.volatilityMultiplier > 1.3,
+    `Expected last-second spike multiplier > 1.3, got ${spikeCandle.volatilityMultiplier}`
+  );
+  assert.notEqual(spikeCandle.microBurstImpulse, 0, 'Last-second spike should include a micro-burst impulse');
+});
+
+test('Risk-Management Offset: subtle probability adjustment and strike-zone tightening remain bounded and organic', () => {
+  const nowMs = 1710000050000;
+  const unitVol = mockEurUsd.volatility;
+
+  // 1. No active trades -> zero adjustment
+  const emptyAdj = calculateRiskManagementOffset({
+    asset: mockEurUsd,
+    currentPrice: 1.0854,
+    unitVol,
+    activeTrades: [],
+    nowMs,
+  });
+  assert.equal(emptyAdj.priceOffset, 0);
+  assert.equal(emptyAdj.probabilityBias, 0);
+  assert.equal(emptyAdj.strikeTightening, 1.0);
+
+  // 2. Active trade near strike price and near expiry (last 4 seconds of a 30s trade)
+  const activeAdj = calculateRiskManagementOffset({
+    asset: mockEurUsd,
+    currentPrice: 1.08548,
+    unitVol,
+    activeTrades: [
+      {
+        id: 't-1',
+        direction: 'CALL',
+        strikePrice: 1.0854,
+        startTime: nowMs - 26000,
+        endTime: nowMs + 4000,
+        investment: 100,
+      },
+    ],
+    nowMs,
+    tickCounter: 42,
+  });
+
+  // Strike tightening should activate since price is within 2.2 unitVol of strikePrice
+  assert.ok(
+    activeAdj.strikeTightening < 1.0 && activeAdj.strikeTightening >= 0.82,
+    `Expected subtle strike tightening in [0.82, 1.0), got ${activeAdj.strikeTightening}`
+  );
+
+  // Price offset must be strictly bounded to <= 0.22 * unitVol per tick to prevent unnatural jumps
+  assert.ok(
+    Math.abs(activeAdj.priceOffset) <= unitVol * 0.22 + 1e-10,
+    `Price offset ${activeAdj.priceOffset} exceeded smooth cap ${unitVol * 0.22}`
+  );
+
+  // Stepping live ticks with active trades produces valid, continuous prices
+  const nextLivePrice = stepOrganicLiveTick(mockEurUsd, {
+    timeframeSeconds: 15,
+    activeTrades: [
+      {
+        id: 't-1',
+        direction: 'CALL',
+        strikePrice: 1.0854,
+        startTime: nowMs - 26000,
+        endTime: nowMs + 4000,
+        investment: 100,
+      },
+    ],
+    nowMs,
+  });
+  assert.ok(Number.isFinite(nextLivePrice) && nextLivePrice > 0);
+});
