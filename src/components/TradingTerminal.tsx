@@ -4305,11 +4305,11 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         {/* 4. RIGHT-SIDE QUOTEX TRADE EXECUTION & ACTIVE POSITIONS / HISTORY PANEL */}
         <div
           data-testid="quotex-right-panel"
-          className="hidden md:flex w-80 sm:w-[336px] bg-[#1c202e] border-l border-[#2a2e39] flex flex-col justify-between p-3.5 shrink-0 z-10 overflow-y-auto"
+          className="hidden md:flex w-72 sm:w-[280px] bg-[#1c202e] border-l border-[#2a2e39] flex flex-col justify-between p-2.5 shrink-0 z-10 overflow-y-auto"
         >
-          <div className="space-y-3">
+          <div className="space-y-2">
             {/* Top Row: Selected Asset | Payout % + PENDING TRADE Toggle Switch */}
-            <div className="p-2.5 rounded-xl bg-[#141722] border border-[#2a2e39] space-y-2">
+            <div className="p-2 rounded-lg bg-[#141722] border border-[#2a2e39] space-y-1.5">
               <div className="flex items-center justify-between gap-1.5">
                 <button
                   type="button"
@@ -4320,11 +4320,11 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                   }}
                   className="flex items-center gap-1 text-left hover:opacity-90 transition-opacity cursor-pointer shrink-0"
                 >
-                  <span className="text-sm shrink-0">{selectedAsset.flag || '📈'}</span>
+                  <span className="text-xs shrink-0">{selectedAsset.flag || '📈'}</span>
                   <span className="font-black text-white text-[11px] font-mono whitespace-nowrap">
                     {selectedAsset.symbol}
                   </span>
-                  <span className="text-[11px] font-mono font-black text-[#00e676] shrink-0 ml-0.5">
+                  <span className="text-[10px] font-mono font-black text-[#00e676] shrink-0 ml-0.5">
                     {selectedAsset.payout}%
                   </span>
                   <ChevronDown className="w-3 h-3 text-slate-400 shrink-0" />
@@ -4344,58 +4344,58 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                   className="flex items-center gap-1 shrink-0 cursor-pointer group"
                   title="Toggle Pending Trade Execution"
                 >
-                  <span className="text-[9px] font-black uppercase tracking-wider text-blue-400 group-hover:text-blue-300 font-mono">
+                  <span className="text-[8.5px] font-black uppercase tracking-wider text-blue-400 group-hover:text-blue-300 font-mono">
                     PENDING TRADE
                   </span>
                   <div
-                    className={`w-6 h-3.5 rounded-full p-0.5 transition-colors flex items-center ${
+                    className={`w-5.5 h-3 rounded-full p-0.5 transition-colors flex items-center ${
                       pendingOrderEnabled ? 'bg-blue-500 justify-end' : 'bg-[#2a2f42] justify-start'
                     }`}
                   >
-                    <div className="w-2.5 h-2.5 rounded-full bg-white" />
+                    <div className="w-2 h-2 rounded-full bg-white" />
                   </div>
                 </button>
               </div>
 
               {pendingOrderEnabled && (
-                <div className="pt-2 border-t border-[#2a2e39] flex items-center justify-between gap-2 font-mono text-[11px]">
+                <div className="pt-1.5 border-t border-[#2a2e39] flex items-center justify-between gap-2 font-mono text-[10px]">
                   <span className="text-slate-400">Trigger Price:</span>
                   <input
                     type="text"
                     value={pendingTriggerPrice}
                     onChange={(e) => setPendingTriggerPrice(e.target.value)}
-                    className="w-28 px-2 py-1 rounded bg-[#1c202e] border border-blue-500/40 text-white text-right font-bold text-xs focus:outline-none"
+                    className="w-24 px-1.5 py-0.5 rounded bg-[#1c202e] border border-blue-500/40 text-white text-right font-bold text-[11px] focus:outline-none"
                   />
                 </div>
               )}
             </div>
 
-            {/* TIME / EXPIRY CONTROL BOX (With "-" / "+" Steppers & "SWITCH TIME" Toggle) */}
-            <div className="p-3 rounded-xl bg-[#141722] border border-[#2a2e39] font-mono">
-              <div className="flex items-center justify-between mb-1.5 text-[11px]">
-                <span className="text-slate-400 font-semibold">Time</span>
-                <span className="text-[10px] text-amber-400 font-bold">Min 30s Rule</span>
+            {/* TIME / EXPIRY CONTROL BOX (Slim Compact Quotex Reference) */}
+            <div className="p-1.5 rounded-lg bg-[#141722] border border-[#2a2e39] font-mono">
+              <div className="flex items-center justify-between mb-0.5 text-[9.5px]">
+                <span className="text-slate-400 font-semibold">Duration / <span className="text-blue-400 font-bold">Time</span></span>
+                <span className="text-[8.5px] text-amber-400/90 font-bold">Min 30s</span>
               </div>
 
-              <div className="flex items-center justify-between bg-[#1c202e] border border-[#2a2e39] rounded-xl px-2 py-1.5 mb-2">
+              <div className="flex items-center justify-between bg-[#1c202e] border border-[#2a2e39] rounded-lg px-2 py-0.5 mb-1">
                 <button
                   type="button"
                   onClick={() => handleStepDuration('down')}
-                  className="w-7 h-7 rounded-full bg-[#262b3d] hover:bg-[#323950] text-slate-200 hover:text-white font-black text-sm flex items-center justify-center cursor-pointer transition-colors"
+                  className="w-5 h-5 rounded-md bg-[#262b3d] hover:bg-[#323950] text-slate-200 hover:text-white font-black text-xs flex items-center justify-center cursor-pointer transition-colors"
                   title="Decrease Expiry Time"
                 >
                   -
                 </button>
                 <div
                   data-testid="quotex-time-display"
-                  className="flex-1 text-center font-black text-white text-base tracking-wider"
+                  className="flex-1 text-center font-black text-white text-xs tracking-wider"
                 >
                   {expiryMode === 'timer' ? formatTimerDisplay(duration) : getClockExpiry(duration)}
                 </div>
                 <button
                   type="button"
                   onClick={() => handleStepDuration('up')}
-                  className="w-7 h-7 rounded-full bg-[#262b3d] hover:bg-[#323950] text-slate-200 hover:text-white font-black text-sm flex items-center justify-center cursor-pointer transition-colors"
+                  className="w-5 h-5 rounded-md bg-[#262b3d] hover:bg-[#323950] text-slate-200 hover:text-white font-black text-xs flex items-center justify-center cursor-pointer transition-colors"
                   title="Increase Expiry Time"
                 >
                   +
@@ -4410,12 +4410,12 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                     soundEngine.playUiClick();
                     setExpiryMode((prev) => (prev === 'timer' ? 'time' : 'timer'));
                   }}
-                  className="text-[10px] font-black uppercase tracking-wider text-blue-400 hover:text-blue-300 cursor-pointer transition-colors"
+                  className="text-[8.5px] font-black uppercase tracking-wider text-blue-400 hover:text-blue-300 cursor-pointer transition-colors"
                 >
                   SWITCH TIME
                 </button>
 
-                <div className="flex items-center gap-1 text-[10px]">
+                <div className="flex items-center gap-0.5 text-[8.5px]">
                   {[
                     { label: '30s', val: 30 },
                     { label: '1m', val: 60 },
@@ -4429,7 +4429,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                         soundEngine.playUiClick();
                         setDuration(p.val);
                       }}
-                      className={`px-1.5 py-0.5 rounded font-bold cursor-pointer transition-colors ${
+                      className={`px-1 py-0.2 rounded font-bold cursor-pointer transition-colors ${
                         duration === p.val
                           ? 'bg-[#ff8800] text-slate-950 font-black'
                           : 'bg-[#1c202e] text-slate-400 hover:text-white'
@@ -4442,37 +4442,37 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               </div>
             </div>
 
-            {/* INVESTMENT CONTROL BOX (With "-" / "+" Steppers & "SWITCH" Option) */}
-            <div className="p-3 rounded-xl bg-[#141722] border border-[#2a2e39] font-mono">
-              <div className="flex items-center justify-between text-[11px] mb-1.5">
-                <span className="text-slate-400 font-semibold">Investment</span>
-                <span className="text-[10px] text-slate-400">
+            {/* INVESTMENT CONTROL BOX (Slim Compact Quotex Reference) */}
+            <div className="p-1.5 rounded-lg bg-[#141722] border border-[#2a2e39] font-mono">
+              <div className="flex items-center justify-between text-[9.5px] mb-0.5">
+                <span className="text-slate-400 font-semibold">Amount / <span className="text-blue-400 font-bold">Percent</span></span>
+                <span className="text-[8.5px] text-slate-400">
                   Max 5%: ${account ? ((account.initialBalance * 5) / 100).toFixed(0) : '500'}
                 </span>
               </div>
 
-              <div className="flex items-center justify-between bg-[#1c202e] border border-[#2a2e39] rounded-xl px-2 py-1.5 mb-2">
+              <div className="flex items-center justify-between bg-[#1c202e] border border-[#2a2e39] rounded-lg px-2 py-0.5 mb-1">
                 <button
                   type="button"
                   onClick={() => {
                     soundEngine.playUiClick();
                     setInvestment((v) => Math.max(1, v - (v <= 10 ? 1 : 10)));
                   }}
-                  className="w-7 h-7 rounded-full bg-[#262b3d] hover:bg-[#323950] text-slate-200 hover:text-white font-black text-sm flex items-center justify-center cursor-pointer transition-colors"
+                  className="w-5 h-5 rounded-md bg-[#262b3d] hover:bg-[#323950] text-slate-200 hover:text-white font-black text-xs flex items-center justify-center cursor-pointer transition-colors"
                   title="Decrease Investment"
                 >
                   -
                 </button>
-                <div className="flex-1 flex items-center justify-center gap-1 font-black text-white text-base">
+                <div className="flex-1 flex items-center justify-center gap-1 font-black text-white text-xs">
                   <input
                     aria-label="Investment Amount"
                     type="number"
                     min={1}
                     value={investment}
                     onChange={(e) => setInvestment(Math.max(1, Number(e.target.value)))}
-                    className="w-16 bg-transparent text-center focus:outline-none font-black text-white"
+                    className="w-12 bg-transparent text-center focus:outline-none font-black text-white"
                   />
-                  <span className="text-slate-300 text-sm font-black">
+                  <span className="text-slate-300 text-xs font-black">
                     {investmentMode === 'usd' ? '$' : '%'}
                   </span>
                 </div>
@@ -4482,7 +4482,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                     soundEngine.playUiClick();
                     setInvestment((v) => v + (v < 10 ? 1 : 10));
                   }}
-                  className="w-7 h-7 rounded-full bg-[#262b3d] hover:bg-[#323950] text-slate-200 hover:text-white font-black text-sm flex items-center justify-center cursor-pointer transition-colors"
+                  className="w-5 h-5 rounded-md bg-[#262b3d] hover:bg-[#323950] text-slate-200 hover:text-white font-black text-xs flex items-center justify-center cursor-pointer transition-colors"
                   title="Increase Investment"
                 >
                   +
@@ -4503,12 +4503,12 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                       setInvestment(50);
                     }
                   }}
-                  className="text-[10px] font-black uppercase tracking-wider text-blue-400 hover:text-blue-300 cursor-pointer transition-colors"
+                  className="text-[8.5px] font-black uppercase tracking-wider text-blue-400 hover:text-blue-300 cursor-pointer transition-colors"
                 >
                   SWITCH ({investmentMode === 'usd' ? '$ → %' : '% → $'})
                 </button>
 
-                <div className="flex items-center gap-1 text-[10px]">
+                <div className="flex items-center gap-0.5 text-[8.5px]">
                   {[2, 10, 50, 100].map((amt) => (
                     <button
                       key={amt}
@@ -4518,7 +4518,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                         setInvestmentMode('usd');
                         setInvestment(amt);
                       }}
-                      className={`px-1.5 py-0.5 rounded font-bold cursor-pointer transition-colors ${
+                      className={`px-1 py-0.2 rounded font-bold cursor-pointer transition-colors ${
                         investmentMode === 'usd' && investment === amt
                           ? 'bg-[#ff8800] text-slate-950 font-black'
                           : 'bg-[#1c202e] text-slate-400 hover:text-white'
@@ -4533,135 +4533,135 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
             {/* Notification messages */}
             {tradeError && (
-              <div className="p-2.5 rounded-xl bg-rose-950/90 border border-rose-500/50 text-xs text-rose-200 flex items-start gap-2 font-mono">
-                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+              <div className="p-1.5 rounded-lg bg-rose-950/90 border border-rose-500/50 text-[10.5px] text-rose-200 flex items-start gap-1 font-mono">
+                <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0 mt-0.5" />
                 <span>{tradeError}</span>
               </div>
             )}
             {tradeSuccess && (
-              <div className="p-2.5 rounded-xl bg-emerald-950/90 border border-[#00e676]/50 text-xs text-emerald-200 flex items-start gap-2 font-mono">
-                <CheckCircle2 className="w-4 h-4 text-[#00e676] shrink-0 mt-0.5" />
+              <div className="p-1.5 rounded-lg bg-emerald-950/90 border border-[#00e676]/50 text-[10.5px] text-emerald-200 flex items-start gap-1 font-mono">
+                <CheckCircle2 className="w-3.5 h-3.5 text-[#00e676] shrink-0 mt-0.5" />
                 <span>{tradeSuccess}</span>
               </div>
             )}
 
-            {/* QUOTEX ACTION BUTTONS (Big Bright Green "Buy" -> Live Payout Display -> Big Bright Red "Sell") */}
+            {/* QUOTEX ACTION BUTTONS (Slim Streamlined "Buy" -> Live Payout -> Slim Streamlined "Sell") */}
             {hasNoAccount ? (
-              <div className="p-4 rounded-xl bg-[#141722] border border-[#ff8800]/50 text-center space-y-3 font-mono">
-                <Lock className="w-6 h-6 text-[#ff8800] mx-auto" />
-                <div className="font-black text-white text-xs uppercase">Trading Panel Locked</div>
-                <p className="text-[11px] text-slate-300 font-sans">
-                  Chart viewing is fully unlocked. Choose a plan to trade and execute live orders.
+              <div className="p-2.5 rounded-lg bg-[#141722] border border-[#ff8800]/50 text-center space-y-1.5 font-mono">
+                <Lock className="w-4 h-4 text-[#ff8800] mx-auto" />
+                <div className="font-black text-white text-[10.5px] uppercase">Trading Panel Locked</div>
+                <p className="text-[9.5px] text-slate-300 font-sans leading-tight">
+                  Chart viewing unlocked. Choose a plan to trade.
                 </p>
                 <button
                   type="button"
                   data-testid="choose-plan-to-trade-btn"
                   onClick={() => onOpenChallengeModal?.()}
-                  className="w-full py-3.5 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] text-slate-950 font-black text-xs uppercase tracking-wider cursor-pointer transition-colors font-sans shadow-lg"
+                  className="w-full py-2 rounded-md bg-[#ff8800] hover:bg-[#ff9900] text-slate-950 font-black text-xs uppercase tracking-wider cursor-pointer transition-colors font-sans shadow-md"
                 >
                   Choose a Plan to Trade
                 </button>
               </div>
             ) : isSoftBreached ? (
-              <div className="p-4 rounded-xl bg-amber-950/60 border border-amber-500/60 text-center space-y-2.5 font-mono">
-                <Clock className="w-6 h-6 text-amber-400 mx-auto animate-pulse" />
-                <div className="font-black text-white text-xs uppercase">Daily Pause (Soft Breach)</div>
-                <p className="text-[10px] text-amber-200">
-                  Daily drawdown limit reached. Trading temporarily paused until next daily cycle.
+              <div className="p-2.5 rounded-lg bg-amber-950/60 border border-amber-500/60 text-center space-y-1.5 font-mono">
+                <Clock className="w-4 h-4 text-amber-400 mx-auto animate-pulse" />
+                <div className="font-black text-white text-[10.5px] uppercase">Daily Pause</div>
+                <p className="text-[8.5px] text-amber-200">
+                  Daily loss limit reached. Paused until next reset.
                 </p>
                 <button
                   onClick={handleResetSoftBreach}
-                  className="w-full py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs cursor-pointer uppercase font-sans"
+                  className="w-full py-1.5 rounded-md bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-[10.5px] cursor-pointer uppercase font-sans"
                 >
                   Simulate Daily Reset
                 </button>
               </div>
             ) : isHardBreached ? (
-              <div className="p-4 rounded-xl bg-rose-950/60 border border-rose-500/60 text-center space-y-2.5 font-mono">
-                <AlertOctagon className="w-6 h-6 text-rose-400 mx-auto animate-pulse" />
-                <div className="font-black text-white text-xs uppercase">Terminal Locked (Hard Breach)</div>
+              <div className="p-2.5 rounded-lg bg-rose-950/60 border border-rose-500/60 text-center space-y-1.5 font-mono">
+                <AlertOctagon className="w-4 h-4 text-rose-400 mx-auto animate-pulse" />
+                <div className="font-black text-white text-[10.5px] uppercase">Hard Breach</div>
                 <button
                   onClick={() => setIsBreachModalOpen(true)}
-                  className="w-full py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs cursor-pointer uppercase"
+                  className="w-full py-1.5 rounded-md bg-rose-600 hover:bg-rose-500 text-white font-black text-[10.5px] cursor-pointer uppercase"
                 >
-                  Review Breach Report
+                  Review Audit Log
                 </button>
                 <button
                   onClick={() => onOpenChallengeModal?.()}
-                  className="w-full py-3 rounded-xl bg-[#00c853] hover:bg-[#00e676] text-slate-950 font-black text-xs cursor-pointer uppercase"
+                  className="w-full py-2 rounded-md bg-[#00c853] hover:bg-[#00e676] text-slate-950 font-black text-[10.5px] cursor-pointer uppercase"
                 >
                   Buy New Account (10% Off)
                 </button>
               </div>
             ) : riskBarricade.barricaded ? (
-              <div className="space-y-2 font-mono">
-                <div className="p-2.5 rounded-xl bg-amber-950/50 border border-amber-500/50 text-[11px] text-amber-300 text-center">
-                  ⚠️ <strong>Risk Barricade Active</strong>: Loss at 80% threshold. Orders blocked.
+              <div className="space-y-1 font-mono">
+                <div className="p-1.5 rounded-lg bg-amber-950/50 border border-amber-500/50 text-[9.5px] text-amber-300 text-center">
+                  ⚠️ <strong>Risk Barricade Active</strong>: Orders locked.
                 </div>
                 <button
                   disabled
-                  className="w-full py-3.5 rounded-xl bg-[#131722] text-slate-500 font-black text-sm cursor-not-allowed border border-[#2a2e39]"
+                  className="w-full py-2 rounded-md bg-[#131722] text-slate-500 font-black text-xs cursor-not-allowed border border-[#2a2e39]"
                 >
                   TRADING LOCKED
                 </button>
               </div>
             ) : (
-              <div className="space-y-2.5 font-sans">
-                {/* Big Bright Green "Buy" Button */}
+              <div className="space-y-1.5 font-sans">
+                {/* Slim Green "Buy" Button */}
                 <button
                   type="button"
                   data-testid="quotex-buy-btn"
                   onClick={() => handleTriggerTrade('CALL')}
-                  className="w-full py-3.5 px-5 rounded-xl bg-[#00b865] hover:bg-[#00cf72] active:scale-[0.99] text-white font-black text-lg flex items-center justify-between transition-all cursor-pointer"
+                  className="w-full py-1.5 px-3 rounded-md bg-[#00c853] hover:bg-[#00e676] active:scale-[0.99] text-white font-black text-sm flex items-center justify-between transition-all cursor-pointer shadow-sm"
                   title="Execute Buy / Higher Order (Shortcut: [B])"
                 >
                   <span>Buy</span>
-                  <span className="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center">
-                    <TrendingUp className="w-4 h-4 text-white stroke-[3]" />
+                  <span className="w-4.5 h-4.5 rounded-full bg-white/20 flex items-center justify-center">
+                    <TrendingUp className="w-3 h-3 text-white stroke-[3]" />
                   </span>
                 </button>
 
-                {/* Live Payout Calculation Display (Exact Quotex Center Row: "Your payout: 3.66 $") */}
+                {/* Live Payout Row Display (Exact Quotex Reference Dotted Line Layout) */}
                 <div
                   data-testid="quotex-payout-display"
-                  className="py-1.5 px-3 rounded-lg bg-[#141722] border border-[#2a2e39] flex items-center justify-between text-xs font-mono"
+                  className="py-0.5 px-2 rounded bg-[#141722] border border-[#2a2e39] flex items-center justify-between text-[10px] font-mono"
                 >
-                  <span className="text-slate-400">Your payout:</span>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-white font-black text-sm">
+                  <span className="text-slate-400">Payout</span>
+                  <div className="flex items-center gap-1">
+                    <span className="text-white font-black text-[11px]">
                       {(
                         effectiveInvestment +
                         (effectiveInvestment * selectedAsset.payout) / 100
                       ).toFixed(2)}{' '}
                       $
                     </span>
-                    <span className="text-[10px] font-black text-[#00e676]">
+                    <span className="text-[9px] font-black text-[#00e676]">
                       (+${((effectiveInvestment * selectedAsset.payout) / 100).toFixed(2)})
                     </span>
                   </div>
                 </div>
 
-                {/* Big Bright Red "Sell" Button */}
+                {/* Slim Red "Sell" Button */}
                 <button
                   type="button"
                   data-testid="quotex-sell-btn"
                   onClick={() => handleTriggerTrade('PUT')}
-                  className="w-full py-3.5 px-5 rounded-xl bg-[#ff3d2e] hover:bg-[#ff5245] active:scale-[0.99] text-white font-black text-lg flex items-center justify-between transition-all cursor-pointer"
+                  className="w-full py-1.5 px-3 rounded-md bg-[#ff334b] hover:bg-[#ff4d63] active:scale-[0.99] text-white font-black text-sm flex items-center justify-between transition-all cursor-pointer shadow-md shadow-rose-500/15"
                   title="Execute Sell / Lower Order (Shortcut: [S])"
                 >
                   <span>Sell</span>
-                  <span className="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center">
-                    <TrendingDown className="w-4 h-4 text-white stroke-[3]" />
+                  <span className="w-4.5 h-4.5 rounded-full bg-white/20 flex items-center justify-center">
+                    <TrendingDown className="w-3 h-3 text-white stroke-[3]" />
                   </span>
                 </button>
               </div>
             )}
           </div>
 
-          {/* BOTTOM SECTION OF RIGHT PANEL: ACTIVE TRADES & HISTORY TAB */}
-          <div className="mt-3 pt-3 border-t border-[#2a2e39] flex-1 flex flex-col min-h-[190px] font-mono">
+          {/* BOTTOM SECTION OF RIGHT PANEL: ACTIVE TRADES & HISTORY TAB (Quotex Condensed List) */}
+          <div className="mt-1.5 pt-1.5 border-t border-[#2a2e39] flex-1 flex flex-col min-h-[140px] font-mono">
             {/* Quotex Trades / History Tab Header */}
-            <div className="flex items-center bg-[#141722] p-1 rounded-xl border border-[#2a2e39] mb-2.5 text-xs">
+            <div className="flex items-center bg-[#141722] p-0.5 rounded-lg border border-[#2a2e39] mb-1 text-[10px]">
               <button
                 type="button"
                 data-testid="right-tab-trades"
@@ -4669,7 +4669,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                   soundEngine.playUiClick();
                   setRightPanelTab('trades');
                 }}
-                className={`flex-1 py-1.5 px-2 rounded-lg font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
+                className={`flex-1 py-1 px-1.5 rounded font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors ${
                   rightPanelTab === 'trades'
                     ? 'bg-[#252b3d] text-white font-black'
                     : 'text-slate-400 hover:text-white'
@@ -4677,7 +4677,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               >
                 <span>Trades</span>
                 <span
-                  className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                  className={`px-1.5 py-0.2 rounded-full text-[8.5px] font-black ${
                     activeTrades.length > 0 ? 'bg-[#00c853] text-slate-950' : 'bg-[#1c202e] text-slate-400'
                   }`}
                 >
@@ -4692,7 +4692,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                   soundEngine.playUiClick();
                   setRightPanelTab('history');
                 }}
-                className={`flex-1 py-1.5 px-2 rounded-lg font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
+                className={`flex-1 py-1 px-1.5 rounded font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors ${
                   rightPanelTab === 'history'
                     ? 'bg-[#252b3d] text-white font-black'
                     : 'text-slate-400 hover:text-white'
@@ -4700,19 +4700,19 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               >
                 <Clock className="w-3 h-3" />
                 <span>History</span>
-                <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-[#1c202e] text-slate-400 font-bold">
+                <span className="px-1.5 py-0.2 rounded-full text-[8.5px] bg-[#1c202e] text-slate-400 font-bold">
                   {closedTrades.length}
                 </span>
               </button>
             </div>
 
-            {/* Tab Content: Active Trades vs Closed Trade History */}
-            <div className="flex-1 overflow-y-auto space-y-2 pr-0.5 max-h-56">
+            {/* Tab Content: Active Trades vs Closed Trade History (Condensed Scrollable List) */}
+            <div className="flex-1 overflow-y-auto space-y-1 pr-0.5 max-h-[calc(100vh-420px)] min-h-[120px] no-scrollbar">
               {rightPanelTab === 'trades' ? (
                 activeTrades.length === 0 ? (
-                  <div className="p-4 rounded-xl bg-[#141722] border border-[#2a2e39] text-center text-[11px] text-slate-400 space-y-1">
-                    <div className="text-slate-300 font-bold">No Running Positions</div>
-                    <div>Click Buy or Sell above to open an instant OTC contract.</div>
+                  <div className="p-2.5 rounded-lg bg-[#141722] border border-[#2a2e39] text-center text-[9.5px] text-slate-400 space-y-0.5">
+                    <div className="text-slate-300 font-bold">No Active Trades</div>
+                    <div>Click Buy or Sell above to open an order.</div>
                   </div>
                 ) : (
                   activeTrades.map((t) => {
@@ -4727,28 +4727,24 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                     return (
                       <div
                         key={t.id}
-                        className={`p-2.5 rounded-xl border text-xs transition-all ${
+                        className={`p-1.5 px-2 rounded-lg border text-xs transition-all ${
                           isInTheMoney
-                            ? 'bg-[#081a14] border-[#00e676]/50'
-                            : 'bg-[#1a0a0e] border-[#ff334b]/50'
+                            ? 'bg-[#081a14] border-[#00e676]/40'
+                            : 'bg-[#1a0a0e] border-[#ff334b]/40'
                         }`}
                       >
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="font-bold text-white flex items-center gap-1.5 text-[11px] truncate">
+                        <div className="flex items-center justify-between mb-0.5">
+                          <div className="flex items-center gap-1 font-bold text-white text-[10.5px] truncate">
                             <span>{assetObj?.flag || '📈'}</span>
                             <span className="truncate">{t.asset}</span>
-                          </span>
-                          <span
-                            className={`px-1.5 py-0.2 rounded text-[9px] font-black shrink-0 ${
-                              isCall ? 'bg-emerald-500/20 text-[#00e676]' : 'bg-rose-500/20 text-rose-400'
-                            }`}
-                          >
-                            {isCall ? '▲ BUY' : '▼ SELL'} ${t.investment}
+                          </div>
+                          <span className="text-[9.5px] font-bold text-cyan-300 font-mono">
+                            {formatTimerDisplay(secondsLeft)}
                           </span>
                         </div>
 
-                        {/* Live Countdown Progress Bar */}
-                        <div className="w-full h-1 bg-[#131722] rounded-full overflow-hidden my-1.5 border border-[#2a2e39]">
+                        {/* Live Countdown Progress Line */}
+                        <div className="w-full h-0.5 bg-[#131722] rounded-full overflow-hidden my-0.5 border border-[#2a2e39]">
                           <div
                             className={`h-full transition-all duration-500 ${
                               isInTheMoney ? 'bg-[#00e676]' : 'bg-[#ff334b]'
@@ -4757,37 +4753,33 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                           />
                         </div>
 
-                        <div className="flex items-center justify-between text-[10px] pt-0.5">
-                          <span className="text-slate-300 flex items-center gap-1 font-bold">
-                            <Clock className="w-3 h-3 text-cyan-400" />
-                            {formatTimerDisplay(secondsLeft)}
+                        <div className="flex items-center justify-between text-[9.5px] font-mono">
+                          <span className={`font-bold ${isCall ? 'text-[#00e676]' : 'text-[#ff334b]'}`}>
+                            {isCall ? '↑' : '↓'} ${t.investment}
                           </span>
 
                           <div className="flex items-center gap-1">
                             <button
                               type="button"
-                              aria-label="Settle trade now"
-                              onClick={() => {
-                                onUpdateTrade({
-                                  ...t,
-                                  endTime: Date.now() - 10,
-                                });
-                              }}
-                              className="px-1.5 py-0.5 rounded bg-[#ff8800]/20 hover:bg-[#ff8800]/30 text-[#ff8800] border border-[#ff8800]/40 text-[9px] font-bold cursor-pointer"
-                              title="Settle trade immediately at current market price"
-                            >
-                              Settle
-                            </button>
-
-                            <button
-                              type="button"
                               onClick={() => handleDoubleUp(t)}
-                              className="px-1.5 py-0.5 rounded bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 text-[9px] font-bold cursor-pointer"
+                              className="px-1 py-0.2 rounded bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 text-[8.5px] font-bold cursor-pointer"
                               title="Double up position (x2)"
                             >
                               x2
                             </button>
-
+                            <button
+                              type="button"
+                              onClick={() =>
+                                onUpdateTrade({
+                                  ...t,
+                                  endTime: Date.now() - 10,
+                                })
+                              }
+                              className="px-1 py-0.2 rounded bg-[#ff8800]/20 hover:bg-[#ff8800]/30 text-[#ff8800] border border-[#ff8800]/40 text-[8.5px] font-bold cursor-pointer"
+                              title="Settle trade immediately"
+                            >
+                              Settle
+                            </button>
                             <span className={`font-black ${isInTheMoney ? 'text-[#00e676]' : 'text-rose-400'}`}>
                               {isInTheMoney ? `+$${t.potentialPayout.toFixed(2)}` : `-$${t.investment.toFixed(2)}`}
                             </span>
@@ -4798,78 +4790,98 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                   })
                 )
               ) : closedTrades.length === 0 ? (
-                <div className="p-4 rounded-xl bg-[#141722] border border-[#2a2e39] text-center text-[11px] text-slate-400">
-                  No settled trades yet. Completed contracts appear here in real time.
+                <div className="p-2.5 rounded-lg bg-[#141722] border border-[#2a2e39] text-center text-[9.5px] text-slate-400">
+                  No settled trades yet.
                 </div>
               ) : (
-                closedTrades.slice(0, 15).map((t) => {
-                  const isWin = t.status === 'won';
-                  const isCall = t.direction === 'CALL';
-                  const assetObj = findAssetBySymbol(t.asset);
-                  const isHighlightedOnChart = activeInspectedMarker?.tradeId === t.id;
-                  return (
-                    <div
-                      key={t.id}
-                      onClick={() => {
-                        soundEngine.playUiClick();
-                        setShowHistoryOverlay(true);
-                        const marker =
-                          tradeMarkersRef.current.find(
-                            (m) => m.tradeId === t.id && m.pointType === 'settlement'
-                          ) ||
-                          tradeMarkersRef.current.find((m) => m.tradeId === t.id) ||
-                          null;
-                        if (marker) {
-                          setSelectedTradeMarker(marker);
-                        }
-                      }}
-                      className={`p-2.5 rounded-xl border flex items-center justify-between text-xs cursor-pointer transition-colors ${
-                        isHighlightedOnChart
-                          ? isWin
-                            ? 'bg-[#081a14] border-[#00e676]'
-                            : 'bg-[#1a0a0e] border-[#ff334b]'
-                          : 'bg-[#141722] border-[#2a2e39] hover:border-slate-600'
-                      }`}
-                      title="Click to highlight execution & settlement dots on chart"
-                    >
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5 font-bold text-white text-[11px]">
-                          <span
-                            className={`w-2 h-2 rounded-full shrink-0 ${
-                              isWin ? 'bg-[#00e676]' : 'bg-[#ff334b]'
+                (() => {
+                  // Group history by date (Quotex Style Date Badges)
+                  const groups = closedTrades.slice(0, 25).reduce((acc, t) => {
+                    const dateStr = new Date(t.endTime)
+                      .toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+                      .toUpperCase();
+                    if (!acc[dateStr]) acc[dateStr] = [];
+                    acc[dateStr].push(t);
+                    return acc;
+                  }, {} as Record<string, typeof closedTrades>);
+
+                  return Object.entries(groups).map(([dateLabel, items]) => (
+                    <div key={dateLabel} className="space-y-0.5">
+                      {/* Quotex Date Section Header Pill */}
+                      <div className="flex items-center justify-center my-0.5">
+                        <div className="px-2 py-0.2 rounded-full bg-[#1c202e] border border-[#2a2e39] text-[8.5px] font-black text-slate-400 font-mono tracking-wider flex items-center gap-1">
+                          <span>{dateLabel}</span>
+                          <span className="w-3 h-3 rounded-full bg-[#262b3d] text-white flex items-center justify-center text-[7.5px] font-bold">
+                            {items.length}
+                          </span>
+                        </div>
+                      </div>
+
+                      {items.map((t) => {
+                        const isWin = t.status === 'won';
+                        const isCall = t.direction === 'CALL';
+                        const assetObj = findAssetBySymbol(t.asset);
+                        const isHighlightedOnChart = activeInspectedMarker?.tradeId === t.id;
+
+                        return (
+                          <div
+                            key={t.id}
+                            onClick={() => {
+                              soundEngine.playUiClick();
+                              setShowHistoryOverlay(true);
+                              const marker =
+                                tradeMarkersRef.current.find(
+                                  (m) => m.tradeId === t.id && m.pointType === 'settlement'
+                                ) ||
+                                tradeMarkersRef.current.find((m) => m.tradeId === t.id) ||
+                                null;
+                              if (marker) {
+                                setSelectedTradeMarker(marker);
+                              }
+                            }}
+                            className={`p-1 px-1.5 rounded-md border text-[11px] cursor-pointer transition-colors ${
+                              isHighlightedOnChart
+                                ? isWin
+                                  ? 'bg-[#081a14] border-[#00e676]'
+                                  : 'bg-[#1a0a0e] border-[#ff334b]'
+                                : 'bg-[#141722] border-[#202533] hover:border-slate-600'
                             }`}
-                          />
-                          <span>{assetObj?.flag || '📈'}</span>
-                          <span className="truncate">{t.asset}</span>
-                          <span className="text-[9px] text-slate-400">+{t.payoutPercentage}%</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-[10px] text-slate-400 mt-0.5">
-                          <span className={isCall ? 'text-[#00e676] font-bold' : 'text-rose-400 font-bold'}>
-                            {isCall ? '▲ Buy' : '▼ Sell'} ${t.investment}
-                          </span>
-                          <span>•</span>
-                          <span>
-                            {new Date(t.endTime).toLocaleTimeString([], {
-                              hour: '2-digit',
-                              minute: '2-digit',
-                              second: '2-digit',
-                            })}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="text-right shrink-0">
-                        <div className={`font-black text-xs ${isWin ? 'text-[#00e676]' : 'text-rose-400'}`}>
-                          {isWin ? `+$${(t.pnl ?? t.potentialPayout ?? 0).toFixed(2)}` : '$0.00'}
-                        </div>
-                        <div className="text-[9px] text-slate-500">
-                          {isWin
-                            ? `Return: $${(t.investment + (t.pnl ?? t.potentialPayout ?? 0)).toFixed(2)}`
-                            : `-${t.investment.toFixed(2)} $`}
-                        </div>
-                      </div>
+                            title="Click to highlight trade execution & settlement on chart"
+                          >
+                            <div className="flex items-center justify-between text-[10px] mb-0.5">
+                              <div className="flex items-center gap-1 font-bold text-white truncate">
+                                <span>{assetObj?.flag || '📈'}</span>
+                                <span className="truncate text-[10px]">{t.asset}</span>
+                              </div>
+                              <span className="text-[9px] text-slate-400 font-mono">
+                                {new Date(t.endTime).toLocaleTimeString([], {
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                  second: '2-digit',
+                                })}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center justify-between text-[9.5px] font-mono">
+                              <span className={`font-bold ${isCall ? 'text-[#00e676]' : 'text-[#ff334b]'}`}>
+                                {isCall ? '↑' : '↓'} ${t.investment}
+                              </span>
+                              <span
+                                className={`font-black ${
+                                  isWin ? 'text-[#00e676]' : 'text-slate-400'
+                                }`}
+                              >
+                                {isWin
+                                  ? `+${(t.pnl ?? t.potentialPayout ?? 0).toFixed(2)} $`
+                                  : '0.00 $'}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
-                  );
-                })
+                  ));
+                })()
               )}
             </div>
           </div>
