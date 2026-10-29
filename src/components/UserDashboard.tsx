@@ -645,8 +645,10 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             id_photo_url: frontUrl,
             status: 'pending',
           })
-          .then(() => {})
-          .catch(() => {});
+          .then(
+            () => {},
+            () => {}
+          );
 
         await supabase
           .from('profiles')

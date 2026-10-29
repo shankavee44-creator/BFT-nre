@@ -80,6 +80,7 @@ import {
   apiGetWithdrawals,
 } from './utils/apiClient';
 import { resolveOrBuildUserProfile } from './utils/authOtpLogic';
+import { broadcastSyncEvent, subscribeToSyncEvents } from './utils/crossTabSync';
 import { Gift, X, UserPlus, ShieldAlert, LogIn } from 'lucide-react';
 
 export default function App() {
@@ -264,6 +265,50 @@ export default function App() {
     }
   }, []);
 
+  // Multi-Tab & Multi-View State Synchronization (BroadcastChannel & Storage Event bus)
+  useEffect(() => {
+    const unsubscribeSync = subscribeToSyncEvents((msg) => {
+      if (msg.type === 'ACCOUNT_UPDATED') {
+        const payload = msg.payload;
+        if (Array.isArray(payload)) {
+          setAccounts(payload);
+        } else if (payload && payload.id) {
+          setAccounts((prev) =>
+            prev.some((a) => a.id === payload.id)
+              ? prev.map((a) => (a.id === payload.id ? payload : a))
+              : [...prev, payload]
+          );
+        }
+      } else if (msg.type === 'ACCOUNT_SELECTED') {
+        if (typeof msg.payload === 'string') {
+          setActiveAccountId(msg.payload);
+        }
+      } else if (msg.type === 'TRADE_ADDED') {
+        if (msg.payload && msg.payload.id) {
+          setTrades((prev) => (prev.some((t) => t.id === msg.payload.id) ? prev : [msg.payload, ...prev]));
+        }
+      } else if (msg.type === 'TRADE_UPDATED') {
+        if (Array.isArray(msg.payload)) {
+          setTrades(msg.payload);
+        } else if (msg.payload && msg.payload.id) {
+          setTrades((prev) => prev.map((t) => (t.id === msg.payload.id ? msg.payload : t)));
+        }
+      } else if (msg.type === 'WITHDRAWALS_UPDATED') {
+        if (Array.isArray(msg.payload)) {
+          setWithdrawals(msg.payload);
+        }
+      } else if (msg.type === 'PROFILE_UPDATED') {
+        if (msg.payload) {
+          setUserProfile(msg.payload);
+        }
+      }
+    });
+
+    return () => {
+      unsubscribeSync();
+    };
+  }, []);
+
   // Listen for Supabase Auth state changes (Email & Password session persistence)
   useEffect(() => {
     const hydrateFromSupabaseSessionUser = async (sessionUser: any) => {
@@ -353,6 +398,7 @@ export default function App() {
       saveAccounts(newAccounts);
       return newAccounts;
     });
+    broadcastSyncEvent('ACCOUNT_UPDATED', updated);
     if (!isDemoAccount(updated)) {
       apiUpdateAccountState(updated.id, {
         currentBalance: updated.currentBalance,
@@ -441,11 +487,13 @@ export default function App() {
   const handleSelectAccount = (id: string) => {
     setActiveAccountId(id);
     saveActiveAccountId(id);
+    broadcastSyncEvent('ACCOUNT_SELECTED', id);
   };
 
   const handleUpdateProfile = (updated: UserProfile) => {
     setUserProfile(updated);
     saveProfile(updated);
+    broadcastSyncEvent('PROFILE_UPDATED', updated);
   };
 
   // Periodic Supabase profile sync for Manual Admin approvals (KYC, Balance)
@@ -519,12 +567,14 @@ export default function App() {
     const updated = [req, ...withdrawals];
     setWithdrawals(updated);
     saveWithdrawals(updated);
+    broadcastSyncEvent('WITHDRAWALS_UPDATED', updated);
   };
 
   const handleUpdateWithdrawal = (req: WithdrawalRequest) => {
     const updated = withdrawals.map((w) => (w.id === req.id ? req : w));
     setWithdrawals(updated);
     saveWithdrawals(updated);
+    broadcastSyncEvent('WITHDRAWALS_UPDATED', updated);
   };
 
   const handleAddTrade = (trade: BinaryTrade) => {
@@ -533,6 +583,7 @@ export default function App() {
       saveTrades(updated);
       return updated;
     });
+    broadcastSyncEvent('TRADE_ADDED', trade);
   };
 
   const handleUpdateTrade = (trade: BinaryTrade) => {
@@ -541,6 +592,7 @@ export default function App() {
       saveTrades(updated);
       return updated;
     });
+    broadcastSyncEvent('TRADE_UPDATED', trade);
   };
 
   const handleAddAffiliatePayout = (payout: AffiliatePayout) => {

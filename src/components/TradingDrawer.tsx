@@ -12,7 +12,8 @@ import {
 } from 'lucide-react';
 import { BinaryTrade, TradingAccount } from '../types';
 import { calculateDrawdownMetrics } from '../utils/propRules';
-import { DEFAULT_ASSETS } from '../utils/storage';
+import { DEFAULT_ASSETS, findAssetBySymbol } from '../utils/storage';
+import { getAssetMarketState } from '../utils/priceFeedEngine';
 
 interface TradingDrawerProps {
   account: TradingAccount;
@@ -164,14 +165,14 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
                   {openTrades.map((t) => {
                     const secondsLeft = Math.max(0, Math.ceil((t.endTime - Date.now()) / 1000));
                     const isCall = t.direction === 'CALL';
-                    const isInTheMoney = isCall
-                      ? currentPrice > t.strikePrice
-                      : currentPrice < t.strikePrice;
+                    const assetObj = findAssetBySymbol(t.asset);
+                    const tradeMarket = getAssetMarketState(t.asset);
+                    const livePrice = tradeMarket?.lastPrice ?? t.strikePrice;
+                    const isInTheMoney = isCall ? livePrice > t.strikePrice : livePrice < t.strikePrice;
                     const percentRemaining = Math.max(
                       0,
                       Math.min(100, (secondsLeft / t.durationSeconds) * 100)
                     );
-                    const assetObj = DEFAULT_ASSETS.find((a) => a.symbol === t.asset);
 
                     return (
                       <div
@@ -202,7 +203,7 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
                         <div className="grid grid-cols-2 gap-2 text-[11px] my-1.5">
                           <div>
                             <span className="text-slate-400 text-[10px] block">Strike</span>
-                            <span className="text-white tabular-nums">{t.strikePrice.toFixed(4)}</span>
+                            <span className="text-white tabular-nums">{t.strikePrice.toFixed(assetObj.pipDecimals)}</span>
                           </div>
                           <div className="text-right">
                             <span className="text-slate-400 text-[10px] block">Current</span>
@@ -211,7 +212,7 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
                                 isInTheMoney ? 'text-[#00e676]' : 'text-rose-400'
                               }`}
                             >
-                              {currentPrice.toFixed(4)}
+                              {livePrice.toFixed(assetObj.pipDecimals)}
                             </span>
                           </div>
                         </div>
@@ -281,7 +282,7 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
                   {closedTrades.slice(0, 20).map((t) => {
                     const isWin = t.status === 'won';
                     const isCall = t.direction === 'CALL';
-                    const assetObj = DEFAULT_ASSETS.find((a) => a.symbol === t.asset);
+                    const assetObj = findAssetBySymbol(t.asset);
                     const netPnl = t.pnl ?? (isWin ? (t.investment * t.payoutPercentage) / 100 : -t.investment);
 
                     return (

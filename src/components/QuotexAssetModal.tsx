@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Search, X, Star, TrendingUp, Sparkles, Activity } from 'lucide-react';
 import { AssetInfo } from '../types';
 import { DEFAULT_ASSETS, getLivePayoutPercentage } from '../utils/storage';
+import { getAssetMarketState } from '../utils/priceFeedEngine';
 import { soundEngine } from '../utils/soundEffects';
 
 interface QuotexAssetModalProps {
@@ -192,6 +193,8 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
               const isSelected = asset.symbol === currentAssetSymbol;
               const isFav = favorites.includes(asset.symbol);
               const livePayout = getLivePayoutPercentage(asset, payoutSeed);
+              const marketState = getAssetMarketState(asset.symbol);
+              const displayPrice = marketState?.lastPrice ?? asset.basePrice;
 
               return (
                 <div
@@ -232,8 +235,8 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
                           {asset.category}
                         </span>
                       </div>
-                      <span className="text-[11px] text-slate-400 block">
-                        {asset.name} • Base {asset.basePrice.toFixed(asset.pipDecimals)}
+                      <span className="text-[11px] text-slate-400 block font-mono">
+                        {asset.name} • {displayPrice.toFixed(asset.pipDecimals)}
                       </span>
                     </div>
                   </div>

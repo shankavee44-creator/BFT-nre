@@ -329,6 +329,94 @@ export const SUPPORTED_COUNTRIES: Array<{ name: string; code: string; flag: stri
   { name: 'Brazil', code: 'BR', flag: '🇧🇷' },
 ];
 
+/**
+ * Canonical symbol aliases map for common shorthand user inputs across views and tabs
+ */
+const SYMBOL_ALIASES: Record<string, string> = {
+  'gold': 'XAU/USD (OTC)',
+  'silver': 'XAG/USD (OTC)',
+  'oil': 'US Oil (OTC)',
+  'crude': 'US Oil (OTC)',
+  'brent': 'Brent Oil (OTC)',
+  'gas': 'Natural Gas (OTC)',
+  'nasdaq': 'NAS100 (OTC)',
+  'ndx': 'NAS100 (OTC)',
+  'spx': 'SPX500 (OTC)',
+  'sp500': 'SPX500 (OTC)',
+  's&p500': 'SPX500 (OTC)',
+  'dow': 'US30 (OTC)',
+  'dji': 'US30 (OTC)',
+  'btc': 'BTC/USD (OTC)',
+  'eth': 'ETH/USD (OTC)',
+  'sol': 'SOL/USD (OTC)',
+  'eurusd': 'EUR/USD (OTC)',
+  'gbpjpy': 'GBP/JPY (OTC)',
+  'gbpusd': 'GBP/USD (OTC)',
+  'usdjpy': 'USD/JPY (OTC)',
+};
+
+/**
+ * Normalizes any asset symbol variant (e.g. "EUR/USD", "eur/usd", "Gold", "BTC/USD")
+ * to its canonical OTC representation in DEFAULT_ASSETS.
+ */
+export function normalizeAssetSymbol(symbol: string): string {
+  if (!symbol || typeof symbol !== 'string') return DEFAULT_ASSETS[0].symbol;
+  const cleaned = symbol.trim();
+  const lower = cleaned.toLowerCase();
+
+  // 1. Direct alias match
+  if (SYMBOL_ALIASES[lower]) {
+    return SYMBOL_ALIASES[lower];
+  }
+
+  // 2. Exact match in DEFAULT_ASSETS
+  const exact = DEFAULT_ASSETS.find((a) => a.symbol === cleaned);
+  if (exact) return exact.symbol;
+
+  // 3. Case-insensitive exact match
+  const caseMatch = DEFAULT_ASSETS.find((a) => a.symbol.toLowerCase() === lower);
+  if (caseMatch) return caseMatch.symbol;
+
+  // 4. Strip OTC suffix comparison
+  const withoutOtc = lower.replace(/\s*\(otc\)/gi, '').trim();
+  const strippedMatch = DEFAULT_ASSETS.find(
+    (a) => a.symbol.toLowerCase().replace(/\s*\(otc\)/gi, '').trim() === withoutOtc
+  );
+  if (strippedMatch) return strippedMatch.symbol;
+
+  // 5. If it already has (OTC), return cleaned; otherwise append (OTC)
+  return cleaned.includes('(OTC)') ? cleaned : `${cleaned} (OTC)`;
+}
+
+/**
+ * Finds the complete AssetInfo object for any symbol variant.
+ * Guarantees a valid, fully-formed AssetInfo is ALWAYS returned without throwing or returning undefined.
+ */
+export function findAssetBySymbol(symbol: string): AssetInfo {
+  if (!symbol) return DEFAULT_ASSETS[0];
+
+  const canonicalSymbol = normalizeAssetSymbol(symbol);
+  const found = DEFAULT_ASSETS.find((a) => a.symbol === canonicalSymbol);
+  if (found) return found;
+
+  // Search by name contains
+  const lower = symbol.trim().toLowerCase();
+  const byName = DEFAULT_ASSETS.find((a) => a.name.toLowerCase().includes(lower));
+  if (byName) return byName;
+
+  // Resilient organic fallback asset info
+  return {
+    symbol: canonicalSymbol,
+    name: canonicalSymbol,
+    payout: 92,
+    category: canonicalSymbol.includes('/') ? 'Forex (OTC)' : 'Stocks (OTC)',
+    basePrice: 100.0,
+    volatility: 0.05,
+    pipDecimals: canonicalSymbol.includes('JPY') ? 3 : canonicalSymbol.includes('/') ? 5 : 2,
+    flag: '📈',
+  };
+}
+
 const STORAGE_KEYS = {
   PROFILE: 'bft_profile_v1',
   PROFILES_BY_EMAIL: 'bft_profiles_by_email_v1',
@@ -339,6 +427,10 @@ const STORAGE_KEYS = {
   AFFILIATE_USERS: 'bft_affiliate_users_v1',
   AFFILIATE_REFERRALS: 'bft_affiliate_referrals_v1',
   AFFILIATE_PAYOUTS: 'bft_affiliate_payouts_v1',
+  SELECTED_ASSET_SYMBOL: 'bft_selected_asset_symbol_v1',
+  OPEN_ASSET_TABS: 'bft_open_asset_tabs_v1',
+  SELECTED_TIMEFRAME: 'bft_selected_timeframe_v1',
+  CHART_TYPE: 'bft_chart_type_v1',
 };
 
 export function loadProfile(): UserProfile {
@@ -579,3 +671,109 @@ export function saveTrades(trades: BinaryTrade[]): void {
     console.error('Failed to save trades', e);
   }
 }
+
+const inMemoryStore: Record<string, string> = {};
+
+function safeGetItem(key: string): string | null {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem(key);
+    }
+  } catch {}
+  return inMemoryStore[key] ?? null;
+}
+
+function safeSetItem(key: string, value: string): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(key, value);
+    }
+  } catch {}
+  inMemoryStore[key] = value;
+}
+
+export function loadSelectedAssetSymbol(): string {
+  try {
+    const sym = safeGetItem(STORAGE_KEYS.SELECTED_ASSET_SYMBOL);
+    if (sym) return normalizeAssetSymbol(sym);
+  } catch {
+    // fallback
+  }
+  return DEFAULT_ASSETS[0].symbol;
+}
+
+export function saveSelectedAssetSymbol(symbol: string): void {
+  try {
+    safeSetItem(STORAGE_KEYS.SELECTED_ASSET_SYMBOL, normalizeAssetSymbol(symbol));
+  } catch (e) {
+    console.error('Failed to save selected asset symbol', e);
+  }
+}
+
+export function loadOpenAssetTabSymbols(): string[] {
+  try {
+    const raw = safeGetItem(STORAGE_KEYS.OPEN_ASSET_TABS);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed.map((s) => normalizeAssetSymbol(String(s)));
+      }
+    }
+  } catch {
+    // fallback
+  }
+  return [
+    DEFAULT_ASSETS[0].symbol, // EUR/USD (OTC)
+    DEFAULT_ASSETS[1].symbol, // GBP/JPY (OTC)
+    'BTC/USD (OTC)',
+    'ETH/USD (OTC)',
+    'XAU/USD (OTC)',
+    'TSLA (OTC)',
+  ];
+}
+
+export function saveOpenAssetTabSymbols(symbols: string[]): void {
+  try {
+    const normalized = symbols.map((s) => normalizeAssetSymbol(s));
+    safeSetItem(STORAGE_KEYS.OPEN_ASSET_TABS, JSON.stringify(normalized));
+  } catch (e) {
+    console.error('Failed to save open asset tabs', e);
+  }
+}
+
+export function loadSelectedTimeframe(): string {
+  try {
+    const tf = safeGetItem(STORAGE_KEYS.SELECTED_TIMEFRAME);
+    if (tf) return tf;
+  } catch {
+    // fallback
+  }
+  return '1m';
+}
+
+export function saveSelectedTimeframe(tf: string): void {
+  try {
+    safeSetItem(STORAGE_KEYS.SELECTED_TIMEFRAME, tf);
+  } catch (e) {
+    console.error('Failed to save selected timeframe', e);
+  }
+}
+
+export function loadChartType(): string {
+  try {
+    const ct = safeGetItem(STORAGE_KEYS.CHART_TYPE);
+    if (ct) return ct;
+  } catch {
+    // fallback
+  }
+  return 'candles';
+}
+
+export function saveChartType(ct: string): void {
+  try {
+    safeSetItem(STORAGE_KEYS.CHART_TYPE, ct);
+  } catch (e) {
+    console.error('Failed to save chart type', e);
+  }
+}
+
