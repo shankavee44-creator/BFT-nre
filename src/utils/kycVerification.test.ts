@@ -6,6 +6,8 @@ import {
   evaluateKycDocumentUpload,
   checkKycTimerCompletion,
   filterAccountsForUser,
+  formatKycStatusBadgeText,
+  requiresDualSidedUpload,
   KYC_WITHDRAWAL_LOCK_MESSAGE,
   KYC_VERIFICATION_DURATION_MS,
 } from './kycVerification';
@@ -30,6 +32,7 @@ const createMockUnverifiedProfile = (): UserProfile => ({
 test('newly registered user defaults to Unverified and is blocked from withdrawals with exact compliance prompt', () => {
   const profile = createMockUnverifiedProfile();
   assert.equal(profile.kycStatus, 'unverified');
+  assert.equal(formatKycStatusBadgeText(profile.kycStatus), 'Unverified');
 
   const check = canUserWithdraw(profile);
   assert.equal(check.allowed, false);
@@ -40,7 +43,7 @@ test('newly registered user defaults to Unverified and is blocked from withdrawa
   );
 });
 
-test('validateAndLockProfileDetails validates Full Name, Address, and DOB and locks them permanently', () => {
+test('validateAndLockProfileDetails validates Full Name, Address, DOB, and Country and locks them permanently', () => {
   const profile = createMockUnverifiedProfile();
 
   // Missing address or invalid DOB should fail
@@ -48,17 +51,19 @@ test('validateAndLockProfileDetails validates Full Name, Address, and DOB and lo
     fullName: 'Jordan Vance',
     address: '',
     dateOfBirth: '',
+    country: 'United States',
   });
   assert.equal(invalidAttempt.success, false);
   assert.equal(invalidAttempt.updatedProfile.profileLocked, false);
 
-  // Valid Full Name, Address, and DOB locks the profile permanently
+  // Valid Full Name, Address, DOB, and Country locks the profile permanently
   const validLock = validateAndLockProfileDetails(
     profile,
     {
       fullName: 'Jordan Vance',
       address: '742 Evergreen Terrace, Suite 200, New York, NY 10001',
       dateOfBirth: '1994-08-15',
+      country: 'Canada',
     },
     '2026-10-27T12:00:00.000Z'
   );
@@ -70,12 +75,14 @@ test('validateAndLockProfileDetails validates Full Name, Address, and DOB and lo
     '742 Evergreen Terrace, Suite 200, New York, NY 10001'
   );
   assert.equal(validLock.updatedProfile.dateOfBirth, '1994-08-15');
+  assert.equal(validLock.updatedProfile.country, 'Canada');
 
-  // Subsequent attempt to edit Full Name, Address, or DOB must be rejected (immutable)
+  // Subsequent attempt to edit Full Name, Address, DOB, or Country must be rejected (immutable)
   const editAttempt = validateAndLockProfileDetails(validLock.updatedProfile, {
     fullName: 'Another Name',
     address: '999 Different Street',
     dateOfBirth: '1990-01-01',
+    country: 'Germany',
   });
   assert.equal(editAttempt.success, false);
   assert.equal(editAttempt.updatedProfile.fullName, 'Jordan Vance');
@@ -84,9 +91,54 @@ test('validateAndLockProfileDetails validates Full Name, Address, and DOB and lo
     '742 Evergreen Terrace, Suite 200, New York, NY 10001'
   );
   assert.equal(editAttempt.updatedProfile.dateOfBirth, '1994-08-15');
+  assert.equal(editAttempt.updatedProfile.country, 'Canada');
 });
 
-test('evaluateKycDocumentUpload checks document match and starts 2-minute auto-verification timer', () => {
+test('dual-sided document upload requires both Front and Back for ID Card and Driving License, single-page for Passport', () => {
+  assert.equal(requiresDualSidedUpload('ID Card'), true);
+  assert.equal(requiresDualSidedUpload('Driving License'), true);
+  assert.equal(requiresDualSidedUpload('Passport'), false);
+
+  const locked = validateAndLockProfileDetails(createMockUnverifiedProfile(), {
+    fullName: 'Jordan Vance',
+    address: '742 Evergreen Terrace, Suite 200, New York, NY 10001',
+    dateOfBirth: '1994-08-15',
+    country: 'United States',
+  }).updatedProfile;
+
+  // Missing Back Side for ID Card must fail
+  const missingBackIdCard = evaluateKycDocumentUpload(locked, {
+    docType: 'ID Card',
+    documentNumber: 'ID99281722',
+    frontFileName: 'id_front.png',
+    backFileName: '',
+    extractedFullName: 'Jordan Vance',
+    extractedDob: '1994-08-15',
+  });
+  assert.equal(missingBackIdCard.matched, false);
+  assert.ok(missingBackIdCard.error?.includes('Back Side'));
+
+  // Providing both Front Side and Back Side for ID Card succeeds and sets status to 'pending' ("Pending Verification")
+  const validDualSidedIdCard = evaluateKycDocumentUpload(locked, {
+    docType: 'ID Card',
+    documentNumber: 'ID99281722',
+    frontFileName: 'id_front.png',
+    backFileName: 'id_back.png',
+    frontDocumentUrl: 'https://kwmjonjcwdwvaijcrtjw.supabase.co/storage/v1/object/public/kyc-documents/usr_new_101/front.png',
+    backDocumentUrl: 'https://kwmjonjcwdwvaijcrtjw.supabase.co/storage/v1/object/public/kyc-documents/usr_new_101/back.png',
+    extractedFullName: 'Jordan Vance',
+    extractedDob: '1994-08-15',
+  });
+  assert.equal(validDualSidedIdCard.matched, true);
+  assert.equal(validDualSidedIdCard.updatedProfile.kycStatus, 'pending');
+  assert.equal(formatKycStatusBadgeText(validDualSidedIdCard.updatedProfile.kycStatus), 'Pending Verification');
+  assert.equal(validDualSidedIdCard.updatedProfile.kycDocumentFileName, 'id_front.png');
+  assert.equal(validDualSidedIdCard.updatedProfile.kycBackDocumentFileName, 'id_back.png');
+  assert.ok(validDualSidedIdCard.updatedProfile.kycFrontDocumentUrl?.includes('/front.png'));
+  assert.ok(validDualSidedIdCard.updatedProfile.kycBackDocumentUrl?.includes('/back.png'));
+});
+
+test('evaluateKycDocumentUpload checks document match and transitions to Pending Verification', () => {
   const baseProfile = createMockUnverifiedProfile();
   const locked = validateAndLockProfileDetails(baseProfile, {
     fullName: 'Jordan Vance',
@@ -111,7 +163,7 @@ test('evaluateKycDocumentUpload checks document match and starts 2-minute auto-v
   assert.equal(mismatchRes.matched, false);
   assert.equal(mismatchRes.updatedProfile.kycStatus, 'unverified');
 
-  // Matching document data starts 2-minute (120s) timer in 'pending' status
+  // Matching document data transitions to 'pending' ("Pending Verification")
   const matchRes = evaluateKycDocumentUpload(
     locked,
     {

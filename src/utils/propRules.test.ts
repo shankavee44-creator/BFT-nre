@@ -18,6 +18,9 @@ import {
   checkMaxRiskPerTradeViolation,
   advanceChallengeAccountPhase,
   checkFirstWithdrawalWaitingPeriod,
+  createDefaultPersonalLiveAccount,
+  isPersonalLiveAccount,
+  getAccountStatusBadgeLabel,
   MIN_WITHDRAWAL_PROFIT,
   FIRST_WITHDRAWAL_WAITING_DAYS,
   WITHDRAWAL_GUARANTEE_NOTICE,
@@ -449,3 +452,43 @@ test('evaluateAccountBreach triggers auto-breach when loss limits are crossed', 
   assert.equal(evalOverall.breachType, 'OVERALL_LOSS');
   assert.equal(evalOverall.violationLog?.rule, 'OVERALL_LOSS');
 });
+
+test('Personal Live account bypasses prop drawdown locks and allows 100% capital + profit withdrawal with $250 min and 10% fee', () => {
+  const personalAcc = createDefaultPersonalLiveAccount('usr_bft_001', 'alex.mercer@bft-trader.io', 1250);
+  assert.equal(isPersonalLiveAccount(personalAcc), true);
+  assert.equal(getAccountStatusBadgeLabel(personalAcc), 'PERSONAL LIVE');
+  assert.equal(personalAcc.dailyLossLimitPercent, 0);
+  assert.equal(personalAcc.maxOverallLossPercent, 0);
+
+  // Even after a 50% balance drop, Personal Live account never triggers prop drawdown breach
+  personalAcc.currentBalance = 600;
+  personalAcc.equity = 600;
+  const ddMetrics = calculateDrawdownMetrics(personalAcc);
+  assert.equal(ddMetrics.isDailyBreached, false);
+  assert.equal(ddMetrics.isOverallBreached, false);
+  assert.equal(ddMetrics.isBreached, false);
+  assert.equal(evaluateAccountBreach(personalAcc).isBreached, false);
+
+  // Can still withdraw capital ($400) even when currentBalance ($600) is below initial deposit ($1,250)
+  const validCapWithdrawal = validateWithdrawalRequest(personalAcc, 400, {
+    enforceFirstWithdrawalLock: true,
+  });
+  assert.equal(validCapWithdrawal.valid, true);
+
+  // Minimum $250 threshold still enforced on Personal Live account
+  const belowMin = validateWithdrawalRequest(personalAcc, 150);
+  assert.equal(belowMin.valid, false);
+  assert.equal(belowMin.code, 'AMOUNT_TOO_LOW');
+
+  // Cannot withdraw more than available Personal Live balance
+  const exceedsBal = validateWithdrawalRequest(personalAcc, 750);
+  assert.equal(exceedsBal.valid, false);
+  assert.equal(exceedsBal.code, 'EXCEEDS_BALANCE');
+
+  // Withdrawal breakdown shows 100% retention and 10% standard fee
+  const breakdown = calculateWithdrawalBreakdown(400, 0, true);
+  assert.equal(breakdown.profitSplitPercent, 100);
+  assert.equal(breakdown.withdrawalFeeAmount, 40);
+  assert.equal(breakdown.netPayoutToReceive, 360);
+});
+

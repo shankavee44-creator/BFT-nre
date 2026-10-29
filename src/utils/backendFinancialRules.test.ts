@@ -13,6 +13,8 @@ import {
   getAffiliateDashboardStats,
   getWeeklyLeaderboardQuery,
   getCountryFlag,
+  ensurePersonalLiveAccountForUser,
+  creditPersonalAccountDepositInDb,
 } from '../server/db';
 
 test('80% Profit Payout Ceiling Rule: blocks withdrawal exceeding 80% of net profit', () => {
@@ -112,6 +114,9 @@ test('Challenge Phase Withdrawal Lock & Progression to Live Funded Account with 
   assert.equal(passedResult.deployedAccount?.phase, 'funded');
   assert.equal(passedResult.deployedAccount?.status, 'active');
   assert.equal(passedResult.deployedAccount?.size, 10000);
+
+  // Clean up test-only accounts so usr_bft_001 retains a clean account list
+  db.prepare(`DELETE FROM accounts WHERE user_id = 'usr_bft_001' AND id NOT IN ('BFT-91823', 'BFT-PERS-001')`).run();
 });
 
 test('3-Tier Affiliate Commission structure: 10% L1, 5% L2, 2% L3', () => {
@@ -150,4 +155,53 @@ test('Weekly Leaderboard query & Country Flag mapping: normalizes Kasun Perera a
   assert.equal(kasun?.flag, '🇱🇰');
   assert.equal(kasun?.profit, 18995.22);
 });
+
+test('Personal Live Trading Account (Self-Funded Balance): supports direct deposits and unrestricted capital + profit withdrawals', () => {
+  // Ensure Personal Live account exists for usr_bft_001
+  const personalRow = ensurePersonalLiveAccountForUser('usr_bft_001');
+  assert.ok(personalRow);
+  assert.equal(personalRow?.id, 'BFT-PERS-001');
+  assert.equal(personalRow?.account_category, 'personal_live');
+
+  // Reset BFT-PERS-001 to $1,250.00 initial & current balance for deterministic testing
+  db.prepare(`
+    UPDATE accounts SET
+      initial_balance = 1250.00,
+      current_balance = 1250.00,
+      equity = 1250.00,
+      starting_day_equity = 1250.00,
+      deposited_capital = 1250.00,
+      size = 1250.00,
+      status = 'active',
+      phase = 'personal_live'
+    WHERE id = 'BFT-PERS-001'
+  `).run();
+
+  // Deposit $500 into Personal Live account -> balance becomes $1,750.00
+  const afterDeposit = creditPersonalAccountDepositInDb({
+    userId: 'usr_bft_001',
+    accountId: 'BFT-PERS-001',
+    amountUsdt: 500,
+  });
+  assert.equal(afterDeposit.currentBalance, 1750);
+  assert.equal(afterDeposit.depositedCapital, 1750);
+
+  // Withdraw $500 of deposited capital (even with $0 profit) -> succeeds with 100% retention and 10% fee ($450 net)
+  const withdrawalRes = processWithdrawalRequest({
+    userId: 'usr_bft_001',
+    accountId: 'BFT-PERS-001',
+    requestedAmount: 500,
+    walletAddress: 'TYsDj4BmVp8QW8r6F32Xnm9ZkE4G1A7L2',
+    network: 'TRON (TRC-20)',
+    paymentMethod: 'crypto_trc20',
+  });
+  assert.equal(withdrawalRes.breakdown.profitShareRate, 1.0);
+  assert.equal(withdrawalRes.breakdown.feeAmount, 50);
+  assert.equal(withdrawalRes.breakdown.netPayout, 450);
+  assert.equal(withdrawalRes.breakdown.isPersonalLive, true);
+  assert.equal((withdrawalRes.withdrawal as any).profit_share_rate, 1.0);
+  assert.equal((withdrawalRes.withdrawal as any).fee_amount, 50);
+  assert.equal((withdrawalRes.withdrawal as any).net_payout, 450);
+});
+
 

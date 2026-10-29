@@ -363,11 +363,18 @@ export function calculateQuotexAccountSummary(account?: TradingAccount | null): 
     };
   }
 
+  const isPersonal =
+    account.tier === 'personal' ||
+    account.accountCategory === 'personal_live' ||
+    account.phase === 'personal_live';
+
   const inTheAccount = Math.max(0, Number(account.currentBalance.toFixed(2)));
   const netProfit = Math.max(0, Number((account.currentBalance - account.initialBalance).toFixed(2)));
+  const availableForWithdrawal = isPersonal ? inTheAccount : netProfit;
+
   return {
     inTheAccount,
-    availableForWithdrawal: netProfit,
+    availableForWithdrawal,
     commission: 10,
     withdrawalFeePercent: 10,
     minWithdrawalAmount: 250,
@@ -375,7 +382,7 @@ export function calculateQuotexAccountSummary(account?: TradingAccount | null): 
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     })} $`,
-    availableForWithdrawalFormatted: `${netProfit.toLocaleString('en-US', {
+    availableForWithdrawalFormatted: `${availableForWithdrawal.toLocaleString('en-US', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     })} $`,

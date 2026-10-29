@@ -11,6 +11,33 @@ export function normalizeIdentityString(val: string | undefined | null): string 
 }
 
 /**
+ * Formats internal KYC status values into clean user-facing badge labels.
+ * Specifically maps 'pending' to 'Pending Verification'.
+ */
+export function formatKycStatusBadgeText(status: string | undefined | null): string {
+  const clean = (status || '').trim().toLowerCase();
+  if (clean === 'pending' || clean === 'pending verification' || clean === 'pending_verification') {
+    return 'Pending Verification';
+  }
+  if (clean === 'verified' || clean === 'approved') {
+    return 'Verified';
+  }
+  if (clean === 'rejected') {
+    return 'Rejected';
+  }
+  return 'Unverified';
+}
+
+/**
+ * Determines whether a given KYC document type requires both Front Side and Back Side uploads.
+ * Passports only require the single bio-data page (Back Side optional), whereas ID Cards
+ * and Driving Licenses strictly require both Front Side and Back Side uploads.
+ */
+export function requiresDualSidedUpload(docType: KYCDocumentType | string | undefined): boolean {
+  return docType !== 'Passport';
+}
+
+/**
  * Checks whether a user is permitted to submit a withdrawal request based on strict KYC compliance.
  */
 export function canUserWithdraw(profile: UserProfile | null | undefined): {
@@ -30,8 +57,8 @@ export function canUserWithdraw(profile: UserProfile | null | undefined): {
 }
 
 /**
- * Validates and permanently locks a user's personal identity fields (Full Name, Address, Date of Birth).
- * Once locked, Full Name, Address, and Date of Birth are immutable and cannot be edited.
+ * Validates and permanently locks a user's personal identity fields (Full Name, Address, Date of Birth, Country).
+ * Once locked, Full Name, Address, Date of Birth, and Country are immutable in the KYC identity record.
  */
 export function validateAndLockProfileDetails(
   currentProfile: UserProfile,
@@ -55,22 +82,28 @@ export function validateAndLockProfileDetails(
       normalizeIdentityString(input.address) !== normalizeIdentityString(currentProfile.address);
     const attemptedDobChange =
       (input.dateOfBirth || '').trim() !== (currentProfile.dateOfBirth || '').trim();
+    const attemptedCountryChange =
+      Boolean(input.country && currentProfile.country) &&
+      normalizeIdentityString(input.country) !== normalizeIdentityString(currentProfile.country);
 
-    if (attemptedNameChange || attemptedAddressChange || attemptedDobChange) {
+    if (
+      attemptedNameChange ||
+      attemptedAddressChange ||
+      attemptedDobChange ||
+      attemptedCountryChange
+    ) {
       return {
         success: false,
         error:
-          'Personal details (Full Name, Address, and Date of Birth) are permanently locked and cannot be edited after submission.',
+          'Personal details (Full Name, Address, Date of Birth, and Country) are permanently locked and cannot be edited after submission.',
         updatedProfile: currentProfile,
       };
     }
 
-    // Allow non-immutable fields (like Telegram handle) to be saved while keeping identity fields locked
     return {
       success: true,
       updatedProfile: {
         ...currentProfile,
-        country: input.country?.trim() || currentProfile.country,
         telegramHandle: input.telegramHandle?.trim() ?? currentProfile.telegramHandle,
       },
     };
@@ -79,6 +112,7 @@ export function validateAndLockProfileDetails(
   const cleanName = (input.fullName || '').trim().replace(/\s+/g, ' ');
   const cleanAddress = (input.address || '').trim();
   const cleanDob = (input.dateOfBirth || '').trim();
+  const cleanCountry = (input.country || currentProfile.country || 'United States').trim();
 
   if (cleanName.length < 3) {
     return {
@@ -104,12 +138,20 @@ export function validateAndLockProfileDetails(
     };
   }
 
+  if (cleanCountry.length < 2) {
+    return {
+      success: false,
+      error: 'Please select your Country of Residence.',
+      updatedProfile: currentProfile,
+    };
+  }
+
   const updatedProfile: UserProfile = {
     ...currentProfile,
     fullName: cleanName,
     address: cleanAddress,
     dateOfBirth: cleanDob,
-    country: input.country?.trim() || currentProfile.country,
+    country: cleanCountry,
     telegramHandle: input.telegramHandle?.trim() ?? currentProfile.telegramHandle,
     profileLocked: true,
     profileLockedAt: nowIso,
@@ -123,7 +165,8 @@ export function validateAndLockProfileDetails(
 
 /**
  * Evaluates uploaded KYC documents against the user's locked personal details.
- * Performs automated verification and updates status to 'verified'.
+ * Enforces Front Side + Back Side uploads for ID Card and Driving License (single-page for Passport),
+ * and transitions the user's KYC status to 'pending' ("Pending Verification").
  */
 export function evaluateKycDocumentUpload(
   profile: UserProfile,
@@ -132,8 +175,10 @@ export function evaluateKycDocumentUpload(
     documentNumber: string;
     frontFileName: string;
     backFileName?: string;
-    extractedFullName: string;
-    extractedDob: string;
+    frontDocumentUrl?: string;
+    backDocumentUrl?: string;
+    extractedFullName?: string;
+    extractedDob?: string;
   },
   nowMs: number = Date.now()
 ): {
@@ -145,7 +190,7 @@ export function evaluateKycDocumentUpload(
     return {
       matched: false,
       error:
-        'Please complete and save your Personal Profile Details (Full Name, Address, Date of Birth) before uploading your KYC document.',
+        'Please complete and save your Personal Profile Details (Full Name, Address, Date of Birth, Country) before uploading your KYC document.',
       updatedProfile: profile,
     };
   }
@@ -158,15 +203,16 @@ export function evaluateKycDocumentUpload(
     };
   }
 
-  if (doc.docType !== 'Passport' && (!doc.backFileName || !doc.backFileName.trim())) {
+  if (requiresDualSidedUpload(doc.docType) && (!doc.backFileName || !doc.backFileName.trim())) {
     return {
       matched: false,
-      error: `Please upload a valid Back Side scan or photo of your ${doc.docType}.`,
+      error: `Please upload a valid Back Side scan or photo of your ${doc.docType}. Both Front Side and Back Side are required.`,
       updatedProfile: profile,
     };
   }
 
-  if (!doc.documentNumber || doc.documentNumber.trim().length < 4) {
+  const cleanDocNumber = (doc.documentNumber || '').trim() || `DOC-${nowMs.toString(36).toUpperCase()}`;
+  if (cleanDocNumber.length < 4) {
     return {
       matched: false,
       error: `Please enter a valid ${doc.docType} serial or document number.`,
@@ -174,14 +220,20 @@ export function evaluateKycDocumentUpload(
     };
   }
 
+  const effectiveExtractedName =
+    doc.extractedFullName !== undefined ? doc.extractedFullName : profile.fullName;
+  const effectiveExtractedDob =
+    doc.extractedDob !== undefined ? doc.extractedDob : profile.dateOfBirth;
+
   const nameMatches =
-    normalizeIdentityString(doc.extractedFullName) === normalizeIdentityString(profile.fullName);
-  const dobMatches = (doc.extractedDob || '').trim() === (profile.dateOfBirth || '').trim();
+    normalizeIdentityString(effectiveExtractedName) === normalizeIdentityString(profile.fullName);
+  const dobMatches =
+    (effectiveExtractedDob || '').trim() === (profile.dateOfBirth || '').trim();
 
   if (!nameMatches || !dobMatches) {
     const mismatchReason = !nameMatches
-      ? `Document name ("${doc.extractedFullName.trim()}") does not match locked profile Full Name ("${profile.fullName}").`
-      : `Document Date of Birth ("${doc.extractedDob.trim()}") does not match locked profile Date of Birth ("${profile.dateOfBirth}").`;
+      ? `Document name ("${effectiveExtractedName.trim()}") does not match locked profile Full Name ("${profile.fullName}").`
+      : `Document Date of Birth ("${effectiveExtractedDob.trim()}") does not match locked profile Date of Birth ("${profile.dateOfBirth}").`;
 
     return {
       matched: false,
@@ -198,14 +250,17 @@ export function evaluateKycDocumentUpload(
     matched: true,
     updatedProfile: {
       ...profile,
-      kycStatus: 'verified',
+      kycStatus: 'pending',
       kycDocumentType: doc.docType,
-      kycDocumentNumber: doc.documentNumber.trim(),
+      kycDocumentNumber: cleanDocNumber,
       kycDocumentFileName: doc.frontFileName.trim(),
-      kycExtractedName: doc.extractedFullName.trim(),
-      kycExtractedDob: doc.extractedDob.trim(),
+      kycBackDocumentFileName: doc.backFileName?.trim() || undefined,
+      kycFrontDocumentUrl: doc.frontDocumentUrl?.trim() || profile.kycFrontDocumentUrl,
+      kycBackDocumentUrl: doc.backDocumentUrl?.trim() || profile.kycBackDocumentUrl,
+      kycExtractedName: effectiveExtractedName.trim(),
+      kycExtractedDob: effectiveExtractedDob.trim(),
       kycSubmittedAt: new Date(nowMs).toISOString().split('T')[0],
-      kycVerificationEndsAt: undefined,
+      kycVerificationEndsAt: nowMs + KYC_VERIFICATION_DURATION_MS,
       kycRejectionReason: undefined,
       profileLocked: true,
     },
@@ -217,18 +272,55 @@ export function evaluateKycDocumentUpload(
  */
 export function checkKycTimerCompletion(
   profile: UserProfile,
-  _nowMs: number = Date.now()
+  nowMs: number = Date.now()
 ): {
   completed: boolean;
   remainingSeconds: number;
   updatedProfile: UserProfile;
 } {
+  if (profile.kycStatus === 'verified' || profile.kycStatus === 'approved') {
+    return {
+      completed: true,
+      remainingSeconds: 0,
+      updatedProfile: {
+        ...profile,
+        kycStatus: 'verified',
+      },
+    };
+  }
+
+  if (profile.kycStatus !== 'pending') {
+    return {
+      completed: false,
+      remainingSeconds: 0,
+      updatedProfile: profile,
+    };
+  }
+
+  if (!profile.kycVerificationEndsAt) {
+    return {
+      completed: false,
+      remainingSeconds: KYC_VERIFICATION_DURATION_SECONDS,
+      updatedProfile: profile,
+    };
+  }
+
+  const remainingMs = profile.kycVerificationEndsAt - nowMs;
+  if (remainingMs > 0) {
+    return {
+      completed: false,
+      remainingSeconds: Math.ceil(remainingMs / 1000),
+      updatedProfile: profile,
+    };
+  }
+
   return {
     completed: true,
     remainingSeconds: 0,
     updatedProfile: {
       ...profile,
-      kycStatus: profile.kycStatus === 'unverified' ? 'unverified' : 'verified',
+      kycStatus: 'verified',
+      kycVerificationEndsAt: undefined,
     },
   };
 }

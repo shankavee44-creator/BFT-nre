@@ -487,6 +487,13 @@ export function deleteSessionToken(token: string) {
 
 export function mapAccountRowToTradingAccount(row: any) {
   if (!row) return null;
+  const accountCategory =
+    row.account_category ||
+    (row.tier === 'personal' || row.phase === 'personal_live'
+      ? 'personal_live'
+      : row.tier === 'demo' || row.phase === 'demo'
+      ? 'demo'
+      : 'prop');
   return {
     ...row,
     id: row.id,
@@ -494,6 +501,8 @@ export function mapAccountRowToTradingAccount(row: any) {
     passwordHash: 'bft_live_' + String(row.id).replace(/[^a-zA-Z0-9]/g, '').toLowerCase(),
     tier: row.tier,
     tierName: row.tier_name,
+    accountCategory,
+    depositedCapital: Number(row.deposited_capital ?? (accountCategory === 'personal_live' ? row.initial_balance : 0)),
     size: row.size,
     initialBalance: row.initial_balance,
     currentBalance: row.current_balance,
@@ -517,10 +526,96 @@ export function mapAccountRowToTradingAccount(row: any) {
   };
 }
 
-try {
-  db.exec(`ALTER TABLE accounts ADD COLUMN certificate_id TEXT;`);
-} catch {
-  // Column already exists
+const accountAlterColumns = [
+  `ALTER TABLE accounts ADD COLUMN certificate_id TEXT;`,
+  `ALTER TABLE accounts ADD COLUMN account_category TEXT DEFAULT 'prop';`,
+  `ALTER TABLE accounts ADD COLUMN deposited_capital REAL DEFAULT 0;`,
+];
+for (const stmt of accountAlterColumns) {
+  try {
+    db.exec(stmt);
+  } catch {
+    // Column already exists
+  }
+}
+
+const kycAlterColumns = [
+  `ALTER TABLE users ADD COLUMN kyc_doc_number TEXT;`,
+  `ALTER TABLE users ADD COLUMN kyc_front_url TEXT;`,
+  `ALTER TABLE users ADD COLUMN kyc_back_url TEXT;`,
+  `ALTER TABLE users ADD COLUMN kyc_front_filename TEXT;`,
+  `ALTER TABLE users ADD COLUMN kyc_back_filename TEXT;`,
+  `ALTER TABLE users ADD COLUMN kyc_submitted_at TEXT;`,
+];
+for (const stmt of kycAlterColumns) {
+  try {
+    db.exec(stmt);
+  } catch {
+    // Column already exists
+  }
+}
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS kyc_submissions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    full_name TEXT NOT NULL,
+    address TEXT NOT NULL,
+    date_of_birth TEXT NOT NULL,
+    country TEXT NOT NULL DEFAULT 'United States',
+    profile_locked INTEGER DEFAULT 1,
+    doc_type TEXT,
+    document_number TEXT,
+    front_document_url TEXT,
+    back_document_url TEXT,
+    front_file_name TEXT,
+    back_file_name TEXT,
+    status TEXT NOT NULL DEFAULT 'unverified',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+`);
+
+export function getKycSubmissionForUser(userId: string) {
+  return db.prepare('SELECT * FROM kyc_submissions WHERE user_id = ?').get(userId) as any;
+}
+
+export function ensureUserInDb(params: {
+  id: string;
+  email: string;
+  fullName?: string;
+  referralCode?: string;
+}) {
+  if (!params.id && !params.email) return null;
+  let existing = params.id ? getUserById(params.id) : null;
+  if (!existing && params.email) {
+    existing = getUserByEmail(params.email);
+  }
+  if (existing) {
+    return existing;
+  }
+
+  const now = Date.now();
+  const cleanEmail = (params.email || `${params.id}@bft.io`).trim().toLowerCase();
+  const cleanName = (params.fullName || cleanEmail.split('@')[0] || 'BFT Trader').trim();
+  const sanitizedRef = (params.referralCode || `BFT-${Math.random().toString(36).substring(2, 8).toUpperCase()}`).trim();
+  const userId = params.id || `usr_${now.toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+
+  try {
+    db.prepare(`
+      INSERT INTO users (id, email, full_name, referral_code, kyc_status, profile_locked, country, created_at, updated_at)
+      VALUES (?, ?, ?, ?, 'unverified', 0, 'United States', ?, ?)
+    `).run(userId, cleanEmail, cleanName, sanitizedRef, now, now);
+  } catch {
+    // Fallback if referral_code collided
+    const fallbackRef = `BFT-${Math.floor(100000 + Math.random() * 899999)}`;
+    db.prepare(`
+      INSERT OR IGNORE INTO users (id, email, full_name, referral_code, kyc_status, profile_locked, country, created_at, updated_at)
+      VALUES (?, ?, ?, ?, 'unverified', 0, 'United States', ?, ?)
+    `).run(userId, cleanEmail, cleanName, fallbackRef, now, now);
+  }
+
+  return getUserById(userId) || getUserByEmail(cleanEmail);
 }
 
 export const COUNTRY_FLAGS: Record<string, string> = {
@@ -549,8 +644,118 @@ export function getCountryFlag(country?: string | null): string {
   return COUNTRY_FLAGS[country.trim()] || '🌐';
 }
 
+export function ensurePersonalLiveAccountForUser(userId: string) {
+  if (!userId) return null;
+  const user = getUserById(userId);
+  if (!user) return null;
+
+  const existing = db
+    .prepare(
+      `SELECT * FROM accounts WHERE user_id = ? AND (tier = 'personal' OR account_category = 'personal_live' OR phase = 'personal_live') LIMIT 1`
+    )
+    .get(userId) as any;
+
+  if (existing) {
+    return mapAccountRowToTradingAccount(existing);
+  }
+
+  const now = Date.now();
+  const nowIso = new Date(now).toISOString().split('T')[0];
+  const suffix = userId.replace(/[^a-zA-Z0-9]/g, '').slice(-5).toUpperCase() || '001';
+  const accountId = userId === 'usr_bft_001' ? 'BFT-PERS-001' : `BFT-PERS-${suffix}`;
+  const initialDeposit = userId === 'usr_bft_001' ? 1250 : 0;
+
+  db.prepare(`
+    INSERT OR IGNORE INTO accounts (
+      id, user_id, tier, tier_name, account_category, deposited_capital, size,
+      initial_balance, current_balance, starting_day_equity, equity,
+      daily_loss_limit_percent, max_overall_loss_percent, max_risk_per_trade_percent,
+      status, phase, trading_days_completed, trades_count, win_rate,
+      daily_withdrawals_unlocked, first_withdrawal_completed, created_date, created_at, updated_at
+    ) VALUES (?, ?, 'personal', 'Personal Live Balance (Self-Funded)', 'personal_live', ?, ?, ?, ?, ?, ?, 0, 0, 100, 'active', 'personal_live', 14, 0, 0, 1, 1, ?, ?, ?)
+  `).run(
+    accountId,
+    userId,
+    initialDeposit,
+    initialDeposit,
+    initialDeposit,
+    initialDeposit,
+    initialDeposit,
+    initialDeposit,
+    nowIso,
+    now - 86400000 * 25,
+    now
+  );
+
+  return getAccountById(accountId);
+}
+
+export function creditPersonalAccountDepositInDb(params: {
+  userId: string;
+  accountId?: string;
+  amountUsdt: number;
+}) {
+  const cleanAmount = Number(params.amountUsdt);
+  if (!Number.isFinite(cleanAmount) || cleanAmount <= 0) {
+    throw new Error('Deposit amount must be greater than $0.00.');
+  }
+
+  let personalAcc = ensurePersonalLiveAccountForUser(params.userId);
+  if (params.accountId) {
+    const specific = getAccountById(params.accountId);
+    if (
+      specific &&
+      specific.user_id === params.userId &&
+      (specific.tier === 'personal' || specific.accountCategory === 'personal_live')
+    ) {
+      personalAcc = specific;
+    }
+  }
+
+  if (!personalAcc) {
+    throw new Error('Personal Live account could not be initialized for deposit.');
+  }
+
+  const now = Date.now();
+  const nextDeposited = Number(((personalAcc.depositedCapital || 0) + cleanAmount).toFixed(2));
+  const nextInitial = Number(((personalAcc.initialBalance || 0) + cleanAmount).toFixed(2));
+  const nextCurrent = Number(((personalAcc.currentBalance || 0) + cleanAmount).toFixed(2));
+  const nextEquity = Number(((personalAcc.equity || 0) + cleanAmount).toFixed(2));
+  const nextStartingDay = Number(((personalAcc.startingDayEquity || 0) + cleanAmount).toFixed(2));
+
+  db.prepare(`
+    UPDATE accounts SET
+      deposited_capital = ?,
+      size = ?,
+      initial_balance = ?,
+      current_balance = ?,
+      starting_day_equity = ?,
+      equity = ?,
+      status = 'active',
+      updated_at = ?
+    WHERE id = ? AND user_id = ?
+  `).run(
+    nextDeposited,
+    nextInitial,
+    nextInitial,
+    nextCurrent,
+    nextStartingDay,
+    nextEquity,
+    now,
+    personalAcc.id,
+    params.userId
+  );
+
+  return getAccountById(personalAcc.id);
+}
+
 export function getAccountsForUser(userId: string) {
-  const rows = db.prepare('SELECT * FROM accounts WHERE user_id = ? ORDER BY created_at DESC').all(userId) as any[];
+  ensurePersonalLiveAccountForUser(userId);
+  const rows = db
+    .prepare(
+      `SELECT * FROM accounts WHERE user_id = ? ORDER BY CASE WHEN tier = 'personal' OR account_category = 'personal_live' THEN 1 ELSE 0 END ASC, created_at DESC`
+    )
+    .all(userId) as any[];
   return rows.map(mapAccountRowToTradingAccount);
 }
 
@@ -725,55 +930,119 @@ export function lockUserProfile(userId: string, data: { fullName: string; addres
   const user = getUserById(userId);
   if (!user) throw new Error('User not found.');
 
+  const now = Date.now();
+
   if (user.profile_locked === 1) {
-    // Only update mutable fields like telegram handle or country flag
+    // Personal details (Full Name, Address, Date of Birth, Country) remain locked; only telegramHandle is mutable
     db.prepare(`
       UPDATE users SET
         telegram_handle = COALESCE(?, telegram_handle),
-        country = COALESCE(?, country),
         updated_at = ?
       WHERE id = ?
-    `).run(data.telegramHandle || null, data.country || null, Date.now(), userId);
+    `).run(data.telegramHandle || null, now, userId);
     return getUserById(userId);
   }
+
+  const cleanName = data.fullName.trim();
+  const cleanAddress = data.address.trim();
+  const cleanDob = data.dateOfBirth.trim();
+  const cleanCountry = (data.country || user.country || 'United States').trim();
 
   db.prepare(`
     UPDATE users SET
       full_name = ?,
       address = ?,
       date_of_birth = ?,
-      country = COALESCE(?, country),
+      country = ?,
       telegram_handle = COALESCE(?, telegram_handle),
       profile_locked = 1,
       updated_at = ?
     WHERE id = ?
   `).run(
-    data.fullName.trim(),
-    data.address.trim(),
-    data.dateOfBirth.trim(),
-    data.country?.trim() || null,
+    cleanName,
+    cleanAddress,
+    cleanDob,
+    cleanCountry,
     data.telegramHandle?.trim() || null,
-    Date.now(),
+    now,
     userId
   );
+
+  // Also persist personal details in kyc_submissions table
+  const existingSub = getKycSubmissionForUser(userId);
+  if (existingSub) {
+    db.prepare(`
+      UPDATE kyc_submissions SET
+        full_name = ?,
+        address = ?,
+        date_of_birth = ?,
+        country = ?,
+        profile_locked = 1,
+        updated_at = ?
+      WHERE user_id = ?
+    `).run(cleanName, cleanAddress, cleanDob, cleanCountry, now, userId);
+  } else {
+    db.prepare(`
+      INSERT INTO kyc_submissions (
+        id, user_id, full_name, address, date_of_birth, country, profile_locked, status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+    `).run(
+      `KYC-SUB-${userId}-${now.toString(36)}`,
+      userId,
+      cleanName,
+      cleanAddress,
+      cleanDob,
+      cleanCountry,
+      user.kyc_status || 'unverified',
+      now,
+      now
+    );
+  }
 
   return getUserById(userId);
 }
 
-export function updateUserKycStatus(userId: string, data: { status: 'unverified' | 'pending' | 'verified' | 'rejected'; docType?: string; timerEndsAt?: number }) {
+export function updateUserKycStatus(
+  userId: string,
+  data: {
+    status: 'unverified' | 'pending' | 'verified' | 'rejected';
+    docType?: string;
+    documentNumber?: string;
+    frontDocumentUrl?: string;
+    backDocumentUrl?: string;
+    frontFileName?: string;
+    backFileName?: string;
+    submittedAt?: string;
+    timerEndsAt?: number;
+  }
+) {
   const now = Date.now();
+  const submittedIso = data.submittedAt || new Date(now).toISOString().split('T')[0];
+
   db.prepare(`
     UPDATE users SET
       kyc_status = ?,
       kyc_doc_type = COALESCE(?, kyc_doc_type),
+      kyc_doc_number = COALESCE(?, kyc_doc_number),
+      kyc_front_url = COALESCE(?, kyc_front_url),
+      kyc_back_url = COALESCE(?, kyc_back_url),
+      kyc_front_filename = COALESCE(?, kyc_front_filename),
+      kyc_back_filename = COALESCE(?, kyc_back_filename),
+      kyc_submitted_at = COALESCE(?, kyc_submitted_at),
       kyc_timer_ends_at = ?,
       kyc_verified_at = CASE WHEN ? = 'verified' THEN ? ELSE kyc_verified_at END,
-      profile_locked = CASE WHEN ? = 'verified' THEN 1 ELSE profile_locked END,
+      profile_locked = CASE WHEN ? IN ('pending', 'verified') THEN 1 ELSE profile_locked END,
       updated_at = ?
     WHERE id = ?
   `).run(
     data.status,
     data.docType || null,
+    data.documentNumber || null,
+    data.frontDocumentUrl || null,
+    data.backDocumentUrl || null,
+    data.frontFileName || null,
+    data.backFileName || null,
+    submittedIso,
     data.timerEndsAt || null,
     data.status,
     now,
@@ -781,6 +1050,62 @@ export function updateUserKycStatus(userId: string, data: { status: 'unverified'
     now,
     userId
   );
+
+  const user = getUserById(userId);
+  if (user) {
+    const existingSub = getKycSubmissionForUser(userId);
+    const subStatus = data.status === 'pending' ? 'Pending Verification' : data.status;
+    if (existingSub) {
+      db.prepare(`
+        UPDATE kyc_submissions SET
+          doc_type = COALESCE(?, doc_type),
+          document_number = COALESCE(?, document_number),
+          front_document_url = COALESCE(?, front_document_url),
+          back_document_url = COALESCE(?, back_document_url),
+          front_file_name = COALESCE(?, front_file_name),
+          back_file_name = COALESCE(?, back_file_name),
+          status = ?,
+          profile_locked = 1,
+          updated_at = ?
+        WHERE user_id = ?
+      `).run(
+        data.docType || null,
+        data.documentNumber || null,
+        data.frontDocumentUrl || null,
+        data.backDocumentUrl || null,
+        data.frontFileName || null,
+        data.backFileName || null,
+        subStatus,
+        now,
+        userId
+      );
+    } else {
+      db.prepare(`
+        INSERT INTO kyc_submissions (
+          id, user_id, full_name, address, date_of_birth, country, profile_locked,
+          doc_type, document_number, front_document_url, back_document_url, front_file_name, back_file_name,
+          status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        `KYC-SUB-${userId}-${now.toString(36)}`,
+        userId,
+        user.full_name || 'Verified Trader',
+        user.address || '',
+        user.date_of_birth || '',
+        user.country || 'United States',
+        data.docType || 'ID Card',
+        data.documentNumber || null,
+        data.frontDocumentUrl || null,
+        data.backDocumentUrl || null,
+        data.frontFileName || null,
+        data.backFileName || null,
+        subStatus,
+        now,
+        now
+      );
+    }
+  }
+
   return getUserById(userId);
 }
 
@@ -817,6 +1142,81 @@ export function processWithdrawalRequest(params: {
   const account = getAccountById(params.accountId);
   if (!account || account.user_id !== params.userId) {
     throw new Error('Trading account not found or unauthorized.');
+  }
+
+  const isPersonalLive =
+    account.tier === 'personal' ||
+    account.account_category === 'personal_live' ||
+    account.accountCategory === 'personal_live' ||
+    account.phase === 'personal_live';
+
+  if (isPersonalLive) {
+    if (account.status !== 'active') {
+      throw new Error('Account is not active.');
+    }
+
+    const availableBalance = Math.max(0, Number(account.current_balance.toFixed(2)));
+    if (availableBalance < 250) {
+      throw new Error(
+        `Minimum withdrawal threshold is $250.00. Current Personal Live balance is $${availableBalance.toFixed(2)}.`
+      );
+    }
+
+    if (params.requestedAmount < 250) {
+      throw new Error('Minimum withdrawal amount is $250.00 USD.');
+    }
+
+    if (params.requestedAmount > availableBalance) {
+      throw new Error(
+        `Cannot withdraw more than your available Personal Live balance ($${availableBalance.toFixed(2)}).`
+      );
+    }
+
+    const feeAmount = Number((params.requestedAmount * 0.10).toFixed(2));
+    const netPayout = Number((params.requestedAmount - feeAmount).toFixed(2));
+    const now = Date.now();
+    const withdrawalId = `WD-${Math.floor(51940000000 + Math.random() * 99999999)}`;
+    const refNumber = `0x${Math.random().toString(16).slice(2, 10)}${Math.random().toString(16).slice(2, 10)}`;
+
+    db.prepare(`
+      INSERT INTO withdrawals (
+        id, user_id, account_id, gross_amount, net_profit, max_allowed_profit, profit_share_rate, fee_amount, net_payout,
+        wallet_address, network, payment_method, status, reference_number, tx_hash, requested_at, processed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 1.00, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, NULL)
+    `).run(
+      withdrawalId,
+      params.userId,
+      params.accountId,
+      params.requestedAmount,
+      availableBalance,
+      availableBalance,
+      feeAmount,
+      netPayout,
+      params.walletAddress,
+      params.network,
+      params.paymentMethod,
+      refNumber,
+      refNumber,
+      now
+    );
+
+    const updatedAccount = getAccountById(account.id);
+    const withdrawalRecord = db.prepare('SELECT * FROM withdrawals WHERE id = ?').get(withdrawalId);
+
+    return {
+      ok: true,
+      withdrawal: withdrawalRecord,
+      updatedAccount,
+      breakdown: {
+        requestedAmount: params.requestedAmount,
+        netProfit: availableBalance,
+        maxAllowed80Percent: availableBalance,
+        profitShareRate: 1.0,
+        feeAmount,
+        netPayout,
+        isPersonalLive: true,
+      },
+    };
   }
 
   // STRICT CHALLENGE PHASE RULE: One-Step and Two-Step Challenge accounts cannot withdraw during challenge phase

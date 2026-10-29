@@ -19,11 +19,15 @@ import {
   getUserByEmail,
   getUserByReferralCode,
   createOrUpdateGoogleUser,
+  ensureUserInDb,
+  getKycSubmissionForUser,
   createSessionToken,
   validateSession,
   deleteSessionToken,
   getAccountsForUser,
   getAccountById,
+  ensurePersonalLiveAccountForUser,
+  creditPersonalAccountDepositInDb,
   updateAccountStateInDb,
   passChallengePhaseInDb,
   lockUserProfile,
@@ -61,7 +65,7 @@ const creditedBalancesByAccount = new Map<string, number>();
 async function startServer() {
   const app = express();
 
-  app.use(express.json({ limit: '1mb' }));
+  app.use(express.json({ limit: '5mb' }));
 
   // Helper for cookie parsing & authentication
   const parseCookies = (req: express.Request): Record<string, string> => {
@@ -85,264 +89,87 @@ async function startServer() {
       const cookies = parseCookies(req);
       token = cookies['bft_session'] || null;
     }
-    if (!token) return null;
-    return validateSession(token);
-  };
+    if (token) {
+      const sessionUser = validateSession(token);
+      if (sessionUser) return sessionUser;
 
-  const formatUserResponse = (user: any) => ({
-    id: user.id,
-    email: user.email,
-    fullName: user.full_name,
-    avatarUrl: user.avatar_url,
-    referralCode: user.referral_code,
-    referredBy: user.referred_by,
-    kycStatus: user.kyc_status,
-    kycDocType: user.kyc_doc_type,
-    profileLocked: Boolean(user.profile_locked),
-    address: user.address || '',
-    dateOfBirth: user.date_of_birth || '',
-    country: user.country || 'United States',
-    flag: getCountryFlag(user.country),
-    telegramHandle: user.telegram_handle || '',
-  });
-
-  // ============================================================================
-  // AUTHENTICATION & GOOGLE OAUTH 2.0 SESSION MANAGEMENT
-  // ============================================================================
-
-  // GET /api/auth/google/url - Returns Google OAuth 2.0 Authorization URL for popup flow
-  app.get('/api/auth/google/url', (req, res) => {
-    const clientId = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || '';
-    const referralCode = typeof req.query.referralCode === 'string' ? req.query.referralCode.trim() : '';
-    const redirectUri = `${APP_URL.replace(/\/$/, '')}/auth/google/callback`;
-
-    if (clientId && clientId !== 'MY_GOOGLE_CLIENT_ID') {
-      const params = new URLSearchParams({
-        client_id: clientId,
-        redirect_uri: redirectUri,
-        response_type: 'code',
-        scope: 'openid email profile',
-        access_type: 'online',
-        prompt: 'select_account',
-        state: referralCode,
-      });
-      return res.json({
-        ok: true,
-        oauthConfigured: true,
-        url: `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`,
-      });
-    }
-
-    // Interactive Google OAuth Identity Chooser popup endpoint hosted on same origin
-    const stateParam = referralCode ? `?referralCode=${encodeURIComponent(referralCode)}` : '';
-    return res.json({
-      ok: true,
-      oauthConfigured: false,
-      url: `/auth/google/popup${stateParam}`,
-    });
-  });
-
-  // GET /auth/google/popup - Authentic Google OAuth 2.0 Account Consent Popup Window
-  app.get('/auth/google/popup', (req, res) => {
-    const referralCode = typeof req.query.referralCode === 'string' ? req.query.referralCode.trim() : '';
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Sign in - Google Accounts</title>
-  <style>
-    * { box-sizing: border-box; font-family: 'Google Sans', Roboto, Arial, sans-serif; }
-    body { margin: 0; background: #0a0a0a; color: #e8eaed; display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
-    .card { width: 100%; max-width: 420px; background: #141414; border: 1px solid #2a2a2a; border-radius: 16px; padding: 32px 28px; box-shadow: 0 20px 50px rgba(0,0,0,0.7); }
-    .logo { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; }
-    h1 { font-size: 22px; font-weight: 600; margin: 0 0 6px; color: #fff; }
-    p.sub { font-size: 14px; color: #9aa0a6; margin: 0 0 24px; }
-    .brand { color: #ff8800; font-weight: 600; }
-    label { display: block; font-size: 12px; color: #9aa0a6; margin-bottom: 6px; font-weight: 500; }
-    input { width: 100%; padding: 12px 14px; border-radius: 8px; border: 1px solid #3c4043; background: #0a0a0a; color: #fff; font-size: 14px; margin-bottom: 16px; outline: none; }
-    input:focus { border-color: #ff8800; }
-    .btn { width: 100%; padding: 12px 16px; border-radius: 8px; border: none; background: #ff8800; color: #000; font-weight: 700; font-size: 14px; cursor: pointer; margin-top: 8px; }
-    .btn:hover { background: #ff991f; }
-    .footer { margin-top: 20px; font-size: 11px; color: #70757a; line-height: 1.5; text-align: center; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <div class="logo">
-      <svg width="24" height="24" viewBox="0 0 24 24">
-        <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-        <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-        <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
-        <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-      </svg>
-      <span style="font-size:14px;color:#e8eaed;font-weight:500;">Sign in with Google</span>
-    </div>
-    <h1>Verify your Google Account</h1>
-    <p class="sub">to continue to <span class="brand">Binary Funded Trader (BFT)</span></p>
-    <form id="oauthForm">
-      <label>Google Email Address</label>
-      <input type="email" id="email" required placeholder="your.name@gmail.com" autocomplete="email" />
-      <label>Full Name (as shown on Google profile)</label>
-      <input type="text" id="name" required placeholder="Enter your full name" autocomplete="name" />
-      <button type="submit" class="btn">Continue with Google</button>
-    </form>
-    <div class="footer">
-      Google will share your name, email address, and profile picture with Binary Funded Trader.
-    </div>
-  </div>
-  <script>
-    const savedEmail = localStorage.getItem('bft_last_google_email') || '';
-    const savedName = localStorage.getItem('bft_last_google_name') || '';
-    if (savedEmail) document.getElementById('email').value = savedEmail;
-    if (savedName) document.getElementById('name').value = savedName;
-
-    document.getElementById('oauthForm').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const email = document.getElementById('email').value.trim().toLowerCase();
-      const name = document.getElementById('name').value.trim();
-      if (!email || !name) return;
-      localStorage.setItem('bft_last_google_email', email);
-      localStorage.setItem('bft_last_google_name', name);
-
-      try {
-        const res = await fetch('/api/auth/google', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            email,
-            name,
-            googleId: 'google_oauth_' + btoa(email).replace(/[^a-zA-Z0-9]/g, '').slice(0, 16),
-            referralCode: ${JSON.stringify(referralCode)},
-            rememberMe: true
-          })
-        });
-        const contentType = res.headers.get('content-type') || '';
-        let data;
-        if (contentType.includes('application/json')) {
-          data = await res.json();
-        } else {
-          data = { ok: false, error: 'Server returned HTML instead of JSON.' };
-        }
-        if (data && data.ok && window.opener) {
-          window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS', payload: data }, '*');
-          window.close();
-        } else {
-          alert(data?.error || 'Google Sign-In failed. Please try again.');
-        }
-      } catch (err) {
-        alert('Google Sign-In error. Please try again.');
-      }
-    });
-  </script>
-</body>
-</html>`);
-  });
-
-  // GET /auth/google/callback - Real Google OAuth 2.0 Code Exchange Callback
-  app.get('/auth/google/callback', async (req, res) => {
-    try {
-      const code = String(req.query.code || '');
-      const stateRefCode = String(req.query.state || '').trim().toUpperCase() || null;
-      const clientId = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || '';
-      const clientSecret = process.env.GOOGLE_CLIENT_SECRET || '';
-      const redirectUri = `${APP_URL.replace(/\/$/, '')}/auth/google/callback`;
-
-      let email = '';
-      let fullName = '';
-      let googleId = '';
-      let avatarUrl = '';
-
-      if (code && clientId && clientSecret) {
-        const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
-            code,
-            client_id: clientId,
-            client_secret: clientSecret,
-            redirect_uri: redirectUri,
-            grant_type: 'authorization_code',
-          }),
-        });
-        const tokenData = (await tokenRes.json()) as any;
-        if (tokenData?.access_token) {
-          const profileRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
-            headers: { Authorization: `Bearer ${tokenData.access_token}` },
-          });
-          const profile = (await profileRes.json()) as any;
-          email = String(profile.email || '').toLowerCase();
-          fullName = String(profile.name || profile.given_name || 'Google Trader');
-          googleId = String(profile.id || '');
-          avatarUrl = String(profile.picture || '');
-        }
-      }
-
-      if (!email) {
-        return res.redirect('/auth/google/popup');
-      }
-
-      const user = createOrUpdateGoogleUser({
-        email,
-        fullName,
-        avatarUrl,
-        googleId,
-        referralCodeInput: stateRefCode,
-      });
-
-      const { token } = createSessionToken(user.id, true);
-      const accounts = getAccountsForUser(user.id);
-      const payload = {
-        ok: true,
-        token,
-        user: formatUserResponse(user),
-        accounts,
-      };
-
-      res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      return res.send(`<!DOCTYPE html><html><body><script>
-        if (window.opener) {
-          window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS', payload: ${JSON.stringify(payload)} }, '*');
-          window.close();
-        } else {
-          window.location.href = '/';
-        }
-      </script></body></html>`);
-    } catch {
-      return res.redirect('/auth/google/popup');
-    }
-  });
-
-  // POST /api/auth/google - Authenticate or register with Google OAuth
-  app.post('/api/auth/google', async (req, res) => {
-    try {
-      let email = String(req.body?.email || '').trim().toLowerCase();
-      let fullName = String(req.body?.name || req.body?.fullName || '').trim();
-      let avatarUrl = req.body?.avatarUrl ? String(req.body.avatarUrl).trim() : undefined;
-      let googleId = req.body?.googleId ? String(req.body.googleId).trim() : undefined;
-      const credentialJwt = req.body?.credential ? String(req.body.credential).trim() : '';
-      const referralCode = req.body?.referralCode ? String(req.body.referralCode).trim().toUpperCase() : null;
-      const rememberMe = req.body?.rememberMe !== false;
-
-      // Support decoding real Google Identity Services (GIS) ID Token JWT if provided
-      if (credentialJwt && credentialJwt.split('.').length === 3) {
+      // Support JWT Bearer tokens from Supabase Auth or createSessionJwtToken
+      if (token.split('.').length === 3) {
         try {
-          const payloadB64 = credentialJwt.split('.')[1];
+          const payloadB64 = token.split('.')[1];
           const decoded = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
-          if (decoded.email) {
-            email = String(decoded.email).toLowerCase();
-            fullName = String(decoded.name || decoded.given_name || email.split('@')[0]);
-            googleId = String(decoded.sub || '');
-            avatarUrl = decoded.picture ? String(decoded.picture) : avatarUrl;
+          if (decoded?.sub || decoded?.email) {
+            const ensured = ensureUserInDb({
+              id: String(decoded.sub || ''),
+              email: String(decoded.email || ''),
+              fullName: decoded.user_metadata?.full_name || decoded.name || undefined,
+              referralCode: decoded.ref || decoded.user_metadata?.referral_code || undefined,
+            });
+            if (ensured) return ensured;
           }
         } catch {
-          // fallback to body fields
+          // ignore malformed token
         }
       }
+    }
+
+    // Fallback to explicit userId / email passed in body or query from authenticated Supabase client
+    const fallbackId = String(req.body?.userId || req.query?.userId || '').trim();
+    const fallbackEmail = String(req.body?.email || req.query?.email || '').trim();
+    if (fallbackId || fallbackEmail) {
+      return ensureUserInDb({
+        id: fallbackId,
+        email: fallbackEmail,
+        fullName: req.body?.fullName ? String(req.body.fullName) : undefined,
+      });
+    }
+
+    return null;
+  };
+
+  const formatUserResponse = (user: any) => {
+    const sub = user?.id ? getKycSubmissionForUser(user.id) : null;
+    return {
+      id: user.id,
+      email: user.email,
+      fullName: user.full_name || sub?.full_name || '',
+      avatarUrl: user.avatar_url,
+      referralCode: user.referral_code,
+      referredBy: user.referred_by,
+      kycStatus: user.kyc_status || 'unverified',
+      kycDocType: user.kyc_doc_type || sub?.doc_type || 'ID Card',
+      kycDocumentNumber: user.kyc_doc_number || sub?.document_number || '',
+      kycFrontDocumentUrl: user.kyc_front_url || sub?.front_document_url || '',
+      kycBackDocumentUrl: user.kyc_back_url || sub?.back_document_url || '',
+      kycDocumentFileName: user.kyc_front_filename || sub?.front_file_name || '',
+      kycBackDocumentFileName: user.kyc_back_filename || sub?.back_file_name || '',
+      kycSubmittedAt: user.kyc_submitted_at || '',
+      profileLocked: Boolean(user.profile_locked || sub?.profile_locked),
+      address: user.address || sub?.address || '',
+      dateOfBirth: user.date_of_birth || sub?.date_of_birth || '',
+      country: user.country || sub?.country || 'United States',
+      flag: getCountryFlag(user.country || sub?.country),
+      telegramHandle: user.telegram_handle || '',
+    };
+  };
+
+  // ============================================================================
+  // AUTHENTICATION & EMAIL/PASSWORD SESSION MANAGEMENT
+  // ============================================================================
+
+  // POST /api/auth/session - Synchronize authenticated Email/Password user session
+  app.post('/api/auth/session', async (req, res) => {
+    try {
+      const email = String(req.body?.email || '').trim().toLowerCase();
+      let fullName = String(req.body?.name || req.body?.fullName || '').trim();
+      const userIdInput = req.body?.userId ? String(req.body.userId).trim() : undefined;
+      const referralCode = req.body?.referralCode
+        ? String(req.body.referralCode).trim().toUpperCase()
+        : null;
+      const rememberMe = req.body?.rememberMe !== false;
 
       if (!email || !email.includes('@')) {
-        return res.status(400).json({ ok: false, error: 'Valid Google email is required for Google Sign-In.' });
+        return res.status(400).json({ ok: false, error: 'Valid email address is required.' });
       }
       if (!fullName) {
         fullName = email
@@ -354,8 +181,7 @@ async function startServer() {
       const user = createOrUpdateGoogleUser({
         email,
         fullName,
-        avatarUrl,
-        googleId: googleId || `google_${Buffer.from(email).toString('hex').slice(0, 16)}`,
+        googleId: userIdInput || `usr_${Buffer.from(email).toString('hex').slice(0, 16)}`,
         referralCodeInput: referralCode,
       });
 
@@ -363,7 +189,6 @@ async function startServer() {
       const maxAgeMs = expiresAt - Date.now();
       const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
 
-      // Set secure HTTP-only session cookie (SameSite=None; Secure for cross-origin iframe, Lax for local)
       res.setHeader(
         'Set-Cookie',
         `bft_session=${token}; Path=/; Max-Age=${Math.floor(maxAgeMs / 1000)}; HttpOnly; ${
@@ -383,6 +208,7 @@ async function startServer() {
       return res.status(500).json({ ok: false, error: err?.message || 'Authentication error.' });
     }
   });
+
 
   // GET /api/auth/me - Retrieve current authenticated user profile and live accounts
   app.get('/api/auth/me', (req, res) => {
@@ -423,41 +249,43 @@ async function startServer() {
 
       const { fullName, address, dateOfBirth, country, telegramHandle } = req.body || {};
       if (!fullName || !address || !dateOfBirth) {
-        return res.status(400).json({ ok: false, error: 'Full Name, Address, and Date of Birth are mandatory to lock profile.' });
+        return res.status(400).json({ ok: false, error: 'Full Name, Address, Date of Birth, and Country are mandatory to lock profile.' });
       }
 
       const updated = lockUserProfile(user.id, {
         fullName: String(fullName),
         address: String(address),
         dateOfBirth: String(dateOfBirth),
-        country: country ? String(country) : undefined,
+        country: country ? String(country) : 'United States',
         telegramHandle: telegramHandle ? String(telegramHandle) : undefined,
       });
 
+      const submission = getKycSubmissionForUser(user.id);
       return res.json({
         ok: true,
         user: formatUserResponse(updated),
+        kycSubmission: submission || null,
       });
     } catch (err: any) {
       return res.status(400).json({ ok: false, error: err?.message || 'Failed to lock personal details.' });
     }
   });
 
-  // POST /api/profile/update - Update Country, Telegram, or unlocked Personal Details
+  // POST /api/profile/update - Update Telegram, Avatar, or unlocked Personal Details
   app.post('/api/profile/update', (req, res) => {
     try {
       const user = getAuthenticatedUser(req);
       if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
 
       const { fullName, address, dateOfBirth, country, telegramHandle, avatarUrl } = req.body || {};
-      const isLocked = Boolean(user.profile_locked) || user.kyc_status === 'verified';
+      const isLocked = Boolean(user.profile_locked) || user.kyc_status === 'verified' || user.kyc_status === 'pending';
 
       db.prepare(`
         UPDATE users SET
           full_name = CASE WHEN ? = 1 THEN full_name ELSE COALESCE(?, full_name) END,
           address = CASE WHEN ? = 1 THEN address ELSE COALESCE(?, address) END,
           date_of_birth = CASE WHEN ? = 1 THEN date_of_birth ELSE COALESCE(?, date_of_birth) END,
-          country = COALESCE(?, country),
+          country = CASE WHEN ? = 1 THEN country ELSE COALESCE(?, country) END,
           telegram_handle = COALESCE(?, telegram_handle),
           avatar_url = COALESCE(?, avatar_url),
           updated_at = ?
@@ -469,6 +297,7 @@ async function startServer() {
         address ? String(address).trim() : null,
         isLocked ? 1 : 0,
         dateOfBirth ? String(dateOfBirth).trim() : null,
+        isLocked ? 1 : 0,
         country ? String(country).trim() : null,
         telegramHandle !== undefined ? String(telegramHandle).trim() : null,
         avatarUrl ? String(avatarUrl) : null,
@@ -486,15 +315,27 @@ async function startServer() {
     }
   });
 
-  // POST /api/kyc/submit - Submit KYC documents, permanently lock personal details, and persist verified status
+  // POST /api/kyc/submit - Submit dual-sided KYC documents, lock personal details, and set status to Pending Verification
   app.post('/api/kyc/submit', (req, res) => {
     try {
       const user = getAuthenticatedUser(req);
       if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
 
-      const { docType, fullName, address, dateOfBirth, country } = req.body || {};
+      const {
+        docType,
+        documentNumber,
+        frontDocumentUrl,
+        backDocumentUrl,
+        frontFileName,
+        backFileName,
+        fullName,
+        address,
+        dateOfBirth,
+        country,
+        status,
+      } = req.body || {};
 
-      // If personal details are passed or not yet locked, lock them permanently now
+      // Ensure personal details are locked in DB
       if (!user.profile_locked && (fullName || user.full_name)) {
         lockUserProfile(user.id, {
           fullName: String(fullName || user.full_name || 'Verified Trader'),
@@ -504,19 +345,47 @@ async function startServer() {
         });
       }
 
-      const cleanDocType = String(docType || 'Passport').trim();
+      const cleanDocType = String(docType || 'ID Card').trim();
+      const targetStatus =
+        status === 'verified' || status === 'approved' ? 'verified' : 'pending';
+
       const updated = updateUserKycStatus(user.id, {
-        status: 'verified',
+        status: targetStatus,
         docType: cleanDocType,
+        documentNumber: documentNumber ? String(documentNumber).trim() : undefined,
+        frontDocumentUrl: frontDocumentUrl ? String(frontDocumentUrl).trim() : undefined,
+        backDocumentUrl: backDocumentUrl ? String(backDocumentUrl).trim() : undefined,
+        frontFileName: frontFileName ? String(frontFileName).trim() : undefined,
+        backFileName: backFileName ? String(backFileName).trim() : undefined,
       });
+
+      const submission = getKycSubmissionForUser(user.id);
 
       return res.json({
         ok: true,
         user: formatUserResponse(updated),
-        message: 'KYC Document submitted & verified successfully!',
+        kycSubmission: submission || null,
+        message: 'KYC Documents submitted! Status updated to Pending Verification.',
       });
     } catch (err: any) {
-      return res.status(500).json({ ok: false, error: err?.message || 'KYC verification error.' });
+      return res.status(500).json({ ok: false, error: err?.message || 'KYC submission error.' });
+    }
+  });
+
+  // GET /api/kyc/status - Retrieve persisted KYC personal details, dual-sided document URLs, and Pending Verification status
+  app.get('/api/kyc/status', (req, res) => {
+    try {
+      const user = getAuthenticatedUser(req);
+      if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
+
+      const submission = getKycSubmissionForUser(user.id);
+      return res.json({
+        ok: true,
+        user: formatUserResponse(user),
+        kycSubmission: submission || null,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || 'Failed to fetch KYC status.' });
     }
   });
 
@@ -636,6 +505,42 @@ async function startServer() {
       return res.json({ ok: true, account: newAccount, commissions });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err?.message || 'Failed to activate evaluation package.' });
+    }
+  });
+
+  // POST /api/accounts/deposit-personal - Credit funds directly to the user's Personal Live (Self-Funded) account
+  app.post('/api/accounts/deposit-personal', (req, res) => {
+    try {
+      const user = getAuthenticatedUser(req);
+      if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
+
+      const amount = Number(req.body?.amount);
+      const accountId = req.body?.accountId ? String(req.body.accountId).trim() : undefined;
+
+      if (!Number.isFinite(amount) || amount < 10) {
+        return res.status(400).json({
+          ok: false,
+          error: 'Minimum Personal Live deposit is $10.00 USDT.',
+        });
+      }
+
+      ensurePersonalLiveAccountForUser(user.id);
+      const updatedAccount = creditPersonalAccountDepositInDb({
+        userId: user.id,
+        accountId,
+        amountUsdt: amount,
+      });
+
+      return res.json({
+        ok: true,
+        account: updatedAccount,
+        creditedAmountUsdt: amount,
+      });
+    } catch (err: any) {
+      return res.status(400).json({
+        ok: false,
+        error: err?.message || 'Failed to credit Personal Live account deposit.',
+      });
     }
   });
 
@@ -912,12 +817,31 @@ async function startServer() {
       invoicesByUuid.set(result.updatedInvoice.uuid, result.updatedInvoice);
       invoicesByOrderId.set(result.updatedInvoice.orderId, result.updatedInvoice);
 
+      let updatedAccount: any = null;
       if (result.creditedAmountUsdt > 0 && !result.alreadyCompleted) {
         const prevCredited = creditedBalancesByAccount.get(invoice.accountId) || 0;
         creditedBalancesByAccount.set(
           invoice.accountId,
           Number((prevCredited + result.creditedAmountUsdt).toFixed(2))
         );
+        try {
+          const existingAcc = getAccountById(invoice.accountId);
+          const ownerUserId = existingAcc?.user_id || invoice.userId || 'usr_bft_001';
+          if (
+            !existingAcc ||
+            existingAcc.tier === 'personal' ||
+            existingAcc.accountCategory === 'personal_live' ||
+            invoice.accountId.includes('PERS')
+          ) {
+            updatedAccount = creditPersonalAccountDepositInDb({
+              userId: ownerUserId,
+              accountId: invoice.accountId,
+              amountUsdt: result.creditedAmountUsdt,
+            });
+          }
+        } catch (dbErr) {
+          console.warn('Webhook DB personal deposit sync warning:', dbErr);
+        }
       }
 
       return res.json({
@@ -925,6 +849,7 @@ async function startServer() {
         alreadyCompleted: Boolean(result.alreadyCompleted),
         creditedAmountUsdt: result.creditedAmountUsdt,
         invoice: result.updatedInvoice,
+        updatedAccount,
       });
     } catch (err: any) {
       return res.status(500).json({
@@ -987,12 +912,31 @@ async function startServer() {
       invoicesByUuid.set(result.updatedInvoice.uuid, result.updatedInvoice);
       invoicesByOrderId.set(result.updatedInvoice.orderId, result.updatedInvoice);
 
+      let updatedAccount: any = null;
       if (result.creditedAmountUsdt > 0 && !result.alreadyCompleted) {
         const prevCredited = creditedBalancesByAccount.get(invoice.accountId) || 0;
         creditedBalancesByAccount.set(
           invoice.accountId,
           Number((prevCredited + result.creditedAmountUsdt).toFixed(2))
         );
+        try {
+          const existingAcc = getAccountById(invoice.accountId);
+          const ownerUserId = existingAcc?.user_id || invoice.userId || 'usr_bft_001';
+          if (
+            !existingAcc ||
+            existingAcc.tier === 'personal' ||
+            existingAcc.accountCategory === 'personal_live' ||
+            invoice.accountId.includes('PERS')
+          ) {
+            updatedAccount = creditPersonalAccountDepositInDb({
+              userId: ownerUserId,
+              accountId: invoice.accountId,
+              amountUsdt: result.creditedAmountUsdt,
+            });
+          }
+        } catch (dbErr) {
+          console.warn('Simulate webhook DB personal deposit sync warning:', dbErr);
+        }
       }
 
       return res.json({
@@ -1000,6 +944,7 @@ async function startServer() {
         alreadyCompleted: Boolean(result.alreadyCompleted),
         creditedAmountUsdt: result.creditedAmountUsdt,
         invoice: result.updatedInvoice,
+        updatedAccount,
         webhookPayloadSent: signedWebhook,
       });
     } catch (err: any) {

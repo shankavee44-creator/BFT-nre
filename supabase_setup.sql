@@ -17,13 +17,52 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   email TEXT NOT NULL,
   full_name TEXT,
+  address TEXT,
+  date_of_birth TEXT,
+  country TEXT DEFAULT 'United States',
+  telegram_handle TEXT,
+  profile_locked BOOLEAN NOT NULL DEFAULT FALSE,
   balance NUMERIC(15, 2) NOT NULL DEFAULT 0.00 CHECK (balance >= 0),
   referral_code VARCHAR(10) UNIQUE NOT NULL,
   referred_by UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
-  kyc_status TEXT NOT NULL DEFAULT 'unverified' CHECK (kyc_status IN ('unverified', 'pending', 'approved', 'rejected')),
+  kyc_status TEXT NOT NULL DEFAULT 'unverified',
+  kyc_doc_type TEXT,
+  kyc_doc_number TEXT,
+  front_document_url TEXT,
+  back_document_url TEXT,
   total_referral_earnings NUMERIC(15, 2) NOT NULL DEFAULT 0.00 CHECK (total_referral_earnings >= 0),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Ensure columns exist on already-provisioned profiles table
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS address TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS date_of_birth TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS country TEXT DEFAULT 'United States';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS telegram_handle TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS profile_locked BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS kyc_doc_type TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS kyc_doc_number TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS front_document_url TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS back_document_url TEXT;
+
+-- KYC SUBMISSIONS TABLE (Full Personal Details + Dual-Sided Document Storage Record)
+CREATE TABLE IF NOT EXISTS public.kyc_submissions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  full_name TEXT NOT NULL,
+  address TEXT NOT NULL,
+  date_of_birth TEXT NOT NULL,
+  country TEXT NOT NULL DEFAULT 'United States',
+  profile_locked BOOLEAN NOT NULL DEFAULT TRUE,
+  doc_type TEXT DEFAULT 'ID Card',
+  document_number TEXT,
+  front_document_url TEXT,
+  back_document_url TEXT,
+  status TEXT NOT NULL DEFAULT 'Pending Verification',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(user_id)
 );
 
 -- KYC REQUESTS TABLE
@@ -31,9 +70,24 @@ CREATE TABLE IF NOT EXISTS public.kyc_requests (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   id_photo_url TEXT NOT NULL,
+  back_photo_url TEXT,
+  doc_type TEXT DEFAULT 'ID Card',
+  document_number TEXT,
+  full_name TEXT,
+  address TEXT,
+  date_of_birth TEXT,
+  country TEXT,
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE public.kyc_requests ADD COLUMN IF NOT EXISTS back_photo_url TEXT;
+ALTER TABLE public.kyc_requests ADD COLUMN IF NOT EXISTS doc_type TEXT DEFAULT 'ID Card';
+ALTER TABLE public.kyc_requests ADD COLUMN IF NOT EXISTS document_number TEXT;
+ALTER TABLE public.kyc_requests ADD COLUMN IF NOT EXISTS full_name TEXT;
+ALTER TABLE public.kyc_requests ADD COLUMN IF NOT EXISTS address TEXT;
+ALTER TABLE public.kyc_requests ADD COLUMN IF NOT EXISTS date_of_birth TEXT;
+ALTER TABLE public.kyc_requests ADD COLUMN IF NOT EXISTS country TEXT;
 
 -- DEPOSITS TABLE
 CREATE TABLE IF NOT EXISTS public.deposits (
@@ -69,6 +123,7 @@ CREATE TABLE IF NOT EXISTS public.referral_commissions (
 -- INDEXES FOR PERFORMANCE
 CREATE INDEX IF NOT EXISTS idx_profiles_referred_by ON public.profiles(referred_by);
 CREATE INDEX IF NOT EXISTS idx_profiles_referral_code ON public.profiles(referral_code);
+CREATE INDEX IF NOT EXISTS idx_kyc_submissions_user_id ON public.kyc_submissions(user_id);
 CREATE INDEX IF NOT EXISTS idx_deposits_user_status ON public.deposits(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_withdrawals_user_status ON public.withdrawals(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_referral_commissions_earner ON public.referral_commissions(earner_id);
@@ -84,11 +139,16 @@ VALUES
   ('deposit-slips', 'deposit-slips', true)
 ON CONFLICT (id) DO NOTHING;
 
--- Storage Security Policies for authenticated users
+-- Storage Security Policies for authenticated and public/anon uploads to kyc-documents
 DROP POLICY IF EXISTS "Allow authenticated upload to kyc-documents" ON storage.objects;
 CREATE POLICY "Allow authenticated upload to kyc-documents" 
-ON storage.objects FOR INSERT TO authenticated 
+ON storage.objects FOR INSERT TO public 
 WITH CHECK (bucket_id = 'kyc-documents');
+
+DROP POLICY IF EXISTS "Allow authenticated update to kyc-documents" ON storage.objects;
+CREATE POLICY "Allow authenticated update to kyc-documents" 
+ON storage.objects FOR UPDATE TO public 
+USING (bucket_id = 'kyc-documents');
 
 DROP POLICY IF EXISTS "Allow public read access to kyc-documents" ON storage.objects;
 CREATE POLICY "Allow public read access to kyc-documents" 
@@ -111,7 +171,7 @@ USING (bucket_id = 'deposit-slips');
 -- ============================================================================
 
 -- Helper Function to Generate a Unique 6-Character Alphanumeric Referral Code
-CREATE OR REPLACE FUNCTION generate_unique_referral_code()
+CREATE OR REPLACE FUNCTION public.generate_unique_referral_code()
 RETURNS TEXT AS $$
 DECLARE
   chars TEXT := '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -128,9 +188,9 @@ BEGIN
   END LOOP;
   RETURN result;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
--- Trigger Function on auth.users Signup
+-- Trigger Function on auth.users Signup (Fault-tolerant with exception guard)
 CREATE OR REPLACE FUNCTION public.handle_new_user_signup()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -138,22 +198,18 @@ DECLARE
   referrer_uuid UUID := NULL;
   new_ref_code TEXT;
 BEGIN
-  -- Extract referral code passed in user metadata (supports 'referral_code' or 'ref')
   ref_code_param := UPPER(TRIM(COALESCE(
     NEW.raw_user_meta_data->>'referral_code',
     NEW.raw_user_meta_data->>'ref',
     ''
   )));
 
-  -- Lookup Referrer Profile ID if referral code exists
   IF ref_code_param <> '' THEN
-    SELECT id INTO referrer_uuid FROM public.profiles WHERE referral_code = ref_code_param;
+    SELECT id INTO referrer_uuid FROM public.profiles WHERE referral_code = ref_code_param LIMIT 1;
   END IF;
 
-  -- Generate Unique 6-character referral code for new user
-  new_ref_code := generate_unique_referral_code();
+  new_ref_code := public.generate_unique_referral_code();
 
-  -- Insert profile row
   INSERT INTO public.profiles (
     id,
     email,
@@ -165,18 +221,22 @@ BEGIN
     total_referral_earnings
   ) VALUES (
     NEW.id,
-    NEW.email,
-    COALESCE(NEW.raw_user_meta_data->>'full_name', NEW.raw_user_meta_data->>'name', split_part(NEW.email, '@', 1)),
+    COALESCE(NEW.email, ''),
+    COALESCE(NEW.raw_user_meta_data->>'full_name', NEW.raw_user_meta_data->>'name', split_part(COALESCE(NEW.email, 'trader@bft.io'), '@', 1)),
     0.00,
     new_ref_code,
     referrer_uuid,
     'unverified',
     0.00
-  );
+  )
+  ON CONFLICT (id) DO NOTHING;
 
   RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  -- Never block auth.users signup if profile trigger encounters any constraint warning
+  RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 -- Drop and recreate signup trigger
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
@@ -200,19 +260,15 @@ DECLARE
   comm2 NUMERIC(15, 2);
   comm3 NUMERIC(15, 2);
 BEGIN
-  -- Only execute when status flips from 'pending' to 'approved'
   IF OLD.status = 'pending' AND NEW.status = 'approved' THEN
 
-    -- a) Add deposit amount to user's balance
     UPDATE public.profiles
     SET balance = balance + NEW.amount,
         updated_at = NOW()
     WHERE id = NEW.user_id;
 
-    -- Retrieve Level 1 (Direct Referrer)
     SELECT referred_by INTO l1_id FROM public.profiles WHERE id = NEW.user_id;
 
-    -- b) Level 1 Commission (10%)
     IF l1_id IS NOT NULL THEN
       comm1 := ROUND(NEW.amount * 0.10, 2);
       IF comm1 > 0 THEN
@@ -226,10 +282,8 @@ BEGIN
         VALUES (l1_id, NEW.user_id, 1, 'deposit', comm1);
       END IF;
 
-      -- Retrieve Level 2 (Sub-Referral)
       SELECT referred_by INTO l2_id FROM public.profiles WHERE id = l1_id;
 
-      -- c) Level 2 Commission (5%)
       IF l2_id IS NOT NULL THEN
         comm2 := ROUND(NEW.amount * 0.05, 2);
         IF comm2 > 0 THEN
@@ -243,10 +297,8 @@ BEGIN
           VALUES (l2_id, NEW.user_id, 2, 'deposit', comm2);
         END IF;
 
-        -- Retrieve Level 3 (Network)
         SELECT referred_by INTO l3_id FROM public.profiles WHERE id = l2_id;
 
-        -- d) Level 3 Commission (2%)
         IF l3_id IS NOT NULL THEN
           comm3 := ROUND(NEW.amount * 0.02, 2);
           IF comm3 > 0 THEN
@@ -259,17 +311,16 @@ BEGIN
             INSERT INTO public.referral_commissions (earner_id, source_user_id, level, commission_type, amount)
             VALUES (l3_id, NEW.user_id, 3, 'deposit', comm3);
           END IF;
-        END IF; -- Level 3
-      END IF; -- Level 2
-    END IF; -- Level 1
+        END IF;
+      END IF;
+    END IF;
 
   END IF;
 
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
--- Drop and recreate deposit approval trigger
 DROP TRIGGER IF EXISTS on_deposit_status_updated ON public.deposits;
 CREATE TRIGGER on_deposit_status_updated
   AFTER UPDATE ON public.deposits
@@ -287,19 +338,15 @@ DECLARE
   l1_id UUID := NULL;
   comm_amount NUMERIC(15, 2);
 BEGIN
-  -- Only execute when status flips from 'pending' to 'completed'
   IF OLD.status = 'pending' AND NEW.status = 'completed' THEN
 
-    -- a) Deduct withdrawal amount from user's balance
     UPDATE public.profiles
     SET balance = balance - NEW.amount,
         updated_at = NOW()
     WHERE id = NEW.user_id;
 
-    -- Retrieve Level 1 (Direct Referrer)
     SELECT referred_by INTO l1_id FROM public.profiles WHERE id = NEW.user_id;
 
-    -- b) Level 1 Direct Commission on Withdrawal (8%)
     IF l1_id IS NOT NULL THEN
       comm_amount := ROUND(NEW.amount * 0.08, 2);
       IF comm_amount > 0 THEN
@@ -318,9 +365,8 @@ BEGIN
 
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
--- Drop and recreate withdrawal completion trigger
 DROP TRIGGER IF EXISTS on_withdrawal_status_updated ON public.withdrawals;
 CREATE TRIGGER on_withdrawal_status_updated
   AFTER UPDATE ON public.withdrawals
@@ -333,24 +379,41 @@ CREATE TRIGGER on_withdrawal_status_updated
 -- ============================================================================
 
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.kyc_submissions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.kyc_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.deposits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.withdrawals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.referral_commissions ENABLE ROW LEVEL SECURITY;
 
--- Profiles: Users read & update their own profile
+-- Profiles: Users read, insert, & update their own profile
 DROP POLICY IF EXISTS "Users can view own profile" ON public.profiles;
 CREATE POLICY "Users can view own profile" ON public.profiles FOR SELECT USING (auth.uid() = id);
+
+DROP POLICY IF EXISTS "Users can insert own profile" ON public.profiles;
+CREATE POLICY "Users can insert own profile" ON public.profiles FOR INSERT WITH CHECK (auth.uid() = id);
 
 DROP POLICY IF EXISTS "Users can update own profile" ON public.profiles;
 CREATE POLICY "Users can update own profile" ON public.profiles FOR UPDATE USING (auth.uid() = id);
 
--- KYC Requests: Users insert & read own KYC requests
+-- KYC Submissions: Users read, insert, & update their own KYC submissions
+DROP POLICY IF EXISTS "Users can view own KYC submissions" ON public.kyc_submissions;
+CREATE POLICY "Users can view own KYC submissions" ON public.kyc_submissions FOR SELECT USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can insert own KYC submissions" ON public.kyc_submissions;
+CREATE POLICY "Users can insert own KYC submissions" ON public.kyc_submissions FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can update own KYC submissions" ON public.kyc_submissions;
+CREATE POLICY "Users can update own KYC submissions" ON public.kyc_submissions FOR UPDATE USING (auth.uid() = user_id);
+
+-- KYC Requests: Users insert, update & read own KYC requests
 DROP POLICY IF EXISTS "Users can view own KYC requests" ON public.kyc_requests;
 CREATE POLICY "Users can view own KYC requests" ON public.kyc_requests FOR SELECT USING (auth.uid() = user_id);
 
 DROP POLICY IF EXISTS "Users can submit KYC requests" ON public.kyc_requests;
 CREATE POLICY "Users can submit KYC requests" ON public.kyc_requests FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can update own KYC requests" ON public.kyc_requests;
+CREATE POLICY "Users can update own KYC requests" ON public.kyc_requests FOR UPDATE USING (auth.uid() = user_id);
 
 -- Deposits: Users view & create own deposits
 DROP POLICY IF EXISTS "Users can view own deposits" ON public.deposits;

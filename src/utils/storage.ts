@@ -400,6 +400,12 @@ export function loadOrCreateUserProfileByEmail(params: {
   referredBy?: string;
   kycStatus?: 'verified' | 'pending' | 'unverified';
   kycDocType?: string;
+  kycDocumentNumber?: string;
+  kycFrontDocumentUrl?: string;
+  kycBackDocumentUrl?: string;
+  kycDocumentFileName?: string;
+  kycBackDocumentFileName?: string;
+  kycSubmittedAt?: string;
   address?: string;
   dateOfBirth?: string;
   country?: string;
@@ -429,7 +435,19 @@ export function loadOrCreateUserProfileByEmail(params: {
                 : params.kycStatus === 'pending' || existing.kycStatus === 'pending'
                 ? 'pending'
                 : 'unverified',
-            profileLocked: Boolean(params.profileLocked || existing.profileLocked || params.kycStatus === 'verified'),
+            kycDocumentType: params.kycDocType || existing.kycDocumentType || 'ID Card',
+            kycDocumentNumber: params.kycDocumentNumber || existing.kycDocumentNumber,
+            kycFrontDocumentUrl: params.kycFrontDocumentUrl || existing.kycFrontDocumentUrl,
+            kycBackDocumentUrl: params.kycBackDocumentUrl || existing.kycBackDocumentUrl,
+            kycDocumentFileName: params.kycDocumentFileName || existing.kycDocumentFileName,
+            kycBackDocumentFileName: params.kycBackDocumentFileName || existing.kycBackDocumentFileName,
+            kycSubmittedAt: params.kycSubmittedAt || existing.kycSubmittedAt,
+            profileLocked: Boolean(
+              params.profileLocked ||
+                existing.profileLocked ||
+                params.kycStatus === 'verified' ||
+                params.kycStatus === 'pending'
+            ),
             address: params.address || existing.address || '',
             dateOfBirth: params.dateOfBirth || existing.dateOfBirth || '',
             country: params.country || existing.country || 'United States',
@@ -453,7 +471,9 @@ export function loadOrCreateUserProfileByEmail(params: {
     fullName: params.fullName.trim(),
     address: params.address || '',
     dateOfBirth: params.dateOfBirth || '',
-    profileLocked: Boolean(params.profileLocked || params.kycStatus === 'verified'),
+    profileLocked: Boolean(
+      params.profileLocked || params.kycStatus === 'verified' || params.kycStatus === 'pending'
+    ),
     country: params.country || 'United States',
     avatarUrl: params.avatarUrl || BUILTIN_AVATARS[0],
     telegramHandle: params.telegramHandle || '',
@@ -463,7 +483,13 @@ export function loadOrCreateUserProfileByEmail(params: {
         : params.kycStatus === 'pending'
         ? 'pending'
         : 'unverified',
-    kycDocumentType: params.kycDocType || 'Passport',
+    kycDocumentType: params.kycDocType || 'ID Card',
+    kycDocumentNumber: params.kycDocumentNumber,
+    kycFrontDocumentUrl: params.kycFrontDocumentUrl,
+    kycBackDocumentUrl: params.kycBackDocumentUrl,
+    kycDocumentFileName: params.kycDocumentFileName,
+    kycBackDocumentFileName: params.kycBackDocumentFileName,
+    kycSubmittedAt: params.kycSubmittedAt,
     twoFactorEnabled: false,
     activeAccountId: '',
     referralCode: params.referralCode,

@@ -35,6 +35,8 @@ import {
   WITHDRAWAL_FEE_PERCENT,
   checkFirstWithdrawalWaitingPeriod,
   isLiveFundedAccount,
+  isPersonalLiveAccount,
+  isDemoAccount,
   getAccountStatusBadgeLabel,
 } from '../utils/propRules';
 import { canUserWithdraw, KYC_WITHDRAWAL_LOCK_MESSAGE } from '../utils/kycVerification';
@@ -136,9 +138,12 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
 
   useEffect(() => {
     if (!account) return;
-    const updatedProfit = Math.max(0, Number((account.currentBalance - account.initialBalance).toFixed(2)));
-    if (updatedProfit >= MIN_WITHDRAWAL_PROFIT) {
-      setAmount(Math.max(MIN_WITHDRAWAL_PROFIT, Math.min(350, updatedProfit)));
+    const isPersonal = isPersonalLiveAccount(account);
+    const updatedWithdrawable = isPersonal
+      ? Math.max(0, Number(account.currentBalance.toFixed(2)))
+      : Math.max(0, Number((account.currentBalance - account.initialBalance).toFixed(2)));
+    if (updatedWithdrawable >= MIN_WITHDRAWAL_PROFIT) {
+      setAmount(Math.max(MIN_WITHDRAWAL_PROFIT, Math.min(350, updatedWithdrawable)));
     } else {
       setAmount(MIN_WITHDRAWAL_PROFIT);
     }
@@ -169,8 +174,8 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
 
   // Breakdown calculation (includes 10% Withdrawal Fee deduction)
   const breakdown = useMemo(
-    () => calculateWithdrawalBreakdown(Math.max(0, amount), monthsActive),
-    [amount, monthsActive]
+    () => calculateWithdrawalBreakdown(Math.max(0, amount), monthsActive, isPersonalLiveAccount(account)),
+    [amount, monthsActive, account]
   );
 
   // Manual Admin Verification Mode: Withdrawals remain pending until approved by admin in Supabase
@@ -246,14 +251,17 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
       return;
     }
 
-    // Enforce strict 80% Net Generated Profit Payout Ceiling Rule
-    const maxAllowedProfitCeiling = Math.max(0, Number((netProfit * 0.80).toFixed(2)));
-    if (amount > maxAllowedProfitCeiling) {
-      setError(
-        `Withdrawal exceeds the 80% profit payout ceiling. Maximum allowable withdrawal is $${maxAllowedProfitCeiling.toFixed(2)} (80% of $${netProfit.toFixed(2)} net generated profit).`
-      );
-      soundEngine.playErrorAlert();
-      return;
+    // Enforce strict 80% Net Generated Profit Payout Ceiling Rule ONLY for Prop Funded accounts
+    // Personal Live accounts can withdraw 100% of their personal profits and deposited capital
+    if (!isPersonalLiveAccount(account)) {
+      const maxAllowedProfitCeiling = Math.max(0, Number((netProfit * 0.80).toFixed(2)));
+      if (amount > maxAllowedProfitCeiling) {
+        setError(
+          `Withdrawal exceeds the 80% profit payout ceiling. Maximum allowable withdrawal is $${maxAllowedProfitCeiling.toFixed(2)} (80% of $${netProfit.toFixed(2)} net generated profit).`
+        );
+        soundEngine.playErrorAlert();
+        return;
+      }
     }
 
     if (paymentMethod === 'crypto_trc20') {
@@ -688,44 +696,66 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                   </span>
                 </div>
 
-                {/* First Withdrawal 14-Day Mandatory Lock & Daily/Weekly Add-on Policy Banner */}
-                <div
-                  data-testid="first-withdrawal-14day-banner"
-                  className={`p-3.5 sm:p-4 rounded-xl bg-[#0e1017] border ${
-                    firstWithdrawalCheck.eligible ? 'border-[#1e2330]' : 'border-[#ff8800]/60'
-                  } space-y-2`}
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <Lock
-                        className={`w-4 h-4 shrink-0 ${
-                          firstWithdrawalCheck.eligible ? 'text-[#00c853]' : 'text-[#ff8800]'
-                        }`}
-                      />
-                      <span className="text-xs font-bold text-white">
-                        First Withdrawal Rule: Mandatory {FIRST_WITHDRAWAL_WAITING_DAYS}-Day Waiting Period
+                {/* First Withdrawal 14-Day Mandatory Lock OR Personal Live Unrestricted Policy Banner */}
+                {isPersonalLiveAccount(account) ? (
+                  <div
+                    data-testid="personal-live-withdrawal-banner"
+                    className="p-3.5 sm:p-4 rounded-xl bg-[#0a0a0a] border border-[#ff8800] space-y-2"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <ShieldCheck className="w-4 h-4 shrink-0 text-[#00c853]" />
+                        <span className="text-xs font-bold text-white">
+                          Personal Live Account (Self-Funded) • Unrestricted Capital & Profit Withdrawal
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-mono font-black px-2 py-0.5 rounded bg-[#ff8800] text-slate-950 border border-[#ff8800] uppercase">
+                        100% Retention • No Prop Split Lock
                       </span>
                     </div>
-                    <span
-                      data-testid="first-withdrawal-status-badge"
-                      className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border uppercase ${
-                        firstWithdrawalCheck.eligible
-                          ? 'bg-[#00c853]/15 text-[#00c853] border-[#00c853]/40'
-                          : 'bg-[#ff8800]/15 text-[#ff8800] border-[#ff8800]/40'
-                      }`}
-                    >
-                      {firstWithdrawalCheck.eligible
-                        ? `14-Day Lock Satisfied (${firstWithdrawalCheck.daysElapsed}/${FIRST_WITHDRAWAL_WAITING_DAYS}d)`
-                        : `${firstWithdrawalCheck.daysRemaining} Days Remaining (${firstWithdrawalCheck.daysElapsed}/${FIRST_WITHDRAWAL_WAITING_DAYS}d)`}
-                    </span>
+                    <p className="text-[11px] text-[#94a3b8] leading-relaxed">
+                      You are withdrawing from your <strong className="text-[#ff8800]">Personal Live Balance ({account?.id})</strong>. Personal Live accounts are not bound by challenge target phases, 14-day waiting periods, or prop profit split ceilings—withdraw both your <strong className="text-white">personal trading profits and deposited capital</strong> anytime following the standard <strong className="text-[#00c853]">$250.00 minimum threshold</strong> and <strong className="text-white">10% withdrawal fee</strong>.
+                    </p>
                   </div>
-                  <p className="text-[11px] text-[#94a3b8] leading-relaxed">
-                    A mandatory <strong className="text-white">14-day waiting period</strong> applies for the very first withdrawal across all account types. After your first withdrawal is completed, users who purchased the{' '}
-                    <strong className="text-[#00c853]">Daily Withdrawal Add-On (+15%)</strong> or{' '}
-                    <strong className="text-white">Weekly Plan</strong> can proceed according to their package rules (Current Account Schedule:{' '}
-                    <strong className="text-[#2b70ff] font-mono">{firstWithdrawalCheck.subsequentCycleLabel}</strong>).
-                  </p>
-                </div>
+                ) : (
+                  <div
+                    data-testid="first-withdrawal-14day-banner"
+                    className={`p-3.5 sm:p-4 rounded-xl bg-[#0e1017] border ${
+                      firstWithdrawalCheck.eligible ? 'border-[#1e2330]' : 'border-[#ff8800]/60'
+                    } space-y-2`}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <Lock
+                          className={`w-4 h-4 shrink-0 ${
+                            firstWithdrawalCheck.eligible ? 'text-[#00c853]' : 'text-[#ff8800]'
+                          }`}
+                        />
+                        <span className="text-xs font-bold text-white">
+                          First Withdrawal Rule: Mandatory {FIRST_WITHDRAWAL_WAITING_DAYS}-Day Waiting Period
+                        </span>
+                      </div>
+                      <span
+                        data-testid="first-withdrawal-status-badge"
+                        className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border uppercase ${
+                          firstWithdrawalCheck.eligible
+                            ? 'bg-[#00c853]/15 text-[#00c853] border-[#00c853]/40'
+                            : 'bg-[#ff8800]/15 text-[#ff8800] border-[#ff8800]/40'
+                        }`}
+                      >
+                        {firstWithdrawalCheck.eligible
+                          ? `14-Day Lock Satisfied (${firstWithdrawalCheck.daysElapsed}/${FIRST_WITHDRAWAL_WAITING_DAYS}d)`
+                          : `${firstWithdrawalCheck.daysRemaining} Days Remaining (${firstWithdrawalCheck.daysElapsed}/${FIRST_WITHDRAWAL_WAITING_DAYS}d)`}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-[#94a3b8] leading-relaxed">
+                      A mandatory <strong className="text-white">14-day waiting period</strong> applies for the very first withdrawal across all account types. After your first withdrawal is completed, users who purchased the{' '}
+                      <strong className="text-[#00c853]">Daily Withdrawal Add-On (+15%)</strong> or{' '}
+                      <strong className="text-white">Weekly Plan</strong> can proceed according to their package rules (Current Account Schedule:{' '}
+                      <strong className="text-[#2b70ff] font-mono">{firstWithdrawalCheck.subsequentCycleLabel}</strong>).
+                    </p>
+                  </div>
+                )}
 
                 {/* Account Balance Summary Rows (Exact Quotex Layout) */}
                 <div>
@@ -744,7 +774,11 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                       data-testid="card-available-balance"
                       className="flex items-center justify-between px-4 py-3 text-xs sm:text-sm"
                     >
-                      <span className="text-[#8c96a6]">Available for withdrawal (Net Profit):</span>
+                      <span className="text-[#8c96a6]">
+                        {isPersonalLiveAccount(account)
+                          ? 'Available for withdrawal (Capital + Profit):'
+                          : 'Available for withdrawal (Net Profit):'}
+                      </span>
                       <span className="font-bold font-mono tabular-nums text-white">
                         {accountSummary.availableForWithdrawalFormatted}
                       </span>
@@ -754,13 +788,18 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                       className="flex items-center justify-between px-4 py-3 text-xs sm:text-sm bg-[#121622]/60"
                     >
                       <span className="text-[#8c96a6] flex items-center gap-1.5">
-                        <span>80% Profit Ceiling:</span>
+                        <span>{isPersonalLiveAccount(account) ? 'Personal Live Retention:' : '80% Profit Ceiling:'}</span>
                         <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-[#ff8800]/15 text-[#ff8800] border border-[#ff8800]/30 font-bold">
-                          Max 80%
+                          {isPersonalLiveAccount(account) ? '100% Capital + Profit' : 'Max 80%'}
                         </span>
                       </span>
                       <span className="font-bold font-mono tabular-nums text-[#ff8800]">
-                        ${Math.max(0, Number((netProfit * 0.8).toFixed(2))).toFixed(2)} USD
+                        $
+                        {(isPersonalLiveAccount(account)
+                          ? accountSummary.availableForWithdrawal
+                          : Math.max(0, Number((netProfit * 0.8).toFixed(2)))
+                        ).toFixed(2)}{' '}
+                        USD
                       </span>
                     </div>
                     <div

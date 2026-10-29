@@ -38,40 +38,32 @@ async function safeJsonResponse(res: Response) {
   };
 }
 
-export async function apiGetGoogleOAuthUrl(referralCode?: string | null) {
-  try {
-    const query = referralCode ? `?referralCode=${encodeURIComponent(referralCode)}` : '';
-    const res = await fetch(`/api/auth/google/url${query}`);
-    return await safeJsonResponse(res);
-  } catch (e: any) {
-    return { ok: false, error: e?.message || 'Unable to fetch Google OAuth URL' };
-  }
-}
-
-export async function apiGoogleSignIn(params: {
+export async function apiEmailSessionSync(params: {
   email: string;
   name: string;
-  avatarUrl?: string;
-  googleId?: string;
-  credential?: string;
+  userId?: string;
   referralCode?: string | null;
   rememberMe?: boolean;
 }) {
   try {
-    const res = await fetch('/api/auth/google', {
+    const res = await fetch('/api/auth/session', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params),
     });
     return await safeJsonResponse(res);
   } catch (e: any) {
-    return { ok: false, error: e?.message || 'Google Sign-In request failed' };
+    return { ok: false, error: e?.message || 'Session sync request failed' };
   }
 }
 
-export async function apiGetMe() {
+export async function apiGetMe(params?: { userId?: string; email?: string }) {
   try {
-    const res = await fetch('/api/auth/me', {
+    const query = new URLSearchParams();
+    if (params?.userId) query.set('userId', params.userId);
+    if (params?.email) query.set('email', params.email);
+    const qs = query.toString() ? `?${query.toString()}` : '';
+    const res = await fetch(`/api/auth/me${qs}`, {
       headers: getAuthHeaders(),
     });
     return await safeJsonResponse(res);
@@ -99,6 +91,8 @@ export async function apiLogout() {
 }
 
 export async function apiLockProfile(data: {
+  userId?: string;
+  email?: string;
   fullName: string;
   address: string;
   dateOfBirth: string;
@@ -118,6 +112,8 @@ export async function apiLockProfile(data: {
 }
 
 export async function apiUpdateProfile(data: {
+  userId?: string;
+  email?: string;
   fullName?: string;
   address?: string;
   dateOfBirth?: string;
@@ -138,12 +134,19 @@ export async function apiUpdateProfile(data: {
 }
 
 export async function apiSubmitKyc(data: {
+  userId?: string;
+  email?: string;
   docType: string;
   documentNumber?: string;
+  frontDocumentUrl?: string;
+  backDocumentUrl?: string;
+  frontFileName?: string;
+  backFileName?: string;
   fullName?: string;
   address?: string;
   dateOfBirth?: string;
   country?: string;
+  status?: 'pending' | 'verified';
   autoVerify?: boolean;
 }) {
   try {
@@ -155,6 +158,21 @@ export async function apiSubmitKyc(data: {
     return await safeJsonResponse(res);
   } catch (e: any) {
     return { ok: false, error: e?.message || 'Failed to submit KYC' };
+  }
+}
+
+export async function apiGetKycStatus(params?: { userId?: string; email?: string }) {
+  try {
+    const query = new URLSearchParams();
+    if (params?.userId) query.set('userId', params.userId);
+    if (params?.email) query.set('email', params.email);
+    const qs = query.toString() ? `?${query.toString()}` : '';
+    const res = await fetch(`/api/kyc/status${qs}`, {
+      headers: getAuthHeaders(),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Failed to fetch KYC status' };
   }
 }
 
@@ -206,6 +224,23 @@ export async function apiPurchaseAccount(params: {
     return await safeJsonResponse(res);
   } catch (e: any) {
     return { ok: false, error: e?.message || 'Account purchase failed' };
+  }
+}
+
+export async function apiDepositPersonalAccount(params: {
+  amount: number;
+  accountId?: string;
+  invoiceUuid?: string;
+}) {
+  try {
+    const res = await fetch('/api/accounts/deposit-personal', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(params),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Personal deposit failed' };
   }
 }
 

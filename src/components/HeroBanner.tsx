@@ -184,12 +184,12 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
           </button>
           {!isLoggedIn && onOpenAuthModal && (
             <button
-              onClick={() => onOpenAuthModal('login')}
-              data-testid="hero-google-signin-btn"
-              className="px-6 py-4 rounded-xl bg-white hover:bg-slate-100 text-slate-950 font-black text-sm sm:text-base transition-colors cursor-pointer flex items-center gap-2 font-mono"
+              onClick={() => onOpenAuthModal('register')}
+              data-testid="hero-auth-register-btn"
+              className="px-6 py-4 rounded-xl bg-[#141418] hover:bg-[#1c1c22] border border-[#ff8800]/40 text-white font-black text-sm sm:text-base transition-colors cursor-pointer flex items-center gap-2 font-mono"
             >
-              <UserPlus className="w-4 h-4" />
-              Sign in with Google
+              <UserPlus className="w-4 h-4 text-[#ff8800]" />
+              Register Trader Account
             </button>
           )}
         </div>

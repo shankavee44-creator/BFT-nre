@@ -58,18 +58,28 @@ import {
   checkUrlForReferralCode,
   hasDirectReferralUrlParam,
   storeReferralCode,
+  getStoredReferralCode,
   process3TierCommissions,
   processWithdrawalCommission,
 } from './utils/affiliateEngine';
-import { PACKAGES, advanceChallengeAccountPhase } from './utils/propRules';
+import {
+  PACKAGES,
+  advanceChallengeAccountPhase,
+  createDefaultPersonalLiveAccount,
+  isPersonalLiveAccount,
+  isDemoAccount,
+} from './utils/propRules';
 import {
   apiGetMe,
+  apiEmailSessionSync,
   apiLogout,
   apiSubmitKyc,
   apiPassChallenge,
+  apiDepositPersonalAccount,
   apiUpdateAccountState,
   apiGetWithdrawals,
 } from './utils/apiClient';
+import { resolveOrBuildUserProfile } from './utils/authOtpLogic';
 import { Gift, X, UserPlus, ShieldAlert, LogIn } from 'lucide-react';
 
 export default function App() {
@@ -125,26 +135,50 @@ export default function App() {
     setAffiliatePayouts(loadAffiliatePayouts());
 
     // Check live database session on backend
-    apiGetMe().then((res) => {
+    const initialStored = loadProfile();
+    apiGetMe(
+      initialStored?.isLoggedIn && (initialStored.id || initialStored.email)
+        ? { userId: initialStored.id, email: initialStored.email }
+        : undefined
+    ).then((res) => {
       if (res && res.ok && res.user) {
         setUserProfile((prev) => {
           const isSameUser =
             prev.email &&
             res.user.email &&
             prev.email.toLowerCase() === res.user.email.toLowerCase();
-          const localAlreadyVerified = isSameUser && prev.kycStatus === 'verified';
+          const localVerified = isSameUser && prev.kycStatus === 'verified';
+          const localPending = isSameUser && prev.kycStatus === 'pending';
+
           const effectiveKycStatus =
-            res.user.kycStatus === 'verified' || localAlreadyVerified
+            res.user.kycStatus === 'verified' || res.user.kycStatus === 'approved' || localVerified
               ? 'verified'
+              : res.user.kycStatus === 'pending' || localPending
+              ? 'pending'
               : res.user.kycStatus || (isSameUser ? prev.kycStatus : 'unverified');
 
-          if (localAlreadyVerified && res.user.kycStatus !== 'verified') {
+          const effectiveProfileLocked = Boolean(
+            res.user.profileLocked ||
+              (isSameUser && prev.profileLocked) ||
+              effectiveKycStatus === 'verified' ||
+              effectiveKycStatus === 'pending'
+          );
+
+          if (isSameUser && (localVerified || localPending) && res.user.kycStatus === 'unverified') {
             apiSubmitKyc({
-              docType: prev.kycDocumentType || 'Passport',
+              userId: res.user.id || prev.id,
+              email: res.user.email || prev.email,
+              docType: prev.kycDocumentType || 'ID Card',
+              documentNumber: prev.kycDocumentNumber,
+              frontDocumentUrl: prev.kycFrontDocumentUrl,
+              backDocumentUrl: prev.kycBackDocumentUrl,
+              frontFileName: prev.kycDocumentFileName,
+              backFileName: prev.kycBackDocumentFileName,
               fullName: prev.fullName || res.user.fullName,
               address: prev.address || res.user.address,
               dateOfBirth: prev.dateOfBirth || res.user.dateOfBirth,
               country: prev.country || res.user.country,
+              status: localVerified ? 'verified' : 'pending',
             }).catch(() => {});
           }
 
@@ -156,7 +190,14 @@ export default function App() {
             referralCode: res.user.referralCode || (isSameUser ? prev.referralCode : ''),
             referredBy: res.user.referredBy || (isSameUser ? prev.referredBy : undefined),
             kycStatus: effectiveKycStatus,
-            profileLocked: Boolean(res.user.profileLocked || effectiveKycStatus === 'verified'),
+            kycDocumentType: res.user.kycDocType || (isSameUser ? prev.kycDocumentType : 'ID Card'),
+            kycDocumentNumber: res.user.kycDocumentNumber || (isSameUser ? prev.kycDocumentNumber : undefined),
+            kycFrontDocumentUrl: res.user.kycFrontDocumentUrl || (isSameUser ? prev.kycFrontDocumentUrl : undefined),
+            kycBackDocumentUrl: res.user.kycBackDocumentUrl || (isSameUser ? prev.kycBackDocumentUrl : undefined),
+            kycDocumentFileName: res.user.kycDocumentFileName || (isSameUser ? prev.kycDocumentFileName : undefined),
+            kycBackDocumentFileName: res.user.kycBackDocumentFileName || (isSameUser ? prev.kycBackDocumentFileName : undefined),
+            kycSubmittedAt: res.user.kycSubmittedAt || (isSameUser ? prev.kycSubmittedAt : undefined),
+            profileLocked: effectiveProfileLocked,
             address: res.user.address || (isSameUser ? prev.address : ''),
             dateOfBirth: res.user.dateOfBirth || (isSameUser ? prev.dateOfBirth : ''),
             country: res.user.country || (isSameUser ? prev.country : 'United States'),
@@ -223,45 +264,178 @@ export default function App() {
     }
   }, []);
 
+  // Listen for Supabase Auth state changes (Email & Password session persistence)
+  useEffect(() => {
+    const hydrateFromSupabaseSessionUser = async (sessionUser: any) => {
+      if (!sessionUser?.id || !sessionUser?.email) return;
+
+      let existingProfile: any = null;
+      try {
+        const { data: p } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', sessionUser.id)
+          .maybeSingle();
+        existingProfile = p;
+      } catch {
+        // ignore read error
+      }
+
+      const sponsorCode = getStoredReferralCode() || null;
+      const { needsUpsert, upsertPayload, resolvedProfile } = resolveOrBuildUserProfile(
+        sessionUser,
+        existingProfile,
+        sponsorCode
+      );
+
+      if (needsUpsert) {
+        try {
+          await supabase
+            .from('profiles')
+            .upsert(upsertPayload, { onConflict: 'id', ignoreDuplicates: true });
+        } catch {
+          // ignore if trigger or RLS already handled
+        }
+      }
+
+      const backendSync = await apiEmailSessionSync({
+        email: resolvedProfile.email,
+        name: resolvedProfile.fullName,
+        userId: sessionUser.id,
+        referralCode: resolvedProfile.referredBy,
+        rememberMe: true,
+      }).catch(() => null);
+
+      if (backendSync?.token) {
+        try {
+          localStorage.setItem('bft_jwt_session', backendSync.token);
+        } catch {
+          // ignore
+        }
+      }
+
+      const loaded = loadOrCreateUserProfileByEmail({
+        userId: sessionUser.id,
+        email: resolvedProfile.email,
+        fullName: backendSync?.user?.fullName || resolvedProfile.fullName,
+        referralCode: backendSync?.user?.referralCode || resolvedProfile.referralCode,
+        referredBy: resolvedProfile.referredBy || backendSync?.user?.referredBy || undefined,
+        rememberMe: true,
+        isNewRegistration: false,
+        kycStatus: backendSync?.user?.kycStatus || resolvedProfile.kycStatus,
+        profileLocked: backendSync?.user?.profileLocked ?? resolvedProfile.profileLocked,
+        address: backendSync?.user?.address || resolvedProfile.address,
+        dateOfBirth: backendSync?.user?.dateOfBirth || resolvedProfile.dateOfBirth,
+        country: backendSync?.user?.country || resolvedProfile.country,
+      });
+
+      setUserProfile(loaded);
+      setIsAuthModalOpen(false);
+    };
+
+    const { data: authSubscription } = supabase.auth.onAuthStateChange((event, session) => {
+      if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session?.user) {
+        hydrateFromSupabaseSessionUser(session.user);
+      }
+    });
+
+    return () => {
+      authSubscription?.subscription?.unsubscribe();
+    };
+  }, []);
+
   const handleUpdateSingleAccount = (updated: TradingAccount) => {
     setAccounts((prev) => {
-      const newAccounts = prev.map((acc) => (acc.id === updated.id ? updated : acc));
+      const exists = prev.some((acc) => acc.id === updated.id);
+      const newAccounts = exists
+        ? prev.map((acc) => (acc.id === updated.id ? updated : acc))
+        : [...prev, updated];
       saveAccounts(newAccounts);
       return newAccounts;
     });
-    apiUpdateAccountState(updated.id, {
-      currentBalance: updated.currentBalance,
-      equity: updated.equity,
-      startingDayEquity: updated.startingDayEquity,
-      status: updated.status,
-      phase: updated.phase,
-      tradesCount: updated.tradesCount,
-      winRate: updated.winRate,
-      tradingDaysCompleted: updated.tradingDaysCompleted,
-      certificateId: updated.certificateId,
-    }).catch(() => {});
+    if (!isDemoAccount(updated)) {
+      apiUpdateAccountState(updated.id, {
+        currentBalance: updated.currentBalance,
+        equity: updated.equity,
+        startingDayEquity: updated.startingDayEquity,
+        status: updated.status,
+        phase: updated.phase,
+        tradesCount: updated.tradesCount,
+        winRate: updated.winRate,
+        tradingDaysCompleted: updated.tradingDaysCompleted,
+        certificateId: updated.certificateId,
+      }).catch(() => {});
+    }
   };
 
   const handleCreditAccountDeposit = (accountId: string, amountUsdt: number) => {
     setAccounts((prev) => {
+      let matched = false;
       const updated = prev.map((acc) => {
         if (acc.id !== accountId) return acc;
+        matched = true;
+        const isPersonal = isPersonalLiveAccount(acc);
         const newBal = Number((acc.currentBalance + amountUsdt).toFixed(2));
         const newEq = Number((acc.equity + amountUsdt).toFixed(2));
-        const nextAcc = {
+        const newStartEq = Number(((acc.startingDayEquity || acc.currentBalance) + amountUsdt).toFixed(2));
+        const newInit = isPersonal
+          ? Number(((acc.initialBalance || 0) + amountUsdt).toFixed(2))
+          : acc.initialBalance;
+        const newDep = isPersonal
+          ? Number(((acc.depositedCapital ?? acc.initialBalance ?? 0) + amountUsdt).toFixed(2))
+          : acc.depositedCapital;
+
+        const nextAcc: TradingAccount = {
           ...acc,
+          initialBalance: newInit,
+          depositedCapital: newDep,
+          size: isPersonal ? newInit : acc.size,
           currentBalance: newBal,
+          startingDayEquity: newStartEq,
           equity: newEq,
         };
-        apiUpdateAccountState(acc.id, {
-          currentBalance: newBal,
-          equity: newEq,
-        }).catch(() => {});
+        if (isPersonal) {
+          apiDepositPersonalAccount({
+            amount: amountUsdt,
+            accountId: acc.id,
+          }).catch(() => {});
+        } else {
+          apiUpdateAccountState(acc.id, {
+            currentBalance: newBal,
+            equity: newEq,
+            startingDayEquity: newStartEq,
+          }).catch(() => {});
+        }
         return nextAcc;
       });
+
+      if (!matched) {
+        const personalAcc = createDefaultPersonalLiveAccount(
+          userProfile.id || 'usr_bft_001',
+          userProfile.email || 'trader@binaryfunded.com',
+          amountUsdt
+        );
+        const createdWithId: TradingAccount = {
+          ...personalAcc,
+          id: accountId || personalAcc.id,
+          loginId: accountId || personalAcc.loginId,
+        };
+        apiDepositPersonalAccount({
+          amount: amountUsdt,
+          accountId: createdWithId.id,
+        }).catch(() => {});
+        const nextList = [...updated, createdWithId];
+        saveAccounts(nextList);
+        return nextList;
+      }
+
       saveAccounts(updated);
       return updated;
     });
+    if (accountId) {
+      setActiveAccountId(accountId);
+      saveActiveAccountId(accountId);
+    }
   };
 
   const handleSelectAccount = (id: string) => {
@@ -276,7 +450,10 @@ export default function App() {
 
   // Periodic Supabase profile sync for Manual Admin approvals (KYC, Balance)
   useEffect(() => {
-    if (!userProfile.isLoggedIn || !userProfile.id) return;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      userProfile.id || ''
+    );
+    if (!userProfile.isLoggedIn || !isUuid) return;
     let isMounted = true;
 
     async function syncSupabaseProfile() {
@@ -288,17 +465,42 @@ export default function App() {
           .maybeSingle();
 
         if (p && isMounted) {
-          const effectiveStatus = p.kyc_status || userProfile.kycStatus;
-          const isVerified = effectiveStatus === 'verified' || effectiveStatus === 'approved';
-          if (p.kyc_status !== userProfile.kycStatus) {
+          setUserProfile((prev) => {
+            const remoteStatus = p.kyc_status;
+            const isRemoteVerified = remoteStatus === 'verified' || remoteStatus === 'approved';
+            const isRemotePending =
+              remoteStatus === 'pending' || remoteStatus === 'Pending Verification';
+            const nextKycStatus = isRemoteVerified
+              ? 'verified'
+              : prev.kycStatus === 'verified'
+              ? 'verified'
+              : isRemotePending || prev.kycStatus === 'pending'
+              ? 'pending'
+              : remoteStatus || prev.kycStatus;
+
+            const nextLocked = Boolean(
+              prev.profileLocked ||
+                p.profile_locked ||
+                nextKycStatus === 'verified' ||
+                nextKycStatus === 'pending'
+            );
+
+            if (nextKycStatus === prev.kycStatus && nextLocked === Boolean(prev.profileLocked)) {
+              return prev;
+            }
+
             const updated: UserProfile = {
-              ...userProfile,
-              kycStatus: isVerified ? 'verified' : effectiveStatus,
-              profileLocked: isVerified ? true : userProfile.profileLocked,
+              ...prev,
+              kycStatus: nextKycStatus,
+              profileLocked: nextLocked,
+              fullName: p.full_name || prev.fullName,
+              address: p.address || prev.address,
+              dateOfBirth: p.date_of_birth || prev.dateOfBirth,
+              country: p.country || prev.country,
             };
-            setUserProfile(updated);
             saveProfile(updated);
-          }
+            return updated;
+          });
         }
       } catch {
         // Fallback
@@ -311,7 +513,7 @@ export default function App() {
       isMounted = false;
       clearInterval(interval);
     };
-  }, [userProfile.isLoggedIn, userProfile.id, userProfile.kycStatus]);
+  }, [userProfile.isLoggedIn, userProfile.id]);
 
   const handleAddWithdrawal = (req: WithdrawalRequest) => {
     const updated = [req, ...withdrawals];
@@ -507,7 +709,55 @@ export default function App() {
     setCurrentTab('home');
   };
 
-  const userAccounts = filterAccountsForUser(accounts, userProfile);
+  const baseOwnedAccounts = filterAccountsForUser(accounts, userProfile);
+  const userAccounts: TradingAccount[] = React.useMemo(() => {
+    if (!userProfile?.isLoggedIn) return [];
+    const list = [...baseOwnedAccounts];
+
+    // Ensure every authenticated user has a Personal Live (Self-Funded) account alongside Prop accounts
+    if (!list.some((a) => isPersonalLiveAccount(a))) {
+      const defaultPersonal = createDefaultPersonalLiveAccount(
+        userProfile.id || 'usr_bft_001',
+        userProfile.email || 'trader@binaryfunded.com',
+        userProfile.id === 'usr_bft_001' ? 1250 : 0
+      );
+      list.push(defaultPersonal);
+    }
+
+    // Ensure every authenticated user also has a Demo Practice account for effortless switching
+    if (!list.some((a) => isDemoAccount(a))) {
+      const today = new Date().toISOString().split('T')[0];
+      list.push({
+        id: 'BFT-DEMO-001',
+        ownerId: userProfile.id,
+        ownerEmail: userProfile.email,
+        loginId: 'BFT-DEMO-001',
+        passwordHash: 'DemoPractice',
+        tier: 'demo',
+        tierName: 'Demo Practice Balance',
+        accountCategory: 'demo',
+        depositedCapital: 0,
+        size: 10000,
+        initialBalance: 10000,
+        currentBalance: 10000,
+        startingDayEquity: 10000,
+        equity: 10000,
+        dailyLossLimitPercent: 0,
+        maxOverallLossPercent: 0,
+        maxRiskPerTradePercent: 100,
+        status: 'active',
+        createdDate: today,
+        lastActiveDate: today,
+        phase: 'demo',
+        tradingDaysCompleted: 0,
+        tradesCount: 0,
+        winRate: 0,
+      });
+    }
+
+    return list;
+  }, [baseOwnedAccounts, userProfile.isLoggedIn, userProfile.id, userProfile.email]);
+
   const activeAccount =
     userAccounts.find((acc) => acc.id === activeAccountId) || userAccounts[0] || undefined;
 
@@ -783,6 +1033,12 @@ export default function App() {
             isNewRegistration,
             kycStatus: serverUser?.kycStatus,
             kycDocType: serverUser?.kycDocType,
+            kycDocumentNumber: serverUser?.kycDocumentNumber,
+            kycFrontDocumentUrl: serverUser?.kycFrontDocumentUrl,
+            kycBackDocumentUrl: serverUser?.kycBackDocumentUrl,
+            kycDocumentFileName: serverUser?.kycDocumentFileName,
+            kycBackDocumentFileName: serverUser?.kycBackDocumentFileName,
+            kycSubmittedAt: serverUser?.kycSubmittedAt,
             profileLocked: serverUser?.profileLocked,
             address: serverUser?.address,
             dateOfBirth: serverUser?.dateOfBirth,

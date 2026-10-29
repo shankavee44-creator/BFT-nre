@@ -484,15 +484,95 @@ export function checkFirstWithdrawalWaitingPeriod(
 }
 
 /**
- * Determines whether an account is a Live Funded Account (Instant Funded or Passed Evaluation)
+ * Determines whether an account is a Personal Live / Self-Funded Real Deposit account.
+ */
+export function isPersonalLiveAccount(account?: TradingAccount | null): boolean {
+  if (!account) return false;
+  return (
+    account.tier === 'personal' ||
+    account.accountCategory === 'personal_live' ||
+    account.phase === 'personal_live'
+  );
+}
+
+/**
+ * Determines whether an account is a Demo Practice account.
+ */
+export function isDemoAccount(account?: TradingAccount | null): boolean {
+  if (!account) return false;
+  return (
+    account.tier === 'demo' ||
+    account.accountCategory === 'demo' ||
+    account.phase === 'demo' ||
+    account.id.startsWith('BFT-DEMO')
+  );
+}
+
+/**
+ * Creates a clean Personal Live (Self-Funded) account object for a user.
+ */
+export function createDefaultPersonalLiveAccount(
+  ownerId: string = 'usr_bft_001',
+  ownerEmail: string = 'trader@binaryfunded.com',
+  initialDeposit: number = 1250
+): TradingAccount {
+  const suffix = ownerId.replace(/[^a-zA-Z0-9]/g, '').slice(-5).toUpperCase() || '001';
+  const id = ownerId === 'usr_bft_001' ? 'BFT-PERS-001' : `BFT-PERS-${suffix}`;
+  const today = new Date().toISOString().split('T')[0];
+  return {
+    id,
+    ownerId,
+    ownerEmail,
+    loginId: id,
+    passwordHash: 'PersonalLiveAuth',
+    tier: 'personal',
+    tierName: 'Personal Live Balance (Self-Funded)',
+    accountCategory: 'personal_live',
+    depositedCapital: initialDeposit,
+    size: Math.max(0, initialDeposit),
+    initialBalance: initialDeposit,
+    currentBalance: initialDeposit,
+    startingDayEquity: initialDeposit,
+    equity: initialDeposit,
+    dailyLossLimitPercent: 0,
+    maxOverallLossPercent: 0,
+    maxRiskPerTradePercent: 100,
+    dailyWithdrawalsUnlocked: true,
+    firstWithdrawalCompleted: true,
+    monthsCompleted: 12,
+    scalingActive: false,
+    status: 'active',
+    breachType: 'none',
+    createdDate: today,
+    lastActiveDate: today,
+    phase: 'personal_live',
+    tradingDaysCompleted: 0,
+    tradesCount: 0,
+    winRate: 0,
+    violationLogs: [],
+  };
+}
+
+/**
+ * Determines whether an account is a Live Funded Account (Instant Funded, Passed Evaluation, or Personal Live)
  * versus an active Challenge Evaluation phase.
  */
 export function isLiveFundedAccount(account?: TradingAccount | null): boolean {
   if (!account) return false;
-  return account.tier === 'instant' || account.phase === 'funded' || account.status === 'passed';
+  if (isDemoAccount(account)) return false;
+  return (
+    isPersonalLiveAccount(account) ||
+    account.tier === 'instant' ||
+    account.phase === 'funded' ||
+    account.status === 'passed'
+  );
 }
 
-export function getAccountStatusBadgeLabel(account?: TradingAccount | null): 'LIVE ACCOUNT' | 'CHALLENGE' {
+export function getAccountStatusBadgeLabel(
+  account?: TradingAccount | null
+): 'PERSONAL LIVE' | 'DEMO' | 'LIVE ACCOUNT' | 'CHALLENGE' {
+  if (isPersonalLiveAccount(account)) return 'PERSONAL LIVE';
+  if (isDemoAccount(account)) return 'DEMO';
   return isLiveFundedAccount(account) ? 'LIVE ACCOUNT' : 'CHALLENGE';
 }
 
@@ -566,7 +646,8 @@ export function calculateDiscountedPrice(
  */
 export function calculateWithdrawalBreakdown(
   requestedPayoutAmount: number,
-  monthsCompleted: number = 1
+  monthsCompleted: number = 1,
+  isPersonalLive: boolean = false
 ): {
   requestedAmount: number;
   requestedProfit: number;
@@ -581,8 +662,8 @@ export function calculateWithdrawalBreakdown(
   affiliateWithdrawalBonus8Percent: number;
   affiliateWithdrawalBonus: number;
 } {
-  const scalingPlanActive = monthsCompleted >= 3;
-  const profitSplitPercent = scalingPlanActive ? 90 : 80;
+  const scalingPlanActive = isPersonalLive ? true : monthsCompleted >= 3;
+  const profitSplitPercent = isPersonalLive ? 100 : scalingPlanActive ? 90 : 80;
   const traderShareBeforeFee = Number(((requestedPayoutAmount * profitSplitPercent) / 100).toFixed(2));
   const withdrawalFeePercent = WITHDRAWAL_FEE_PERCENT;
   const withdrawalFeeAmount = Number(((requestedPayoutAmount * withdrawalFeePercent) / 100).toFixed(2));
@@ -699,6 +780,45 @@ export function validateWithdrawalRequest(
   requestedAmount: number,
   options?: { enforceFirstWithdrawalLock?: boolean; nowMs?: number }
 ): RuleValidationResult {
+  if (isDemoAccount(account)) {
+    return {
+      valid: false,
+      reason: 'Demo Practice accounts use virtual funds and are not eligible for real withdrawals.',
+      code: 'DEMO_ACCOUNT_LOCKED',
+    };
+  }
+
+  // Personal Live (Self-Funded) Accounts:
+  // Users can withdraw both personal profits AND deposited capital following the $250 minimum threshold and 10% fee,
+  // without being bound by prop challenge target phases, profit-only restrictions, or 14-day waiting periods.
+  if (isPersonalLiveAccount(account)) {
+    if (account.currentBalance < MIN_WITHDRAWAL_PROFIT) {
+      return {
+        valid: false,
+        reason: `Minimum withdrawal balance is $${MIN_WITHDRAWAL_PROFIT}. Current Personal Live balance is $${account.currentBalance.toFixed(2)}.`,
+        code: 'BELOW_MIN_BALANCE',
+      };
+    }
+
+    if (requestedAmount < MIN_WITHDRAWAL_PROFIT) {
+      return {
+        valid: false,
+        reason: `Minimum withdrawal amount is $${MIN_WITHDRAWAL_PROFIT}.`,
+        code: 'AMOUNT_TOO_LOW',
+      };
+    }
+
+    if (requestedAmount > account.currentBalance) {
+      return {
+        valid: false,
+        reason: `Cannot withdraw more than your available Personal Live balance ($${account.currentBalance.toFixed(2)}).`,
+        code: 'EXCEEDS_BALANCE',
+      };
+    }
+
+    return { valid: true };
+  }
+
   if (!isLiveFundedAccount(account)) {
     return {
       valid: false,
@@ -892,6 +1012,18 @@ export function isDuringRestrictedNewsWindow(
  * Calculates current daily drawdown and overall drawdown percentages.
  */
 export function calculateDrawdownMetrics(account: TradingAccount) {
+  if (isPersonalLiveAccount(account) || isDemoAccount(account)) {
+    return {
+      dailyDrawdownAmount: 0,
+      dailyDrawdownPercent: 0,
+      overallLossAmount: 0,
+      overallLossPercent: 0,
+      isDailyBreached: false,
+      isOverallBreached: false,
+      isBreached: false,
+    };
+  }
+
   const dailyDrawdownAmount = Math.max(0, account.startingDayEquity - account.equity);
   const dailyDrawdownPercent = account.startingDayEquity > 0
     ? Number(((dailyDrawdownAmount / account.startingDayEquity) * 100).toFixed(2))
@@ -902,8 +1034,10 @@ export function calculateDrawdownMetrics(account: TradingAccount) {
     ? Number(((overallLossAmount / account.initialBalance) * 100).toFixed(2))
     : 0;
 
-  const isDailyBreached = dailyDrawdownPercent >= account.dailyLossLimitPercent;
-  const isOverallBreached = overallLossPercent >= account.maxOverallLossPercent;
+  const isDailyBreached =
+    account.dailyLossLimitPercent > 0 && dailyDrawdownPercent >= account.dailyLossLimitPercent;
+  const isOverallBreached =
+    account.maxOverallLossPercent > 0 && overallLossPercent >= account.maxOverallLossPercent;
 
   return {
     dailyDrawdownAmount,
@@ -997,6 +1131,10 @@ export function evaluateAccountBreach(
   violationLog?: RuleViolationLog;
   autoUnlockTimestamp?: number;
 } {
+  if (isPersonalLiveAccount(account) || isDemoAccount(account)) {
+    return { isBreached: false };
+  }
+
   const metrics = calculateDrawdownMetrics(account);
 
   // 1. Overall Loss -> Permanent HARD BREACH

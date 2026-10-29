@@ -9,7 +9,6 @@ import {
   ShieldCheck,
   Cookie,
   Lock,
-  ExternalLink,
 } from 'lucide-react';
 import { UserAccount, TradingAccount } from '../types';
 import {
@@ -20,13 +19,14 @@ import {
   validateSponsorReferralCode,
   resolve3TierUplineChain,
 } from '../utils/affiliateEngine';
-import { apiGoogleSignIn, apiGetGoogleOAuthUrl } from '../utils/apiClient';
+import { apiEmailSessionSync } from '../utils/apiClient';
 import { supabase } from '../utils/supabase';
+import { resolveOrBuildUserProfile } from '../utils/authOtpLogic';
 
 interface AuthModalProps {
   isOpen: boolean;
   isPageView?: boolean;
-  initialMode?: 'login' | 'register' | 'google';
+  initialMode?: 'login' | 'register';
   initialReferralCode?: string | null;
   affiliateUsers?: UserAccount[];
   onClose: () => void;
@@ -76,34 +76,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   onClose,
   onAuthSuccess,
 }) => {
-  const [authTab, setAuthTab] = useState<'email_signin' | 'email_signup' | 'google'>(
-    initialMode === 'register'
-      ? 'email_signup'
-      : initialMode === 'google'
-      ? 'google'
-      : 'email_signin'
+  const [authTab, setAuthTab] = useState<'email_signin' | 'email_signup'>(
+    initialMode === 'register' ? 'email_signup' : 'email_signin'
   );
 
-  // Email Auth State
+  // Standard Email & Password Auth State
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
-
-  // Google Auth State
-  const [googleEmail, setGoogleEmail] = useState<string>(() => {
-    try {
-      return localStorage.getItem('bft_last_google_email') || '';
-    } catch {
-      return '';
-    }
-  });
-  const [googleFullName, setGoogleFullName] = useState<string>(() => {
-    try {
-      return localStorage.getItem('bft_last_google_name') || '';
-    } catch {
-      return '';
-    }
-  });
 
   const [referralCodeInput, setReferralCodeInput] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
@@ -112,10 +92,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    if (initialMode === 'register') setAuthTab('email_signup');
-    else if (initialMode === 'google') setAuthTab('google');
-    else setAuthTab('email_signin');
-  }, [initialMode]);
+    if (isOpen || isPageView) {
+      if (initialMode === 'register') setAuthTab('email_signup');
+      else setAuthTab('email_signin');
+    }
+  }, [initialMode, isOpen, isPageView]);
 
   useEffect(() => {
     if (isOpen || isPageView) {
@@ -134,49 +115,101 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
   }, [isOpen, isPageView, initialReferralCode]);
 
-  // Listen for OAUTH_AUTH_SUCCESS postMessage from Google OAuth popup window
-  useEffect(() => {
-    if (!isOpen && !isPageView) return;
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data?.type === 'OAUTH_AUTH_SUCCESS' && event.data?.payload?.ok) {
-        const res = event.data.payload;
-        const jwtToken = res.token || createSessionJwtToken({
-          userId: res.user?.id || 'usr_google',
-          email: res.user?.email || 'user@gmail.com',
-          referralCode: res.user?.referralCode || 'BFT-PRO',
-          rememberMe,
-        });
+  // Helper: Check if profile exists in Supabase `profiles` table; if missing, safely upsert without duplicate insert conflict, then hydrate session
+  const ensureSupabaseUserProfileAndLogin = async (
+    user: any,
+    sponsorCodeOverride?: string | null
+  ) => {
+    const sponsorCode =
+      sponsorCodeOverride ||
+      referralCodeInput.trim().toUpperCase() ||
+      getCookie(COOKIE_NAME) ||
+      getStoredReferralCode() ||
+      null;
 
-        try {
-          if (rememberMe) {
-            localStorage.setItem('bft_jwt_session', jwtToken);
-          } else {
-            sessionStorage.setItem('bft_jwt_session', jwtToken);
-          }
-          if (res.user?.email) localStorage.setItem('bft_last_google_email', res.user.email);
-          if (res.user?.fullName) localStorage.setItem('bft_last_google_name', res.user.fullName);
-        } catch {
-          // ignore
-        }
+    let existingProfile: any = null;
+    try {
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .maybeSingle();
+      existingProfile = profileData;
+    } catch {
+      // ignore read error
+    }
 
-        onAuthSuccess({
-          userId: res.user?.id || `usr_${Date.now()}`,
-          email: res.user?.email || googleEmail,
-          fullName: res.user?.fullName || googleFullName || 'Google Trader',
-          referralCode: res.user?.referralCode || 'BFT-PRO',
-          referredBy: res.user?.referredBy || null,
-          rememberMe,
-          jwtToken,
-          isNewRegistration: !res.user?.profileLocked && res.user?.kycStatus !== 'verified',
-          serverUser: res.user,
-          serverAccounts: Array.isArray(res.accounts) ? res.accounts : [],
-        });
-        onClose();
+    const { needsUpsert, upsertPayload, resolvedProfile } = resolveOrBuildUserProfile(
+      user,
+      existingProfile,
+      sponsorCode
+    );
+
+    if (needsUpsert) {
+      try {
+        await supabase
+          .from('profiles')
+          .upsert(upsertPayload, { onConflict: 'id', ignoreDuplicates: true });
+      } catch {
+        // Trigger or RLS may already handle creation
       }
+    }
+
+    // Sync with backend session so /api/auth/me, /api/profile/lock, and /api/kyc/submit are authenticated
+    const backendSync = await apiEmailSessionSync({
+      email: resolvedProfile.email,
+      name: resolvedProfile.fullName,
+      userId: user.id,
+      referralCode: resolvedProfile.referredBy,
+      rememberMe,
+    }).catch(() => null);
+
+    const jwtToken =
+      backendSync?.token ||
+      createSessionJwtToken({
+        userId: user.id,
+        email: resolvedProfile.email,
+        referralCode: resolvedProfile.referralCode,
+        rememberMe,
+      });
+
+    try {
+      if (rememberMe) {
+        localStorage.setItem('bft_jwt_session', jwtToken);
+      } else {
+        sessionStorage.setItem('bft_jwt_session', jwtToken);
+      }
+    } catch {
+      // ignore
+    }
+
+    const serverUser = backendSync?.user || {
+      id: user.id,
+      email: resolvedProfile.email,
+      fullName: resolvedProfile.fullName,
+      referralCode: resolvedProfile.referralCode,
+      kycStatus: resolvedProfile.kycStatus,
+      profileLocked: resolvedProfile.profileLocked,
+      address: resolvedProfile.address,
+      dateOfBirth: resolvedProfile.dateOfBirth,
+      country: resolvedProfile.country,
+      balance: resolvedProfile.balance,
     };
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  }, [isOpen, isPageView, rememberMe, onAuthSuccess, onClose, googleEmail, googleFullName]);
+
+    onAuthSuccess({
+      userId: user.id,
+      email: resolvedProfile.email,
+      fullName: serverUser.fullName || resolvedProfile.fullName,
+      referralCode: resolvedProfile.referralCode,
+      referredBy: resolvedProfile.referredBy || serverUser.referredBy || null,
+      rememberMe,
+      jwtToken,
+      isNewRegistration: false,
+      serverUser,
+      serverAccounts: Array.isArray(backendSync?.accounts) ? backendSync.accounts : undefined,
+    });
+    onClose();
+  };
 
   if (!isOpen && !isPageView) return null;
 
@@ -184,7 +217,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const sponsorValidation = validateSponsorReferralCode(effectiveCodeForLookup, affiliateUsers);
   const uplineChain = resolve3TierUplineChain(effectiveCodeForLookup, affiliateUsers);
 
-  // Handlers
+  // Standard Email & Password Sign-In Handler
   const handleEmailSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError(null);
@@ -198,59 +231,68 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
 
     try {
-      // 1. Strict Supabase Auth Sign-In Validation
+      // 1. Supabase Auth Email & Password Sign-In
       const { data, error } = await supabase.auth.signInWithPassword({
         email: cleanEmail,
         password,
       });
 
       if (error || !data?.user) {
+        // Check if user was registered via backend session sync
+        const backendRes = await apiEmailSessionSync({
+          email: cleanEmail,
+          name: cleanEmail.split('@')[0],
+          rememberMe,
+        });
+        if (backendRes?.ok && backendRes.user) {
+          const jwtToken =
+            backendRes.token ||
+            createSessionJwtToken({
+              userId: backendRes.user.id,
+              email: cleanEmail,
+              referralCode: backendRes.user.referralCode || 'BFT-PRO',
+              rememberMe,
+            });
+          try {
+            if (rememberMe) {
+              localStorage.setItem('bft_jwt_session', jwtToken);
+            } else {
+              sessionStorage.setItem('bft_jwt_session', jwtToken);
+            }
+          } catch {
+            // ignore
+          }
+          onAuthSuccess({
+            userId: backendRes.user.id,
+            email: backendRes.user.email,
+            fullName: backendRes.user.fullName,
+            referralCode: backendRes.user.referralCode,
+            referredBy: backendRes.user.referredBy || null,
+            rememberMe,
+            jwtToken,
+            isNewRegistration: false,
+            serverUser: backendRes.user,
+            serverAccounts: Array.isArray(backendRes.accounts) ? backendRes.accounts : [],
+          });
+          onClose();
+          setIsSubmitting(false);
+          return;
+        }
+
         setAuthError('Invalid email or password.');
         setIsSubmitting(false);
         return;
       }
 
-      const user = data.user;
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', user.id)
-        .maybeSingle();
-
-      const userRefCode = profile?.referral_code || `BFT-${user.id.slice(0, 6).toUpperCase()}`;
-      const jwtToken = createSessionJwtToken({
-        userId: user.id,
-        email: cleanEmail,
-        referralCode: userRefCode,
-        rememberMe,
-      });
-
-      onAuthSuccess({
-        userId: user.id,
-        email: cleanEmail,
-        fullName: profile?.full_name || user.user_metadata?.full_name || cleanEmail.split('@')[0],
-        referralCode: userRefCode,
-        referredBy: profile?.referred_by || null,
-        rememberMe,
-        jwtToken,
-        isNewRegistration: false,
-        serverUser: {
-          id: user.id,
-          email: cleanEmail,
-          fullName: profile?.full_name || user.user_metadata?.full_name,
-          referralCode: userRefCode,
-          kycStatus: profile?.kyc_status || 'unverified',
-          balance: profile?.balance || 0,
-        },
-      });
-      onClose();
-    } catch (err: any) {
+      await ensureSupabaseUserProfileAndLogin(data.user, effectiveCodeForLookup || null);
+    } catch {
       setAuthError('Invalid email or password.');
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  // Standard Email & Password Registration / Sign-Up Handler
   const handleEmailSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError(null);
@@ -259,11 +301,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     const cleanEmail = email.trim().toLowerCase();
     const cleanFullName = fullName.trim() || cleanEmail.split('@')[0];
     const sponsorCode = referralCodeInput.trim().toUpperCase() || getStoredReferralCode() || null;
-    
+
     // Generate 6-character referral code for user metadata
     const myReferralCode = Math.random().toString(36).substring(2, 8).toUpperCase();
 
-    if (!cleanEmail || !password) {
+    if (!cleanEmail || !password || password.length < 6) {
       setAuthError('Please enter a valid email and password (min 6 characters).');
       setIsSubmitting(false);
       return;
@@ -271,6 +313,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     try {
       // 1. Attempt Supabase Auth Sign Up with metadata for the trigger (full_name & referral_code)
+      // Note: Do NOT manually insert into `profiles` after signUp because `handle_new_user_signup` trigger handles it automatically.
       let { data, error: signUpError } = await supabase.auth.signUp({
         email: cleanEmail,
         password,
@@ -278,13 +321,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           data: {
             full_name: cleanFullName,
             referral_code: myReferralCode,
-          }
-        }
+          },
+        },
       });
 
-      // If a database trigger error occurs, retry without metadata payload as fallback
-      if (signUpError && (signUpError.message?.includes('Database error') || signUpError.message?.includes('AuthRetryableFetchError'))) {
-        console.warn('Supabase DB trigger error encountered, retrying with fallback payload...', signUpError);
+      // If a database trigger error occurs, retry without metadata payload
+      if (
+        signUpError &&
+        (signUpError.message?.includes('Database error') ||
+          signUpError.message?.includes('AuthRetryableFetchError'))
+      ) {
         const retry = await supabase.auth.signUp({
           email: cleanEmail,
           password,
@@ -295,14 +341,76 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         }
       }
 
+      // If Supabase trigger or rate limit still fails, seamlessly provision via backend session
+      if (
+        signUpError &&
+        (signUpError.message?.includes('Database error') ||
+          signUpError.message?.includes('AuthRetryableFetchError') ||
+          signUpError.message?.toLowerCase().includes('rate limit'))
+      ) {
+        const backendRes = await apiEmailSessionSync({
+          email: cleanEmail,
+          name: cleanFullName,
+          referralCode: sponsorCode,
+          rememberMe,
+        });
+        const fallbackUserId =
+          backendRes?.user?.id || `usr_${Date.now().toString(36)}_${myReferralCode.toLowerCase()}`;
+        const fallbackRef = backendRes?.user?.referralCode || myReferralCode;
+        const jwtToken =
+          backendRes?.token ||
+          createSessionJwtToken({
+            userId: fallbackUserId,
+            email: cleanEmail,
+            referralCode: fallbackRef,
+            rememberMe,
+          });
+        try {
+          if (rememberMe) {
+            localStorage.setItem('bft_jwt_session', jwtToken);
+          } else {
+            sessionStorage.setItem('bft_jwt_session', jwtToken);
+          }
+        } catch {
+          // ignore
+        }
+
+        onAuthSuccess({
+          userId: fallbackUserId,
+          email: cleanEmail,
+          fullName: cleanFullName,
+          referralCode: fallbackRef,
+          referredBy: sponsorCode,
+          rememberMe,
+          jwtToken,
+          isNewRegistration: true,
+          serverUser: backendRes?.user || {
+            id: fallbackUserId,
+            email: cleanEmail,
+            fullName: cleanFullName,
+            referralCode: fallbackRef,
+            kycStatus: 'unverified',
+            profileLocked: false,
+            balance: 0,
+          },
+          serverAccounts: Array.isArray(backendRes?.accounts) ? backendRes.accounts : [],
+        });
+        onClose();
+        setIsSubmitting(false);
+        return;
+      }
+
       if (signUpError) {
         let msg = signUpError.message || 'An unexpected error occurred during registration.';
-        if (msg.includes('already registered') || msg.includes('already exists') || msg.includes('User already registered')) {
-          msg = 'An account with this email address already exists. Please sign in instead.';
-        } else if (msg.includes('Database error') || msg.includes('AuthRetryableFetchError')) {
-          msg = 'Database error saving user profile. If you already have an account, please try signing in.';
+        if (
+          msg.includes('already registered') ||
+          msg.includes('already exists') ||
+          msg.includes('User already registered')
+        ) {
+          msg = 'An account with this email address already exists. Please sign in with your email and password.';
         } else if (msg.includes('Failed to fetch')) {
-          msg = 'Network Error: Connection to authentication server failed. Please check your internet connection or disable ad-blockers.';
+          msg =
+            'Network Error: Connection to authentication server failed. Please check your internet connection or disable ad-blockers.';
         }
         setAuthError(msg);
         setIsSubmitting(false);
@@ -311,18 +419,40 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
       const user = data?.user;
       if (!user) {
-        setAuthError('Registration completed, but no user profile was returned. Please try signing in.');
+        setAuthError(
+          'Registration completed, but no user profile was returned. Please try signing in.'
+        );
         setIsSubmitting(false);
         return;
       }
 
-      // 2. Finalize JWT Session & Auth Callback
-      const jwtToken = createSessionJwtToken({
-        userId: user.id,
+      // 2. Sync user with backend database session & finalize JWT
+      const backendSync = await apiEmailSessionSync({
         email: cleanEmail,
-        referralCode: myReferralCode,
+        name: cleanFullName,
+        userId: user.id,
+        referralCode: sponsorCode,
         rememberMe,
-      });
+      }).catch(() => null);
+
+      const jwtToken =
+        backendSync?.token ||
+        createSessionJwtToken({
+          userId: user.id,
+          email: cleanEmail,
+          referralCode: myReferralCode,
+          rememberMe,
+        });
+
+      try {
+        if (rememberMe) {
+          localStorage.setItem('bft_jwt_session', jwtToken);
+        } else {
+          sessionStorage.setItem('bft_jwt_session', jwtToken);
+        }
+      } catch {
+        // ignore
+      }
 
       onAuthSuccess({
         userId: user.id,
@@ -333,154 +463,25 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         rememberMe,
         jwtToken,
         isNewRegistration: true,
-        serverUser: {
+        serverUser: backendSync?.user || {
           id: user.id,
           email: cleanEmail,
           fullName: cleanFullName,
           referralCode: myReferralCode,
           kycStatus: 'unverified',
+          profileLocked: false,
           balance: 0,
         },
+        serverAccounts: Array.isArray(backendSync?.accounts) ? backendSync.accounts : [],
       });
       onClose();
     } catch (err: any) {
       console.error('Auth Error:', err);
       let msg = err?.message || 'An unexpected error occurred during registration.';
       if (msg.includes('already registered') || msg.includes('User already registered')) {
-        msg = 'An account with this email address already exists. Please sign in instead.';
-      } else if (msg.includes('Failed to fetch')) {
-        msg = 'Network Error: Connection to authentication server failed. Please check your internet connection or disable ad-blockers.';
-      } else if (msg.includes('Database error') || msg.includes('AuthRetryableFetchError')) {
-        msg = 'Database error saving new user. If your account was created, please try signing in.';
+        msg = 'An account with this email address already exists. Please sign in with your email and password.';
       }
       setAuthError(msg);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-
-  const handleOpenGoogleOAuthPopup = async () => {
-    const codeToAttribute =
-      referralCodeInput.trim() || getCookie(COOKIE_NAME) || getStoredReferralCode() || null;
-
-    if (googleEmail.trim() && googleEmail.includes('@')) {
-      await handleDirectGoogleSignIn();
-      return;
-    }
-
-    try {
-      setAuthError(null);
-      const urlRes = await apiGetGoogleOAuthUrl(codeToAttribute);
-      if (urlRes?.ok && urlRes.url) {
-        const popup = window.open(
-          urlRes.url,
-          'bft_google_oauth_popup',
-          'width=500,height=640,menubar=no,toolbar=no,location=no,status=no'
-        );
-        if (!popup) {
-          setAuthError('Please enter your Google email address below to continue with Google Sign-In.');
-        }
-      } else {
-        setAuthError(urlRes?.error || 'Please enter your Google Email address below to continue.');
-      }
-    } catch {
-      setAuthError('Please enter your Google Email address below to continue with Google Sign-In.');
-    }
-  };
-
-  const handleDirectGoogleSignIn = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    const cleanEmail = googleEmail.trim().toLowerCase();
-    if (!cleanEmail || !cleanEmail.includes('@')) {
-      setAuthError('Please enter a valid Google email address (e.g., yourname@gmail.com).');
-      return;
-    }
-
-    const derivedName =
-      googleFullName.trim() ||
-      cleanEmail
-        .split('@')[0]
-        .replace(/[._-]+/g, ' ')
-        .replace(/\b\w/g, (l) => l.toUpperCase());
-
-    const codeToAttribute =
-      referralCodeInput.trim() || getCookie(COOKIE_NAME) || getStoredReferralCode() || null;
-
-    setIsSubmitting(true);
-    setAuthError(null);
-
-    try {
-      const res = await apiGoogleSignIn({
-        email: cleanEmail,
-        name: derivedName,
-        googleId: `google_oauth_${btoa(cleanEmail).replace(/[^a-zA-Z0-9]/g, '').slice(0, 16)}`,
-        referralCode: codeToAttribute,
-        rememberMe,
-      });
-
-      if (!res || !res.ok) {
-        // Safe Fallback if server route returned an error
-        const fallbackUserId = `usr_google_${btoa(cleanEmail).replace(/[^a-zA-Z0-9]/g, '').slice(0, 12)}`;
-        const fallbackRefCode = `BFT-${cleanEmail.slice(0, 4).toUpperCase()}88`;
-        const jwtToken = createSessionJwtToken({
-          userId: fallbackUserId,
-          email: cleanEmail,
-          referralCode: fallbackRefCode,
-          rememberMe,
-        });
-
-        onAuthSuccess({
-          userId: fallbackUserId,
-          email: cleanEmail,
-          fullName: derivedName,
-          referralCode: fallbackRefCode,
-          referredBy: null,
-          rememberMe,
-          jwtToken,
-          isNewRegistration: true,
-          serverUser: {
-            id: fallbackUserId,
-            email: cleanEmail,
-            fullName: derivedName,
-            referralCode: fallbackRefCode,
-            kycStatus: 'unverified',
-            balance: 0,
-          },
-        });
-        onClose();
-        setIsSubmitting(false);
-        return;
-      }
-
-      const jwtToken = res.token;
-      try {
-        if (rememberMe) {
-          localStorage.setItem('bft_jwt_session', jwtToken);
-        } else {
-          sessionStorage.setItem('bft_jwt_session', jwtToken);
-        }
-        localStorage.setItem('bft_last_google_email', res.user.email);
-        localStorage.setItem('bft_last_google_name', res.user.fullName);
-      } catch {
-        // Ignore storage errors
-      }
-
-      onAuthSuccess({
-        userId: res.user.id,
-        email: res.user.email,
-        fullName: res.user.fullName,
-        referralCode: res.user.referralCode,
-        referredBy: res.user.referredBy || null,
-        rememberMe,
-        jwtToken,
-        isNewRegistration: !res.user.profileLocked && res.user.kycStatus !== 'verified',
-        serverUser: res.user,
-        serverAccounts: Array.isArray(res.accounts) ? res.accounts : [],
-      });
-      onClose();
-    } catch (err: any) {
-      setAuthError(err?.message || 'Google Sign-In failed.');
     } finally {
       setIsSubmitting(false);
     }
@@ -494,16 +495,18 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       } rounded-2xl bg-[#0a0a0a] border border-[#262c3a] p-5 sm:p-6 my-auto shadow-2xl`}
     >
       {!isPageView && (
-        <button
-          onClick={onClose}
-          className="absolute top-3.5 right-3.5 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 cursor-pointer transition-colors"
-          aria-label="Close modal"
-        >
-          <X className="w-5 h-5" />
-        </button>
+        <div className="flex justify-end mb-2 -mt-1 -mr-1">
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 cursor-pointer transition-colors"
+            aria-label="Close modal"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
       )}
 
-      {/* Auth Tab Navigation: Email Sign In | Email Sign Up | Google Sign-In */}
+      {/* Auth Tab Navigation: Email Sign In | Register (Sign Up) */}
       <div className="flex bg-[#141720] border border-[#262c3a] p-1 rounded-xl mb-5 font-mono text-[11px] font-bold">
         <button
           type="button"
@@ -512,14 +515,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             setAuthTab('email_signin');
             setAuthError(null);
           }}
-          className={`flex-1 py-2 rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-1 ${
+          className={`flex-1 py-2 rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${
             authTab === 'email_signin'
               ? 'bg-[#ff8800] text-slate-950 font-black'
               : 'text-slate-400 hover:text-white'
           }`}
         >
           <Mail className="w-3.5 h-3.5" />
-          <span>Email Sign In</span>
+          <span>Sign In</span>
         </button>
 
         <button
@@ -529,7 +532,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             setAuthTab('email_signup');
             setAuthError(null);
           }}
-          className={`flex-1 py-2 rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-1 ${
+          className={`flex-1 py-2 rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${
             authTab === 'email_signup'
               ? 'bg-[#ff8800] text-slate-950 font-black'
               : 'text-slate-400 hover:text-white'
@@ -537,40 +540,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         >
           <User className="w-3.5 h-3.5" />
           <span>Register</span>
-        </button>
-
-        <button
-          type="button"
-          data-testid="auth-tab-google"
-          onClick={() => {
-            setAuthTab('google');
-            setAuthError(null);
-          }}
-          className={`flex-1 py-2 rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-1 ${
-            authTab === 'google'
-              ? 'bg-[#ff8800] text-slate-950 font-black'
-              : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24">
-            <path
-              fill="#EA4335"
-              d="M12 5c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 1.79 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84C6.71 7.31 9.14 5 12 5z"
-            />
-            <path
-              fill="#4285F4"
-              d="M23.49 12.27c0-.79-.07-1.54-.19-2.27H12v4.51h6.47c-.29 1.48-1.14 2.73-2.4 3.58l3.76 2.92c2.2-2.03 3.66-5.02 3.66-8.74z"
-            />
-            <path
-              fill="#FBBC05"
-              d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09L2.18 7.07C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"
-            />
-            <path
-              fill="#34A853"
-              d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.76-2.92c-1.04.7-2.38 1.12-3.52 1.12-2.86 0-5.29-2.31-6.16-4.91L2.18 16.93C3.99 20.53 7.7 23 12 23z"
-            />
-          </svg>
-          <span>Google</span>
         </button>
       </div>
 
@@ -580,21 +549,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           data-testid="bft-auth-badge"
           className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded bg-[#141720] border border-[#262c3a] text-[#ff8800] text-[10px] font-mono font-bold uppercase tracking-wider mb-1.5"
         >
-          <ShieldCheck className="w-3 h-3" /> Supabase & OAuth 2.0 Secured Identity
+          <ShieldCheck className="w-3 h-3" /> BFT Encrypted Email & Password Auth
         </span>
         <h3 className="text-xl font-black text-white font-mono">
-          {authTab === 'email_signin'
-            ? 'Sign In with Email'
-            : authTab === 'email_signup'
-            ? 'Create Trader Account'
-            : 'Sign in with Google'}
+          {authTab === 'email_signin' ? 'Sign In to Trader Portal' : 'Create Trader Account'}
         </h3>
         <p className="text-xs text-slate-400 mt-1">
           {authTab === 'email_signin'
-            ? 'Access your prop trading dashboard, OTC terminal, and 3-min payout portal.'
-            : authTab === 'email_signup'
-            ? 'Register to receive your instant $100,000 OTC trading terminal access.'
-            : 'Authenticate with your Google Account to access your BFT trading portal.'}
+            ? 'Enter your registered email and password to access your prop trading dashboard and OTC terminal.'
+            : 'Register with your email and password to receive instant $100,000 OTC trading terminal access.'}
         </p>
       </div>
 
@@ -609,11 +572,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         </div>
       )}
 
-      {/* FORM MODE 1: EMAIL SIGN IN */}
+      {/* FORM MODE 1: EMAIL & PASSWORD SIGN IN */}
       {authTab === 'email_signin' && (
         <form onSubmit={handleEmailSignIn} className="space-y-3.5 mb-4">
           <div>
-            <label htmlFor="signin-email" className="block text-[11px] font-mono font-bold text-slate-300 mb-1 flex items-center gap-1.5">
+            <label
+              htmlFor="signin-email"
+              className="block text-[11px] font-mono font-bold text-slate-300 mb-1 flex items-center gap-1.5"
+            >
               <Mail className="w-3.5 h-3.5 text-[#ff8800]" />
               <span>Email Address *</span>
             </label>
@@ -630,7 +596,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           </div>
 
           <div>
-            <label htmlFor="signin-password" className="block text-[11px] font-mono font-bold text-slate-300 mb-1 flex items-center gap-1.5">
+            <label
+              htmlFor="signin-password"
+              className="block text-[11px] font-mono font-bold text-slate-300 mb-1 flex items-center gap-1.5"
+            >
               <Lock className="w-3.5 h-3.5 text-[#ff8800]" />
               <span>Password *</span>
             </label>
@@ -658,11 +627,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         </form>
       )}
 
-      {/* FORM MODE 2: EMAIL REGISTER / SIGN UP */}
+      {/* FORM MODE 2: EMAIL & PASSWORD REGISTER / SIGN UP */}
       {authTab === 'email_signup' && (
         <form onSubmit={handleEmailSignUp} className="space-y-3.5 mb-4">
           <div>
-            <label htmlFor="signup-fullname" className="block text-[11px] font-mono font-bold text-slate-300 mb-1 flex items-center gap-1.5">
+            <label
+              htmlFor="signup-fullname"
+              className="block text-[11px] font-mono font-bold text-slate-300 mb-1 flex items-center gap-1.5"
+            >
               <User className="w-3.5 h-3.5 text-[#ff8800]" />
               <span>Full Legal Name *</span>
             </label>
@@ -679,7 +651,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           </div>
 
           <div>
-            <label htmlFor="signup-email" className="block text-[11px] font-mono font-bold text-slate-300 mb-1 flex items-center gap-1.5">
+            <label
+              htmlFor="signup-email"
+              className="block text-[11px] font-mono font-bold text-slate-300 mb-1 flex items-center gap-1.5"
+            >
               <Mail className="w-3.5 h-3.5 text-[#ff8800]" />
               <span>Email Address *</span>
             </label>
@@ -696,7 +671,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           </div>
 
           <div>
-            <label htmlFor="signup-password" className="block text-[11px] font-mono font-bold text-slate-300 mb-1 flex items-center gap-1.5">
+            <label
+              htmlFor="signup-password"
+              className="block text-[11px] font-mono font-bold text-slate-300 mb-1 flex items-center gap-1.5"
+            >
               <Lock className="w-3.5 h-3.5 text-[#ff8800]" />
               <span>Choose Password *</span>
             </label>
@@ -719,93 +697,21 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             data-testid="signup-submit-btn"
             className="w-full py-3.5 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] disabled:opacity-60 text-slate-950 font-black text-xs cursor-pointer transition-colors flex items-center justify-center gap-1.5 font-mono uppercase tracking-wider mt-2"
           >
-            <span>{isSubmitting ? 'Creating Account...' : 'Register & Get Live Terminal Access'}</span>
+            <span>
+              {isSubmitting ? 'Creating Account...' : 'Register & Get Live Terminal Access'}
+            </span>
             <ArrowRight className="w-4 h-4 stroke-[2.5]" />
           </button>
         </form>
       )}
 
-      {/* FORM MODE 3: GOOGLE OAUTH SIGN IN */}
-      {authTab === 'google' && (
-        <form onSubmit={handleDirectGoogleSignIn} className="space-y-3.5 mb-4">
-          <div className="p-3.5 rounded-xl bg-[#11131a] border border-[#1e2330] space-y-3">
-            <div>
-              <label htmlFor="google-oauth-email" className="block text-[11px] font-mono font-bold text-slate-300 mb-1 flex items-center gap-1.5">
-                <Mail className="w-3.5 h-3.5 text-[#ff8800]" />
-                <span>Your Google Email Address *</span>
-              </label>
-              <input
-                id="google-oauth-email"
-                data-testid="google-oauth-email-input"
-                type="email"
-                required
-                value={googleEmail}
-                onChange={(e) => setGoogleEmail(e.target.value)}
-                placeholder="your.email@gmail.com"
-                className="w-full px-3.5 py-2.5 bg-[#0a0a0a] border border-[#262c3a] rounded-lg text-white font-mono text-xs focus:outline-none focus:border-[#ff8800]"
-              />
-            </div>
-
-            <div>
-              <label htmlFor="google-oauth-name" className="block text-[11px] font-mono font-bold text-slate-300 mb-1 flex items-center gap-1.5">
-                <User className="w-3.5 h-3.5 text-[#ff8800]" />
-                <span>Google Profile Name</span>
-              </label>
-              <input
-                id="google-oauth-name"
-                data-testid="google-oauth-name-input"
-                type="text"
-                value={googleFullName}
-                onChange={(e) => setGoogleFullName(e.target.value)}
-                placeholder="Your Full Name"
-                className="w-full px-3.5 py-2.5 bg-[#0a0a0a] border border-[#262c3a] rounded-lg text-white font-mono text-xs focus:outline-none focus:border-[#ff8800]"
-              />
-            </div>
-          </div>
-
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            data-testid="google-signin-btn"
-            className="w-full py-3.5 px-4 rounded-xl bg-white hover:bg-slate-100 disabled:opacity-60 text-slate-950 font-black text-sm cursor-pointer transition-colors flex items-center justify-center gap-3 border border-white"
-          >
-            <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
-              <path
-                fill="#EA4335"
-                d="M12 5c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 1.79 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84C6.71 7.31 9.14 5 12 5z"
-              />
-              <path
-                fill="#4285F4"
-                d="M23.49 12.27c0-.79-.07-1.54-.19-2.27H12v4.51h6.47c-.29 1.48-1.14 2.73-2.4 3.58l3.76 2.92c2.2-2.03 3.66-5.02 3.66-8.74z"
-              />
-              <path
-                fill="#FBBC05"
-                d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09L2.18 7.07C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"
-              />
-              <path
-                fill="#34A853"
-                d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.76-2.92c-1.04.7-2.38 1.12-3.52 1.12-2.86 0-5.29-2.31-6.16-4.91L2.18 16.93C3.99 20.53 7.7 23 12 23z"
-              />
-            </svg>
-            <span>{isSubmitting ? 'Verifying Google Session...' : 'Continue with Google'}</span>
-            <ArrowRight className="w-4 h-4 text-slate-700" />
-          </button>
-
-          <button
-            type="button"
-            onClick={handleOpenGoogleOAuthPopup}
-            className="w-full py-2 px-3 rounded-lg bg-[#141720] hover:bg-[#1c202c] border border-[#262c3a] text-slate-300 hover:text-white text-[11px] font-mono flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
-          >
-            <ExternalLink className="w-3.5 h-3.5 text-[#ff8800]" />
-            <span>Open Google OAuth 2.0 Popup Window</span>
-          </button>
-        </form>
-      )}
-
-      {/* Sponsor Referral Code Input (Present across all modes) */}
+      {/* Sponsor Referral Code Input */}
       <div className="mb-4 p-3 rounded-xl bg-[#11131a] border border-[#1e2330] space-y-2">
         <div className="flex items-center justify-between">
-          <label htmlFor="auth-referral-code" className="text-[11px] font-mono font-bold text-slate-300 flex items-center gap-1.5">
+          <label
+            htmlFor="auth-referral-code"
+            className="text-[11px] font-mono font-bold text-slate-300 flex items-center gap-1.5"
+          >
             <Gift className="w-3.5 h-3.5 text-[#ff8800]" />
             <span>Sponsor Referral Code (Optional):</span>
           </label>

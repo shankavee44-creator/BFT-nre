@@ -1,6 +1,8 @@
-export type ChallengeTier = 'one-step' | 'two-step' | 'instant';
+export type ChallengeTier = 'one-step' | 'two-step' | 'instant' | 'personal' | 'demo';
 
-export type AccountSize = 2500 | 5000 | 10000 | 25000 | 50000 | 100000;
+export type AccountCategory = 'prop' | 'personal_live' | 'demo';
+
+export type AccountSize = 2500 | 5000 | 10000 | 25000 | 50000 | 100000 | number;
 
 export type PromoCodeType = 'SPOOKY40' | 'SPOOKY20' | 'BFT40' | 'BFT20';
 
@@ -48,6 +50,8 @@ export interface TradingAccount {
   passwordHash: string;
   tier: ChallengeTier;
   tierName: string;
+  accountCategory?: AccountCategory;
+  depositedCapital?: number;
   size: AccountSize;
   currentBalance: number;
   initialBalance: number;
@@ -69,7 +73,7 @@ export interface TradingAccount {
   passedAt?: string;
   createdDate: string;
   lastActiveDate: string;
-  phase: 'phase_1' | 'phase_2' | 'funded';
+  phase: 'phase_1' | 'phase_2' | 'funded' | 'personal_live' | 'demo';
   tradingDaysCompleted: number;
   tradesCount: number;
   winRate: number;
@@ -179,6 +183,9 @@ export interface UserProfile {
   kycDocumentType?: KYCDocumentType | string;
   kycDocumentNumber?: string;
   kycDocumentFileName?: string;
+  kycBackDocumentFileName?: string;
+  kycFrontDocumentUrl?: string;
+  kycBackDocumentUrl?: string;
   kycExtractedName?: string;
   kycExtractedDob?: string;
   kycSubmittedAt?: string;

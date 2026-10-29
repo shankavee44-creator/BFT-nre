@@ -66,6 +66,8 @@ import {
   isDuringRestrictedNewsWindow,
   checkMaxRiskPerTradeViolation,
   isLiveFundedAccount,
+  isPersonalLiveAccount,
+  isDemoAccount,
   getAccountStatusBadgeLabel,
   getChallengeProfitTarget,
 } from '../utils/propRules';
@@ -798,7 +800,10 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     setTradeError(null);
     setTradeSuccess(null);
 
-    if (riskBarricade.barricaded) {
+    const isUnrestrictedPersonalOrDemo =
+      isPersonalLiveAccount(activeAcc) || isDemoAccount(activeAcc);
+
+    if (!isUnrestrictedPersonalOrDemo && riskBarricade.barricaded) {
       soundEngine.playTradeLoss();
       setTradeError('Risk Barricade Active: Account is within 80% of max loss limit. Orders locked to protect capital.');
       return;
@@ -820,67 +825,71 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       return;
     }
 
-    // Strict 5% Max Risk Per Trade Check (Hard Breach if violated)
-    const maxRiskCheck = checkMaxRiskPerTradeViolation(
-      stakeToUse,
-      activeAcc.initialBalance || activeAcc.size,
-      activeAcc.maxRiskPerTradePercent || 5
-    );
-    if (maxRiskCheck.violated) {
-      soundEngine.playTradeLoss();
-      const breachReason = `Max Risk Per Trade Violated: Stake of $${stakeToUse.toFixed(2)} (${maxRiskCheck.riskPercent}%) exceeds the strict ${activeAcc.maxRiskPerTradePercent || 5}% ($${maxRiskCheck.maxAllowedStake.toFixed(2)}) per-trade risk limit. Permanent Hard Breach enforced.`;
-      const breachLog = {
-        id: `VIO-RISK5-${Date.now()}`,
-        rule: 'MAX_RISK_PER_TRADE' as const,
-        ruleName: '5% Max Risk Per Trade (Hard Breach)',
-        severity: 'critical' as const,
-        message: breachReason,
-        timestamp: Date.now(),
-        details: `Stake: $${stakeToUse} / Max Allowed: $${maxRiskCheck.maxAllowedStake} (5% Rule)`,
-      };
-      const breachedUpdate: TradingAccount = {
-        ...activeAcc,
-        status: 'hard-breached',
-        breachType: 'hard',
-        discountEligible: true,
-        breachReason,
-        breachedAt: Date.now(),
-        violationLogs: [...(activeAcc.violationLogs || []), breachLog],
-      };
-      if (account) {
-        onUpdateAccount(breachedUpdate);
-      } else {
-        setDemoPracticeAccount(breachedUpdate);
+    // Strict Prop Guardrails apply ONLY to Prop Trading Accounts (Challenge & Funded)
+    // Personal Live (Self-Funded) and Demo accounts trade without prop drawdown or risk-per-trade locks
+    if (!isUnrestrictedPersonalOrDemo) {
+      // Strict 5% Max Risk Per Trade Check (Hard Breach if violated)
+      const maxRiskCheck = checkMaxRiskPerTradeViolation(
+        stakeToUse,
+        activeAcc.initialBalance || activeAcc.size,
+        activeAcc.maxRiskPerTradePercent || 5
+      );
+      if (maxRiskCheck.violated) {
+        soundEngine.playTradeLoss();
+        const breachReason = `Max Risk Per Trade Violated: Stake of $${stakeToUse.toFixed(2)} (${maxRiskCheck.riskPercent}%) exceeds the strict ${activeAcc.maxRiskPerTradePercent || 5}% ($${maxRiskCheck.maxAllowedStake.toFixed(2)}) per-trade risk limit. Permanent Hard Breach enforced.`;
+        const breachLog = {
+          id: `VIO-RISK5-${Date.now()}`,
+          rule: 'MAX_RISK_PER_TRADE' as const,
+          ruleName: '5% Max Risk Per Trade (Hard Breach)',
+          severity: 'critical' as const,
+          message: breachReason,
+          timestamp: Date.now(),
+          details: `Stake: $${stakeToUse} / Max Allowed: $${maxRiskCheck.maxAllowedStake} (5% Rule)`,
+        };
+        const breachedUpdate: TradingAccount = {
+          ...activeAcc,
+          status: 'hard-breached',
+          breachType: 'hard',
+          discountEligible: true,
+          breachReason,
+          breachedAt: Date.now(),
+          violationLogs: [...(activeAcc.violationLogs || []), breachLog],
+        };
+        if (account) {
+          onUpdateAccount(breachedUpdate);
+        } else {
+          setDemoPracticeAccount(breachedUpdate);
+        }
+        setTradeError(breachReason);
+        setIsBreachModalOpen(true);
+        return;
       }
-      setTradeError(breachReason);
-      setIsBreachModalOpen(true);
-      return;
-    }
 
-    const hedgingCheck = isHedgingViolation(direction, assetToTrade.symbol, activeTrades);
-    if (hedgingCheck.detected) {
-      soundEngine.playTradeLoss();
-      setTradeError(hedgingCheck.reason || `Hedging Prohibited: You already have an active opposing trade on ${assetToTrade.symbol}.`);
-      return;
-    }
+      const hedgingCheck = isHedgingViolation(direction, assetToTrade.symbol, activeTrades);
+      if (hedgingCheck.detected) {
+        soundEngine.playTradeLoss();
+        setTradeError(hedgingCheck.reason || `Hedging Prohibited: You already have an active opposing trade on ${assetToTrade.symbol}.`);
+        return;
+      }
 
-    const martingaleCheck = isMartingalePattern(stakeToUse, trades);
-    if (martingaleCheck.detected) {
-      soundEngine.playTradeLoss();
-      setTradeError(martingaleCheck.reason || 'Martingale Strategy Violation: Explosive stake doubling (≥1.8x) following a loss is strictly prohibited.');
-      return;
-    }
+      const martingaleCheck = isMartingalePattern(stakeToUse, trades);
+      if (martingaleCheck.detected) {
+        soundEngine.playTradeLoss();
+        setTradeError(martingaleCheck.reason || 'Martingale Strategy Violation: Explosive stake doubling (≥1.8x) following a loss is strictly prohibited.');
+        return;
+      }
 
-    if (isDuringRestrictedNewsWindow(Date.now()).restricted) {
-      soundEngine.playTradeLoss();
-      setTradeError('Economic News Window: Trading within 2 minutes of High-Impact Macro Releases is restricted.');
-      return;
-    }
+      if (isDuringRestrictedNewsWindow(Date.now()).restricted) {
+        soundEngine.playTradeLoss();
+        setTradeError('Economic News Window: Trading within 2 minutes of High-Impact Macro Releases is restricted.');
+        return;
+      }
 
-    if (isPositionSizeSpike(stakeToUse, trades.map((t) => t.investment))) {
-      soundEngine.playTradeLoss();
-      setTradeError('Volume Spike Violation: Stake exceeds 5x your recent average trading volume.');
-      return;
+      if (isPositionSizeSpike(stakeToUse, trades.map((t) => t.investment))) {
+        soundEngine.playTradeLoss();
+        setTradeError('Volume Spike Violation: Stake exceeds 5x your recent average trading volume.');
+        return;
+      }
     }
 
     // Deduct stake optimistically
@@ -2395,12 +2404,12 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             )}
           </button>
 
-          {/* Account Balance Switcher Dropdown (Quotex CHALLENGE vs LIVE ACCOUNT Badge) */}
+          {/* Account Balance Switcher Dropdown (Quotex CHALLENGE vs LIVE ACCOUNT vs PERSONAL LIVE Badge) */}
           <div className="relative">
             <button
               onClick={() => setAccountDropdownOpen(!accountDropdownOpen)}
               data-testid="terminal-account-switcher"
-              className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#181b25] hover:bg-[#222736] border border-[#2a2e39] text-xs font-mono transition-all cursor-pointer"
+              className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#0a0a0a] hover:bg-[#141418] border border-white/15 hover:border-[#ff8800] text-xs font-mono transition-colors cursor-pointer"
             >
               <div
                 className={`w-2 h-2 rounded-full ${
@@ -2408,6 +2417,10 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                     ? 'bg-[#ff8800]'
                     : isBreached
                     ? 'bg-rose-500 animate-pulse'
+                    : isPersonalLiveAccount(account)
+                    ? 'bg-[#ff8800]'
+                    : isDemoAccount(account)
+                    ? 'bg-slate-400'
                     : isLiveFundedAccount(account)
                     ? 'bg-[#00e676]'
                     : 'bg-[#ff8800]'
@@ -2416,13 +2429,23 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               <div className="text-left">
                 <div className="flex items-center gap-1.5">
                   <span className="font-bold text-white text-[11px]">
-                    {account ? account.id : 'No Active Account'}
+                    {!account
+                      ? 'No Active Account'
+                      : isPersonalLiveAccount(account)
+                      ? 'Personal Live Balance'
+                      : isDemoAccount(account)
+                      ? 'Demo'
+                      : account.id}
                   </span>
                   {account && (
                     <span
                       data-testid="terminal-account-status-badge"
                       className={`text-[9px] px-1.5 py-0.5 rounded font-black uppercase tracking-wider border ${
-                        isLiveFundedAccount(account)
+                        isPersonalLiveAccount(account)
+                          ? 'bg-[#ff8800] text-slate-950 border-[#ff8800]'
+                          : isDemoAccount(account)
+                          ? 'bg-white/10 text-slate-300 border-white/20'
+                          : isLiveFundedAccount(account)
                           ? 'bg-[#00c853]/25 text-[#00e676] border-[#00e676]/60'
                           : 'bg-[#ff8800]/20 text-[#ff8800] border-[#ff8800]/50'
                       }`}

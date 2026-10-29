@@ -20,6 +20,7 @@ import {
   validateDepositAmount,
   createCryptomusInvoiceObject,
 } from '../utils/cryptomusEngine';
+import { isPersonalLiveAccount, getAccountStatusBadgeLabel } from '../utils/propRules';
 import { CRYPTOMUS_CONFIG } from '../config/cryptomus';
 import { supabase } from '../utils/supabase';
 
@@ -116,7 +117,13 @@ export const CryptomusDepositModal: React.FC<CryptomusDepositModalProps> = ({
 
   const creditedUuidsRef = useRef<Set<string>>(new Set());
 
-  const targetAccount = activeAccount || accounts[0] || null;
+  const personalLiveAccount = accounts.find((acc) => isPersonalLiveAccount(acc)) || null;
+  const targetAccount =
+    (activeAccount && isPersonalLiveAccount(activeAccount) ? activeAccount : null) ||
+    personalLiveAccount ||
+    activeAccount ||
+    accounts[0] ||
+    null;
 
   // Fetch invoice history when modal opens
   useEffect(() => {
@@ -188,8 +195,9 @@ export const CryptomusDepositModal: React.FC<CryptomusDepositModalProps> = ({
               : [fetched, ...prev];
           });
 
-          if (fetched.status === 'completed') {
-            // Manual Admin Verification: deposit remains pending until approved by admin in Supabase
+          if (fetched.status === 'completed' && !creditedUuidsRef.current.has(fetched.uuid)) {
+            creditedUuidsRef.current.add(fetched.uuid);
+            onCreditAccountDeposit(fetched.accountId, fetched.amount, fetched);
           }
         }
       } catch {
@@ -325,8 +333,9 @@ export const CryptomusDepositModal: React.FC<CryptomusDepositModalProps> = ({
         );
       }
 
-      if (updated.status === 'completed') {
-        // Deposit recorded in Supabase deposits table; awaits manual admin approval
+      if (updated.status === 'completed' && !creditedUuidsRef.current.has(updated.uuid)) {
+        creditedUuidsRef.current.add(updated.uuid);
+        onCreditAccountDeposit(updated.accountId, updated.amount, updated);
       }
     } catch {
       setErrorMessage('Unable to reach Cryptomus webhook endpoint.');
@@ -384,39 +393,53 @@ export const CryptomusDepositModal: React.FC<CryptomusDepositModalProps> = ({
         </div>
 
         {/* Target Account Selector & Live Balance Banner */}
-        <div className="p-4 rounded-2xl bg-[#131620] border border-[#252a3a] mb-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 font-mono">
+        <div className="p-4 rounded-2xl bg-[#0a0a0a] border border-white/15 mb-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 font-mono">
           <div>
-            <div className="text-[10px] uppercase text-slate-400 font-bold">
-              Target Trading Account
+            <div className="text-[10px] uppercase text-[#ff8800] font-black tracking-wider">
+              Target Personal Live / Trading Account
             </div>
-            <div className="flex items-center gap-2 mt-1">
+            <div className="flex flex-wrap items-center gap-2 mt-1">
               {accounts.length > 1 && onSelectAccount ? (
                 <select
                   aria-label="Select Target Account"
+                  data-testid="deposit-target-account-select"
                   value={targetAccount?.id || ''}
                   onChange={(e) => onSelectAccount(e.target.value)}
-                  className="bg-[#0c0d12] border border-[#2a2e39] rounded-lg px-2.5 py-1 text-xs font-bold text-white focus:outline-none focus:border-[#ff8800]"
+                  className="bg-[#111115] border border-white/20 rounded-lg px-2.5 py-1.5 text-xs font-bold text-white focus:outline-none focus:border-[#ff8800]"
                 >
                   {accounts.map((acc) => (
                     <option key={acc.id} value={acc.id}>
-                      {acc.id} ({acc.tierName})
+                      {isPersonalLiveAccount(acc)
+                        ? `Personal Live Balance (${acc.id}) — Self-Funded`
+                        : `${acc.id} (${acc.tierName})`}
                     </option>
                   ))}
                 </select>
               ) : (
                 <span className="text-sm font-black text-white">
-                  {targetAccount?.id || 'BFT-91823'}
+                  {targetAccount?.id || 'BFT-PERS-001'}
                 </span>
               )}
-              <span className="text-[10px] px-2 py-0.5 rounded bg-[#00e676]/20 text-[#00e676] border border-[#00e676]/40 font-black">
-                {targetAccount?.tierName || 'Instant Funded'}
+              <span
+                className={`text-[10px] px-2 py-0.5 rounded font-black border uppercase ${
+                  isPersonalLiveAccount(targetAccount)
+                    ? 'bg-[#ff8800] text-slate-950 border-[#ff8800]'
+                    : 'bg-[#00e676]/20 text-[#00e676] border-[#00e676]/40'
+                }`}
+              >
+                {targetAccount ? getAccountStatusBadgeLabel(targetAccount) : 'PERSONAL LIVE'}
               </span>
+            </div>
+            <div className="text-[10px] text-slate-400 mt-1">
+              {isPersonalLiveAccount(targetAccount)
+                ? 'Self-Funded Personal Live Account • No Prop Drawdown Locks • 100% Profit & Capital Withdrawable'
+                : targetAccount?.tierName || 'Instant Funded'}
             </div>
           </div>
 
           <div className="text-left sm:text-right">
             <div className="text-[10px] uppercase text-slate-400 font-bold">
-              Current Account Balance
+              {isPersonalLiveAccount(targetAccount) ? 'Personal Live Balance' : 'Current Account Balance'}
             </div>
             <div
               data-testid="cryptomus-current-balance"
