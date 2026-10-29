@@ -258,6 +258,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     const cleanEmail = email.trim().toLowerCase();
     const codeToAttribute = referralCodeInput.trim().toUpperCase() || getStoredReferralCode() || null;
+    const cleanFullName = fullName.trim() || cleanEmail.split('@')[0];
 
     if (!cleanEmail || !password) {
       setAuthError('Please enter a valid email and password (min 6 characters).');
@@ -266,21 +267,37 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
 
     try {
-      const { data, error } = await supabase.auth.signUp({
+      let { data, error } = await supabase.auth.signUp({
         email: cleanEmail,
         password,
         options: {
           data: {
+            full_name: cleanFullName,
             referral_code: codeToAttribute,
-            full_name: fullName.trim() || cleanEmail.split('@')[0],
           },
         },
       });
 
       if (error) {
-        setAuthError(error.message);
-        setIsSubmitting(false);
-        return;
+        if (error.message?.includes('Database error saving new user') || error.message?.includes('trigger') || error.message?.includes('already registered')) {
+          // If user already registered or trigger failed, try signing in directly
+          const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({
+            email: cleanEmail,
+            password,
+          });
+          if (signInData?.user) {
+            data = { user: signInData.user, session: signInData.session };
+            error = null;
+          } else {
+            setAuthError(error.message);
+            setIsSubmitting(false);
+            return;
+          }
+        } else {
+          setAuthError(error.message);
+          setIsSubmitting(false);
+          return;
+        }
       }
 
       const user = data.user;
@@ -290,7 +307,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         return;
       }
 
-      // Fetch or wait for profile created by Postgres trigger
+      const userRefCode = `BFT-${user.id.slice(0, 6).toUpperCase()}`;
+
+      // Gracefully ensure profile exists in profiles table (handle trigger failures)
       let profile = null;
       for (let attempt = 0; attempt < 3; attempt++) {
         const { data: p } = await supabase
@@ -302,31 +321,47 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           profile = p;
           break;
         }
+        if (attempt === 1) {
+          // Insert directly into profiles table as robust fallback if trigger didn't create profile
+          try {
+            await supabase.from('profiles').upsert({
+              id: user.id,
+              email: cleanEmail,
+              full_name: cleanFullName,
+              referral_code: userRefCode,
+              referred_by: codeToAttribute || null,
+              balance: 0,
+              kyc_status: 'unverified',
+            }, { onConflict: 'id' });
+          } catch {
+            // ignore
+          }
+        }
         await new Promise((r) => setTimeout(r, 400));
       }
 
-      const userRefCode = profile?.referral_code || `BFT-${user.id.slice(0, 6).toUpperCase()}`;
+      const finalRefCode = profile?.referral_code || userRefCode;
       const jwtToken = createSessionJwtToken({
         userId: user.id,
         email: cleanEmail,
-        referralCode: userRefCode,
+        referralCode: finalRefCode,
         rememberMe,
       });
 
       onAuthSuccess({
         userId: user.id,
         email: cleanEmail,
-        fullName: profile?.full_name || fullName || cleanEmail.split('@')[0],
-        referralCode: userRefCode,
-        referredBy: profile?.referred_by || null,
+        fullName: profile?.full_name || cleanFullName,
+        referralCode: finalRefCode,
+        referredBy: profile?.referred_by || codeToAttribute || null,
         rememberMe,
         jwtToken,
         isNewRegistration: true,
         serverUser: {
           id: user.id,
           email: cleanEmail,
-          fullName: profile?.full_name || fullName,
-          referralCode: userRefCode,
+          fullName: profile?.full_name || cleanFullName,
+          referralCode: finalRefCode,
           kycStatus: profile?.kyc_status || 'unverified',
           balance: profile?.balance || 0,
         },
