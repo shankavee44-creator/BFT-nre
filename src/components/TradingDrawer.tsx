@@ -156,12 +156,12 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
 
       {/* Drawer Content */}
       {!isCollapsed && (
-        <div className="p-3 max-h-56 overflow-y-auto bg-[#0e1016]">
+        <div className="p-2 sm:p-3 max-h-[60vh] md:max-h-56 overflow-y-auto bg-[#0e1016]">
           {/* TAB 1: OPEN TRADES */}
           {activeTab === 'open' && (
             <div data-testid="drawer-open-trades-content">
               {openTrades.length > 0 ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
                   {openTrades.map((t) => {
                     const secondsLeft = Math.max(0, Math.ceil((t.endTime - Date.now()) / 1000));
                     const isCall = t.direction === 'CALL';
@@ -178,19 +178,19 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
                       <div
                         key={t.id}
                         data-testid={`open-trade-card-${t.id}`}
-                        className={`p-2.5 rounded-xl border transition-colors ${
+                        className={`p-2 rounded-xl border transition-colors ${
                           isInTheMoney
                             ? 'bg-[#081a14] border-[#00e676]/50'
                             : 'bg-[#1a0a0e] border-[#ff334b]/50'
                         }`}
                       >
-                        <div className="flex items-center justify-between mb-1.5">
-                          <span className="font-bold text-xs text-white flex items-center gap-1.5 truncate">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-bold text-[11px] text-white flex items-center gap-1.5 truncate">
                             <span>{assetObj?.flag || '📈'}</span>
                             <span className="truncate">{t.asset}</span>
                           </span>
                           <span
-                            className={`text-[10px] font-black px-2 py-0.5 rounded shrink-0 ${
+                            className={`text-[9.5px] font-black px-1.5 py-0.5 rounded shrink-0 ${
                               isCall
                                 ? 'bg-emerald-500/20 text-[#00e676] border border-[#00e676]/30'
                                 : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
@@ -200,13 +200,13 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
                           </span>
                         </div>
 
-                        <div className="grid grid-cols-2 gap-2 text-[11px] my-1.5">
+                        <div className="grid grid-cols-2 gap-1 text-[10.5px] my-1 font-mono">
                           <div>
-                            <span className="text-slate-400 text-[10px] block">Strike</span>
+                            <span className="text-slate-400 text-[9px] block">Strike</span>
                             <span className="text-white tabular-nums">{t.strikePrice.toFixed(assetObj.pipDecimals)}</span>
                           </div>
                           <div className="text-right">
-                            <span className="text-slate-400 text-[10px] block">Current</span>
+                            <span className="text-slate-400 text-[9px] block">Current</span>
                             <span
                               className={`tabular-nums font-bold ${
                                 isInTheMoney ? 'text-[#00e676]' : 'text-rose-400'
@@ -217,7 +217,7 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
                           </div>
                         </div>
 
-                        <div className="w-full h-1 bg-[#141720] rounded-full overflow-hidden my-1.5">
+                        <div className="w-full h-1 bg-[#141720] rounded-full overflow-hidden my-1">
                           <div
                             className={`h-full transition-all duration-500 ${
                               isInTheMoney ? 'bg-[#00e676]' : 'bg-[#ff334b]'
@@ -226,16 +226,16 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
                           />
                         </div>
 
-                        <div className="flex items-center justify-between text-[11px] pt-0.5">
+                        <div className="flex items-center justify-between text-[10.5px] pt-0.5 font-mono">
                           <span className="text-slate-300 flex items-center gap-1 font-bold tabular-nums">
                             <Clock className="w-3 h-3 text-[#ff8800]" /> {secondsLeft}s
                           </span>
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex items-center gap-1">
                             {onSettleTrade && (
                               <button
                                 type="button"
                                 onClick={() => onSettleTrade(t)}
-                                className="px-2 py-0.5 rounded bg-[#ff8800]/20 hover:bg-[#ff8800]/30 text-[#ff8800] border border-[#ff8800]/40 text-[10px] font-bold cursor-pointer"
+                                className="px-1.5 py-0.5 rounded bg-[#ff8800]/20 hover:bg-[#ff8800]/30 text-[#ff8800] border border-[#ff8800]/40 text-[9px] font-bold cursor-pointer"
                               >
                                 Settle
                               </button>
@@ -244,7 +244,7 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
                               <button
                                 type="button"
                                 onClick={() => onDoubleUp(t)}
-                                className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/15 text-white border border-white/20 text-[10px] font-bold cursor-pointer"
+                                className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/15 text-white border border-white/20 text-[9px] font-bold cursor-pointer"
                                 title="Place another trade with identical parameters"
                               >
                                 x2
@@ -274,71 +274,98 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
             </div>
           )}
 
-          {/* TAB 2: CLOSED HISTORY (Quotex Clean Card & List Format) */}
+          {/* TAB 2: CLOSED HISTORY (Quotex Clean Date Grouped Format) */}
           {activeTab === 'history' && (
             <div data-testid="drawer-history-content">
               {closedTrades.length > 0 ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-                  {closedTrades.slice(0, 20).map((t) => {
-                    const isWin = t.status === 'won';
-                    const isCall = t.direction === 'CALL';
-                    const assetObj = findAssetBySymbol(t.asset);
-                    const netPnl = t.pnl ?? (isWin ? (t.investment * t.payoutPercentage) / 100 : -t.investment);
+                <div className="space-y-2">
+                  {(() => {
+                    const groups = closedTrades.slice(0, 30).reduce((acc, t) => {
+                      const dateStr = new Date(t.endTime || t.startTime)
+                        .toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+                        .toUpperCase();
+                      if (!acc[dateStr]) acc[dateStr] = [];
+                      acc[dateStr].push(t);
+                      return acc;
+                    }, {} as Record<string, typeof closedTrades>);
 
-                    return (
-                      <div
-                        key={t.id}
-                        data-testid={`history-trade-row-${t.id}`}
-                        onClick={() => onInspectClosedTrade?.(t)}
-                        className="p-2.5 rounded-xl bg-[#141720] hover:bg-[#191d28] border border-white/10 flex items-center justify-between gap-2 text-xs cursor-pointer transition-colors"
-                      >
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1.5 font-bold text-white text-[11px]">
-                            <span
-                              className={`w-2 h-2 rounded-full shrink-0 ${
-                                isWin ? 'bg-[#00e676]' : 'bg-[#ff334b]'
-                              }`}
-                            />
-                            <span className="shrink-0">{assetObj?.flag || '📈'}</span>
-                            <span className="truncate">{t.asset}</span>
-                            <span className="text-[10px] text-[#ff8800] font-black shrink-0">
-                              {t.payoutPercentage}%
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-1.5 text-[10px] text-slate-400 mt-0.5 tabular-nums">
-                            <span className={isCall ? 'text-[#00e676] font-bold' : 'text-rose-400 font-bold'}>
-                              {isCall ? '▲ Buy' : '▼ Sell'} ${t.investment}
-                            </span>
-                            <span>·</span>
-                            <span>
-                              {new Date(t.endTime || t.startTime).toLocaleTimeString([], {
-                                hour: '2-digit',
-                                minute: '2-digit',
-                                second: '2-digit',
-                              })}
+                    return Object.entries(groups).map(([dateLabel, items]) => (
+                      <div key={dateLabel} className="space-y-1">
+                        {/* Section Header Date Badge */}
+                        <div className="flex items-center justify-center my-1">
+                          <div className="px-2.5 py-0.5 rounded-full bg-[#1c202e] border border-[#2a2e39] text-[9px] font-black text-slate-400 font-mono tracking-wider flex items-center gap-1.5">
+                            <span>{dateLabel}</span>
+                            <span className="w-3.5 h-3.5 rounded-full bg-[#262b3d] text-white flex items-center justify-center text-[8px] font-bold">
+                              {items.length}
                             </span>
                           </div>
                         </div>
 
-                        <div className="text-right shrink-0 tabular-nums">
-                          <div
-                            className={`font-black text-xs ${
-                              isWin ? 'text-[#00e676]' : 'text-rose-400'
-                            }`}
-                          >
-                            {isWin
-                              ? `+$${Math.abs(netPnl).toFixed(2)}`
-                              : `-$${Math.abs(t.investment).toFixed(2)}`}
-                          </div>
-                          <div className="text-[10px] text-slate-500">
-                            {isWin
-                              ? `Payout: $${(t.investment + Math.abs(netPnl)).toFixed(2)}`
-                              : '$0.00'}
-                          </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-1.5">
+                          {items.map((t) => {
+                            const isWin = t.status === 'won';
+                            const isCall = t.direction === 'CALL';
+                            const assetObj = findAssetBySymbol(t.asset);
+                            const netPnl = t.pnl ?? (isWin ? (t.investment * t.payoutPercentage) / 100 : -t.investment);
+
+                            return (
+                              <div
+                                key={t.id}
+                                data-testid={`history-trade-row-${t.id}`}
+                                onClick={() => onInspectClosedTrade?.(t)}
+                                className="p-2 rounded-xl bg-[#141720] hover:bg-[#191d28] border border-white/10 flex items-center justify-between gap-2 text-xs cursor-pointer transition-colors"
+                              >
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5 font-bold text-white text-[10.5px]">
+                                    <span
+                                      className={`w-2 h-2 rounded-full shrink-0 ${
+                                        isWin ? 'bg-[#00e676]' : 'bg-[#ff334b]'
+                                      }`}
+                                    />
+                                    <span className="shrink-0">{assetObj?.flag || '📈'}</span>
+                                    <span className="truncate">{t.asset}</span>
+                                    <span className="text-[9.5px] text-[#ff8800] font-black shrink-0">
+                                      {t.payoutPercentage}%
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-1.5 text-[9.5px] text-slate-400 mt-0.5 tabular-nums">
+                                    <span className={isCall ? 'text-[#00e676] font-bold' : 'text-rose-400 font-bold'}>
+                                      {isCall ? '▲ Buy' : '▼ Sell'} ${t.investment}
+                                    </span>
+                                    <span>·</span>
+                                    <span>
+                                      {new Date(t.endTime || t.startTime).toLocaleTimeString([], {
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                        second: '2-digit',
+                                      })}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                <div className="text-right shrink-0 tabular-nums">
+                                  <div
+                                    className={`font-black text-[11px] ${
+                                      isWin ? 'text-[#00e676]' : 'text-rose-400'
+                                    }`}
+                                  >
+                                    {isWin
+                                      ? `+$${Math.abs(netPnl).toFixed(2)}`
+                                      : `-$${Math.abs(t.investment).toFixed(2)}`}
+                                  </div>
+                                  <div className="text-[9px] text-slate-500">
+                                    {isWin
+                                      ? `Payout: $${(t.investment + Math.abs(netPnl)).toFixed(2)}`
+                                      : '$0.00'}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
-                    );
-                  })}
+                    ));
+                  })()}
                 </div>
               ) : (
                 <div className="text-center py-5 text-xs text-slate-400">

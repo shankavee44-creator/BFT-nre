@@ -4246,26 +4246,35 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             ) : null}
           </div>
 
-          {/* Bottom Collapsible Trades & History Drawer (Overlay on Mobile so Chart Canvas Never Collapses) */}
+          {/* Bottom Collapsible Trades & History Drawer (Slide-Up Sheet on Mobile with Backdrop Overlay) */}
           {isTradesDrawerOpen && (
             <div
               data-testid="mobile-trades-history-panel-wrapper"
-              className="absolute inset-x-0 bottom-0 z-30 max-h-[62%] md:static md:max-h-56 border-t border-white/15 bg-[#0a0a0a] shrink-0 overflow-y-auto shadow-2xl"
+              className="fixed inset-0 z-40 bg-black/65 backdrop-blur-sm md:static md:bg-transparent md:backdrop-blur-none flex flex-col justify-end"
+              onClick={() => setIsTradesDrawerOpen(false)}
             >
-              <TradingDrawer
-                account={{ ...effectiveAccount, equity: liveEquity }}
-                trades={trades}
-                currentPrice={currentPrice}
-                onDoubleUp={handleDoubleUp}
-                initialTab={mobileTradesTab === 'history' ? 'history' : 'open'}
-                onTabChange={(tab) => {
-                  if (tab === 'open') setMobileTradesTab('trades');
-                  else if (tab === 'history') setMobileTradesTab('history');
-                }}
-                onClose={() => setIsTradesDrawerOpen(false)}
-              />
+              <div
+                className="w-full max-h-[75vh] md:max-h-60 border-t border-white/15 bg-[#0e1016] rounded-t-2xl md:rounded-none shrink-0 overflow-hidden shadow-2xl animate-in slide-in-from-bottom-full duration-200"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {/* Grab handle indicator for mobile sheet */}
+                <div className="w-12 h-1 bg-white/20 rounded-full mx-auto my-2 md:hidden" />
+                <TradingDrawer
+                  account={{ ...effectiveAccount, equity: liveEquity }}
+                  trades={trades}
+                  currentPrice={currentPrice}
+                  onDoubleUp={handleDoubleUp}
+                  initialTab={mobileTradesTab === 'history' ? 'history' : 'open'}
+                  onTabChange={(tab) => {
+                    if (tab === 'open') setMobileTradesTab('trades');
+                    else if (tab === 'history') setMobileTradesTab('history');
+                  }}
+                  onClose={() => setIsTradesDrawerOpen(false)}
+                />
+              </div>
             </div>
           )}
+
         </div>
 
         {/* Mobile Quotex Bottom Trade Execution Dock */}
