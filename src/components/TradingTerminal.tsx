@@ -1573,15 +1573,24 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     const width = Math.max(300, Math.floor(containerRect.width || canvasSize.width || 390));
     const height = Math.max(220, Math.floor(containerRect.height || canvasSize.height || 360));
 
-    if (canvas.width !== width) {
-      canvas.width = width;
+    const dpr = Math.max(1, typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1);
+    const targetWidth = Math.floor(width * dpr);
+    const targetHeight = Math.floor(height * dpr);
+
+    if (canvas.width !== targetWidth) {
+      canvas.width = targetWidth;
     }
-    if (canvas.height !== height) {
-      canvas.height = height;
+    if (canvas.height !== targetHeight) {
+      canvas.height = targetHeight;
     }
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+
+    ctx.save();
+    ctx.scale(dpr, dpr);
 
     // Terminal Background: Deep Matte Black `#0a0a0a`
     ctx.fillStyle = '#0a0a0a';
@@ -2435,6 +2444,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       ctx.fillText(hoverPrice.toFixed(selectedAsset.pipDecimals), width - 33, crosshairPos.y + 3);
       ctx.restore();
     }
+    ctx.restore();
   }, [
     candles,
     currentPrice,
