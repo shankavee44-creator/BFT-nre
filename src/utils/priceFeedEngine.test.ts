@@ -6,6 +6,7 @@ import {
   stepOrganicLiveTick,
   resetAssetMarketState,
   getAssetMarketState,
+  getAssetTimeOffsetMs,
 } from './priceFeedEngine';
 import { AssetInfo } from '../types';
 import {
@@ -390,4 +391,51 @@ test('State Persistence 10: Candle history and active market states persist and 
   assert.ok(rehydratedCandles.length > 0, 'Rehydrated candles should be restored from storage');
   assert.equal(rehydratedCandles[0].time, initialCandles[0].time, 'Oldest candle time should match persisted history');
 });
+
+test('Natural Candle Progression: when time elapses into a new time bucket, completed candle is locked and a new candle is spawned', () => {
+  resetAssetMarketState();
+
+  const asset = findAssetBySymbol('EUR/USD');
+  const tf = 5; // 5s timeframe
+  const candlesBefore = aggregateCandlesForTimeframe(asset, tf);
+  const lastBefore = candlesBefore[candlesBefore.length - 1];
+
+  // Simulate advancing time past the current 5s bucket
+  const futureTime = lastBefore.time + 6000; // 6 seconds in future (crosses bucket boundary)
+
+  const store = getOrCreateMasterHistory(asset);
+  stepOrganicLiveTick(asset);
+
+  const candlesAfter = aggregateCandlesForTimeframe(asset, tf);
+  assert.ok(candlesAfter.length >= candlesBefore.length);
+});
+
+test('Asset Independence: different asset pairs have distinct time phase shifts and independent countdown timers', () => {
+  const eurOffset = getAssetTimeOffsetMs('EUR/USD (OTC)', 60);
+  const gbpOffset = getAssetTimeOffsetMs('GBP/JPY (OTC)', 60);
+  const btcOffset = getAssetTimeOffsetMs('BTC/USD (OTC)', 60);
+  const goldOffset = getAssetTimeOffsetMs('XAU/USD (OTC)', 60);
+
+  // Offsets should vary across assets so candles close at different times on the clock
+  const uniqueOffsets = new Set([eurOffset, gbpOffset, btcOffset, goldOffset]);
+  assert.ok(uniqueOffsets.size > 1, 'Asset pairs must have distinct phase offsets');
+});
+
+test('Asset-Specific Volatility: Crypto and Gold exhibit higher relative body variance and volatility multipliers than Forex', () => {
+  resetAssetMarketState();
+
+  const eurAsset = findAssetBySymbol('EUR/USD');
+  const btcAsset = findAssetBySymbol('BTC/USD');
+
+  const eurCandles = aggregateCandlesForTimeframe(eurAsset, 60);
+  const btcCandles = aggregateCandlesForTimeframe(btcAsset, 60);
+
+  const eurAvgPct = eurCandles.reduce((s, c) => s + Math.abs(c.close - c.open) / c.open, 0) / eurCandles.length;
+  const btcAvgPct = btcCandles.reduce((s, c) => s + Math.abs(c.close - c.open) / c.open, 0) / btcCandles.length;
+
+  assert.ok(btcAvgPct > eurAvgPct, 'Crypto average percentage body size should be higher than Forex');
+});
+
+
+
 

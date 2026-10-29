@@ -102,6 +102,7 @@ import {
   aggregateCandlesForTimeframe,
   prependHistoricalCandles,
   getAssetMarketState,
+  getAssetTimeOffsetMs,
 } from '../utils/priceFeedEngine';
 import {
   calculateVisibleWindow,
@@ -632,8 +633,9 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     setSmoothPrice(store.lastPrice);
     targetPriceRef.current = store.lastPrice;
 
-    // Immediately synchronize candle expiry countdown for the newly selected timeframe
-    const immediateCountdown = calculateCandleCountdown(Date.now(), nextSec);
+    // Immediately synchronize candle expiry countdown for the newly selected timeframe and asset phase
+    const symbolOffsetSec = Math.floor(getAssetTimeOffsetMs(selectedAsset.symbol, nextSec) / 1000);
+    const immediateCountdown = calculateCandleCountdown(Date.now(), nextSec, symbolOffsetSec);
     setCandleCountdown(immediateCountdown);
 
     // Preserve relative historical scroll position when switching timeframes on same asset;
@@ -721,6 +723,16 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       setCurrentPrice(newPrice);
       targetPriceRef.current = newPrice;
 
+      const sec = TIMEFRAME_SECONDS[timeframe];
+      const liveCandlesSeries = aggregateCandlesForTimeframe(selectedAsset, sec);
+      setCandles(liveCandlesSeries);
+
+      const symbolOffsetSec = Math.floor(getAssetTimeOffsetMs(selectedAsset.symbol, sec) / 1000);
+      const nextCountdown = calculateCandleCountdown(Date.now(), sec, symbolOffsetSec);
+      setCandleCountdown((prev) =>
+        prev.remainingSeconds === nextCountdown.remainingSeconds ? prev : nextCountdown
+      );
+
       // Stagger background tab updates to every 10 ticks (~1.5s) instead of 7x every second
       bgTickCounterRef.current = (bgTickCounterRef.current + 1) % 10;
       if (bgTickCounterRef.current === 0) {
@@ -768,23 +780,12 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         setAlerts(updatedAlerts);
       }
 
-      // Sync candles when a new candle opens or on a gentle 1-second cadence
-      candleSyncCounterRef.current = (candleSyncCounterRef.current + 1) % 7;
-      const updatedCandles = aggregateCandlesForTimeframe(selectedAsset, TIMEFRAME_SECONDS[timeframe]);
-      if (candleSyncCounterRef.current === 0 || updatedCandles.length !== candles.length) {
-        setCandles(updatedCandles);
-      }
-
       const nextSeed = Math.floor(Date.now() / 3000);
       setPayoutSeed((prev) => (prev === nextSeed ? prev : nextSeed));
-      const nextCountdown = calculateCandleCountdown(Date.now(), TIMEFRAME_SECONDS[timeframe]);
-      setCandleCountdown((prev) =>
-        prev.remainingSeconds === nextCountdown.remainingSeconds ? prev : nextCountdown
-      );
     }, 150);
 
     return () => clearInterval(interval);
-  }, [selectedAsset, timeframe, candles.length]);
+  }, [selectedAsset, timeframe]);
 
   // 3. Trade resolution timer with stable refs & Inline On-Chart Coordinate Outcome Badge
   const currentPriceRef = useRef(currentPrice);

@@ -16,11 +16,13 @@ export interface CandleCountdownResult {
  */
 export function calculateCandleCountdown(
   nowMs: number,
-  timeframeSeconds: number
+  timeframeSeconds: number,
+  symbolOffsetSeconds: number = 0
 ): CandleCountdownResult {
   const safeTf = Math.max(1, Math.floor(timeframeSeconds || 60));
+  const offset = Math.floor(symbolOffsetSeconds || 0);
   const nowSec = Math.max(0, Math.floor(nowMs / 1000));
-  const elapsed = nowSec % safeTf;
+  const elapsed = (nowSec + offset) % safeTf;
   const remainingSeconds = Math.max(1, safeTf - elapsed);
   const progressPercent = Number((((safeTf - remainingSeconds) / safeTf) * 100).toFixed(1));
 

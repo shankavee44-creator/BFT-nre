@@ -53,47 +53,61 @@ function hashSymbol(str: string): number {
 }
 
 /**
- * Get category-specific volatility and behavior multipliers.
+ * Get category-specific volatility and behavior multipliers tailored to each asset class.
  */
-function getCategoryParameters(category: string) {
+function getCategoryParameters(category: string, symbol: string = '') {
   const cat = (category || '').toLowerCase();
+  const sym = (symbol || '').toLowerCase();
+
+  const isVolatileFx =
+    sym.includes('jpy') ||
+    sym.includes('gbp') ||
+    sym.includes('mxn') ||
+    sym.includes('brl') ||
+    sym.includes('try') ||
+    sym.includes('zar');
+
   if (cat.includes('crypto')) {
     return {
-      volMultiplier: 2.1,
-      trendLengthMin: 25,
-      trendLengthMax: 70,
-      breakoutChance: 0.28,
-      wickMultiplier: 1.35,
+      volMultiplier: 2.85,
+      trendLengthMin: 20,
+      trendLengthMax: 65,
+      breakoutChance: 0.32,
+      jumpChance: 0.08,
+      wickMultiplier: 1.45,
       maxRunCandles: 7,
     };
   }
   if (cat.includes('commodit')) {
     return {
-      volMultiplier: 1.45,
-      trendLengthMin: 35,
-      trendLengthMax: 90,
-      breakoutChance: 0.20,
-      wickMultiplier: 1.15,
+      volMultiplier: sym.includes('xau') || sym.includes('wti') || sym.includes('cocoa') ? 2.1 : 1.65,
+      trendLengthMin: 30,
+      trendLengthMax: 85,
+      breakoutChance: 0.24,
+      jumpChance: 0.06,
+      wickMultiplier: 1.30,
       maxRunCandles: 6,
     };
   }
   if (cat.includes('stock')) {
     return {
-      volMultiplier: 1.25,
-      trendLengthMin: 30,
-      trendLengthMax: 80,
-      breakoutChance: 0.18,
-      wickMultiplier: 1.1,
+      volMultiplier: sym.includes('tsla') || sym.includes('nvda') || sym.includes('mstr') || sym.includes('coin') ? 2.2 : 1.55,
+      trendLengthMin: 25,
+      trendLengthMax: 75,
+      breakoutChance: 0.22,
+      jumpChance: 0.05,
+      wickMultiplier: 1.25,
       maxRunCandles: 5,
     };
   }
   // Default Forex
   return {
-    volMultiplier: 1.0,
+    volMultiplier: isVolatileFx ? 1.35 : 1.0,
     trendLengthMin: 30,
     trendLengthMax: 85,
-    breakoutChance: 0.15,
-    wickMultiplier: 1.05,
+    breakoutChance: 0.16,
+    jumpChance: 0.03,
+    wickMultiplier: 1.10,
     maxRunCandles: 5,
   };
 }
@@ -152,6 +166,20 @@ function getDeterministicBlockBasePrice(asset: AssetInfo, blockIndex: number): n
 }
 
 /**
+ * Calculates a deterministic time phase shift for an asset pair in milliseconds.
+ * Ensures that candle boundaries for EUR/USD, GBP/USD, Crypto, Stocks, etc.
+ * occur at different times on the clock for true asset independence.
+ */
+export function getAssetTimeOffsetMs(symbol: string, timeframeSeconds: number): number {
+  const canonical = normalizeAssetSymbol(symbol);
+  const hash = hashSymbol(canonical);
+  const tfSeconds = Math.max(5, timeframeSeconds);
+  const subSteps = Math.max(1, Math.floor(tfSeconds / 5));
+  const stepIndex = (hash >> 3) % subSteps;
+  return stepIndex * 5000;
+}
+
+/**
  * Deterministically generates a sequence of timeframe candles anchored to real-time UTC timestamps.
  * Guarantees that any device/tab at timestamp T produces identical prices and candles with strict open === prev.close continuity.
  */
@@ -162,12 +190,13 @@ function generateDeterministicTimeframeCandles(
 ): Candle[] {
   const tf = Math.max(5, timeframeSeconds);
   const tfMs = tf * 1000;
+  const offsetMs = getAssetTimeOffsetMs(asset.symbol, tf);
   const nowMs = Date.now();
-  const currentBucket = Math.floor(nowMs / tfMs) * tfMs;
+  const currentBucket = Math.floor((nowMs + offsetMs) / tfMs) * tfMs - offsetMs;
   const startBucket = currentBucket - (count - 1) * tfMs;
 
-  const catParams = getCategoryParameters(asset.category);
-  const tfMultiplier = Math.pow(Math.max(1, tf / 5), 0.32);
+  const catParams = getCategoryParameters(asset.category, asset.symbol);
+  const tfMultiplier = Math.pow(Math.max(1, tf / 5), 0.38);
   const unitVol = asset.volatility * tfMultiplier * catParams.volMultiplier;
   const minPip = Math.pow(10, -asset.pipDecimals);
 
@@ -242,13 +271,18 @@ function generateDeterministicTimeframeCandles(
     const u3 = Math.max(1e-7, nextRandom());
     const u4 = Math.max(1e-7, nextRandom());
     const shock2 = Math.abs(Math.sqrt(-2.0 * Math.log(u3)) * Math.cos(2.0 * Math.PI * u4));
-    const bodyMag = Math.max(minPip * 2, (0.3 + shock2 * 0.7) * unitVol * volCluster);
+
+    // Jump-diffusion shock events for lively impulse candles
+    const isJump = nextRandom() < catParams.jumpChance;
+    const jumpBoost = isJump ? 1.8 + nextRandom() * 1.4 : 1.0;
+
+    const bodyMag = Math.max(minPip * 3.5, (0.45 + shock2 * 0.85) * unitVol * volCluster * jumpBoost);
     const close = Math.max(minPip * 10, open + sign * bodyMag);
 
     const bodyMax = Math.max(open, close);
     const bodyMin = Math.min(open, close);
-    const upperWick = Math.max(minPip * 2.5, catParams.wickMultiplier * unitVol * volCluster * (0.35 + nextRandom() * 0.85));
-    const lowerWick = Math.max(minPip * 2.5, catParams.wickMultiplier * unitVol * volCluster * (0.35 + nextRandom() * 0.85));
+    const upperWick = Math.max(minPip * 3.0, catParams.wickMultiplier * unitVol * volCluster * (0.38 + nextRandom() * 0.88));
+    const lowerWick = Math.max(minPip * 3.0, catParams.wickMultiplier * unitVol * volCluster * (0.38 + nextRandom() * 0.88));
 
     const high = Number((bodyMax + upperWick).toFixed(asset.pipDecimals));
     const low = Number((bodyMin - lowerWick).toFixed(asset.pipDecimals));
@@ -376,16 +410,29 @@ export function stepOrganicLiveTick(assetOrSymbol: AssetInfo | string): number {
 
   const nowMs = Date.now();
   const minPip = Math.pow(10, -asset.pipDecimals);
+  const catParams = getCategoryParameters(asset.category, asset.symbol);
 
-  const active5sCandles = generateDeterministicTimeframeCandles(asset, 5, 1);
-  const active5s = active5sCandles[0];
+  // Access full 1500-candle accumulated history series to prevent resetting to base price
+  let base5sSeries = store.timeframeSeries.get(5);
+  if (!base5sSeries || base5sSeries.length === 0) {
+    base5sSeries = generateDeterministicTimeframeCandles(asset, 5, 1500);
+    store.timeframeSeries.set(5, base5sSeries);
+  }
 
-  const subTickProgress = (nowMs % 5000) / 5000;
-  const subTickHash = hashSymbol(`${asset.symbol}:sub:${nowMs}`);
-  const subOscillation = ((subTickHash % 1000) / 1000 - 0.5) * asset.volatility * 0.3;
+  const active5s = base5sSeries[base5sSeries.length - 1];
 
-  let livePrice = active5s.open + (active5s.close - active5s.open) * subTickProgress + subOscillation;
-  livePrice = Math.max(active5s.low, Math.min(active5s.high, livePrice));
+  const offsetMs = getAssetTimeOffsetMs(asset.symbol, 5);
+  const subTickProgress = ((nowMs + offsetMs) % 5000) / 5000;
+  const subTickHash = hashSymbol(`${asset.symbol}:subTick:${nowMs}:${store.tickCounter}`);
+  const rawNoise = (subTickHash % 2000) / 1000 - 1.0;
+  const subOscillation = rawNoise * asset.volatility * catParams.volMultiplier * 0.40;
+
+  // Step momentum micro-walk for organic live price action
+  store.momentum = store.momentum * 0.85 + rawNoise * asset.volatility * catParams.volMultiplier * 0.15;
+
+  let livePrice = active5s.open + (active5s.close - active5s.open) * subTickProgress + subOscillation + store.momentum;
+  const margin = asset.volatility * catParams.volMultiplier * 0.5;
+  livePrice = Math.max(active5s.low - margin, Math.min(active5s.high + margin, livePrice));
   livePrice = Number(Math.max(minPip * 10, livePrice).toFixed(asset.pipDecimals));
 
   store.prevPrice = store.lastPrice;
@@ -419,7 +466,8 @@ function updateCandleArrayWithTick(
   if (!candles || candles.length === 0) return;
 
   const bucketMs = Math.max(5, timeframeSeconds) * 1000;
-  const currentBucket = Math.floor(now / bucketMs) * bucketMs;
+  const offsetMs = getAssetTimeOffsetMs(asset.symbol, timeframeSeconds);
+  const currentBucket = Math.floor((now + offsetMs) / bucketMs) * bucketMs - offsetMs;
   const minPip = Math.pow(10, -asset.pipDecimals);
 
   const lastCandle = candles[candles.length - 1];
@@ -430,23 +478,31 @@ function updateCandleArrayWithTick(
     if (newPrice < lastCandle.low) lastCandle.low = newPrice;
     lastCandle.volume += 1;
   } else if (lastCandle && currentBucket > lastCandle.time) {
-    const openPrice = lastCandle.close;
-    const initialWick = minPip * 3;
+    const numBucketsPassed = Math.floor((currentBucket - lastCandle.time) / bucketMs);
+    let prevClose = lastCandle.close;
+    const initialWick = minPip * 2.5;
 
-    const high = Math.max(openPrice, newPrice, openPrice + initialWick);
-    const low = Math.min(openPrice, newPrice, openPrice - initialWick);
+    for (let b = 1; b <= numBucketsPassed; b++) {
+      const bTime = lastCandle.time + b * bucketMs;
+      const bOpen = prevClose;
+      const bClose = b === numBucketsPassed ? newPrice : bOpen;
+      const bodyMax = Math.max(bOpen, bClose);
+      const bodyMin = Math.min(bOpen, bClose);
 
-    candles.push({
-      time: currentBucket,
-      open: Number(openPrice.toFixed(asset.pipDecimals)),
-      high: Number(high.toFixed(asset.pipDecimals)),
-      low: Number(low.toFixed(asset.pipDecimals)),
-      close: Number(newPrice.toFixed(asset.pipDecimals)),
-      volume: 1,
-    });
+      candles.push({
+        time: bTime,
+        open: Number(bOpen.toFixed(asset.pipDecimals)),
+        high: Number((bodyMax + initialWick).toFixed(asset.pipDecimals)),
+        low: Number((bodyMin - initialWick).toFixed(asset.pipDecimals)),
+        close: Number(bClose.toFixed(asset.pipDecimals)),
+        volume: b === numBucketsPassed ? 1 : 0,
+      });
+
+      prevClose = bClose;
+    }
 
     if (candles.length > 5000) {
-      candles.shift();
+      candles.splice(0, candles.length - 5000);
     }
   }
 }
@@ -461,6 +517,7 @@ export function aggregateCandlesForTimeframe(
   const store = getOrCreateMasterHistory(asset);
   const tf = Math.max(5, timeframeSeconds);
   const minPip = Math.pow(10, -asset.pipDecimals);
+  const now = Date.now();
 
   let series = store.timeframeSeries.get(tf);
 
@@ -474,7 +531,11 @@ export function aggregateCandlesForTimeframe(
 
   if (!series || series.length === 0) {
     series = generateDeterministicTimeframeCandles(asset, tf, 1500);
+    store.timeframeSeries.set(tf, series);
   }
+
+  // Synchronize candle series with current timestamp
+  updateCandleArrayWithTick(series, asset, tf, store.lastPrice, now);
 
   if (series.length > 0) {
     const activeCandle = series[series.length - 1];
