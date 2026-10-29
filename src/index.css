@@ -3,6 +3,7 @@
 html,
 body {
   overflow-x: hidden !important;
+  overscroll-behavior-x: none !important;
   width: 100% !important;
   max-width: 100vw !important;
   margin: 0;
@@ -10,18 +11,28 @@ body {
   box-sizing: border-box;
   -webkit-text-size-adjust: 100%;
   touch-action: manipulation;
+  background-color: #0a0a0a;
 }
 
 #root {
   overflow-x: hidden !important;
+  overscroll-behavior-x: none !important;
   width: 100% !important;
   max-width: 100vw !important;
-  min-height: 100vh;
+  min-height: 100dvh;
   position: relative;
 }
 
 *, ::before, ::after {
   box-sizing: border-box;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
 
 @layer base {
@@ -55,8 +66,12 @@ body {
 
 .text-glow-gold,
 .text-glow-mint,
-.text-glow-red {
+.text-glow-red,
+.glow-gold,
+.glow-mint,
+.glow-red {
   text-shadow: none !important;
+  box-shadow: none !important;
 }
 
 /* BFT Institutional Dark Charcoal Grid */

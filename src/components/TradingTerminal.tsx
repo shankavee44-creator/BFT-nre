@@ -136,6 +136,8 @@ import {
   calculatePinchZoomLevel,
   calculateTouchPanOffset,
   formatMobileAccountBalance,
+  resolveMobileTradesDrawerAction,
+  MobileTradesTab,
 } from '../utils/quotexMobile';
 
 interface TradingTerminalProps {
@@ -355,6 +357,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   const [isPriceAlertModalOpen, setIsPriceAlertModalOpen] = useState(false);
   const [accountDropdownOpen, setAccountDropdownOpen] = useState(false);
   const [isTradesDrawerOpen, setIsTradesDrawerOpen] = useState(false);
+  const [mobileTradesTab, setMobileTradesTab] = useState<MobileTradesTab>('trades');
   const [soundEnabled, setSoundEnabled] = useState(soundEngine.isEnabled());
 
   // Real-time Price Alerts state
@@ -585,8 +588,8 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       setSmoothPrice((prev) => {
         const target = targetPriceRef.current;
         const diff = target - prev;
-        if (Math.abs(diff) < 1e-8) return target;
-        return prev + diff * 0.24;
+        if (Math.abs(diff) < 1e-6) return prev === target ? prev : target;
+        return prev + diff * 0.28;
       });
 
       // Step momentum inertia panning when user releases drag with velocity
@@ -659,8 +662,12 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       // Re-aggregate candles consistently for current timeframe
       const updatedCandles = aggregateCandlesForTimeframe(selectedAsset, TIMEFRAME_SECONDS[timeframe]);
       setCandles(updatedCandles);
-      setPayoutSeed(Math.floor(Date.now() / 3000));
-      setCandleCountdown(calculateCandleCountdown(Date.now(), TIMEFRAME_SECONDS[timeframe]));
+      const nextSeed = Math.floor(Date.now() / 3000);
+      setPayoutSeed((prev) => (prev === nextSeed ? prev : nextSeed));
+      const nextCountdown = calculateCandleCountdown(Date.now(), TIMEFRAME_SECONDS[timeframe]);
+      setCandleCountdown((prev) =>
+        prev.secondsRemaining === nextCountdown.secondsRemaining ? prev : nextCountdown
+      );
     }, 150);
 
     return () => clearInterval(interval);
@@ -2236,7 +2243,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       {/* 0. COMPACT MOBILE TOP NAVIGATION HEADER (Quotex Mobile View) */}
       <div
         data-testid="quotex-mobile-top-header"
-        className="flex md:hidden h-11 bg-[#0e1015] border-b border-white/10 items-center justify-between px-2.5 shrink-0 z-30"
+        className="flex md:hidden h-10 bg-[#0a0a0a] border-b border-white/10 items-center justify-between px-2.5 shrink-0 z-30"
       >
         <div className="flex items-center gap-1.5">
           <button
@@ -2244,7 +2251,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               soundEngine.playUiClick();
               onNavigateTab?.('home');
             }}
-            className="flex items-center gap-1 px-2 py-1 rounded-lg bg-[#161922] border border-white/10 text-xs font-mono font-bold text-slate-300"
+            className="flex items-center gap-1 px-2 py-1 rounded-lg bg-[#141720] border border-white/10 text-xs font-mono font-bold text-slate-300"
             title="Return to BFT Portal"
           >
             <span className="font-black text-[#ff8800]">BFT</span>
@@ -2256,19 +2263,25 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             <button
               onClick={() => setAccountDropdownOpen(!accountDropdownOpen)}
               data-testid="mobile-account-switcher"
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#161922] border border-white/10 text-xs font-mono"
+              className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[#141720] border border-white/10 text-xs font-mono"
             >
               <div
                 className={`w-2 h-2 rounded-full ${
                   isBreached
                     ? 'bg-rose-500 animate-pulse'
-                    : isLiveFundedAccount(effectiveAccount)
+                    : isPersonalLiveAccount(effectiveAccount) || isLiveFundedAccount(effectiveAccount)
                     ? 'bg-[#00e676]'
                     : 'bg-[#ff8800]'
                 }`}
               />
               <span className="text-[9px] uppercase font-black px-1 py-0.2 rounded bg-[#ff8800]/15 text-[#ff8800] border border-[#ff8800]/30">
-                {isLiveFundedAccount(effectiveAccount) ? 'LIVE' : 'CHALLENGE'}
+                {isPersonalLiveAccount(effectiveAccount)
+                  ? 'PERSONAL'
+                  : isDemoAccount(effectiveAccount)
+                  ? 'DEMO'
+                  : isLiveFundedAccount(effectiveAccount)
+                  ? 'LIVE'
+                  : 'CHALLENGE'}
               </span>
               <span className="text-[11px] font-black font-mono text-white">
                 ${formatMobileAccountBalance(effectiveAccount.currentBalance, 2)}
@@ -2334,17 +2347,30 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         <div className="flex items-center gap-1.5">
           <button
             type="button"
+            data-testid="mobile-header-leaderboard-btn"
+            onClick={() => {
+              soundEngine.playUiClick();
+              setIsLeaderboardOpen(true);
+            }}
+            className="p-1.5 rounded-lg bg-[#141720] border border-white/10 text-[#ff8800]"
+            title="Top 20 Leaderboard"
+          >
+            <Trophy className="w-3.5 h-3.5" />
+          </button>
+
+          <button
+            type="button"
             data-testid="mobile-alerts-btn"
             onClick={() => {
               soundEngine.playUiClick();
               setIsPriceAlertModalOpen(true);
             }}
-            className="p-1.5 rounded-lg bg-[#181b25] border border-[#2a2e39] text-amber-400 relative"
+            className="p-1.5 rounded-lg bg-[#141720] border border-white/10 text-[#ff8800] relative"
             title="Price Alerts"
           >
-            <BellRing className="w-4 h-4" />
+            <BellRing className="w-3.5 h-3.5" />
             {alerts.filter((a) => a.active && !a.triggered).length > 0 && (
-              <span className="w-2 h-2 rounded-full bg-amber-400 absolute top-1 right-1 animate-ping" />
+              <span className="w-2 h-2 rounded-full bg-[#ff8800] absolute top-1 right-1 animate-ping" />
             )}
           </button>
 
@@ -2750,11 +2776,11 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         </div>
 
         {/* 3. CENTRAL SUPER-SMOOTH OTC ALGORITHMIC CHART ENGINE */}
-        <div className="flex-1 flex flex-col relative overflow-hidden bg-[#0a0a0a] min-h-[240px]">
+        <div className="flex-1 flex flex-col relative overflow-hidden bg-[#0a0a0a] min-h-0">
           {/* 1. TOP MULTI-ASSET SCROLLING TICKER BAR (Quotex Style) */}
           <div
             data-testid="top-multi-asset-ticker-bar"
-            className="flex items-center gap-1.5 overflow-x-auto px-3 py-2 bg-[#121620] border-b border-[#262b38] shrink-0 z-25 font-mono text-xs select-none no-scrollbar"
+            className="flex items-center gap-1.5 overflow-x-auto px-2 py-1.5 md:px-3 md:py-2 bg-[#0a0a0a] border-b border-white/10 shrink-0 z-25 font-mono text-xs select-none no-scrollbar"
           >
             {openTabs.map((tabAsset) => {
               const isTabActive = tabAsset.symbol === selectedAsset.symbol;
@@ -2766,10 +2792,10 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                     soundEngine.playUiClick();
                     setSelectedAsset(tabAsset);
                   }}
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border transition-all cursor-pointer shrink-0 ${
+                  className={`flex items-center gap-1.5 px-2.5 py-1 md:px-3 md:py-1.5 rounded-lg border transition-all cursor-pointer shrink-0 ${
                     isTabActive
-                      ? 'bg-[#1c2230] border-[#ff8800] text-white shadow-md'
-                      : 'bg-[#141822] hover:bg-[#191f2d] border-[#222735] text-slate-300'
+                      ? 'bg-[#141720] border-[#ff8800] text-white'
+                      : 'bg-[#0e1016] hover:bg-[#141720] border-white/10 text-slate-300'
                   }`}
                 >
                   <span className="text-sm shrink-0">{tabAsset.flag || '📈'}</span>
@@ -3446,7 +3472,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
           <div
             ref={chartContainerRef}
             data-testid="otc-chart-container"
-            className={`flex-1 relative w-full h-full min-h-[220px] touch-none select-none overflow-hidden cursor-${
+            className={`flex-1 relative w-full h-full min-h-0 touch-none select-none overflow-hidden cursor-${
               activeDrawingTool !== 'none'
                 ? 'crosshair'
                 : hoveredDrawingId || hoveredTradeMarker
@@ -3932,20 +3958,29 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             ) : null}
           </div>
 
-          {/* Bottom Collapsible Trades Drawer */}
-          {isTradesDrawerOpen && account && (
-            <div className="border-t border-[#2a2e39] bg-[#1e222d] shrink-0 max-h-56 overflow-y-auto">
+          {/* Bottom Collapsible Trades & History Drawer (Overlay on Mobile so Chart Canvas Never Collapses) */}
+          {isTradesDrawerOpen && (
+            <div
+              data-testid="mobile-trades-history-panel-wrapper"
+              className="absolute inset-x-0 bottom-0 z-30 max-h-[62%] md:static md:max-h-56 border-t border-white/15 bg-[#0a0a0a] shrink-0 overflow-y-auto shadow-2xl"
+            >
               <TradingDrawer
-                account={{ ...account, equity: liveEquity }}
+                account={{ ...effectiveAccount, equity: liveEquity }}
                 trades={trades}
                 currentPrice={currentPrice}
                 onDoubleUp={handleDoubleUp}
+                initialTab={mobileTradesTab === 'history' ? 'history' : 'open'}
+                onTabChange={(tab) => {
+                  if (tab === 'open') setMobileTradesTab('trades');
+                  else if (tab === 'history') setMobileTradesTab('history');
+                }}
+                onClose={() => setIsTradesDrawerOpen(false)}
               />
             </div>
           )}
         </div>
 
-                {/* Mobile Quotex Bottom Trade Execution Dock */}
+        {/* Mobile Quotex Bottom Trade Execution Dock */}
         <QuotexMobileDock
           selectedAsset={selectedAsset}
           currentPrice={currentPrice}
@@ -3961,13 +3996,23 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
           closedTradesCount={closedTrades.length}
           dailyDrawdownPercent={metrics.dailyDrawdownPercent}
           isTradesDrawerOpen={isTradesDrawerOpen}
+          activeTradesTab={mobileTradesTab}
+          onSelectTradesTab={(tab) => {
+            const next = resolveMobileTradesDrawerAction(isTradesDrawerOpen, mobileTradesTab, tab);
+            setIsTradesDrawerOpen(next.isOpen);
+            setMobileTradesTab(next.activeTab);
+          }}
           onOpenAssetModal={() => setIsAssetModalOpen(true)}
           onTogglePendingTrade={() => setPendingOrderEnabled(!pendingOrderEnabled)}
           onChangeDuration={(d) => setDuration(d)}
           onChangeInvestment={(inv) => setInvestment(inv)}
           onToggleInvestmentMode={() => setInvestmentMode(investmentMode === 'usd' ? 'percent' : 'usd')}
           onTriggerTrade={(dir) => handleTriggerTrade(dir)}
-          onToggleTradesDrawer={() => setIsTradesDrawerOpen(!isTradesDrawerOpen)}
+          onToggleTradesDrawer={() => {
+            const next = resolveMobileTradesDrawerAction(isTradesDrawerOpen, mobileTradesTab, 'toggle');
+            setIsTradesDrawerOpen(next.isOpen);
+            setMobileTradesTab(next.activeTab);
+          }}
         />
         {/* 4. RIGHT-SIDE QUOTEX TRADE EXECUTION & ACTIVE POSITIONS / HISTORY PANEL */}
         <div
@@ -4713,12 +4758,13 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       <QuotexLeaderboardModal
         isOpen={isLeaderboardOpen}
         onClose={() => setIsLeaderboardOpen(false)}
-        userProfit={
-          account ? Math.max(0, Number((account.currentBalance - account.initialBalance).toFixed(2))) : 0
-        }
+        userProfit={Math.max(
+          0,
+          Number((effectiveAccount.currentBalance - effectiveAccount.initialBalance).toFixed(2))
+        )}
         weeklyTradesCount={trades.filter((t) => t.status === 'won' || t.status === 'lost').length}
         userName={userProfile?.fullName || userProfile?.email || 'Trader'}
-        userAccountId={account?.id || 'UNRANKED'}
+        userAccountId={effectiveAccount.id || 'UNRANKED'}
       />
 
       {/* Indicator Settings Modal */}

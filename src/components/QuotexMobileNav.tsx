@@ -47,10 +47,10 @@ export const QuotexMobileNav: React.FC<QuotexMobileNavProps> = ({
 
   return (
     <>
-      {/* Fixed Bottom Navigation Bar for Mobile */}
+      {/* Bottom Navigation Bar for Mobile Terminal */}
       <nav
         data-testid="quotex-mobile-nav"
-        className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-[#0c0e14] border-t border-[#1e222d] py-1 px-1 flex items-center justify-around select-none safe-area-pb max-w-[100vw] overflow-x-hidden w-full shadow-2xl"
+        className="md:hidden shrink-0 z-40 bg-[#0a0a0a] border-t border-white/10 py-1 px-1 flex items-center justify-around select-none safe-area-pb max-w-[100vw] overflow-x-hidden w-full"
       >
         {/* Chart Button */}
         <button

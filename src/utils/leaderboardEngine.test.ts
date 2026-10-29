@@ -6,6 +6,7 @@ import {
   resolveUserLeaderboardPosition,
   normalizeWeeklyLeaderboard,
   getMondayWeeklyResetInfo,
+  formatCleanLeaderboardRow,
 } from './leaderboardEngine';
 
 test('Kasun Perera is positioned at 9th place with Sri Lankan flag and $18,995.22 profit', () => {
@@ -64,3 +65,27 @@ test('getMondayWeeklyResetInfo computes valid Monday UTC reset schedule', () => 
   assert.equal(info.nextMondayIso, '2026-11-02'); // Next Monday Nov 2
   assert.ok(info.resetScheduleLabel.includes('Resets Monday 00:00 UTC'));
 });
+
+test('formatCleanLeaderboardRow formats strictly rank number, flag, trader name, and profit amount', () => {
+  const normalized = normalizeWeeklyLeaderboard(WEEKLY_LEADERBOARD_TRADERS);
+  const top1 = formatCleanLeaderboardRow(normalized[0]);
+  assert.deepEqual(top1, {
+    rank: 1,
+    rankDisplay: '1',
+    flag: '🇦🇪',
+    name: 'Rashid Al-Maktoum',
+    profitFormatted: '+$48,990.50',
+    isTopThree: true,
+  });
+
+  const kasun = formatCleanLeaderboardRow(normalized[8]);
+  assert.deepEqual(kasun, {
+    rank: 9,
+    rankDisplay: '9',
+    flag: '🇱🇰',
+    name: 'Kasun Perera',
+    profitFormatted: '+$18,995.22',
+    isTopThree: false,
+  });
+});
+

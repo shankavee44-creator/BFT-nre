@@ -89,3 +89,77 @@ export function formatMobileAccountBalance(
     maximumFractionDigits: decimals,
   });
 }
+
+export type MobileTradesTab = 'trades' | 'history';
+
+/**
+ * Resolves the next open/tab state when a user taps "Trades", "History", or the chevron toggle
+ * in the Quotex mobile execution dock, ensuring smooth tab switching without breaking the chart.
+ */
+export function resolveMobileTradesDrawerAction(
+  currentOpen: boolean,
+  currentTab: MobileTradesTab,
+  action: MobileTradesTab | 'toggle' | { type: 'toggle' } | { type: 'select_tab'; tab: MobileTradesTab }
+): { isOpen: boolean; activeTab: MobileTradesTab } {
+  const normalizedAction =
+    typeof action === 'string'
+      ? action === 'toggle'
+        ? { type: 'toggle' as const }
+        : { type: 'select_tab' as const, tab: action }
+      : action;
+
+  if (normalizedAction.type === 'toggle') {
+    return {
+      isOpen: !currentOpen,
+      activeTab: currentTab,
+    };
+  }
+  if (!currentOpen) {
+    return {
+      isOpen: true,
+      activeTab: normalizedAction.tab,
+    };
+  }
+  if (currentTab === normalizedAction.tab) {
+    return {
+      isOpen: false,
+      activeTab: currentTab,
+    };
+  }
+  return {
+    isOpen: true,
+    activeTab: normalizedAction.tab,
+  };
+}
+
+/**
+ * Computes the vertical layout budget for the Quotex mobile terminal so that
+ * top header + asset ticker + chart canvas + bottom dock + bottom nav fit 100%
+ * within the mobile viewport height without overflowing or collapsing the chart.
+ */
+export function computeMobileTerminalViewportBudget(viewportHeightPx: number): {
+  topHeaderPx: number;
+  tickerBarPx: number;
+  bottomDockPx: number;
+  bottomNavPx: number;
+  chartCanvasPx: number;
+  fitsWithoutOverflow: boolean;
+} {
+  const safeViewport = Math.max(560, Math.floor(viewportHeightPx || 844));
+  const topHeaderPx = 42;
+  const tickerBarPx = 38;
+  const bottomDockPx = 198;
+  const bottomNavPx = 48;
+  const fixedChrome = topHeaderPx + tickerBarPx + bottomDockPx + bottomNavPx;
+  const chartCanvasPx = Math.max(220, safeViewport - fixedChrome);
+
+  return {
+    topHeaderPx,
+    tickerBarPx,
+    bottomDockPx,
+    bottomNavPx,
+    chartCanvasPx,
+    fitsWithoutOverflow: fixedChrome + chartCanvasPx <= safeViewport,
+  };
+}
+

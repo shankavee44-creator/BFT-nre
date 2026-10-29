@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Clock,
   ChevronUp,
@@ -8,15 +8,22 @@ import {
   CheckCircle2,
   Activity,
   History,
+  X,
 } from 'lucide-react';
 import { BinaryTrade, TradingAccount } from '../types';
 import { calculateDrawdownMetrics } from '../utils/propRules';
+import { DEFAULT_ASSETS } from '../utils/storage';
 
 interface TradingDrawerProps {
   account: TradingAccount;
   trades: BinaryTrade[];
   currentPrice: number;
   onDoubleUp?: (trade: BinaryTrade) => void;
+  onSettleTrade?: (trade: BinaryTrade) => void;
+  onInspectClosedTrade?: (trade: BinaryTrade) => void;
+  initialTab?: 'open' | 'history' | 'risk';
+  onTabChange?: (tab: 'open' | 'history' | 'risk') => void;
+  onClose?: () => void;
 }
 
 export const TradingDrawer: React.FC<TradingDrawerProps> = ({
@@ -24,146 +31,232 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
   trades,
   currentPrice,
   onDoubleUp,
+  onSettleTrade,
+  onInspectClosedTrade,
+  initialTab = 'open',
+  onTabChange,
+  onClose,
 }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const [activeTab, setActiveTab] = useState<'open' | 'history' | 'risk'>('open');
+  const [activeTab, setActiveTab] = useState<'open' | 'history' | 'risk'>(initialTab);
+
+  useEffect(() => {
+    setActiveTab(initialTab);
+    setIsCollapsed(false);
+  }, [initialTab]);
 
   const openTrades = trades.filter((t) => t.status === 'active');
-  const closedTrades = trades.filter((t) => t.status !== 'active');
+  const closedTrades = trades
+    .filter((t) => t.status !== 'active')
+    .sort((a, b) => b.endTime - a.endTime);
 
   // Risk metrics
   const metrics = calculateDrawdownMetrics(account);
   const dailyLossLimitDollars = (account.startingDayEquity * account.dailyLossLimitPercent) / 100;
   const remainingDailyBuffer = Math.max(0, dailyLossLimitDollars - metrics.dailyDrawdownAmount);
-  const dailyBufferPercent = dailyLossLimitDollars > 0
-    ? Math.max(0, Math.min(100, (remainingDailyBuffer / dailyLossLimitDollars) * 100))
-    : 100;
+  const dailyBufferPercent =
+    dailyLossLimitDollars > 0
+      ? Math.max(0, Math.min(100, (remainingDailyBuffer / dailyLossLimitDollars) * 100))
+      : 100;
 
   // Profit target metrics (for challenges)
   const currentNetProfit = Math.max(0, account.currentBalance - account.initialBalance);
-  const targetProfitDollars = (account.initialBalance * (account.tier === 'one-step' ? 15 : account.tier === 'two-step' ? 15 : 0)) / 100;
-  const targetPercent = targetProfitDollars > 0
-    ? Math.min(100, Math.round((currentNetProfit / targetProfitDollars) * 100))
-    : 100;
+  const targetProfitDollars =
+    (account.initialBalance *
+      (account.tier === 'one-step' ? 15 : account.tier === 'two-step' ? 15 : 0)) /
+    100;
+  const targetPercent =
+    targetProfitDollars > 0
+      ? Math.min(100, Math.round((currentNetProfit / targetProfitDollars) * 100))
+      : 100;
+
+  const handleSelectTab = (tabId: 'open' | 'history' | 'risk') => {
+    setActiveTab(tabId);
+    if (isCollapsed) setIsCollapsed(false);
+    onTabChange?.(tabId);
+  };
 
   return (
-    <div className="w-full rounded-2xl bg-[#090e1a] border border-slate-800 shadow-2xl overflow-hidden transition-all duration-300">
+    <div
+      data-testid="trading-drawer-panel"
+      className="w-full bg-[#0e1016] border-t border-white/15 overflow-hidden select-none font-mono"
+    >
       {/* Drawer Control Header */}
-      <div className="px-4 py-2.5 bg-[#060a14] border-b border-slate-800 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          {/* Tabs */}
+      <div className="px-3 py-2 bg-[#0a0a0a] border-b border-white/10 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
           {[
-            { id: 'open', label: `Open Trades (${openTrades.length})`, icon: Activity },
-            { id: 'history', label: `Closed History (${closedTrades.length})`, icon: History },
-            { id: 'risk', label: 'Risk Analytics Meter', icon: Target },
+            {
+              id: 'open' as const,
+              testId: 'drawer-tab-trades',
+              label: `Trades (${openTrades.length})`,
+              icon: Activity,
+            },
+            {
+              id: 'history' as const,
+              testId: 'drawer-tab-history',
+              label: `History (${closedTrades.length})`,
+              icon: History,
+            },
+            {
+              id: 'risk' as const,
+              testId: 'drawer-tab-risk',
+              label: 'Risk Meter',
+              icon: Target,
+            },
           ].map((tab) => {
             const Icon = tab.icon;
+            const isActive = activeTab === tab.id && !isCollapsed;
             return (
               <button
                 key={tab.id}
-                onClick={() => {
-                  setActiveTab(tab.id as any);
-                  if (isCollapsed) setIsCollapsed(false);
-                }}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer font-mono ${
-                  activeTab === tab.id && !isCollapsed
-                    ? 'bg-amber-400 text-slate-950 font-bold shadow-md shadow-amber-500/20 glow-gold'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                type="button"
+                data-testid={tab.testId}
+                onClick={() => handleSelectTab(tab.id)}
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                  isActive
+                    ? 'bg-[#ff8800] text-slate-950 font-black'
+                    : 'text-slate-400 hover:text-white bg-[#141720] border border-white/10'
                 }`}
               >
-                <Icon className="w-3.5 h-3.5" />
+                <Icon className="w-3.5 h-3.5 shrink-0" />
                 <span>{tab.label}</span>
               </button>
             );
           })}
         </div>
 
-        {/* Collapse / Expand Toggle */}
-        <button
-          onClick={() => setIsCollapsed(!isCollapsed)}
-          className="p-1.5 rounded-lg hover:bg-slate-800/60 text-slate-400 hover:text-white flex items-center gap-1 text-xs cursor-pointer"
-        >
-          <span className="text-[10px] font-mono hidden sm:inline">
-            {isCollapsed ? 'Expand Drawer' : 'Collapse Drawer'}
-          </span>
-          {isCollapsed ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-        </button>
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            type="button"
+            data-testid="drawer-collapse-btn"
+            onClick={() => setIsCollapsed(!isCollapsed)}
+            className="p-1.5 rounded-lg bg-[#141720] hover:bg-[#1c202c] border border-white/10 text-slate-400 hover:text-white flex items-center gap-1 text-xs cursor-pointer"
+            title={isCollapsed ? 'Expand Panel' : 'Collapse Panel'}
+          >
+            <span className="text-[10px] hidden sm:inline">
+              {isCollapsed ? 'Expand' : 'Collapse'}
+            </span>
+            {isCollapsed ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+          </button>
+
+          {onClose && (
+            <button
+              type="button"
+              data-testid="drawer-close-btn"
+              onClick={onClose}
+              aria-label="Close trades drawer"
+              className="p-1.5 rounded-lg bg-[#141720] hover:bg-[#1c202c] border border-white/10 text-slate-400 hover:text-white cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Drawer Content */}
       {!isCollapsed && (
-        <div className="p-4 max-h-72 overflow-y-auto">
+        <div className="p-3 max-h-56 overflow-y-auto bg-[#0e1016]">
           {/* TAB 1: OPEN TRADES */}
           {activeTab === 'open' && (
-            <div>
+            <div data-testid="drawer-open-trades-content">
               {openTrades.length > 0 ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
                   {openTrades.map((t) => {
                     const secondsLeft = Math.max(0, Math.ceil((t.endTime - Date.now()) / 1000));
                     const isCall = t.direction === 'CALL';
-                    const isInTheMoney = isCall ? currentPrice > t.strikePrice : currentPrice < t.strikePrice;
-                    const percentRemaining = Math.max(0, Math.min(100, (secondsLeft / t.durationSeconds) * 100));
+                    const isInTheMoney = isCall
+                      ? currentPrice > t.strikePrice
+                      : currentPrice < t.strikePrice;
+                    const percentRemaining = Math.max(
+                      0,
+                      Math.min(100, (secondsLeft / t.durationSeconds) * 100)
+                    );
+                    const assetObj = DEFAULT_ASSETS.find((a) => a.symbol === t.asset);
 
                     return (
                       <div
                         key={t.id}
-                        className={`p-3.5 rounded-xl border transition-all ${
+                        data-testid={`open-trade-card-${t.id}`}
+                        className={`p-2.5 rounded-xl border transition-colors ${
                           isInTheMoney
-                            ? 'bg-[#081a14] border-emerald-500/50 glow-mint'
-                            : 'bg-[#1a0a0e] border-rose-500/50'
+                            ? 'bg-[#081a14] border-[#00e676]/50'
+                            : 'bg-[#1a0a0e] border-[#ff334b]/50'
                         }`}
                       >
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="font-mono font-bold text-xs text-white flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                            {t.asset}
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="font-bold text-xs text-white flex items-center gap-1.5 truncate">
+                            <span>{assetObj?.flag || '📈'}</span>
+                            <span className="truncate">{t.asset}</span>
                           </span>
                           <span
-                            className={`text-[10px] font-bold px-2 py-0.5 rounded font-mono ${
-                              isCall ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                            className={`text-[10px] font-black px-2 py-0.5 rounded shrink-0 ${
+                              isCall
+                                ? 'bg-emerald-500/20 text-[#00e676] border border-[#00e676]/30'
+                                : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
                             }`}
                           >
-                            {t.direction} ${t.investment}
+                            {isCall ? '▲ BUY' : '▼ SELL'} ${t.investment}
                           </span>
                         </div>
 
-                        <div className="grid grid-cols-2 gap-2 text-xs font-mono my-2">
+                        <div className="grid grid-cols-2 gap-2 text-[11px] my-1.5">
                           <div>
-                            <span className="text-slate-400 text-[10px] block font-medium">Strike Price</span>
-                            <span className="text-white">{t.strikePrice.toFixed(4)}</span>
+                            <span className="text-slate-400 text-[10px] block">Strike</span>
+                            <span className="text-white tabular-nums">{t.strikePrice.toFixed(4)}</span>
                           </div>
-                          <div>
-                            <span className="text-slate-400 text-[10px] block font-medium">Market Price</span>
-                            <span className={isInTheMoney ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
+                          <div className="text-right">
+                            <span className="text-slate-400 text-[10px] block">Current</span>
+                            <span
+                              className={`tabular-nums font-bold ${
+                                isInTheMoney ? 'text-[#00e676]' : 'text-rose-400'
+                              }`}
+                            >
                               {currentPrice.toFixed(4)}
                             </span>
                           </div>
                         </div>
 
-                        {/* Progress Bar of Duration */}
-                        <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden my-2 border border-slate-800">
+                        <div className="w-full h-1 bg-[#141720] rounded-full overflow-hidden my-1.5">
                           <div
-                            className={`h-full transition-all duration-1000 ${isInTheMoney ? 'bg-emerald-400' : 'bg-rose-500'}`}
+                            className={`h-full transition-all duration-500 ${
+                              isInTheMoney ? 'bg-[#00e676]' : 'bg-[#ff334b]'
+                            }`}
                             style={{ width: `${percentRemaining}%` }}
                           />
                         </div>
 
-                        <div className="flex items-center justify-between text-xs pt-1 font-mono">
-                          <span className="text-slate-400 flex items-center gap-1 text-[11px]">
-                            <Clock className="w-3 h-3 text-amber-400" /> {secondsLeft}s left
+                        <div className="flex items-center justify-between text-[11px] pt-0.5">
+                          <span className="text-slate-300 flex items-center gap-1 font-bold tabular-nums">
+                            <Clock className="w-3 h-3 text-[#ff8800]" /> {secondsLeft}s
                           </span>
-                          <div className="flex items-center gap-2">
-                            {onDoubleUp && (
+                          <div className="flex items-center gap-1.5">
+                            {onSettleTrade && (
                               <button
-                                onClick={() => onDoubleUp(t)}
-                                className="px-2 py-0.5 rounded bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 text-[10px] font-bold cursor-pointer transition-all active:scale-95"
-                                title="Place another trade with identical parameters"
+                                type="button"
+                                onClick={() => onSettleTrade(t)}
+                                className="px-2 py-0.5 rounded bg-[#ff8800]/20 hover:bg-[#ff8800]/30 text-[#ff8800] border border-[#ff8800]/40 text-[10px] font-bold cursor-pointer"
                               >
-                                Double up (x2)
+                                Settle
                               </button>
                             )}
-                            <span className={`font-bold ${isInTheMoney ? 'text-emerald-400' : 'text-rose-400'}`}>
-                              {isInTheMoney ? `+$${t.potentialPayout.toFixed(2)} (ITM)` : `-$${t.investment.toFixed(2)} (OTM)`}
+                            {onDoubleUp && (
+                              <button
+                                type="button"
+                                onClick={() => onDoubleUp(t)}
+                                className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/15 text-white border border-white/20 text-[10px] font-bold cursor-pointer"
+                                title="Place another trade with identical parameters"
+                              >
+                                x2
+                              </button>
+                            )}
+                            <span
+                              className={`font-black tabular-nums ${
+                                isInTheMoney ? 'text-[#00e676]' : 'text-rose-400'
+                              }`}
+                            >
+                              {isInTheMoney
+                                ? `+$${t.potentialPayout.toFixed(2)}`
+                                : `-$${t.investment.toFixed(2)}`}
                             </span>
                           </div>
                         </div>
@@ -172,65 +265,83 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
                   })}
                 </div>
               ) : (
-                <div className="text-center py-8 text-xs text-slate-400">
-                  <Activity className="w-6 h-6 text-slate-500 mx-auto mb-2 opacity-50" />
-                  <span>No active positions open. Execute Call or Put on the panel above to place high-speed trades.</span>
+                <div className="text-center py-5 text-xs text-slate-400">
+                  <Activity className="w-5 h-5 text-slate-500 mx-auto mb-1.5 opacity-60" />
+                  <span>No active positions open. Tap Buy or Sell to execute an OTC trade.</span>
                 </div>
               )}
             </div>
           )}
 
-          {/* TAB 2: CLOSED HISTORY */}
+          {/* TAB 2: CLOSED HISTORY (Quotex Clean Card & List Format) */}
           {activeTab === 'history' && (
-            <div>
+            <div data-testid="drawer-history-content">
               {closedTrades.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs font-mono">
-                    <thead>
-                      <tr className="border-b border-slate-800 text-slate-400 text-[10px] uppercase">
-                        <th className="py-2">Time</th>
-                        <th className="py-2">Asset</th>
-                        <th className="py-2">Direction</th>
-                        <th className="py-2">Stake</th>
-                        <th className="py-2">Strike Price</th>
-                        <th className="py-2">Close Price</th>
-                        <th className="py-2">Result</th>
-                        <th className="py-2 text-right">Net P&L</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800/80">
-                      {closedTrades.slice(0, 15).map((t) => {
-                        const isWin = t.status === 'won';
-                        return (
-                          <tr key={t.id} className="hover:bg-slate-800/30">
-                            <td className="py-2 text-slate-400">{new Date(t.startTime).toLocaleTimeString()}</td>
-                            <td className="py-2 text-white font-bold">{t.asset}</td>
-                            <td className="py-2 font-bold">
-                              <span className={t.direction === 'CALL' ? 'text-emerald-400' : 'text-rose-400'}>
-                                {t.direction}
-                              </span>
-                            </td>
-                            <td className="py-2 text-slate-300">${t.investment}</td>
-                            <td className="py-2 text-slate-400">{t.strikePrice.toFixed(4)}</td>
-                            <td className="py-2 text-slate-400">{t.closePrice ? t.closePrice.toFixed(4) : '-'}</td>
-                            <td className="py-2">
-                              <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${
-                                isWin ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-500/30' : 'bg-rose-950/60 text-rose-400 border border-rose-500/30'
-                              }`}>
-                                {isWin ? 'WIN (ITM)' : 'LOSS (OTM)'}
-                              </span>
-                            </td>
-                            <td className={`py-2 text-right font-bold ${t.pnl && t.pnl > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                              {t.pnl && t.pnl > 0 ? `+$${t.pnl.toFixed(2)}` : t.pnl ? `-$${Math.abs(t.pnl).toFixed(2)}` : '$0.00'}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                  {closedTrades.slice(0, 20).map((t) => {
+                    const isWin = t.status === 'won';
+                    const isCall = t.direction === 'CALL';
+                    const assetObj = DEFAULT_ASSETS.find((a) => a.symbol === t.asset);
+                    const netPnl = t.pnl ?? (isWin ? (t.investment * t.payoutPercentage) / 100 : -t.investment);
+
+                    return (
+                      <div
+                        key={t.id}
+                        data-testid={`history-trade-row-${t.id}`}
+                        onClick={() => onInspectClosedTrade?.(t)}
+                        className="p-2.5 rounded-xl bg-[#141720] hover:bg-[#191d28] border border-white/10 flex items-center justify-between gap-2 text-xs cursor-pointer transition-colors"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 font-bold text-white text-[11px]">
+                            <span
+                              className={`w-2 h-2 rounded-full shrink-0 ${
+                                isWin ? 'bg-[#00e676]' : 'bg-[#ff334b]'
+                              }`}
+                            />
+                            <span className="shrink-0">{assetObj?.flag || '📈'}</span>
+                            <span className="truncate">{t.asset}</span>
+                            <span className="text-[10px] text-[#ff8800] font-black shrink-0">
+                              {t.payoutPercentage}%
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5 text-[10px] text-slate-400 mt-0.5 tabular-nums">
+                            <span className={isCall ? 'text-[#00e676] font-bold' : 'text-rose-400 font-bold'}>
+                              {isCall ? '▲ Buy' : '▼ Sell'} ${t.investment}
+                            </span>
+                            <span>·</span>
+                            <span>
+                              {new Date(t.endTime || t.startTime).toLocaleTimeString([], {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                second: '2-digit',
+                              })}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="text-right shrink-0 tabular-nums">
+                          <div
+                            className={`font-black text-xs ${
+                              isWin ? 'text-[#00e676]' : 'text-rose-400'
+                            }`}
+                          >
+                            {isWin
+                              ? `+$${Math.abs(netPnl).toFixed(2)}`
+                              : `-$${Math.abs(t.investment).toFixed(2)}`}
+                          </div>
+                          <div className="text-[10px] text-slate-500">
+                            {isWin
+                              ? `Payout: $${(t.investment + Math.abs(netPnl)).toFixed(2)}`
+                              : '$0.00'}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               ) : (
-                <div className="text-center py-8 text-xs text-slate-400">
+                <div className="text-center py-5 text-xs text-slate-400">
+                  <History className="w-5 h-5 text-slate-500 mx-auto mb-1.5 opacity-60" />
                   <span>No completed trade history on this account yet.</span>
                 </div>
               )}
@@ -239,72 +350,77 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
 
           {/* TAB 3: RISK ANALYTICS METER */}
           {activeTab === 'risk' && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {/* Daily Loss Limit Buffer */}
-              <div className="p-4 rounded-xl bg-[#060a14] border border-slate-800">
-                <div className="flex items-center justify-between text-xs font-bold text-white mb-2">
-                  <span className="flex items-center gap-1.5 text-slate-300 font-mono">
-                    <ShieldAlert className="w-4 h-4 text-amber-400" />
+            <div data-testid="drawer-risk-content" className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="p-3 rounded-xl bg-[#141720] border border-white/10">
+                <div className="flex items-center justify-between text-xs font-bold text-white mb-1.5">
+                  <span className="flex items-center gap-1.5 text-slate-300">
+                    <ShieldAlert className="w-3.5 h-3.5 text-[#ff8800]" />
                     Daily Loss Buffer
                   </span>
-                  <span className="font-mono text-emerald-400">
-                    ${remainingDailyBuffer.toFixed(2)} Remaining
+                  <span className="text-[#00e676] tabular-nums">
+                    ${remainingDailyBuffer.toFixed(2)}
                   </span>
                 </div>
-                <div className="w-full h-2.5 bg-slate-900 rounded-full overflow-hidden border border-slate-800 my-2">
+                <div className="w-full h-2 bg-[#0a0a0a] rounded-full overflow-hidden border border-white/10 my-1.5">
                   <div
                     className={`h-full rounded-full transition-all duration-300 ${
-                      dailyBufferPercent > 50 ? 'bg-emerald-400' : dailyBufferPercent > 25 ? 'bg-amber-400' : 'bg-rose-500'
+                      dailyBufferPercent > 50
+                        ? 'bg-[#00e676]'
+                        : dailyBufferPercent > 25
+                        ? 'bg-[#ff8800]'
+                        : 'bg-rose-500'
                     }`}
                     style={{ width: `${dailyBufferPercent}%` }}
                   />
                 </div>
-                <div className="flex justify-between text-[10px] text-slate-400 font-mono mt-1">
-                  <span>Max Daily Limit: {account.dailyLossLimitPercent}% (${dailyLossLimitDollars.toFixed(0)})</span>
+                <div className="flex justify-between text-[10px] text-slate-400 mt-1 tabular-nums">
+                  <span>
+                    Limit: {account.dailyLossLimitPercent}% (${dailyLossLimitDollars.toFixed(0)})
+                  </span>
                   <span>Safety: {dailyBufferPercent.toFixed(0)}%</span>
                 </div>
               </div>
 
-              {/* Profit Target Meter */}
-              <div className="p-4 rounded-xl bg-[#060a14] border border-slate-800">
-                <div className="flex items-center justify-between text-xs font-bold text-white mb-2">
-                  <span className="flex items-center gap-1.5 text-slate-300 font-mono">
-                    <Target className="w-4 h-4 text-amber-400" />
-                    Profit Target Progress
+              <div className="p-3 rounded-xl bg-[#141720] border border-white/10">
+                <div className="flex items-center justify-between text-xs font-bold text-white mb-1.5">
+                  <span className="flex items-center gap-1.5 text-slate-300">
+                    <Target className="w-3.5 h-3.5 text-[#ff8800]" />
+                    Profit Target
                   </span>
-                  <span className="font-mono text-amber-400">
-                    {targetPercent}% Achieved
-                  </span>
+                  <span className="text-[#ff8800] tabular-nums">{targetPercent}%</span>
                 </div>
-                <div className="w-full h-2.5 bg-slate-900 rounded-full overflow-hidden border border-slate-800 my-2">
+                <div className="w-full h-2 bg-[#0a0a0a] rounded-full overflow-hidden border border-white/10 my-1.5">
                   <div
-                    className="h-full rounded-full bg-gradient-to-r from-amber-500 to-emerald-400 transition-all duration-300"
+                    className="h-full rounded-full bg-[#ff8800] transition-all duration-300"
                     style={{ width: `${targetPercent}%` }}
                   />
                 </div>
-                <div className="flex justify-between text-[10px] text-slate-400 font-mono mt-1">
-                  <span>Current Profit: ${currentNetProfit.toFixed(2)}</span>
-                  <span>Target: ${targetProfitDollars > 0 ? targetProfitDollars.toFixed(0) : 'N/A (Funded)'}</span>
+                <div className="flex justify-between text-[10px] text-slate-400 mt-1 tabular-nums">
+                  <span>Profit: ${currentNetProfit.toFixed(2)}</span>
+                  <span>
+                    Target: ${targetProfitDollars > 0 ? targetProfitDollars.toFixed(0) : 'Unrestricted'}
+                  </span>
                 </div>
               </div>
 
-              {/* Trading Days & Discipline */}
-              <div className="p-4 rounded-xl bg-[#060a14] border border-slate-800">
-                <div className="flex items-center justify-between text-xs font-bold text-white mb-2">
-                  <span className="flex items-center gap-1.5 text-slate-300 font-mono">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                    Discipline & Rules Check
+              <div className="p-3 rounded-xl bg-[#141720] border border-white/10">
+                <div className="flex items-center justify-between text-xs font-bold text-white mb-1.5">
+                  <span className="flex items-center gap-1.5 text-slate-300">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-[#00e676]" />
+                    Execution Status
                   </span>
-                  <span className="font-mono text-emerald-400">100% Valid</span>
+                  <span className="text-[#00e676]">Compliant</span>
                 </div>
-                <div className="space-y-1.5 text-[11px] text-slate-300 font-mono mt-2">
+                <div className="space-y-1 text-[10px] text-slate-300 mt-1.5 tabular-nums">
                   <div className="flex justify-between">
                     <span className="text-slate-400">Min Duration (30s):</span>
-                    <span className="text-emerald-400 font-semibold">Compliant</span>
+                    <span className="text-[#00e676] font-bold">Active</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-400">Max Overall Loss Buffer:</span>
-                    <span className="text-emerald-400 font-semibold">{account.maxOverallLossPercent}% (Clean)</span>
+                    <span className="text-slate-400">Max Overall Loss:</span>
+                    <span className="text-[#00e676] font-bold">
+                      {account.maxOverallLossPercent > 0 ? `${account.maxOverallLossPercent}%` : 'None'}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -315,3 +431,4 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
     </div>
   );
 };
+

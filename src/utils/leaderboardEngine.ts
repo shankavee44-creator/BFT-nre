@@ -352,3 +352,30 @@ export function getMondayWeeklyResetInfo(nowMs: number = Date.now()): {
     resetScheduleLabel: `Resets Monday 00:00 UTC (${daysUntilMonday}d ${hoursUntilMonday}h)`,
   };
 }
+
+/**
+ * Formats a leaderboard entry strictly into the clean Quotex mobile/desktop row format:
+ * Rank number, Country flag, Trader name, and Profit amount (+$...).
+ */
+export function formatCleanLeaderboardRow(trader: LeaderboardTrader): {
+  rank: number;
+  rankDisplay: string;
+  flag: string;
+  name: string;
+  profitFormatted: string;
+  isTopThree: boolean;
+} {
+  const cleanProfit = Number.isFinite(trader.profit) ? trader.profit : 0;
+  return {
+    rank: trader.rank,
+    rankDisplay: `${trader.rank}`,
+    flag: trader.flag,
+    name: trader.name,
+    profitFormatted: `+$${cleanProfit.toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`,
+    isTopThree: trader.rank >= 1 && trader.rank <= 3,
+  };
+}
+

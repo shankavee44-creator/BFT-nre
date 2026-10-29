@@ -6,6 +6,8 @@ import {
   calculatePinchZoomLevel,
   calculateTouchPanOffset,
   formatMobileAccountBalance,
+  resolveMobileTradesDrawerAction,
+  computeMobileTerminalViewportBudget,
 } from './quotexMobile';
 
 test('formatSecondsToTimer formats durations accurately in Quotex MM:SS:00 style', () => {
@@ -110,3 +112,33 @@ test('Duration boundary validation enforces minimum 30s rule and upper bound', (
   assert.equal(clampDuration(300), 300);
   assert.equal(clampDuration(20000), 14400);
 });
+
+test('resolveMobileTradesDrawerAction handles smooth tab switching and collapsing without losing active tab', () => {
+  // Opening 'history' when drawer is closed opens drawer directly on 'history'
+  const s1 = resolveMobileTradesDrawerAction(false, 'trades', 'history');
+  assert.deepEqual(s1, { isOpen: true, activeTab: 'history' });
+
+  // Switching from 'history' to 'trades' while open keeps drawer open and changes activeTab
+  const s2 = resolveMobileTradesDrawerAction(true, 'history', 'trades');
+  assert.deepEqual(s2, { isOpen: true, activeTab: 'trades' });
+
+  // Tapping active 'trades' tab again while open collapses the drawer
+  const s3 = resolveMobileTradesDrawerAction(true, 'trades', 'trades');
+  assert.deepEqual(s3, { isOpen: false, activeTab: 'trades' });
+
+  // Explicit toggle button flips isOpen while preserving activeTab
+  const s4 = resolveMobileTradesDrawerAction(false, 'history', 'toggle');
+  assert.deepEqual(s4, { isOpen: true, activeTab: 'history' });
+});
+
+test('computeMobileTerminalViewportBudget guarantees generous chart canvas height on 390x844 and 375x667 viewports', () => {
+  const iphone14 = computeMobileTerminalViewportBudget(844);
+  assert.equal(iphone14.chartCanvasPx, 518);
+  assert.equal(iphone14.fitsWithoutOverflow, true);
+
+  const iphoneSE = computeMobileTerminalViewportBudget(667);
+  assert.equal(iphoneSE.chartCanvasPx, 341);
+  assert.equal(iphoneSE.fitsWithoutOverflow, true);
+  assert.ok(iphoneSE.chartCanvasPx >= 300);
+});
+
