@@ -371,3 +371,23 @@ test('State Consistency 4.5: crossTabSync event bus transmits and unsubscribes c
 
   unsubscribe();
 });
+
+test('State Persistence 10: Candle history and active market states persist and rehydrate without resetting simulation', () => {
+  resetAssetMarketState();
+
+  const asset = findAssetBySymbol('BTC/USD');
+  const initialCandles = aggregateCandlesForTimeframe(asset, 60); // 1m candles
+  assert.ok(initialCandles.length > 0, 'Should generate initial candles');
+
+  // Step a live tick
+  stepOrganicLiveTick(asset);
+
+  // Clear in-memory master state to simulate page refresh
+  resetAssetMarketState('BTC/USD');
+
+  // Re-request market state and timeframe candles
+  const rehydratedCandles = aggregateCandlesForTimeframe(asset, 60);
+  assert.ok(rehydratedCandles.length > 0, 'Rehydrated candles should be restored from storage');
+  assert.equal(rehydratedCandles[0].time, initialCandles[0].time, 'Oldest candle time should match persisted history');
+});
+

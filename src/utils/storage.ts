@@ -777,3 +777,32 @@ export function saveChartType(ct: string): void {
   }
 }
 
+export function saveAssetHistoryToStorage(symbol: string, candles: Candle[], timeframeSeconds: number): void {
+  try {
+    const canonical = normalizeAssetSymbol(symbol);
+    const key = `bft_candles_${canonical}_${timeframeSeconds}`;
+    const recentCandles = candles.slice(-1500);
+    safeSetItem(key, JSON.stringify(recentCandles));
+  } catch (e) {
+    console.error('Failed to save asset history', e);
+  }
+}
+
+export function loadAssetHistoryFromStorage(symbol: string, timeframeSeconds: number): Candle[] | null {
+  try {
+    const canonical = normalizeAssetSymbol(symbol);
+    const key = `bft_candles_${canonical}_${timeframeSeconds}`;
+    const raw = safeGetItem(key);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch {
+    // fallback
+  }
+  return null;
+}
+
+

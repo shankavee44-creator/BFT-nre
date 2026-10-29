@@ -654,6 +654,14 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     panVelocityRef.current = 0;
   }, [selectedAsset, timeframe]);
 
+  useEffect(() => {
+    saveSelectedTimeframe(timeframe);
+  }, [timeframe]);
+
+  useEffect(() => {
+    saveChartType(chartType);
+  }, [chartType]);
+
   // 1b. Butter-Smooth 60fps Price & Inertia Momentum Panning Loop
   useEffect(() => {
     targetPriceRef.current = currentPrice;
