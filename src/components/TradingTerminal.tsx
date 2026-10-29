@@ -147,6 +147,8 @@ import { QuotexMobileDock } from './QuotexMobileDock';
 import { QuotexMobileNav } from './QuotexMobileNav';
 import { PriceAlertModal, PriceAlert } from './PriceAlertModal';
 import { soundEngine } from '../utils/soundEffects';
+import { supabaseMarketSync } from '../utils/supabaseMarketSync';
+
 import {
   calculateCandleCountdown,
   calculatePinchZoomLevel,
@@ -663,6 +665,47 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   useEffect(() => {
     saveChartType(chartType);
   }, [chartType]);
+
+  // 1a-2. Supabase Realtime Market Price Sync Subscription & Initial Snapshot Restoration
+  useEffect(() => {
+    // 1. Subscribe to real-time market broadcast ticks from Supabase
+    const unsubscribe = supabaseMarketSync.subscribeTicks((payload) => {
+      if (normalizeAssetSymbol(payload.symbol) === normalizeAssetSymbol(selectedAsset.symbol)) {
+        setCurrentPrice(payload.price);
+        targetPriceRef.current = payload.price;
+
+        const sec = TIMEFRAME_SECONDS[timeframe];
+        const liveCandlesSeries = aggregateCandlesForTimeframe(selectedAsset, sec);
+        setCandles(liveCandlesSeries);
+
+        const symbolOffsetSec = Math.floor(getAssetTimeOffsetMs(selectedAsset.symbol, sec) / 1000);
+        const nextCountdown = calculateCandleCountdown(Date.now(), sec, symbolOffsetSec);
+        setCandleCountdown((prev) =>
+          prev.remainingSeconds === nextCountdown.remainingSeconds ? prev : nextCountdown
+        );
+      }
+    });
+
+    // 2. Fetch latest snapshot from Supabase on mount / asset pair switch for instant state recovery
+    supabaseMarketSync.fetchMarketSnapshot(selectedAsset.symbol).then((snapshot) => {
+      if (snapshot && snapshot.lastPrice) {
+        const store = getOrCreateMasterHistory(selectedAsset);
+        store.prevPrice = snapshot.prevPrice || snapshot.lastPrice;
+        store.lastPrice = snapshot.lastPrice;
+        setCurrentPrice(snapshot.lastPrice);
+        targetPriceRef.current = snapshot.lastPrice;
+
+        const sec = TIMEFRAME_SECONDS[timeframe];
+        const liveCandlesSeries = aggregateCandlesForTimeframe(selectedAsset, sec);
+        setCandles(liveCandlesSeries);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [selectedAsset, timeframe]);
+
 
   // 1b. Butter-Smooth 60fps Price & Inertia Momentum Panning Loop
   useEffect(() => {
@@ -1725,18 +1768,14 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         const candleColor = isGreen ? '#00e676' : '#ff3355';
         const topBodyY = Math.min(openY, closeY);
         const bottomBodyY = Math.max(openY, closeY);
-        const bodyH = Math.max(2, Math.round(bottomBodyY - topBodyY));
+        const bodyH = Math.max(1, Math.round(bottomBodyY - topBodyY));
 
-        // Ensure upper and lower wicks are always crisp and visible
-        const effectiveHighY = Math.min(highY, topBodyY - 3);
-        const effectiveLowY = Math.max(lowY, topBodyY + bodyH + 3);
-
-        // Upper & Lower Wicks (Shadow Rejections)
+        // Upper & Lower Wicks (Shadow Rejections from highY down to lowY)
         ctx.strokeStyle = candleColor;
-        ctx.lineWidth = Math.max(1.4, Math.min(2.2, candleWidth * 0.18));
+        ctx.lineWidth = Math.max(1.2, Math.min(2.0, candleWidth * 0.18));
         ctx.beginPath();
-        ctx.moveTo(centerX, effectiveHighY);
-        ctx.lineTo(centerX, effectiveLowY);
+        ctx.moveTo(centerX, highY);
+        ctx.lineTo(centerX, lowY);
         ctx.stroke();
 
         // Candle Body

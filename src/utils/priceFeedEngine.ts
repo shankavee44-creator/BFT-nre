@@ -5,6 +5,8 @@ import {
   saveAssetHistoryToStorage,
   loadAssetHistoryFromStorage,
 } from './storage';
+import { supabaseMarketSync } from './supabaseMarketSync';
+
 
 export type MarketRegime =
   | 'bullish_trend'
@@ -412,28 +414,26 @@ export function stepOrganicLiveTick(assetOrSymbol: AssetInfo | string): number {
   const minPip = Math.pow(10, -asset.pipDecimals);
   const catParams = getCategoryParameters(asset.category, asset.symbol);
 
-  // Access full 1500-candle accumulated history series to prevent resetting to base price
-  let base5sSeries = store.timeframeSeries.get(5);
-  if (!base5sSeries || base5sSeries.length === 0) {
-    base5sSeries = generateDeterministicTimeframeCandles(asset, 5, 1500);
-    store.timeframeSeries.set(5, base5sSeries);
-  }
+  // Derive stochastic noise via fast hash PRNG
+  const tickHash = hashSymbol(`${asset.symbol}:liveTick:${nowMs}:${store.tickCounter}`);
+  const u1 = Math.max(1e-7, (tickHash % 10000) / 10000);
+  const u2 = Math.max(1e-7, ((tickHash >> 4) % 10000) / 10000);
+  const z = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
 
-  const active5s = base5sSeries[base5sSeries.length - 1];
-
-  const offsetMs = getAssetTimeOffsetMs(asset.symbol, 5);
-  const subTickProgress = ((nowMs + offsetMs) % 5000) / 5000;
-  const subTickHash = hashSymbol(`${asset.symbol}:subTick:${nowMs}:${store.tickCounter}`);
-  const rawNoise = (subTickHash % 2000) / 1000 - 1.0;
-  const subOscillation = rawNoise * asset.volatility * catParams.volMultiplier * 0.40;
+  // Dynamic regime drift
+  let regimeDrift = 0;
+  if (store.regime === 'bullish_trend') regimeDrift = 0.22 * store.regimeIntensity;
+  else if (store.regime === 'bearish_trend') regimeDrift = -0.22 * store.regimeIntensity;
+  else if (store.regime === 'volatile_breakout') regimeDrift = (z > 0 ? 0.38 : -0.38) * store.regimeIntensity;
 
   // Step momentum micro-walk for organic live price action
-  store.momentum = store.momentum * 0.85 + rawNoise * asset.volatility * catParams.volMultiplier * 0.15;
+  store.momentum = store.momentum * 0.78 + z * asset.volatility * catParams.volMultiplier * 0.12;
 
-  let livePrice = active5s.open + (active5s.close - active5s.open) * subTickProgress + subOscillation + store.momentum;
-  const margin = asset.volatility * catParams.volMultiplier * 0.5;
-  livePrice = Math.max(active5s.low - margin, Math.min(active5s.high + margin, livePrice));
-  livePrice = Number(Math.max(minPip * 10, livePrice).toFixed(asset.pipDecimals));
+  const unitVol = asset.volatility * catParams.volMultiplier * store.volatilityRegime;
+  const deltaPrice = (regimeDrift * 0.15 + z * 0.85) * unitVol * 0.35 + store.momentum;
+
+  let livePrice = store.lastPrice + deltaPrice;
+  livePrice = Math.max(minPip * 10, Number(livePrice.toFixed(asset.pipDecimals)));
 
   store.prevPrice = store.lastPrice;
   store.lastPrice = livePrice;
@@ -447,6 +447,7 @@ export function stepOrganicLiveTick(assetOrSymbol: AssetInfo | string): number {
  */
 export function appendLiveTick(asset: AssetInfo, newPrice: number): void {
   const store = getOrCreateMasterHistory(asset);
+  const prevPrice = store.lastPrice;
   store.lastPrice = newPrice;
   const now = Date.now();
 
@@ -454,7 +455,16 @@ export function appendLiveTick(asset: AssetInfo, newPrice: number): void {
     updateCandleArrayWithTick(series, asset, tfSeconds, newPrice, now);
     saveAssetHistoryToStorage(asset.symbol, series, tfSeconds);
   });
+
+  // Broadcast tick to Supabase Realtime channel
+  supabaseMarketSync.broadcastTick({
+    symbol: asset.symbol,
+    price: newPrice,
+    prevPrice,
+    timestamp: now,
+  });
 }
+
 
 function updateCandleArrayWithTick(
   candles: Candle[],
@@ -469,6 +479,9 @@ function updateCandleArrayWithTick(
   const offsetMs = getAssetTimeOffsetMs(asset.symbol, timeframeSeconds);
   const currentBucket = Math.floor((now + offsetMs) / bucketMs) * bucketMs - offsetMs;
   const minPip = Math.pow(10, -asset.pipDecimals);
+  const catParams = getCategoryParameters(asset.category, asset.symbol);
+  const tfMultiplier = Math.pow(Math.max(1, timeframeSeconds / 5), 0.38);
+  const unitVol = asset.volatility * tfMultiplier * catParams.volMultiplier;
 
   const lastCandle = candles[candles.length - 1];
 
@@ -480,22 +493,46 @@ function updateCandleArrayWithTick(
   } else if (lastCandle && currentBucket > lastCandle.time) {
     const numBucketsPassed = Math.floor((currentBucket - lastCandle.time) / bucketMs);
     let prevClose = lastCandle.close;
-    const initialWick = minPip * 2.5;
 
     for (let b = 1; b <= numBucketsPassed; b++) {
       const bTime = lastCandle.time + b * bucketMs;
       const bOpen = prevClose;
-      const bClose = b === numBucketsPassed ? newPrice : bOpen;
+      let bClose = b === numBucketsPassed ? newPrice : bOpen;
+
+      if (b < numBucketsPassed) {
+        // Organic Brownian step for missed intermediate buckets to prevent flat doji rows
+        const hash = hashSymbol(`${asset.symbol}:${timeframeSeconds}:backfill:${bTime}`);
+        const u1 = Math.max(1e-7, (hash % 10000) / 10000);
+        const u2 = Math.max(1e-7, ((hash >> 5) % 10000) / 10000);
+        const z = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
+        const sign = (hash % 2 === 0) ? 1 : -1;
+        const bodySize = Math.max(minPip * 3.0, Math.abs(z) * unitVol * 0.65);
+        bClose = bOpen + sign * bodySize;
+      }
+
       const bodyMax = Math.max(bOpen, bClose);
       const bodyMin = Math.min(bOpen, bClose);
+
+      // Generate realistic upper and lower wicks proportional to volatility
+      const wickHash = hashSymbol(`${asset.symbol}:wick:${bTime}`);
+      const u3 = Math.max(1e-7, (wickHash % 10000) / 10000);
+      const u4 = Math.max(1e-7, ((wickHash >> 3) % 10000) / 10000);
+      const zUpper = Math.abs(Math.sqrt(-2.0 * Math.log(u3)) * Math.cos(2.0 * Math.PI * u4));
+      const zLower = Math.abs(Math.sqrt(-2.0 * Math.log(u3)) * Math.sin(2.0 * Math.PI * u4));
+
+      const upperWick = Math.max(minPip * 2.5, catParams.wickMultiplier * unitVol * (0.35 + zUpper * 0.55));
+      const lowerWick = Math.max(minPip * 2.5, catParams.wickMultiplier * unitVol * (0.35 + zLower * 0.55));
+
+      const bHigh = Number((bodyMax + upperWick).toFixed(asset.pipDecimals));
+      const bLow = Number((bodyMin - lowerWick).toFixed(asset.pipDecimals));
 
       candles.push({
         time: bTime,
         open: Number(bOpen.toFixed(asset.pipDecimals)),
-        high: Number((bodyMax + initialWick).toFixed(asset.pipDecimals)),
-        low: Number((bodyMin - initialWick).toFixed(asset.pipDecimals)),
+        high: Math.max(bHigh, Number(Math.max(bOpen, bClose).toFixed(asset.pipDecimals))),
+        low: Math.min(bLow, Number(Math.min(bOpen, bClose).toFixed(asset.pipDecimals))),
         close: Number(bClose.toFixed(asset.pipDecimals)),
-        volume: b === numBucketsPassed ? 1 : 0,
+        volume: b === numBucketsPassed ? 1 : Math.floor(35 + Math.random() * 60),
       });
 
       prevClose = bClose;
