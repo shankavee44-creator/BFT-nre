@@ -253,7 +253,7 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
                     <div>
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-black text-white text-sm">
-                          {asset.symbol}
+                          {asset.symbol.includes('R_') ? asset.symbol : `${asset.symbol} (OTC)`}
                         </span>
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-bold">
                           {tvResolved.tvSymbol}
@@ -263,7 +263,7 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
                         </span>
                       </div>
                       <span className="text-[11px] text-slate-400 block font-mono">
-                        {asset.name} • {displayPrice.toFixed(asset.pipDecimals)}
+                        {asset.symbol.includes('R_') ? asset.name : `${asset.name} (OTC)`} • {displayPrice.toFixed(asset.pipDecimals)}
                       </span>
                     </div>
                   </div>

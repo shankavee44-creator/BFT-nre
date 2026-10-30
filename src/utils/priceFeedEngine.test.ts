@@ -221,16 +221,16 @@ test('Category Volatility: Crypto assets exhibit larger relative volatility and 
   assert.ok(maxEurDeltaPercent > 0);
 });
 
-test('DEFAULT_ASSETS provides 250+ synchronized OTC instruments across Forex, Crypto, Commodities, and Stocks', () => {
-  const forexOtc = DEFAULT_ASSETS.filter((a) => a.category === 'Forex (OTC)');
-  const cryptoOtc = DEFAULT_ASSETS.filter((a) => a.category === 'Crypto (OTC)');
-  const commoditiesOtc = DEFAULT_ASSETS.filter((a) => a.category === 'Commodities (OTC)');
-  const stocksOtc = DEFAULT_ASSETS.filter((a) => a.category === 'Stocks (OTC)');
+test('DEFAULT_ASSETS provides 250+ synchronized instruments across Forex, Crypto, Commodities, and Stocks', () => {
+  const forex = DEFAULT_ASSETS.filter((a) => a.category === 'Forex');
+  const crypto = DEFAULT_ASSETS.filter((a) => a.category === 'Crypto');
+  const commodities = DEFAULT_ASSETS.filter((a) => a.category === 'Commodities');
+  const stocks = DEFAULT_ASSETS.filter((a) => a.category === 'Stocks & Indices');
 
-  assert.ok(forexOtc.length >= 25, `Expected >= 25 Forex (OTC) assets, got ${forexOtc.length}`);
-  assert.ok(cryptoOtc.length >= 25, `Expected >= 25 Crypto (OTC) assets, got ${cryptoOtc.length}`);
-  assert.ok(commoditiesOtc.length >= 25, `Expected >= 25 Commodities (OTC) assets, got ${commoditiesOtc.length}`);
-  assert.ok(stocksOtc.length >= 25, `Expected >= 25 Stocks (OTC) assets, got ${stocksOtc.length}`);
+  assert.ok(forex.length >= 25, `Expected >= 25 Forex assets, got ${forex.length}`);
+  assert.ok(crypto.length >= 25, `Expected >= 25 Crypto assets, got ${crypto.length}`);
+  assert.ok(commodities.length >= 25, `Expected >= 25 Commodities assets, got ${commodities.length}`);
+  assert.ok(stocks.length >= 25, `Expected >= 25 Stocks assets, got ${stocks.length}`);
   assert.ok(DEFAULT_ASSETS.length >= 250, `Expected >= 250 total synchronized assets, got ${DEFAULT_ASSETS.length}`);
 
   for (const asset of DEFAULT_ASSETS) {
@@ -277,32 +277,31 @@ test('Timeframe Independence: candles and price history update correctly and sep
   }
 });
 
-test('State Consistency 4.1: normalizeAssetSymbol normalizes OTC symbols, shorthand aliases, and casing consistently', () => {
-  assert.equal(normalizeAssetSymbol('EUR/USD'), 'EUR/USD (OTC)');
-  assert.equal(normalizeAssetSymbol('eur/usd'), 'EUR/USD (OTC)');
-  assert.equal(normalizeAssetSymbol('EUR/USD (OTC)'), 'EUR/USD (OTC)');
-  assert.equal(normalizeAssetSymbol('btc/usd'), 'BTC/USD (OTC)');
-  assert.equal(normalizeAssetSymbol('BTC/USD'), 'BTC/USD (OTC)');
-  assert.equal(normalizeAssetSymbol('gold'), 'XAU/USD (OTC)');
-  assert.equal(normalizeAssetSymbol('oil'), 'WTI/USD (OTC)');
-  assert.equal(normalizeAssetSymbol('nasdaq'), 'NAS100 (OTC)');
-  assert.equal(normalizeAssetSymbol('spx'), 'SPX500 (OTC)');
-  assert.equal(normalizeAssetSymbol('gbpjpy'), 'GBP/JPY (OTC)');
+test('State Consistency 4.1: normalizeAssetSymbol normalizes real market symbols, shorthand aliases, and casing consistently', () => {
+  assert.equal(normalizeAssetSymbol('EUR/USD'), 'EUR/USD');
+  assert.equal(normalizeAssetSymbol('eur/usd'), 'EUR/USD');
+  assert.equal(normalizeAssetSymbol('btc/usd'), 'BTC/USD');
+  assert.equal(normalizeAssetSymbol('BTC/USD'), 'BTC/USD');
+  assert.equal(normalizeAssetSymbol('gold'), 'XAU/USD');
+  assert.equal(normalizeAssetSymbol('oil'), 'WTI/USD');
+  assert.equal(normalizeAssetSymbol('nasdaq'), 'NAS100');
+  assert.equal(normalizeAssetSymbol('spx'), 'SPX500');
+  assert.equal(normalizeAssetSymbol('gbpjpy'), 'GBP/JPY');
 });
 
 test('State Consistency 4.2: findAssetBySymbol always returns a valid, consistent AssetInfo object without undefined or null', () => {
   const eurUsd = findAssetBySymbol('EUR/USD');
-  assert.equal(eurUsd.symbol, 'EUR/USD (OTC)');
+  assert.equal(eurUsd.symbol, 'EUR/USD');
   assert.equal(eurUsd.pipDecimals, 5);
   assert.ok(eurUsd.payout >= 79 && eurUsd.payout <= 97);
 
   const btcUsd = findAssetBySymbol('btc/usd');
-  assert.equal(btcUsd.symbol, 'BTC/USD (OTC)');
-  assert.equal(btcUsd.category, 'Crypto (OTC)');
+  assert.equal(btcUsd.symbol, 'BTC/USD');
+  assert.equal(btcUsd.category, 'Crypto');
 
   const gold = findAssetBySymbol('gold');
-  assert.equal(gold.symbol, 'XAU/USD (OTC)');
-  assert.equal(gold.category, 'Commodities (OTC)');
+  assert.equal(gold.symbol, 'XAU/USD');
+  assert.equal(gold.category, 'Commodities');
 
   // Unrecognized custom asset gracefully returns a safe organic fallback
   const custom = findAssetBySymbol('CUSTOM/ASSET');
@@ -311,45 +310,40 @@ test('State Consistency 4.2: findAssetBySymbol always returns a valid, consisten
   assert.ok(custom.pipDecimals >= 2);
 });
 
-test('State Consistency 4.3: getAssetMarketState resolves the same market state regardless of symbol variant or missing (OTC)', () => {
+test('State Consistency 4.3: getAssetMarketState resolves the same market state regardless of symbol variant', () => {
   resetAssetMarketState();
 
   const asset = findAssetBySymbol('EUR/USD');
   const storeDirect = getOrCreateMasterHistory(asset);
   assert.ok(storeDirect.lastPrice > 0);
 
-  // Looking up with 'EUR/USD', 'eur/usd', or 'EUR/USD (OTC)' must all return the exact same store
+  // Looking up with 'EUR/USD' or 'eur/usd' must all return the exact same store
   const lookup1 = getAssetMarketState('EUR/USD');
   const lookup2 = getAssetMarketState('eur/usd');
-  const lookup3 = getAssetMarketState('EUR/USD (OTC)');
 
   assert.ok(lookup1 !== undefined);
   assert.ok(lookup2 !== undefined);
-  assert.ok(lookup3 !== undefined);
-  assert.equal(lookup1?.symbol, 'EUR/USD (OTC)');
-  assert.equal(lookup2?.symbol, 'EUR/USD (OTC)');
-  assert.equal(lookup3?.symbol, 'EUR/USD (OTC)');
+  assert.equal(lookup1?.symbol, 'EUR/USD');
+  assert.equal(lookup2?.symbol, 'EUR/USD');
   assert.equal(lookup1?.lastPrice, storeDirect.lastPrice);
   assert.equal(lookup2?.lastPrice, storeDirect.lastPrice);
-  assert.equal(lookup3?.lastPrice, storeDirect.lastPrice);
 
   // Stepping the price via stepOrganicLiveTick advances the exact same state machine
   const nextPrice = stepOrganicLiveTick('EUR/USD');
   assert.equal(lookup1?.lastPrice, nextPrice);
   assert.equal(lookup2?.lastPrice, nextPrice);
-  assert.equal(lookup3?.lastPrice, nextPrice);
 });
 
 test('State Consistency 4.4: Terminal view preferences (selected asset, tabs, timeframe, chart type) persist cleanly', () => {
   // Test selected asset persistence
   saveSelectedAssetSymbol('GBP/JPY');
-  assert.equal(loadSelectedAssetSymbol(), 'GBP/JPY (OTC)');
+  assert.equal(loadSelectedAssetSymbol(), 'GBP/JPY');
 
   // Test open tabs persistence
   const tabsToSave = ['EUR/USD', 'BTC/USD', 'TSLA'];
   saveOpenAssetTabSymbols(tabsToSave);
   const loadedTabs = loadOpenAssetTabSymbols();
-  assert.deepEqual(loadedTabs, ['EUR/USD (OTC)', 'BTC/USD (OTC)', 'TSLA (OTC)']);
+  assert.deepEqual(loadedTabs, ['EUR/USD', 'BTC/USD', 'TSLA']);
 
   // Test timeframe persistence
   saveSelectedTimeframe('5m');

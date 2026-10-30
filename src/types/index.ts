@@ -103,6 +103,21 @@ export interface BinaryTrade {
   accountTier?: string; // e.g. 'demo', 'personal', 'one-step', 'two-step', 'instant'
 }
 
+export interface TradeResultOverlayData {
+  id: string;
+  isWin: boolean;
+  isTie: boolean;
+  profitAmount: number;
+  investment: number;
+  asset: string;
+  direction: BinaryOptionDirection;
+  strikePrice: number;
+  closePrice: number;
+  payoutPercentage: number;
+  startTime: number;
+  endTime: number;
+}
+
 export interface Candle {
   time: number;
   open: number;
@@ -123,6 +138,7 @@ export type AssetCategory =
   | 'Commodities'
   | 'Indices'
   | 'Stocks'
+  | 'Stocks & Indices'
   | 'OTC';
 
 export interface AssetInfo {

@@ -399,3 +399,65 @@ export function evaluateLockedTradeSettlement(
     updatedBalance: Number(currentBalance.toFixed(2)),
   };
 }
+
+export interface PriceLineHandle {
+  applyOptions(options: Record<string, any>): void;
+}
+
+export interface OrderLineSeriesHost {
+  createPriceLine(options: Record<string, any>): PriceLineHandle;
+  removePriceLine(line: PriceLineHandle): void;
+}
+
+export interface TradingViewOrderLineInstance {
+  applyState(state: OrderLineState): void;
+  getState(): OrderLineState;
+  remove(): void;
+  isRemoved(): boolean;
+}
+
+export function createTradingViewOrderLine(
+  seriesHost: OrderLineSeriesHost,
+  initialState: OrderLineState
+): TradingViewOrderLineInstance {
+  let currentState = { ...initialState };
+  let removed = false;
+
+  const priceLineOptions = {
+    price: currentState.price,
+    color: currentState.lineColor,
+    lineWidth: 2,
+    lineStyle: 0,
+    axisLabelVisible: true,
+    title: currentState.text,
+  };
+
+  const lineHandle = seriesHost.createPriceLine(priceLineOptions);
+
+  return {
+    applyState(newState: OrderLineState) {
+      if (removed) return;
+      currentState = { ...newState };
+      if (lineHandle && typeof lineHandle.applyOptions === 'function') {
+        lineHandle.applyOptions({
+          price: currentState.price,
+          color: currentState.lineColor,
+          title: currentState.text,
+        });
+      }
+    },
+    getState() {
+      return currentState;
+    },
+    remove() {
+      if (removed) return;
+      removed = true;
+      if (lineHandle && typeof seriesHost.removePriceLine === 'function') {
+        seriesHost.removePriceLine(lineHandle);
+      }
+    },
+    isRemoved() {
+      return removed;
+    },
+  };
+}

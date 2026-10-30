@@ -56,77 +56,66 @@ export const SUPPORTED_COUNTRIES: Array<{ name: string; code: string; flag: stri
  * Canonical symbol aliases map for common shorthand user inputs across views and tabs
  */
 const SYMBOL_ALIASES: Record<string, string> = {
-  'gold': 'XAU/USD (OTC)',
-  'xau/usd': 'XAU/USD (OTC)',
-  'silver': 'XAG/USD (OTC)',
-  'xag/usd': 'XAG/USD (OTC)',
-  'oil': 'WTI/USD (OTC)',
-  'crude': 'CRUDE OIL (OTC)',
-  'crude oil': 'CRUDE OIL (OTC)',
-  'us oil': 'WTI/USD (OTC)',
-  'us oil (otc)': 'WTI/USD (OTC)',
-  'brent': 'BRENT/USD (OTC)',
-  'brent oil': 'BRENT/USD (OTC)',
-  'brent oil (otc)': 'BRENT/USD (OTC)',
-  'gas': 'NGAS/USD (OTC)',
-  'natural gas': 'NGAS/USD (OTC)',
-  'natural gas (otc)': 'NGAS/USD (OTC)',
-  'nasdaq': 'NAS100 (OTC)',
-  'ndx': 'NAS100 (OTC)',
-  'spx': 'SPX500 (OTC)',
-  'sp500': 'SPX500 (OTC)',
-  's&p500': 'SPX500 (OTC)',
-  'dow': 'US30 (OTC)',
-  'dji': 'US30 (OTC)',
-  'btc': 'BTC/USD (OTC)',
-  'btc/usdt': 'BTC/USDT (OTC)',
-  'eth': 'ETH/USD (OTC)',
-  'eth/usdt': 'ETH/USDT (OTC)',
-  'sol': 'SOL/USD (OTC)',
-  'sol/usdt': 'SOL/USDT (OTC)',
-  'eurusd': 'EUR/USD (OTC)',
-  'gbpjpy': 'GBP/JPY (OTC)',
-  'gbpusd': 'GBP/USD (OTC)',
-  'usdjpy': 'USD/JPY (OTC)',
+  'gold': 'XAU/USD',
+  'xau/usd': 'XAU/USD',
+  'silver': 'XAG/USD',
+  'xag/usd': 'XAG/USD',
+  'oil': 'WTI/USD',
+  'crude': 'CRUDE OIL',
+  'crude oil': 'CRUDE OIL',
+  'us oil': 'WTI/USD',
+  'brent': 'BRENT/USD',
+  'brent oil': 'BRENT/USD',
+  'gas': 'NGAS/USD',
+  'natural gas': 'NGAS/USD',
+  'nasdaq': 'NAS100',
+  'ndx': 'NAS100',
+  'spx': 'SPX500',
+  'sp500': 'SPX500',
+  's&p500': 'SPX500',
+  'dow': 'US30',
+  'dji': 'US30',
+  'btc': 'BTC/USD',
+  'btc/usdt': 'BTC/USDT',
+  'eth': 'ETH/USD',
+  'eth/usdt': 'ETH/USDT',
+  'sol': 'SOL/USD',
+  'sol/usdt': 'SOL/USDT',
+  'eurusd': 'EUR/USD',
+  'gbpjpy': 'GBP/JPY',
+  'gbpusd': 'GBP/USD',
+  'usdjpy': 'USD/JPY',
 };
 
 /**
  * Normalizes any asset symbol variant (e.g. "EUR/USD", "eur/usd", "Gold", "BTC/USD")
- * to its canonical OTC representation in DEFAULT_ASSETS.
+ * to its canonical real-market representation in DEFAULT_ASSETS.
  */
 export function normalizeAssetSymbol(symbol: string): string {
   const fallback = 'EUR/USD (OTC)';
   if (!symbol || typeof symbol !== 'string') return fallback;
-  const cleaned = symbol.trim();
-  const lower = cleaned.toLowerCase();
-
   const allAssets = dynamicAssetsRegistry.length > 0 ? dynamicAssetsRegistry : DEFAULT_ASSETS;
 
-  // 1. Direct alias match
+  // 1. Exact match in Registry
+  const exact = allAssets.find((a) => a.symbol.toLowerCase() === symbol.toLowerCase());
+  if (exact) return exact.symbol;
+
+  const cleaned = symbol.replace(/\s*\(otc\)/gi, '').trim();
+  const lower = cleaned.toLowerCase();
+
+  // 2. Direct alias match
   if (SYMBOL_ALIASES[lower]) {
     return SYMBOL_ALIASES[lower];
   }
 
-  // 2. Exact match in Registry
-  const exact = allAssets.find((a) => a.symbol === cleaned);
-  if (exact) return exact.symbol;
+  // 3. Match cleaned symbol or name
+  const cleanMatch = allAssets.find((a) => a.symbol.replace(/\s*\(otc\)/gi, '').trim().toLowerCase() === lower);
+  if (cleanMatch) return cleanMatch.symbol;
 
-  // 3. Case-insensitive exact match
-  const caseMatch = allAssets.find((a) => a.symbol.toLowerCase() === lower);
+  const caseMatch = allAssets.find((a) => a.symbol.toLowerCase() === lower || a.name.toLowerCase() === lower);
   if (caseMatch) return caseMatch.symbol;
 
-  // 4. Strip OTC suffix comparison
-  const withoutOtc = lower.replace(/\s*\(otc\)/gi, '').trim();
-  if (SYMBOL_ALIASES[withoutOtc]) {
-    return SYMBOL_ALIASES[withoutOtc];
-  }
-  const strippedMatch = allAssets.find(
-    (a) => a.symbol.toLowerCase().replace(/\s*\(otc\)/gi, '').trim() === withoutOtc
-  );
-  if (strippedMatch) return strippedMatch.symbol;
-
-  // 5. If it already has (OTC), return cleaned; otherwise append (OTC)
-  return cleaned.includes('(OTC)') ? cleaned : `${cleaned} (OTC)`;
+  return symbol.toUpperCase();
 }
 
 let dynamicAssetsRegistry: AssetInfo[] = [...OTC_ASSETS_CATALOG];

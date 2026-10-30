@@ -151,6 +151,7 @@ import { LightweightTradingChart } from './LightweightTradingChart';
 import { soundEngine } from '../utils/soundEffects';
 import { supabaseMarketSync } from '../utils/supabaseMarketSync';
 import { supabase } from '../utils/supabase';
+import { derivClient } from '../utils/derivWebSocketClient';
 import { appendLiveTick } from '../utils/priceFeedEngine';
 import {
   liveMarketFeed,
@@ -740,6 +741,29 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       }
     });
 
+    // Subscribe to Deriv WebSocket feed if it's a Deriv asset; otherwise OTC assets use internal simulated generator / REST feed
+    const isDerivAsset = selectedAsset.symbol.includes('R_') || selectedAsset.category.includes('Deriv');
+    let unsubDeriv = () => {};
+    if (isDerivAsset) {
+      unsubDeriv = derivClient.subscribeTicks(selectedAsset.symbol, (tick) => {
+        if (tick && tick.price > 0) {
+          appendLiveTick(selectedAsset, tick.price, true);
+          setCurrentPrice(tick.price);
+          targetPriceRef.current = tick.price;
+
+          const sec = TIMEFRAME_SECONDS[timeframe];
+          const liveCandlesSeries = aggregateCandlesForTimeframe(selectedAsset, sec);
+          setCandles(liveCandlesSeries);
+
+          const symbolOffsetSec = Math.floor(getAssetTimeOffsetMs(selectedAsset.symbol, sec) / 1000);
+          const nextCountdown = calculateCandleCountdown(Date.now(), sec, symbolOffsetSec);
+          setCandleCountdown((prev) =>
+            prev.remainingSeconds === nextCountdown.remainingSeconds ? prev : nextCountdown
+          );
+        }
+      });
+    }
+
     let isCancelled = false;
 
     // Fetch latest snapshot on mount / asset pair switch for instant state recovery
@@ -763,6 +787,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       unsubStatus();
       unsubLiveTicks();
       unsubscribe();
+      unsubDeriv();
     };
   }, [selectedAsset, timeframe]);
 
@@ -1356,7 +1381,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   }, [oneClickTrading, duration, investment, selectedAsset, account, activeTrades, trades]);
 
   // Helper to arm any technical analysis drawing tool from the side drawer or toolbar
-  const handleSelectDrawingTool = (tool: DrawingTool) => {
+  const handleSelectDrawingTool = (tool: DrawingToolId) => {
     soundEngine.playUiClick();
     if (tool === 'none') {
       setActiveDrawingTool('none');
@@ -1368,6 +1393,16 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     setSelectedDrawingId(null);
     // Always arm the tool immediately for a fresh drawing action on the canvas
     setActiveDrawingTool(tool);
+  };
+
+  const handleAddNewDrawing = (newDrawing: ChartDrawingObject) => {
+    soundEngine.playUiClick();
+    setDrawings((prev) => [...prev, newDrawing]);
+    setSelectedDrawingId(newDrawing.id);
+  };
+
+  const handleUpdateDrawing = (updatedDrawing: ChartDrawingObject) => {
+    setDrawings((prev) => prev.map((d) => (d.id === updatedDrawing.id ? updatedDrawing : d)));
   };
 
   const selectedDrawing = React.useMemo(
@@ -2947,23 +2982,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                       ? 'Demo'
                       : account.id}
                   </span>
-                  {account && (
-                    <span
-                      data-testid="terminal-account-status-badge"
-                      className={`text-[9px] px-1.5 py-0.5 rounded font-black uppercase tracking-wider border ${
-                        isPersonalLiveAccount(account)
-                          ? 'bg-[#ff8800] text-slate-950 border-[#ff8800]'
-                          : isDemoAccount(account)
-                          ? 'bg-white/10 text-slate-300 border-white/20'
-                          : isLiveFundedAccount(account)
-                          ? 'bg-[#00c853]/25 text-[#00e676] border-[#00e676]/60'
-                          : 'bg-[#ff8800]/20 text-[#ff8800] border-[#ff8800]/50'
-                      }`}
-                    >
-                      {getAccountStatusBadgeLabel(account)}
-                    </span>
-                  )}
-                </div>
+                  </div>
                 <div className={`text-xs font-black ${!account ? 'text-[#ff8800]' : isBreached ? 'text-rose-400' : 'text-[#00e676]'}`}>
                   {account
                     ? `$${account.currentBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
@@ -4021,6 +4040,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               timeframe={timeframe}
               chartType={chartType}
               activeTrades={activeTrades}
+              tradeResultOverlay={tradeResultOverlay}
               indicators={indicators}
               zoomLevel={zoomLevel}
               onHoverCandle={setHoveredCandle}
@@ -4031,11 +4051,9 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               drawingLineStyle={drawingLineStyle}
               selectedDrawingId={selectedDrawingId}
               onSelectDrawing={setSelectedDrawingId}
-              onAddDrawing={(d) => setDrawings((prev) => [...prev, d])}
-              onUpdateDrawing={(updated) =>
-                setDrawings((prev) => prev.map((d) => (d.id === updated.id ? updated : d)))
-              }
-              onCompleteDrawingTool={() => setActiveDrawingTool('none')}
+              onAddDrawing={handleAddNewDrawing}
+              onUpdateDrawing={handleUpdateDrawing}
+              onCompleteDrawingTool={() => setActiveDrawingTool(null)}
             />
             {/* Quotex-style sleek floating notification pill when trade is opened */}
             {tradeSuccess && (
@@ -4214,252 +4232,9 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               </button>
             )}
 
-            {/* Bottom-Left Chart Controls (Pencil Drawing Drawer, Timeframe, Chart Type, Zoom) */}
-            <div className="absolute bottom-2.5 left-2.5 md:bottom-4 md:left-4 z-10 flex items-center gap-1.5 md:gap-2 bg-[#141722]/90 backdrop-blur-md border border-white/10 rounded-xl p-1 md:p-1.5 font-mono text-xs">
-              {/* Dedicated Pencil Icon Tool Drawer Button on Chart Toolbar */}
-              <button
-                type="button"
-                data-testid="chart-toolbar-pencil-btn"
-                onClick={() => {
-                  soundEngine.playUiClick();
-                  setIsDrawingDrawerOpen((prev) => !prev);
-                }}
-                className={`p-1.5 rounded-lg border flex items-center justify-center transition-colors cursor-pointer ${
-                  isDrawingDrawerOpen || activeDrawingTool !== 'none'
-                    ? 'bg-[#ff8800] border-[#ff8800] text-slate-950 font-black'
-                    : 'bg-[#0a0a0a] border-white/10 text-slate-300 hover:text-[#ff8800]'
-                }`}
-                title="Open Technical Analysis Drawing Tools Side-Drawer"
-              >
-                <Pencil className="w-3.5 h-3.5" />
-              </button>
+            {/* Chart controls removed per user request */}
 
-              {/* Quick Technical Analysis Toggles (Trendline, MA, RSI, S/R) */}
-              <div className="flex items-center gap-1 bg-[#0a0a0a] rounded-lg p-0.5 border border-white/10">
-                <button
-                  type="button"
-                  data-testid="quick-tool-trendline"
-                  onClick={() =>
-                    handleSelectDrawingTool(
-                      activeDrawingTool === 'trendline' ? 'none' : 'trendline'
-                    )
-                  }
-                  className={`px-1.5 py-1 rounded text-[10px] font-bold transition-colors cursor-pointer ${
-                    activeDrawingTool === 'trendline'
-                      ? 'bg-[#ff8800] text-slate-950 font-black'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                  title="Draw Trendline on Chart"
-                >
-                  Trend
-                </button>
-                <button
-                  type="button"
-                  data-testid="quick-ind-ma"
-                  onClick={() => {
-                    soundEngine.playUiClick();
-                    setIndicators((prev) => ({
-                      ...prev,
-                      showSma: !prev.showSma,
-                      showEma: !prev.showSma,
-                    }));
-                  }}
-                  className={`px-1.5 py-1 rounded text-[10px] font-bold transition-colors cursor-pointer ${
-                    indicators.showSma || indicators.showEma
-                      ? 'bg-sky-500/20 text-sky-300 border border-sky-500/40 font-black'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                  title="Toggle Moving Averages (SMA 14 & EMA 9)"
-                >
-                  MA
-                </button>
-                <button
-                  type="button"
-                  data-testid="quick-ind-rsi"
-                  onClick={() => {
-                    soundEngine.playUiClick();
-                    setIndicators((prev) => ({ ...prev, showRsi: !prev.showRsi }));
-                  }}
-                  className={`px-1.5 py-1 rounded text-[10px] font-bold transition-colors cursor-pointer ${
-                    indicators.showRsi
-                      ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-black'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                  title="Toggle Relative Strength Index (RSI 14)"
-                >
-                  RSI
-                </button>
-                <button
-                  type="button"
-                  data-testid="quick-ind-sr"
-                  onClick={() => {
-                    soundEngine.playUiClick();
-                    setIndicators((prev) => ({
-                      ...prev,
-                      showSupportResistance: !prev.showSupportResistance,
-                    }));
-                  }}
-                  className={`px-1.5 py-1 rounded text-[10px] font-bold transition-colors cursor-pointer ${
-                    indicators.showSupportResistance
-                      ? 'bg-emerald-500/20 text-[#00e676] border border-[#00e676]/40 font-black'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                  title="Toggle Support & Resistance Levels"
-                >
-                  S/R
-                </button>
-              </div>
 
-              {/* Chart Type Selector (Desktop) */}
-              <div className="hidden md:flex bg-[#0a0a0a] rounded-lg p-0.5 border border-white/10">
-                {(['candles', 'heikin-ashi', 'line', 'bars'] as const).map((type) => (
-                  <button
-                    key={type}
-                    onClick={() => {
-                      soundEngine.playUiClick();
-                      setChartType(type);
-                    }}
-                    className={`px-2 py-1 rounded text-[10px] font-bold uppercase transition-all cursor-pointer ${
-                      chartType === type
-                        ? 'bg-[#ff8800] text-slate-950 font-black'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    {type === 'heikin-ashi' ? 'H-Ashi' : type}
-                  </button>
-                ))}
-              </div>
-
-              {/* Timeframe Selector (TradingView 1m, 5m, 15m, 1h, 1D + Fast OTC Tick Timeframes) */}
-              <div className="flex bg-[#0a0a0a] rounded-lg p-0.5 border border-white/10">
-                {(
-                  [
-                    { tf: '5s' as const, key: '1', mobileVisible: true },
-                    { tf: '15s' as const, key: '2', mobileVisible: true },
-                    { tf: '30s' as const, key: '3', mobileVisible: false },
-                    { tf: '1m' as const, key: '4', mobileVisible: true },
-                    { tf: '5m' as const, key: '5', mobileVisible: true },
-                    { tf: '15m' as const, key: '6', mobileVisible: false },
-                    { tf: '1h' as const, key: '7', mobileVisible: false },
-                    { tf: '1D' as const, key: '8', mobileVisible: false },
-                  ] as const
-                ).map((item) => (
-                  <button
-                    key={item.tf}
-                    type="button"
-                    data-testid={`timeframe-${item.tf}`}
-                    onClick={() => {
-                      soundEngine.playUiClick();
-                      setTimeframe(item.tf);
-                    }}
-                    className={`${
-                      item.mobileVisible ? 'flex' : 'hidden sm:flex'
-                    } px-1.5 md:px-2 py-1 rounded text-[10px] font-bold transition-all items-center gap-1 cursor-pointer ${
-                      timeframe === item.tf
-                        ? 'bg-[#ff8800] text-slate-950 font-black'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                    title={`Switch timeframe (${item.tf})`}
-                  >
-                    <span>{item.tf}</span>
-                  </button>
-                ))}
-              </div>
-
-              {/* Zoom Controls (Smooth Touch-Friendly Zoom In / Zoom Out) */}
-              <div className="flex items-center gap-1 pl-1 border-l border-white/10">
-                <button
-                  type="button"
-                  data-testid="chart-zoom-in-btn"
-                  onClick={() =>
-                    setZoomLevel((z) => Number(Math.min(3.5, z + 0.2).toFixed(2)))
-                  }
-                  className="p-1.5 rounded bg-[#0a0a0a] hover:bg-[#1e222d] text-slate-300 hover:text-white cursor-pointer"
-                  title="Zoom In"
-                >
-                  <ZoomIn className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  type="button"
-                  data-testid="chart-zoom-out-btn"
-                  onClick={() =>
-                    setZoomLevel((z) => Number(Math.max(0.35, z - 0.2).toFixed(2)))
-                  }
-                  className="p-1.5 rounded bg-[#0a0a0a] hover:bg-[#1e222d] text-slate-300 hover:text-white cursor-pointer"
-                  title="Zoom Out"
-                >
-                  <ZoomOut className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            </div>
-
-            {/* PRECISE INLINE TRADE WIN/LOSS RESULT BADGE ANCHORED AT EXACT CHART COORDINATE (NO FULL-SCREEN OVERLAY) */}
-            {tradeResultOverlay &&
-              (() => {
-                const canvasW = canvasRef.current?.width || canvasSize.width || 800;
-                const canvasH = canvasRef.current?.height || canvasSize.height || 440;
-                const subPaneH = (indicators.showRsi ? 60 : 0) + (indicators.showMacd ? 70 : 0);
-                const chartH = Math.max(180, canvasH - subPaneH - 25);
-
-                const maxVis = Math.max(18, Math.floor((canvasW - 75) / (11 * zoomLevel)));
-                const endIdx = Math.max(maxVis, candles.length - panOffset);
-                const startIdx = Math.max(0, endIdx - maxVis);
-                const visSlice = candles.slice(startIdx, endIdx);
-                const priceList = visSlice.map((c) => [c.high, c.low]).flat();
-                priceList.push(tradeResultOverlay.closePrice, tradeResultOverlay.strikePrice);
-                let minP = Math.min(...priceList);
-                let maxP = Math.max(...priceList);
-                const pad = (maxP - minP) * 0.14 || 0.0005;
-                minP -= pad;
-                maxP += pad;
-
-                const coordX =
-                  timestampToCanvasX(
-                    tradeResultOverlay.endTime,
-                    visSlice,
-                    TIMEFRAME_SECONDS[timeframe],
-                    canvasW
-                  ) ?? canvasW - 140;
-                const coordY = priceToCanvasY(tradeResultOverlay.closePrice, minP, maxP, chartH);
-
-                const inlineBox = computeInlineTradeResultBadgeBox({
-                  anchorX: coordX,
-                  anchorY: coordY,
-                  canvasWidth: canvasW,
-                  chartHeight: chartH,
-                  isWin: tradeResultOverlay.isWin,
-                  profitOrPnl: tradeResultOverlay.profitAmount,
-                  investment: tradeResultOverlay.investment,
-                  direction: tradeResultOverlay.direction,
-                });
-
-                return (
-                  <div
-                    data-testid="trade-result-chart-overlay"
-                    style={{
-                      left: `${inlineBox.boxX}px`,
-                      top: `${inlineBox.boxY}px`,
-                    }}
-                    className="absolute z-25 pointer-events-none select-none"
-                  >
-                    <div
-                      data-testid="inline-trade-result-badge"
-                      className={`px-2.5 py-1 rounded-md font-mono text-xs font-black flex items-center gap-1.5 border ${
-                        tradeResultOverlay.isWin
-                          ? 'bg-[#00e676] border-[#00e676] text-[#05140b]'
-                          : 'bg-[#1c1015]/95 border-[#ff334b] text-[#ff4d63]'
-                      }`}
-                    >
-                      <span
-                        className={`w-1.5 h-1.5 rounded-full ${
-                          tradeResultOverlay.isWin ? 'bg-[#05140b]' : 'bg-[#ff334b]'
-                        }`}
-                      />
-                      <span>{inlineBox.label}</span>
-                    </div>
-                  </div>
-                );
-              })()}
 
             {/* BREACH OVERLAY */}
             {isSoftBreached ? (
