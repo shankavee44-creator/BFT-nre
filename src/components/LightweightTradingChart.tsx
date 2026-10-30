@@ -44,9 +44,8 @@ import {
 import {
   resolveTradingViewSymbol,
   computeOrderLineState,
-  createTradingViewOrderLine,
-  type ITradingViewOrderLine,
 } from '../utils/tradingViewOrderLineEngine';
+import { TradeBadge } from './TradeBadge';
 
 export interface LightweightTradingChartProps {
   asset: AssetInfo;
@@ -145,8 +144,6 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = (
   const emaSeriesRef = useRef<ISeriesApi<any> | null>(null);
   const bbUpperRef = useRef<ISeriesApi<any> | null>(null);
   const bbLowerRef = useRef<ISeriesApi<any> | null>(null);
-
-  const tradeLinesRef = useRef<Map<string, ITradingViewOrderLine>>(new Map());
   const srLinesRef = useRef<IPriceLine[]>([]);
   const fibLinesRef = useRef<IPriceLine[]>([]);
   const resolvedTvSymbol = useMemo(
@@ -809,7 +806,7 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = (
             color: lvl.type === 'resistance' ? 'rgba(255, 51, 75, 0.65)' : 'rgba(0, 230, 118, 0.65)',
             lineWidth: 1,
             lineStyle: LineStyle.Dashed,
-            axisLabelVisible: true,
+            axisLabelVisible: false,
             title: lvl.type === 'resistance' ? 'RESISTANCE' : 'SUPPORT',
           });
           srLinesRef.current.push(line);
@@ -880,58 +877,6 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = (
     candles[0]?.open,
   ]);
 
-  // 6. Synchronize Interactive Chart Trade Overlays (TradingView createOrderLine Primitive)
-  useEffect(() => {
-    const series = mainSeriesRef.current;
-    if (!series) return;
-
-    const existingMap = tradeLinesRef.current;
-    const activeIds = new Set(assetActiveTrades.map((t) => t.id));
-
-    // Automatically remove order lines upon final trade settlement / expiration
-    for (const [id, orderLineObj] of existingMap.entries()) {
-      if (!activeIds.has(id)) {
-        orderLineObj.remove();
-        existingMap.delete(id);
-      }
-    }
-
-    const now = Date.now();
-    const isCompactViewport = (containerRef.current?.clientWidth || 800) < 540;
-
-    for (const trade of assetActiveTrades) {
-      const orderState = computeOrderLineState(trade, currentPrice, now, asset.pipDecimals);
-      const existingOrderLine = existingMap.get(trade.id);
-
-      if (existingOrderLine && !existingOrderLine.isRemoved()) {
-        existingOrderLine
-          .setPrice(trade.strikePrice)
-          .setDirection(trade.direction)
-          .setQuantity(orderState.formattedAmount)
-          .setTimer(orderState.formattedTimer)
-          .setLineColor(orderState.lineColor)
-          .setBodyBackgroundColor(orderState.bodyBackgroundColor)
-          .setBodyBorderColor(orderState.bodyBorderColor)
-          .setBodyTextColor(orderState.bodyTextColor)
-          .setQuantityBackgroundColor(orderState.quantityBackgroundColor)
-          .setCancellable(false)
-          .applyState(orderState, isCompactViewport);
-      } else {
-        try {
-          const newOrderLine = createTradingViewOrderLine(
-            series as any,
-            orderState,
-            isCompactViewport
-          );
-          existingMap.set(trade.id, newOrderLine);
-        } catch {
-          // ignore
-        }
-      }
-    }
-
-    computeTradeCoordinates();
-  }, [assetActiveTrades, currentPrice, chartType, asset.pipDecimals, computeTradeCoordinates]);
 
   // 7. Synchronize Hardware-Accelerated Overlay Canvas (Legacy Trade Entry/Exit Nodes + Drawings + RSI/MACD Sub-panes)
   useEffect(() => {
@@ -977,52 +922,36 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = (
           const orderState = computeOrderLineState(trade, currentPrice, now, asset.pipDecimals);
           const { y, entryX, liveX } = coords;
 
-          // Reinforced Horizontal OrderLine across the chart canvas at the exact entry price Y coordinate
+          // Short trade segment at entry price
           if (y >= 10 && y <= chartHeight) {
             ctx.save();
             ctx.strokeStyle = orderState.lineColor;
             ctx.lineWidth = 2;
             ctx.setLineDash([]);
             ctx.beginPath();
-            ctx.moveTo(0, y);
-            ctx.lineTo(width - 68, y);
-            ctx.stroke();
+            const nodeX = entryX ?? liveX ?? width - 160;
+            
+            // P/L Indicator Pill at end of segment
+            const pillWidth = 110;
+            const pillHeight = 20;
+            const pillX = nodeX + 10;
+            const pillY = y - pillHeight / 2;
+            
+            ctx.fillStyle = orderState.lineColor;
+            ctx.beginPath();
+            ctx.roundRect(pillX, pillY, pillWidth, pillHeight, 4);
+            ctx.fill();
+            
+            ctx.fillStyle = orderState.isInTheMoney ? '#04130a' : '#ffffff';
+            ctx.font = 'bold 10px JetBrains Mono, monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(`${orderState.direction} ${orderState.formattedAmount} ${orderState.formattedTimer} ${orderState.formattedPnl}`, pillX + pillWidth / 2, pillY + pillHeight / 2);
             ctx.restore();
           }
 
           // Entry vertical dashed line & glowing execution dot
           const nodeX = entryX ?? liveX ?? width - 160;
-          if (nodeX >= 10 && nodeX <= width - 70) {
-            ctx.save();
-            ctx.strokeStyle = orderState.isInTheMoney
-              ? 'rgba(0, 230, 118, 0.35)'
-              : 'rgba(255, 51, 75, 0.35)';
-            ctx.lineWidth = 1;
-            ctx.setLineDash([4, 4]);
-            ctx.beginPath();
-            ctx.moveTo(nodeX, 12);
-            ctx.lineTo(nodeX, chartHeight);
-            ctx.stroke();
-
-            // Outer glow ring at execution coordinate
-            ctx.setLineDash([]);
-            ctx.beginPath();
-            ctx.arc(nodeX, y, 8, 0, Math.PI * 2);
-            ctx.fillStyle = orderState.isInTheMoney
-              ? 'rgba(0, 230, 118, 0.25)'
-              : 'rgba(255, 51, 75, 0.25)';
-            ctx.fill();
-
-            // Inner solid entry point dot
-            ctx.beginPath();
-            ctx.arc(nodeX, y, 4, 0, Math.PI * 2);
-            ctx.fillStyle = orderState.lineColor;
-            ctx.fill();
-            ctx.lineWidth = 1.5;
-            ctx.strokeStyle = '#ffffff';
-            ctx.stroke();
-            ctx.restore();
-          }
 
           // Expiration vertical line ("End of trade") ahead of live candle
           const expX = Math.min(width - 78, (liveX ?? width - 140) + 52);
@@ -1036,9 +965,9 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = (
           ctx.stroke();
           ctx.setLineDash([]);
           ctx.fillStyle = '#ff8800';
-          ctx.font = 'bold 9px JetBrains Mono, monospace';
+          ctx.font = 'bold 8.5px JetBrains Mono, monospace';
           ctx.textAlign = 'center';
-          ctx.fillText(`EXP ${orderState.formattedTimer}`, expX, 20);
+          ctx.fillText(`End of trade ${orderState.formattedTimer}`, Math.min(width - 65, Math.max(65, expX)), 18);
           ctx.restore();
         }
       }
