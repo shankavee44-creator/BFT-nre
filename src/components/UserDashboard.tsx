@@ -83,6 +83,7 @@ interface UserDashboardProps {
   userProfile: UserProfile;
   onUpdateProfile: (updated: UserProfile) => void;
   accounts: TradingAccount[];
+  activeAccountId?: string;
   trades?: BinaryTrade[];
   referrals?: ReferralRecord[];
   payouts?: AffiliatePayout[];
@@ -101,6 +102,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   userProfile,
   onUpdateProfile,
   accounts,
+  activeAccountId,
   trades = [],
   referrals = [],
   payouts = [],
@@ -751,8 +753,10 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     exportTradesToCSV(trades, accId);
   };
 
-  // Only use real trades executed by the user (zero mock/dummy fallback data for new accounts)
-  const effectiveTrades = trades;
+  // Filter trades based on the currently selected account for history and analytics consistency
+  const effectiveTrades = activeAccountId 
+    ? trades.filter((t) => t.accountId === activeAccountId)
+    : trades;
   const wonTradesCount = effectiveTrades.filter((t) => t.status === 'won').length;
   const lostTradesCount = effectiveTrades.filter((t) => t.status === 'lost').length;
   const totalSettled = wonTradesCount + lostTradesCount;

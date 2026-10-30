@@ -7,7 +7,7 @@ import {
   normalizeWeeklyLeaderboard,
   getMondayWeeklyResetInfo,
   formatCleanLeaderboardRow,
-} from './leaderboardEngine';
+} from './leaderboardEngine.ts';
 
 test('Kasun Perera is positioned at 9th place with Sri Lankan flag and $18,995.22 profit', () => {
   const normalized = normalizeWeeklyLeaderboard(WEEKLY_LEADERBOARD_TRADERS);

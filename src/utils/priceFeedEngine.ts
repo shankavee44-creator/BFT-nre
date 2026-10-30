@@ -4,6 +4,7 @@ import {
   normalizeAssetSymbol,
   saveAssetHistoryToStorage,
   loadAssetHistoryFromStorage,
+  loadSelectedAssetSymbol,
 } from './storage';
 
 // Listener pattern to break circular dependency with supabaseMarketSync
@@ -601,51 +602,14 @@ export function stepOrganicLiveTick(
   if (!asset) return 1.085;
 
   const store = getOrCreateMasterHistory(asset);
-  const nowMs = options?.nowMs ?? Date.now();
-  const tfSeconds = options?.timeframeSeconds ?? 5;
-  const minPip = Math.pow(10, -asset.pipDecimals);
-  const catParams = getCategoryParameters(asset.category, asset.symbol);
-
-  const deterministicCandles = generateDeterministicTimeframeCandles(asset, tfSeconds, 1);
-  const currentCandle = deterministicCandles[0];
-  const closeDynamics = calculateCandleCloseDynamics(asset.symbol, tfSeconds, nowMs);
-  const effectiveVolatility = Math.max(0.00018, asset.volatility * catParams.volMultiplier);
-
-  const bucket100ms = Math.floor(nowMs / 100);
-  const tickHash = hashSymbol(`${asset.symbol}:pulse:${bucket100ms}`);
-  const u1 = Math.max(1e-7, (tickHash % 10000) / 10000);
-  const u2 = Math.max(1e-7, ((tickHash >> 5) % 10000) / 10000);
-  const shock = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
-
-  const riskAdjustment = calculateRiskManagementOffset({
-    asset,
-    currentPrice: currentCandle.close,
-    unitVol: effectiveVolatility,
-    activeTrades: options?.activeTrades,
-    nowMs,
-    tickCounter: store.tickCounter,
-  });
-
-  const progress = closeDynamics.progress;
-  const intraCandleBase = currentCandle.open + (currentCandle.close - currentCandle.open) * progress;
-  const totalVolMultiplier = closeDynamics.volatilityMultiplier * riskAdjustment.strikeTightening;
-  const pulseNoise = (shock * 0.35 + closeDynamics.microBurstImpulse) * effectiveVolatility * totalVolMultiplier;
-  
-  let livePrice = intraCandleBase + pulseNoise + riskAdjustment.priceOffset;
-  livePrice = Math.max(minPip * 10, Number(livePrice.toFixed(asset.pipDecimals)));
-
-  store.prevPrice = store.lastPrice;
-  store.lastPrice = livePrice;
-  store.tickCounter++;
-
-  appendLiveTick(asset, livePrice);
-  return livePrice;
+  // No more simulation here. Just return the last price we got from the backend.
+  return store.lastPrice;
 }
 
 /**
  * Appends live tick to all active timeframe candle series.
  */
-export function appendLiveTick(asset: AssetInfo, newPrice: number): void {
+export function appendLiveTick(asset: AssetInfo, newPrice: number, skipBroadcast = false): void {
   const store = getOrCreateMasterHistory(asset);
   const prevPrice = store.lastPrice;
   store.lastPrice = newPrice;
@@ -653,10 +617,16 @@ export function appendLiveTick(asset: AssetInfo, newPrice: number): void {
 
   store.timeframeSeries.forEach((series, tfSeconds) => {
     updateCandleArrayWithTick(series, asset, tfSeconds, newPrice, now);
-    saveAssetHistoryToStorage(asset.symbol, series, tfSeconds);
+    
+    // Performance optimization: only save history to localStorage for the active asset
+    // or throttle heavily for background assets to prevent main thread blocking
+    const activeSym = loadSelectedAssetSymbol();
+    if (asset.symbol === activeSym) {
+      saveAssetHistoryToStorage(asset.symbol, series, tfSeconds);
+    }
   });
 
-  if (broadcastListener) {
+  if (!skipBroadcast && broadcastListener) {
     broadcastListener({
       symbol: asset.symbol,
       price: newPrice,
@@ -736,7 +706,7 @@ function updateCandleArrayWithTick(
         high: Number(Math.max(bodyMax + upperWick, bodyMax).toFixed(asset.pipDecimals)),
         low: Number(Math.min(bodyMin - lowerWick, bodyMin).toFixed(asset.pipDecimals)),
         close: Number(bClose.toFixed(asset.pipDecimals)),
-        volume: b === numBucketsPassed ? 1 : Math.floor(20 + Math.random() * 40),
+        volume: b === numBucketsPassed ? 1 : Math.floor(20 + (wickHash % 40)),
       });
 
       prevClose = bClose;

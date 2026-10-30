@@ -39,6 +39,7 @@ import {
   getCountryFlag,
   db,
 } from './src/server/db.ts';
+import { BackendMarketEngine } from './src/server/marketEngine.ts';
 
 dotenv.config({ override: true });
 
@@ -64,6 +65,9 @@ const creditedBalancesByAccount = new Map<string, number>();
 
 async function startServer() {
   const app = express();
+
+  const marketEngine = new BackendMarketEngine();
+  marketEngine.start();
 
   app.use(express.json({ limit: '5mb' }));
 
@@ -1005,6 +1009,19 @@ async function startServer() {
       appType: 'spa',
     });
     app.use(vite.middlewares);
+
+    // Development SPA Fallback: Serve index.html for all non-API/non-file requests
+    app.get('*', async (req, res, next) => {
+      if (req.url.startsWith('/api/')) return next();
+      try {
+        let html = fs.readFileSync(path.resolve(__dirname, 'index.html'), 'utf-8');
+        html = await vite.transformIndexHtml(req.url, html);
+        res.status(200).set({ 'Content-Type': 'text/html' }).end(html);
+      } catch (e: any) {
+        vite.ssrFixStacktrace(e);
+        next(e);
+      }
+    });
   } else {
     app.use(
       express.static(distPath, {

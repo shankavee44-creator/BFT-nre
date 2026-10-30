@@ -288,15 +288,16 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
       // Supabase persistent insertion into withdrawals table
       try {
         const { data: { user } } = await supabase.auth.getUser();
-        const currentUserId = user?.id || userProfile?.id;
-        if (currentUserId) {
+        const candidateId = user?.id || userProfile?.id;
+        const isCandidateUuid = candidateId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(candidateId.trim());
+        if (isCandidateUuid) {
           const bankDetailsPayload =
             paymentMethod === 'bank_transfer'
               ? { bankName: bankName.trim(), accountHolder: accountHolder.trim(), accountNumber: accountNumber.trim(), swiftCode: swiftCode.trim().toUpperCase() }
               : { trc20Address: purseAddress.trim(), network, quotexMethod };
 
           await supabase.from('withdrawals').insert({
-            user_id: currentUserId,
+            user_id: candidateId.trim(),
             amount: amount,
             bank_details: bankDetailsPayload,
             status: 'pending',
@@ -1533,7 +1534,10 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#1e2330]">
-                      {trades.slice(0, 10).map((t) => (
+                      {trades
+                        .filter((t) => !account || t.accountId === account.id)
+                        .slice(0, 15)
+                        .map((t) => (
                         <tr key={t.id}>
                           <td className="py-2.5 px-3 font-bold text-white">{t.asset}</td>
                           <td

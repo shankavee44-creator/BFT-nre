@@ -35,8 +35,6 @@ import {
   saveActiveAccountId,
   loadWithdrawals,
   saveWithdrawals,
-  loadTrades,
-  saveTrades,
   clearAuthSession,
   loadOrCreateUserProfileByEmail,
 } from './utils/storage';
@@ -62,6 +60,8 @@ import {
   process3TierCommissions,
   processWithdrawalCommission,
 } from './utils/affiliateEngine';
+import { registerDynamicAssets } from './utils/storage';
+import { supabaseMarketSync } from './utils/supabaseMarketSync';
 import {
   fetchUserTrades,
   createSupabaseTrade,
@@ -136,7 +136,6 @@ export default function App() {
     setAccounts(loadedAccounts);
     setActiveAccountId(activeId);
     setWithdrawals(loadWithdrawals());
-    setTrades(loadTrades());
 
     setAffiliateUsers(loadAffiliateUsers());
     setAffiliateReferrals(loadAffiliateReferrals());
@@ -276,10 +275,17 @@ export default function App() {
       fetchUserTrades(userProfile.id).then((fetchedTrades) => {
         if (fetchedTrades.length > 0) {
           setTrades(fetchedTrades);
-          saveTrades(fetchedTrades);
         }
       });
     }
+
+    // Global OTC Asset Discovery & Sync
+    supabaseMarketSync.fetchAllOtcAssets().then((assets) => {
+      if (assets.length > 0) {
+        registerDynamicAssets(assets);
+        supabaseMarketSync.initGlobalMarketSync();
+      }
+    });
   }, [userProfile.id, userProfile.isLoggedIn]);
 
   // Real-time Trade Subscription
@@ -622,7 +628,6 @@ export default function App() {
   const handleAddTrade = (trade: BinaryTrade) => {
     setTrades((prev) => {
       const updated = [trade, ...prev];
-      saveTrades(updated);
       return updated;
     });
     broadcastSyncEvent('TRADE_ADDED', trade);
@@ -636,7 +641,6 @@ export default function App() {
   const handleUpdateTrade = (trade: BinaryTrade) => {
     setTrades((prev) => {
       const updated = prev.map((t) => (t.id === trade.id ? trade : t));
-      saveTrades(updated);
       return updated;
     });
     broadcastSyncEvent('TRADE_UPDATED', trade);
@@ -788,11 +792,36 @@ export default function App() {
       setCurrentTab('home');
       setAuthModalMode('login');
       setIsAuthModalOpen(true);
+      window.history.replaceState(null, '', '/');
       return;
     }
     setProtectedRouteNotice(null);
     setCurrentTab(tabId);
+    
+    // Synchronize URL path with state-based navigation
+    const path = tabId === 'home' ? '/' : `/${tabId}`;
+    if (window.location.pathname !== path) {
+      window.history.pushState(null, '', path);
+    }
   };
+
+  // Initial URL-to-Tab Routing Synchronization
+  useEffect(() => {
+    const path = window.location.pathname.replace(/^\//, '') || 'home';
+    const validTabs = ['home', 'terminal', 'rules', 'affiliate', 'withdrawals', 'dashboard', 'faq'];
+    if (validTabs.includes(path) && path !== currentTab) {
+      handleNavigateTab(path);
+    }
+
+    const handlePopState = () => {
+      const p = window.location.pathname.replace(/^\//, '') || 'home';
+      if (validTabs.includes(p)) {
+        setCurrentTab(p);
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [userProfile.isLoggedIn]);
 
   // Route protection guard: redirect immediately if on a protected route while unauthenticated
   useEffect(() => {
@@ -1028,6 +1057,7 @@ export default function App() {
             userProfile={userProfile}
             onUpdateProfile={handleUpdateProfile}
             accounts={userAccounts}
+            activeAccountId={activeAccountId}
             trades={trades}
             referrals={affiliateReferrals}
             payouts={affiliatePayouts}

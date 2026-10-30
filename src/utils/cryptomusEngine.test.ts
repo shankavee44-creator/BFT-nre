@@ -9,8 +9,8 @@ import {
   generateUniqueTrc20Address,
   createCryptomusInvoiceObject,
   processCryptomusWebhookPayload,
-  CryptomusWebhookPayload,
-} from './cryptomusEngine';
+} from './cryptomusEngine.ts';
+import type { CryptomusWebhookPayload } from './cryptomusEngine.ts';
 
 test('md5Hex matches Node.js native crypto.createHash("md5") across test vectors', () => {
   const vectors = [
@@ -123,7 +123,7 @@ test('processCryptomusWebhookPayload credits exact USDT amount on paid status an
 });
 
 test('createCryptomusInvoiceObject attaches Merchant ID 9b16fe05-6331-49c0-a1be-d574726df832', async () => {
-  const { CRYPTOMUS_CONFIG } = await import('../config/cryptomus');
+  const { CRYPTOMUS_CONFIG } = await import('../config/cryptomus.ts');
   assert.equal(CRYPTOMUS_CONFIG.merchantId, '9b16fe05-6331-49c0-a1be-d574726df832');
   assert.equal(CRYPTOMUS_CONFIG.domainVerificationTag, '9b16fe05');
 

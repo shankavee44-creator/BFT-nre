@@ -186,6 +186,7 @@ const STORAGE_KEYS = {
   OPEN_ASSET_TABS: 'bft_open_asset_tabs_v1',
   SELECTED_TIMEFRAME: 'bft_selected_timeframe_v1',
   CHART_TYPE: 'bft_chart_type_v1',
+  FAVORITES: 'bft_favorites_v1',
 };
 
 export function loadProfile(): UserProfile {
@@ -500,6 +501,34 @@ export function saveOpenAssetTabSymbols(symbols: string[]): void {
     safeSetItem(STORAGE_KEYS.OPEN_ASSET_TABS, JSON.stringify(normalized));
   } catch (e) {
     console.error('Failed to save open asset tabs', e);
+  }
+}
+
+export function loadFavoritesFromStorage(): string[] {
+  try {
+    const raw = safeGetItem(STORAGE_KEYS.FAVORITES);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed.map((s) => normalizeAssetSymbol(String(s)));
+      }
+    }
+  } catch {}
+  return [
+    'EUR/USD (OTC)',
+    'GBP/JPY (OTC)',
+    'BTC/USD (OTC)',
+    'XAU/USD (OTC)',
+    'TSLA (OTC)',
+  ];
+}
+
+export function saveFavoritesToStorage(favorites: string[]): void {
+  try {
+    const normalized = favorites.map((s) => normalizeAssetSymbol(s));
+    safeSetItem(STORAGE_KEYS.FAVORITES, JSON.stringify(normalized));
+  } catch (e) {
+    console.error('Failed to save favorites', e);
   }
 }
 

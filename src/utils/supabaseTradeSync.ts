@@ -1,24 +1,77 @@
-import { supabase } from './supabase';
-import { BinaryTrade, BinaryOptionDirection } from '../types';
+import { supabase } from './supabase.ts';
+import type { BinaryTrade, BinaryOptionDirection } from '../types/index.ts';
+
+/**
+ * UUID validator utility (RFC 4122 standard).
+ */
+export function isValidUuid(id?: string | null): boolean {
+  if (!id || typeof id !== 'string') return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id.trim());
+}
+
+/**
+ * Converts a non-UUID trade identifier (e.g., 'TRD-123456') into a deterministic valid UUID format,
+ * or leaves already valid UUIDs unchanged.
+ */
+export function ensureTradeUuid(tradeId: string): string {
+  if (isValidUuid(tradeId)) return tradeId.trim();
+
+  // Deterministic 32-char hex digest generator
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0; i < tradeId.length; i++) {
+    const ch = tradeId.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = ((h1 ^ (h1 >>> 16)) >>> 0);
+  h2 = ((h2 ^ (h2 >>> 13)) >>> 0);
+
+  const hex1 = (h1 >>> 0).toString(16).padStart(8, '0');
+  const hex2 = (h2 >>> 0).toString(16).padStart(8, '0');
+  const hex3 = ((h1 ^ 0xa5a5a5a5) >>> 0).toString(16).padStart(8, '0');
+  const hex4 = ((h2 ^ 0x5a5a5a5a) >>> 0).toString(16).padStart(8, '0');
+  const fullHex = (hex1 + hex2 + hex3 + hex4).slice(0, 32);
+
+  return `${fullHex.slice(0, 8)}-${fullHex.slice(8, 12)}-4${fullHex.slice(13, 16)}-a${fullHex.slice(17, 20)}-${fullHex.slice(20, 32)}`;
+}
+
+/**
+ * Resolves the effective Supabase user UUID.
+ * If the input userId is already a valid UUID, returns it.
+ * If not (e.g. backend SQLite user "usr_mvulnwy8_ej1z"), checks if there is an active
+ * Supabase Auth session with a valid UUID. If no valid UUID can be resolved, returns null.
+ */
+export async function getEffectiveSupabaseUserId(userId?: string | null): Promise<string | null> {
+  if (userId && isValidUuid(userId)) {
+    return userId.trim();
+  }
+
+  try {
+    const { data } = await supabase.auth.getUser();
+    if (data?.user?.id && isValidUuid(data.user.id)) {
+      return data.user.id;
+    }
+  } catch {
+    // Supabase auth lookup failed or unauthenticated
+  }
+
+  return null;
+}
 
 /**
  * Maps a BinaryTrade object to a Supabase user_trades row.
- * Schema based on supabase_setup.sql:
- * - id: UUID
- * - user_id: UUID
- * - symbol: TEXT
- * - trade_type: TEXT ('CALL', 'PUT', 'HIGHER', 'LOWER')
- * - amount: NUMERIC
- * - entry_price: NUMERIC
- * - exit_price: NUMERIC
- * - payout_multiplier: NUMERIC (e.g. 1.82 for 82% payout)
- * - status: TEXT ('OPEN', 'WON', 'LOST', 'TIE')
- * - created_at: TIMESTAMPTZ
- * - expires_at: TIMESTAMPTZ
  */
 function mapToSupabaseRow(trade: BinaryTrade, userId: string): any {
+  // Map tier to database enum strings
+  let accountType = 'DEMO';
+  const tier = (trade as any).accountTier || 'demo';
+  if (tier === 'personal') accountType = 'REAL';
+  else if (tier === 'one-step') accountType = 'ONE_STEP';
+  else if (tier === 'two-step') accountType = 'TWO_STEP';
+  else if (tier === 'instant') accountType = 'INSTANT';
+
   return {
-    id: trade.id,
+    id: ensureTradeUuid(trade.id),
     user_id: userId,
     symbol: trade.asset,
     trade_type: trade.direction,
@@ -29,6 +82,8 @@ function mapToSupabaseRow(trade: BinaryTrade, userId: string): any {
     status: trade.status === 'active' ? 'OPEN' : trade.status.toUpperCase(),
     created_at: new Date(trade.startTime).toISOString(),
     expires_at: new Date(trade.endTime).toISOString(),
+    account_type: accountType,
+    account_id: trade.accountId,
   };
 }
 
@@ -40,7 +95,7 @@ export function mapFromSupabaseRow(row: any): BinaryTrade {
   
   return {
     id: row.id,
-    accountId: 'BFT-LIVE-DB', // Placeholder since DB row doesn't store account_id explicitly in this schema
+    accountId: row.account_id || 'BFT-LIVE-DB', 
     asset: row.symbol,
     direction: row.trade_type as BinaryOptionDirection,
     strikePrice: Number(row.entry_price),
@@ -56,19 +111,28 @@ export function mapFromSupabaseRow(row: any): BinaryTrade {
     pnl: row.status === 'WON' 
       ? Number(row.amount) * (payoutPercentage / 100) 
       : (row.status === 'LOST' ? -Number(row.amount) : 0),
+    accountTier: row.account_type === 'REAL' ? 'personal' : row.account_type?.toLowerCase(),
   };
 }
 
 /**
  * Fetches all trades for a specific user from Supabase.
+ * Gracefully returns an empty array if the user does not have a valid Supabase UUID,
+ * avoiding PostgreSQL 22P02 invalid input syntax errors.
  */
 export async function fetchUserTrades(userId: string): Promise<BinaryTrade[]> {
   if (!userId) return [];
+  const effectiveUserId = await getEffectiveSupabaseUserId(userId);
+  if (!effectiveUserId) {
+    // Non-Supabase / local SQLite user session (e.g. 'usr_mvulnwy8_ej1z')
+    return [];
+  }
+
   try {
     const { data, error } = await supabase
       .from('user_trades')
       .select('*')
-      .eq('user_id', userId)
+      .eq('user_id', effectiveUserId)
       .order('created_at', { ascending: false });
 
     if (error) throw error;
@@ -82,16 +146,21 @@ export async function fetchUserTrades(userId: string): Promise<BinaryTrade[]> {
 }
 
 /**
- * Persists a new trade to Supabase.
+ * Persists a new trade to Supabase if the user has a valid Supabase UUID.
  */
 export async function createSupabaseTrade(trade: BinaryTrade, userId: string): Promise<void> {
   if (!userId) return;
+  const effectiveUserId = await getEffectiveSupabaseUserId(userId);
+  if (!effectiveUserId) return;
+
   try {
-    const row = mapToSupabaseRow(trade, userId);
+    const row = mapToSupabaseRow(trade, effectiveUserId);
     const { error } = await supabase.from('user_trades').insert(row);
-    if (error) throw error;
+    if (error) {
+      console.warn('Could not persist trade to Supabase:', error.message);
+    }
   } catch (err) {
-    console.error('Error creating trade in Supabase:', err);
+    console.warn('Error creating trade in Supabase:', err);
   }
 }
 
@@ -100,8 +169,11 @@ export async function createSupabaseTrade(trade: BinaryTrade, userId: string): P
  */
 export async function updateSupabaseTrade(trade: BinaryTrade, userId: string): Promise<void> {
   if (!userId) return;
+  const effectiveUserId = await getEffectiveSupabaseUserId(userId);
+  if (!effectiveUserId) return;
+
   try {
-    const row = mapToSupabaseRow(trade, userId);
+    const row = mapToSupabaseRow(trade, effectiveUserId);
     const { error } = await supabase
       .from('user_trades')
       .update({
@@ -109,33 +181,69 @@ export async function updateSupabaseTrade(trade: BinaryTrade, userId: string): P
         status: row.status,
         settled_at: new Date().toISOString()
       })
-      .eq('id', trade.id)
-      .eq('user_id', userId);
-    if (error) throw error;
+      .eq('id', row.id)
+      .eq('user_id', effectiveUserId);
+    if (error) {
+      console.warn('Could not update trade in Supabase:', error.message);
+    }
   } catch (err) {
-    console.error('Error updating trade in Supabase:', err);
+    console.warn('Error updating trade in Supabase:', err);
   }
 }
 
 /**
- * Subscribes to realtime updates for user trades.
+ * Subscribes to realtime updates for user trades if a valid Supabase UUID is available.
  */
 export function subscribeUserTrades(userId: string, callback: (payload: any) => void) {
   if (!userId) return null;
   
-  return supabase
-    .channel(`user-trades-${userId}`)
-    .on(
-      'postgres_changes',
-      {
-        event: '*',
-        schema: 'public',
-        table: 'user_trades',
-        filter: `user_id=eq.${userId}`,
-      },
-      (payload) => {
-        callback(payload);
+  if (isValidUuid(userId)) {
+    return supabase
+      .channel(`user-trades-${userId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'user_trades',
+          filter: `user_id=eq.${userId}`,
+        },
+        (payload) => {
+          callback(payload);
+        }
+      )
+      .subscribe();
+  }
+
+  // If userId is not a direct UUID (e.g. 'usr_...'), attempt asynchronous Supabase Auth resolution
+  let innerChannel: any = null;
+  getEffectiveSupabaseUserId(userId).then((effectiveId) => {
+    if (effectiveId) {
+      innerChannel = supabase
+        .channel(`user-trades-${effectiveId}`)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'user_trades',
+            filter: `user_id=eq.${effectiveId}`,
+          },
+          (payload) => callback(payload)
+        )
+        .subscribe();
+    }
+  });
+
+  return {
+    unsubscribe: () => {
+      if (innerChannel) {
+        try {
+          innerChannel.unsubscribe();
+        } catch {
+          // ignore
+        }
       }
-    )
-    .subscribe();
+    },
+  };
 }

@@ -483,10 +483,25 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 -- Optional pg_cron scheduling (if extension is available)
 -- SELECT cron.schedule('update-market-every-second', '* * * * * *', $$SELECT public.update_market_prices();$$);
 
+-- OTC ASSETS REGISTRY TABLE (Centralized 24/7 Algorithmic Market Data)
+CREATE TABLE IF NOT EXISTS public.otc_assets (
+  symbol TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  category TEXT NOT NULL,
+  current_price NUMERIC(15, 6) NOT NULL,
+  payout_rate INTEGER NOT NULL DEFAULT 92,
+  volatility NUMERIC(10, 6) DEFAULT 0.00012,
+  pip_decimals INTEGER DEFAULT 5,
+  flag TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- USER TRADES TABLE FOR OTC BINARY OPTIONS
 CREATE TABLE IF NOT EXISTS public.user_trades (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  account_id TEXT, -- Logical account identifier (e.g. BFT-91823)
+  account_type TEXT DEFAULT 'DEMO', -- 'DEMO', 'REAL', 'ONE_STEP', 'TWO_STEP', 'INSTANT'
   symbol TEXT NOT NULL,
   trade_type TEXT NOT NULL CHECK (trade_type IN ('CALL', 'PUT', 'HIGHER', 'LOWER')),
   amount NUMERIC(15, 2) NOT NULL CHECK (amount > 0),
@@ -498,6 +513,10 @@ CREATE TABLE IF NOT EXISTS public.user_trades (
   expires_at TIMESTAMPTZ NOT NULL,
   settled_at TIMESTAMPTZ
 );
+
+-- Ensure columns exist for already provisioned tables
+ALTER TABLE public.user_trades ADD COLUMN IF NOT EXISTS account_id TEXT;
+ALTER TABLE public.user_trades ADD COLUMN IF NOT EXISTS account_type TEXT DEFAULT 'DEMO';
 
 CREATE INDEX IF NOT EXISTS idx_user_trades_user_status ON public.user_trades(user_id, status);
 
@@ -570,6 +589,9 @@ ALTER TABLE public.user_trades ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Public read access to market_prices" ON public.market_prices;
 CREATE POLICY "Public read access to market_prices" ON public.market_prices FOR SELECT TO public USING (true);
+
+DROP POLICY IF EXISTS "Allow write access to market_prices" ON public.market_prices;
+CREATE POLICY "Allow write access to market_prices" ON public.market_prices FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Users can view own trades" ON public.user_trades;
 CREATE POLICY "Users can view own trades" ON public.user_trades FOR SELECT USING (auth.uid() = user_id);

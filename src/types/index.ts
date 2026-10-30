@@ -100,6 +100,7 @@ export interface BinaryTrade {
   endTime: number;
   status: 'active' | 'won' | 'lost';
   pnl?: number;
+  accountTier?: string; // e.g. 'demo', 'personal', 'one-step', 'two-step', 'instant'
 }
 
 export interface Candle {

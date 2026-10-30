@@ -1199,29 +1199,11 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       durationSeconds: durationToUse,
       endTime: Date.now() + durationToUse * 1000,
       status: 'active',
+      accountTier: activeAcc.tier,
     };
 
     onAddTrade(newTrade);
 
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      supabase.from('user_trades').insert({
-        id: newTrade.id,
-        user_id: user?.id || 'anonymous',
-        asset: assetToTrade.symbol,
-        trade_type: direction,
-        entry_price: assetLivePrice,
-        amount: stakeToUse,
-        status: 'OPEN',
-        payout_percentage: assetToTrade.payout,
-        duration_seconds: durationToUse,
-        start_time: new Date(newTrade.startTime).toISOString(),
-        end_time: new Date(newTrade.endTime).toISOString(),
-      }).then(({ error }) => {
-        if (error) {
-          // Fallback gracefully
-        }
-      });
-    });
 
     setTradeSuccess(`Trade opened with price: ${assetLivePrice.toFixed(assetToTrade.pipDecimals)} ${assetToTrade.symbol}`);
     setTimeout(() => setTradeSuccess(null), 4000);

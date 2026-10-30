@@ -1,7 +1,7 @@
 import { supabase } from './supabase';
 import { Candle, AssetInfo, AssetCategory } from '../types';
-import { normalizeAssetSymbol } from './storage';
-import { getOrCreateMasterHistory, setMarketBroadcastListener } from './priceFeedEngine';
+import { normalizeAssetSymbol, findAssetBySymbol } from './storage';
+import { getOrCreateMasterHistory, setMarketBroadcastListener, appendLiveTick } from './priceFeedEngine';
 
 
 export interface MarketTickPayload {
@@ -55,6 +55,12 @@ export class SupabaseMarketSyncEngine {
           if (response?.payload) {
             const payload = response.payload as MarketTickPayload;
             this.handleRemoteTick(payload);
+          }
+        })
+        .on('broadcast', { event: 'price_batch' }, (response) => {
+          if (response?.payload?.ticks && Array.isArray(response.payload.ticks)) {
+            const ticks = response.payload.ticks as MarketTickPayload[];
+            ticks.forEach((tick) => this.handleRemoteTick(tick));
           }
         })
         .subscribe((status) => {
@@ -206,10 +212,9 @@ export class SupabaseMarketSyncEngine {
 
     // Apply remote tick to local market store
     const canonical = normalizeAssetSymbol(payload.symbol);
-    const store = getOrCreateMasterHistory({ symbol: canonical } as AssetInfo);
-    if (store) {
-      store.prevPrice = store.lastPrice;
-      store.lastPrice = payload.price;
+    const asset = findAssetBySymbol(canonical);
+    if (asset) {
+      appendLiveTick(asset, payload.price, true);
     }
 
     // Notify local UI subscribers

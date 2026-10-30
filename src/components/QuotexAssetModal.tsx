@@ -1,7 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Search, X, Star, TrendingUp, Sparkles, Activity } from 'lucide-react';
 import { AssetInfo } from '../types';
-import { getDynamicAssets, getLivePayoutPercentage } from '../utils/storage';
+import {
+  getDynamicAssets,
+  getLivePayoutPercentage,
+  loadFavoritesFromStorage,
+  saveFavoritesToStorage,
+} from '../utils/storage';
 import { getAssetMarketState } from '../utils/priceFeedEngine';
 import { soundEngine } from '../utils/soundEffects';
 
@@ -13,12 +18,12 @@ interface QuotexAssetModalProps {
 }
 
 type ModalCategoryTab =
-  | 'Forex (OTC)'
-  | 'Crypto (OTC)'
-  | 'Commodities (OTC)'
-  | 'Stocks (OTC)'
   | 'All'
-  | 'Favorites';
+  | 'Favorites'
+  | 'Forex'
+  | 'Crypto'
+  | 'Stocks'
+  | 'Commodities';
 
 export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
   isOpen,
@@ -28,17 +33,12 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState<ModalCategoryTab>('All');
-  const [favorites, setFavorites] = useState<string[]>([
-    'EUR/USD (OTC)',
-    'GBP/JPY (OTC)',
-    'BTC/USD (OTC)',
-    'XAU/USD (OTC)',
-    'TSLA (OTC)',
-  ]);
+  const [favorites, setFavorites] = useState<string[]>(() => loadFavoritesFromStorage());
   const [payoutSeed, setPayoutSeed] = useState<number>(() => Math.floor(Date.now() / 2500));
 
   useEffect(() => {
     if (!isOpen) return;
+    setFavorites(loadFavoritesFromStorage());
     const interval = setInterval(() => {
       setPayoutSeed(Math.floor(Date.now() / 500));
     }, 500);
@@ -50,27 +50,52 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
   const toggleFavorite = (e: React.MouseEvent, symbol: string) => {
     e.stopPropagation();
     soundEngine.playUiClick();
-    if (favorites.includes(symbol)) {
-      setFavorites(favorites.filter((s) => s !== symbol));
-    } else {
-      setFavorites([...favorites, symbol]);
-    }
+    setFavorites((prev) => {
+      const next = prev.includes(symbol)
+        ? prev.filter((s) => s !== symbol)
+        : [...prev, symbol];
+      saveFavoritesToStorage(next);
+      return next;
+    });
   };
+
+  const allAssets = getDynamicAssets();
 
   const categoryTabs: { id: ModalCategoryTab; label: string; count: number }[] = [
     {
       id: 'All',
       label: 'All Markets',
-      count: getDynamicAssets().length,
+      count: allAssets.length,
     },
     {
       id: 'Favorites',
       label: '★ Watchlist',
       count: favorites.length,
     },
+    {
+      id: 'Forex',
+      label: 'Forex',
+      count: allAssets.filter(a => a.category.includes('Forex')).length,
+    },
+    {
+      id: 'Crypto',
+      label: 'Crypto',
+      count: allAssets.filter(a => a.category.includes('Crypto')).length,
+    },
+    {
+      id: 'Stocks',
+      label: 'Stocks & Indices',
+      count: allAssets.filter(a => a.category.includes('Stocks') || a.category.includes('Indices')).length,
+    },
+    {
+      id: 'Commodities',
+      label: 'Commodities',
+      count: allAssets.filter(a => a.category.includes('Commodities')).length,
+    },
   ];
 
-  const filteredAssets = getDynamicAssets().filter((asset) => {
+  const filteredAssets = allAssets.filter((asset) => {
+    // 1. Filter by Search Query
     const matchesSearch =
       asset.symbol.toLowerCase().includes(searchQuery.toLowerCase()) ||
       asset.name.toLowerCase().includes(searchQuery.toLowerCase());
@@ -79,8 +104,14 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
       return matchesSearch;
     }
 
+    // 2. Filter by Category Tab
     if (activeCategory === 'Favorites') return favorites.includes(asset.symbol);
-    return true; // Show all for 'All' or any other tab
+    if (activeCategory === 'Forex') return asset.category.includes('Forex');
+    if (activeCategory === 'Crypto') return asset.category.includes('Crypto');
+    if (activeCategory === 'Stocks') return asset.category.includes('Stocks') || asset.category.includes('Indices');
+    if (activeCategory === 'Commodities') return asset.category.includes('Commodities');
+    
+    return true; // 'All'
   });
 
   return (
