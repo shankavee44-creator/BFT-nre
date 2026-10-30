@@ -1,18 +1,37 @@
 import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
 
-const DB_DIR = path.resolve(process.cwd(), 'data');
-if (!fs.existsSync(DB_DIR)) {
-  fs.mkdirSync(DB_DIR, { recursive: true });
+function openResilientDatabase(): DatabaseSync {
+  const candidates = [
+    path.resolve(process.cwd(), 'data'),
+    path.resolve(os.tmpdir(), 'bft_data'),
+  ];
+  for (const dir of candidates) {
+    try {
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      const dbFile = path.join(dir, 'bft_platform.sqlite');
+      const instance = new DatabaseSync(dbFile);
+      try {
+        instance.exec('PRAGMA journal_mode = WAL;');
+      } catch {
+        // Fallback to default journal mode if container filesystem does not support WAL mmap
+      }
+      return instance;
+    } catch {
+      // Try next candidate
+    }
+  }
+  return new DatabaseSync(':memory:');
 }
-const DB_PATH = path.join(DB_DIR, 'bft_platform.sqlite');
 
-export const db = new DatabaseSync(DB_PATH);
+export const db = openResilientDatabase();
 
-// Enable WAL mode for high performance concurrency
+// Enable foreign keys and initialize tables
 db.exec(`
-  PRAGMA journal_mode = WAL;
   PRAGMA foreign_keys = ON;
 
   -- 1. Users Table
@@ -497,6 +516,8 @@ export function mapAccountRowToTradingAccount(row: any) {
   return {
     ...row,
     id: row.id,
+    userId: row.user_id,
+    user_id: row.user_id,
     loginId: row.id,
     passwordHash: 'bft_live_' + String(row.id).replace(/[^a-zA-Z0-9]/g, '').toLowerCase(),
     tier: row.tier,
@@ -601,6 +622,28 @@ db.exec(`
     target_type TEXT NOT NULL,
     details TEXT,
     created_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS trades (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    asset TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    strike_price REAL NOT NULL,
+    close_price REAL,
+    investment REAL NOT NULL,
+    payout_percentage REAL NOT NULL,
+    potential_payout REAL NOT NULL,
+    pnl REAL DEFAULT 0,
+    credited_amount REAL DEFAULT 0,
+    start_time INTEGER NOT NULL,
+    end_time INTEGER NOT NULL,
+    duration_seconds INTEGER NOT NULL,
+    status TEXT DEFAULT 'active',
+    account_tier TEXT,
+    created_at INTEGER NOT NULL,
+    settled_at INTEGER
   );
 `);
 
@@ -2174,4 +2217,213 @@ export function ensureAdminSeedData() {
 }
 
 ensureAdminSeedData();
+
+// ============================================================================
+// Trade Execution & Settlement Database Handlers
+// ============================================================================
+
+export function recordTradeInDb(userId: string, trade: {
+  id?: string;
+  accountId: string;
+  asset: string;
+  direction: 'CALL' | 'PUT';
+  strikePrice: number;
+  investment: number;
+  payoutPercentage: number;
+  durationSeconds: number;
+  startTime?: number;
+  endTime?: number;
+  accountTier?: string;
+}) {
+  const account = getAccountById(trade.accountId);
+  if (!account) throw new Error('Account not found.');
+  const ownerId = account.user_id || account.userId;
+  if (ownerId && ownerId !== userId) throw new Error('Unauthorized account trade.');
+
+  const cleanInvestment = Number(trade.investment);
+  if (cleanInvestment <= 0) throw new Error('Invalid trade investment amount.');
+  if (account.currentBalance < cleanInvestment) {
+    throw new Error('Insufficient account balance for trade placement.');
+  }
+
+  const now = Date.now();
+  const tradeId = trade.id || `TRD-${now.toString().slice(-6)}-${Math.floor(100 + Math.random() * 899)}`;
+  const startTime = trade.startTime || now;
+  const durationSec = Number(trade.durationSeconds) || 30;
+  const endTime = trade.endTime || (startTime + durationSec * 1000);
+  const payoutPct = Number(trade.payoutPercentage) || 92;
+  const potentialPayout = Number((cleanInvestment + (cleanInvestment * payoutPct) / 100).toFixed(2));
+
+  // Atomic transaction: Insert trade & debit balance
+  const nextBalance = Number((account.currentBalance - cleanInvestment).toFixed(2));
+
+  db.prepare(`
+    INSERT INTO trades (
+      id, user_id, account_id, asset, direction, strike_price, close_price,
+      investment, payout_percentage, potential_payout, pnl, credited_amount,
+      start_time, end_time, duration_seconds, status, account_tier, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    tradeId,
+    userId,
+    trade.accountId,
+    trade.asset,
+    trade.direction,
+    Number(trade.strikePrice),
+    Number(trade.strikePrice),
+    cleanInvestment,
+    payoutPct,
+    potentialPayout,
+    0,
+    0,
+    startTime,
+    endTime,
+    durationSec,
+    'active',
+    trade.accountTier || account.tier,
+    now
+  );
+
+  db.prepare(`
+    UPDATE accounts SET
+      current_balance = ?,
+      equity = ?,
+      updated_at = ?
+    WHERE id = ?
+  `).run(nextBalance, nextBalance, now, trade.accountId);
+
+  const savedTrade = db.prepare('SELECT * FROM trades WHERE id = ?').get(tradeId) as any;
+  const updatedAccount = getAccountById(trade.accountId);
+
+  return {
+    trade: mapTradeRow(savedTrade),
+    account: updatedAccount,
+  };
+}
+
+export function settleTradeInDb(userId: string, tradeId: string, closePrice: number, manualStatus?: string) {
+  const tradeRow = db.prepare('SELECT * FROM trades WHERE id = ? AND user_id = ?').get(tradeId, userId) as any;
+  if (!tradeRow) throw new Error('Trade not found or unauthorized.');
+  if (tradeRow.status !== 'active') {
+    // Already settled
+    const acc = getAccountById(tradeRow.account_id);
+    return { trade: mapTradeRow(tradeRow), account: acc, alreadySettled: true };
+  }
+
+  const finalPrice = Number(closePrice);
+  const strike = Number(tradeRow.strike_price);
+  const investment = Number(tradeRow.investment);
+  const payoutPct = Number(tradeRow.payout_percentage);
+
+  let status: 'won' | 'lost' | 'tie' = 'lost';
+  let pnl = -investment;
+  let creditedAmount = 0;
+
+  const diff = finalPrice - strike;
+  const isTie = manualStatus === 'tie' || Math.abs(diff) < 1e-7;
+
+  if (isTie) {
+    status = 'tie';
+    pnl = 0;
+    creditedAmount = investment; // full refund
+  } else {
+    const isWin =
+      manualStatus === 'won' ||
+      (tradeRow.direction === 'CALL' && diff > 0) ||
+      (tradeRow.direction === 'PUT' && diff < 0);
+
+    if (isWin) {
+      status = 'won';
+      pnl = Number(((investment * payoutPct) / 100).toFixed(2));
+      creditedAmount = Number((investment + pnl).toFixed(2));
+    }
+  }
+
+  const now = Date.now();
+
+  // 1. Update settled trade record in database
+  db.prepare(`
+    UPDATE trades SET
+      close_price = ?,
+      pnl = ?,
+      credited_amount = ?,
+      status = ?,
+      settled_at = ?
+    WHERE id = ?
+  `).run(finalPrice, pnl, creditedAmount, status, now, tradeId);
+
+  // 2. Fetch fresh account state and compute accurate win rate
+  const account = getAccountById(tradeRow.account_id);
+  const nextBalance = Number(((account?.currentBalance || 0) + creditedAmount).toFixed(2));
+  const nextTradesCount = (account?.tradesCount || 0) + 1;
+
+  const resolvedTrades = db.prepare(
+    "SELECT status FROM trades WHERE account_id = ? AND status IN ('won', 'lost', 'tie')"
+  ).all(tradeRow.account_id) as any[];
+
+  const wonCount = resolvedTrades.filter((s) => s.status === 'won').length;
+  const totalCount = resolvedTrades.length;
+  const nextWinRate = totalCount > 0 ? Number(((wonCount / totalCount) * 100).toFixed(1)) : 0;
+
+  db.prepare(`
+    UPDATE accounts SET
+      current_balance = ?,
+      equity = ?,
+      trades_count = ?,
+      win_rate = ?,
+      updated_at = ?
+    WHERE id = ?
+  `).run(nextBalance, nextBalance, nextTradesCount, nextWinRate, now, tradeRow.account_id);
+
+  const updatedTrade = db.prepare('SELECT * FROM trades WHERE id = ?').get(tradeId) as any;
+  const updatedAccount = getAccountById(tradeRow.account_id);
+
+  return {
+    trade: mapTradeRow(updatedTrade),
+    account: updatedAccount,
+    settlement: {
+      status,
+      pnl,
+      creditedAmount,
+      closePrice: finalPrice,
+    },
+  };
+}
+
+export function getUserTradesFromDb(userId: string, accountId?: string) {
+  const query = accountId
+    ? 'SELECT * FROM trades WHERE user_id = ? AND account_id = ? ORDER BY created_at DESC LIMIT 200'
+    : 'SELECT * FROM trades WHERE user_id = ? ORDER BY created_at DESC LIMIT 200';
+  const rows = accountId
+    ? db.prepare(query).all(userId, accountId)
+    : db.prepare(query).all(userId);
+  return (rows as any[]).map(mapTradeRow);
+}
+
+function mapTradeRow(row: any) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    accountId: row.account_id,
+    userId: row.user_id,
+    asset: row.asset,
+    direction: row.direction,
+    strikePrice: Number(row.strike_price),
+    currentPrice: Number(row.close_price || row.strike_price),
+    closePrice: row.close_price ? Number(row.close_price) : undefined,
+    investment: Number(row.investment),
+    payoutPercentage: Number(row.payout_percentage),
+    potentialPayout: Number(row.potential_payout),
+    pnl: Number(row.pnl || 0),
+    creditedAmount: Number(row.credited_amount || 0),
+    startTime: Number(row.start_time),
+    endTime: Number(row.end_time),
+    durationSeconds: Number(row.duration_seconds),
+    status: row.status,
+    accountTier: row.account_tier,
+    createdAt: Number(row.created_at),
+    settledAt: row.settled_at ? Number(row.settled_at) : undefined,
+  };
+}
+
 

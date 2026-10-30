@@ -56,6 +56,9 @@ import {
   getAdminCommissionsLedger,
   getAdminAuditLogs,
   ensureAdminSeedData,
+  recordTradeInDb,
+  settleTradeInDb,
+  getUserTradesFromDb,
   db,
 } from './src/server/db.ts';
 import { BackendMarketEngine } from './src/server/marketEngine.ts';
@@ -65,7 +68,7 @@ dotenv.config({ override: true });
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 const CRYPTOMUS_MERCHANT_ID =
   process.env.CRYPTOMUS_MERCHANT_ID &&
   process.env.CRYPTOMUS_MERCHANT_ID !== 'MY_CRYPTOMUS_MERCHANT_ID' &&
@@ -89,6 +92,10 @@ async function startServer() {
   marketEngine.start();
 
   app.use(express.json({ limit: '5mb' }));
+
+  app.get(['/api/health', '/healthz'], (_req, res) => {
+    res.status(200).json({ ok: true, status: 'healthy', timestamp: Date.now() });
+  });
 
   // Helper for cookie parsing & authentication
   const parseCookies = (req: express.Request): Record<string, string> => {
@@ -475,6 +482,144 @@ async function startServer() {
     }
   });
 
+  // ============================================================================
+  // LIVE MARKET FEEDS & SERVER-SIDE REST PROXY
+  // ============================================================================
+
+  // GET /api/market/live-prices - Authoritative server-side proxy for live Crypto & Interbank FX prices
+  app.get('/api/market/live-prices', (_req, res) => {
+    try {
+      const prices = marketEngine.getAllPrices();
+      const forexRates = marketEngine.getForexRates();
+      return res.json({
+        ok: true,
+        timestamp: Date.now(),
+        source: marketEngine.getFeedSource(),
+        prices,
+        forexRates,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || 'Failed to get live prices.' });
+    }
+  });
+
+  // GET /api/market/ticker - Fast single-symbol server-side proxy lookup
+  app.get('/api/market/ticker', (req, res) => {
+    try {
+      const symbol = String(req.query.symbol || 'BTC/USD (OTC)').trim();
+      const price = marketEngine.getPrice(symbol);
+      return res.json({
+        ok: true,
+        symbol,
+        price: price ?? null,
+        timestamp: Date.now(),
+        source: marketEngine.getFeedSource(),
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || 'Failed to get ticker price.' });
+    }
+  });
+
+  // ============================================================================
+  // TRADE EXECUTION & SETTLEMENT WITH AUTOMATIC BALANCE SYNCHRONIZATION
+  // ============================================================================
+
+  // POST /api/trades - Place trade with synchronized live strike price, immediately debiting balance
+  app.post('/api/trades', (req, res) => {
+    try {
+      const user = getAuthenticatedUser(req);
+      if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
+
+      const {
+        id,
+        accountId,
+        asset,
+        direction,
+        strikePrice,
+        investment,
+        payoutPercentage,
+        durationSeconds,
+        startTime,
+        endTime,
+        accountTier,
+      } = req.body || {};
+
+      if (!accountId || !asset || !direction || !investment) {
+        return res.status(400).json({ ok: false, error: 'Missing required trade execution parameters.' });
+      }
+
+      const serverPrice = marketEngine.getPrice(asset);
+      const executionPrice = Number(strikePrice) || serverPrice || 1.0;
+
+      const result = recordTradeInDb(user.id, {
+        id: id ? String(id) : undefined,
+        accountId: String(accountId),
+        asset: String(asset),
+        direction: direction === 'CALL' ? 'CALL' : 'PUT',
+        strikePrice: executionPrice,
+        investment: Number(investment),
+        payoutPercentage: Number(payoutPercentage) || 92,
+        durationSeconds: Number(durationSeconds) || 30,
+        startTime: startTime ? Number(startTime) : undefined,
+        endTime: endTime ? Number(endTime) : undefined,
+        accountTier: accountTier ? String(accountTier) : undefined,
+      });
+
+      return res.json({
+        ok: true,
+        trade: result.trade,
+        account: result.account,
+        message: 'Trade placed successfully. Balance updated in database.',
+      });
+    } catch (err: any) {
+      return res.status(400).json({ ok: false, error: err?.message || 'Failed to place trade.' });
+    }
+  });
+
+  // POST /api/trades/settle - Settle expired trade against synchronized market close price & auto-credit balance
+  app.post('/api/trades/settle', (req, res) => {
+    try {
+      const user = getAuthenticatedUser(req);
+      if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
+
+      const tradeId = String(req.body?.tradeId || req.body?.id || '').trim();
+      const clientClosePrice = req.body?.closePrice !== undefined ? Number(req.body.closePrice) : undefined;
+      const statusOverride = req.body?.status as string | undefined;
+
+      if (!tradeId) {
+        return res.status(400).json({ ok: false, error: 'Trade ID is required for settlement.' });
+      }
+
+      const result = settleTradeInDb(
+        user.id,
+        tradeId,
+        clientClosePrice ?? 1.0,
+        statusOverride
+      );
+
+      return res.json({
+        ok: true,
+        ...result,
+      });
+    } catch (err: any) {
+      return res.status(400).json({ ok: false, error: err?.message || 'Failed to settle trade.' });
+    }
+  });
+
+  // GET /api/trades - Fetch user's persistent trade history
+  app.get('/api/trades', (req, res) => {
+    try {
+      const user = getAuthenticatedUser(req);
+      if (!user) return res.json({ ok: true, trades: [] });
+
+      const accountId = req.query.accountId ? String(req.query.accountId).trim() : undefined;
+      const trades = getUserTradesFromDb(user.id, accountId);
+      return res.json({ ok: true, trades });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || 'Failed to fetch trades.' });
+    }
+  });
+
   // POST /api/accounts/pass-challenge - Complete challenge phase, issue certificate & provision Live Funded Account
   app.post('/api/accounts/pass-challenge', (req, res) => {
     try {
@@ -642,7 +787,7 @@ async function startServer() {
   // GET /api/withdrawals - List withdrawal ledger for user
   app.get('/api/withdrawals', (req, res) => {
     const user = getAuthenticatedUser(req);
-    if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
+    if (!user) return res.json({ ok: true, withdrawals: [] });
 
     const withdrawals = db.prepare('SELECT * FROM withdrawals WHERE user_id = ? ORDER BY requested_at DESC').all(user.id);
     return res.json({ ok: true, withdrawals });
@@ -1395,6 +1540,7 @@ async function startServer() {
 
   process.on('SIGTERM', () => {
     console.log('SIGTERM received, closing HTTP server gracefully...');
+    marketEngine.stop();
     server.close(() => {
       console.log('HTTP server closed.');
       process.exit(0);

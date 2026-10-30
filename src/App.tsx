@@ -86,16 +86,37 @@ import {
   apiDepositPersonalAccount,
   apiUpdateAccountState,
   apiGetWithdrawals,
+  apiPlaceTrade,
+  apiSettleTrade,
+  apiGetUserTrades,
 } from './utils/apiClient';
 import { resolveOrBuildUserProfile } from './utils/authOtpLogic';
 import { broadcastSyncEvent, subscribeToSyncEvents } from './utils/crossTabSync';
 import { Gift, X, UserPlus, ShieldAlert, LogIn } from 'lucide-react';
 
 export default function App() {
-  const [currentTab, setCurrentTab] = useState<string>('home');
+  const isAutostart =
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('autostart') === '1';
+
+  const [currentTab, setCurrentTab] = useState<string>(isAutostart ? 'terminal' : 'home');
   const [accounts, setAccounts] = useState<TradingAccount[]>([]);
   const [activeAccountId, setActiveAccountId] = useState<string>('');
-  const [userProfile, setUserProfile] = useState<UserProfile>(loadProfile());
+  const [userProfile, setUserProfile] = useState<UserProfile>(() => {
+    const p = loadProfile();
+    if (isAutostart && !p.isLoggedIn) {
+      const autoProfile: UserProfile = {
+        ...p,
+        id: p.id || 'usr_bft_001',
+        email: p.email || 'trader@binaryfunded.com',
+        fullName: p.fullName || 'Pro Funded Trader',
+        isLoggedIn: true,
+      };
+      saveProfile(autoProfile);
+      return autoProfile;
+    }
+    return p;
+  });
   const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>([]);
   const [trades, setTrades] = useState<BinaryTrade[]>([]);
   const [protectedRouteNotice, setProtectedRouteNotice] = useState<string | null>(null);
@@ -147,6 +168,9 @@ export default function App() {
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('admin') === '1' || window.location.pathname === '/admin') {
       setIsAdminDashboardOpen(true);
+    }
+    if (urlParams.get('autostart') === '1') {
+      setCurrentTab('terminal');
     }
 
     // Check live database session on backend
@@ -231,7 +255,8 @@ export default function App() {
           }));
           setAccounts(mappedAccounts);
           saveAccounts(mappedAccounts);
-          const nextActiveId = mappedAccounts[0]?.id || '';
+          const fundedAcc = mappedAccounts.find((a: TradingAccount) => a.currentBalance > 0);
+          const nextActiveId = fundedAcc?.id || 'BFT-DEMO-001';
           setActiveAccountId(nextActiveId);
           saveActiveAccountId(nextActiveId);
         }
@@ -278,12 +303,24 @@ export default function App() {
       setActiveReferralNotification(refCode);
     }
 
-    // Initial fetch of trades from Supabase if logged in
+    // Initial fetch of trades from SQLite backend (with Supabase fallback) if logged in
     if (userProfile.id && userProfile.isLoggedIn) {
-      fetchUserTrades(userProfile.id).then((fetchedTrades) => {
-        if (fetchedTrades.length > 0) {
-          setTrades(fetchedTrades);
+      apiGetUserTrades().then((tRes) => {
+        if (tRes && tRes.ok && Array.isArray(tRes.trades) && tRes.trades.length > 0) {
+          setTrades(tRes.trades);
+        } else {
+          fetchUserTrades(userProfile.id).then((fetchedTrades) => {
+            if (fetchedTrades.length > 0) {
+              setTrades(fetchedTrades);
+            }
+          });
         }
+      }).catch(() => {
+        fetchUserTrades(userProfile.id).then((fetchedTrades) => {
+          if (fetchedTrades.length > 0) {
+            setTrades(fetchedTrades);
+          }
+        });
       });
     }
 
@@ -640,8 +677,22 @@ export default function App() {
     });
     broadcastSyncEvent('TRADE_ADDED', trade);
 
-    // Persist to Supabase
-    if (userProfile.id && userProfile.isLoggedIn) {
+    // Persist to SQLite backend & Supabase (for non-demo accounts)
+    const isDemoTrade = trade.accountId === 'BFT-DEMO-001' || trade.accountTier === 'demo';
+    if (userProfile.id && userProfile.isLoggedIn && !isDemoTrade) {
+      apiPlaceTrade({
+        id: trade.id,
+        accountId: trade.accountId,
+        asset: trade.asset,
+        direction: trade.direction,
+        strikePrice: trade.strikePrice,
+        investment: trade.investment,
+        payoutPercentage: trade.payoutPercentage,
+        durationSeconds: trade.durationSeconds,
+        startTime: trade.startTime,
+        endTime: trade.endTime,
+        accountTier: trade.accountTier,
+      }).catch(() => {});
       createSupabaseTrade(trade, userProfile.id);
     }
   };
@@ -653,8 +704,16 @@ export default function App() {
     });
     broadcastSyncEvent('TRADE_UPDATED', trade);
 
-    // Update in Supabase
-    if (userProfile.id && userProfile.isLoggedIn) {
+    // Update in SQLite backend & Supabase (for non-demo accounts)
+    const isDemoTrade = trade.accountId === 'BFT-DEMO-001' || trade.accountTier === 'demo';
+    if (userProfile.id && userProfile.isLoggedIn && !isDemoTrade) {
+      if (trade.status !== 'active') {
+        apiSettleTrade({
+          tradeId: trade.id,
+          closePrice: trade.closePrice ?? trade.currentPrice,
+          status: trade.status,
+        }).catch(() => {});
+      }
       updateSupabaseTrade(trade, userProfile.id);
     }
   };
@@ -815,7 +874,9 @@ export default function App() {
 
   // Initial URL-to-Tab Routing Synchronization
   useEffect(() => {
-    const path = window.location.pathname.replace(/^\//, '') || 'home';
+    const urlParams = new URLSearchParams(window.location.search);
+    const rawPath = window.location.pathname.replace(/^\//, '');
+    const path = urlParams.get('autostart') === '1' ? 'terminal' : (rawPath || 'home');
     const validTabs = ['home', 'terminal', 'rules', 'affiliate', 'withdrawals', 'dashboard', 'faq'];
     if (validTabs.includes(path) && path !== currentTab) {
       handleNavigateTab(path);
@@ -899,8 +960,18 @@ export default function App() {
     return list;
   }, [baseOwnedAccounts, userProfile.isLoggedIn, userProfile.id, userProfile.email]);
 
+  const matchedById = userAccounts.find((acc) => acc.id === activeAccountId);
   const activeAccount =
-    userAccounts.find((acc) => acc.id === activeAccountId) || userAccounts[0] || undefined;
+    (matchedById && matchedById.currentBalance > 0 ? matchedById : undefined) ||
+    userAccounts.find((acc) => acc.currentBalance > 0) ||
+    matchedById ||
+    userAccounts[0] ||
+    undefined;
+
+  const activeTerminalTrades = React.useMemo(
+    () => (activeAccount ? trades.filter((t) => t.accountId === activeAccount.id) : []),
+    [trades, activeAccount?.id]
+  );
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-slate-100 flex flex-col selection:bg-[#ff8800] selection:text-slate-950 w-full max-w-[100vw] overflow-x-hidden relative">
@@ -1024,7 +1095,7 @@ export default function App() {
             accounts={userAccounts}
             onSelectAccount={handleSelectAccount}
             onUpdateAccount={handleUpdateSingleAccount}
-            trades={activeAccount ? trades.filter((t) => t.accountId === activeAccount.id) : []}
+            trades={activeTerminalTrades}
             onAddTrade={handleAddTrade}
             onUpdateTrade={handleUpdateTrade}
             onOpenWithdrawalModal={() => setIsWithdrawalModalOpen(true)}

@@ -147,9 +147,22 @@ import { QuotexLeaderboardModal } from './QuotexLeaderboardModal';
 import { QuotexMobileDock } from './QuotexMobileDock';
 import { QuotexMobileNav } from './QuotexMobileNav';
 import { PriceAlertModal, PriceAlert } from './PriceAlertModal';
+import { LightweightTradingChart } from './LightweightTradingChart';
 import { soundEngine } from '../utils/soundEffects';
 import { supabaseMarketSync } from '../utils/supabaseMarketSync';
 import { supabase } from '../utils/supabase';
+import { appendLiveTick } from '../utils/priceFeedEngine';
+import {
+  liveMarketFeed,
+  LiveFeedStatus,
+  calculateTradeSettlement,
+  computeAccountWinRate,
+} from '../utils/liveMarketFeed';
+import {
+  apiPlaceTrade,
+  apiSettleTrade,
+  apiUpdateAccountState,
+} from '../utils/apiClient';
 
 import {
   calculateCandleCountdown,
@@ -255,13 +268,19 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   userProfile,
   onPassChallengePhase,
 }) => {
-  const [isLoadingAssets, setIsLoadingAssets] = useState(true);
+  const [isLoadingAssets, setIsLoadingAssets] = useState(false);
   // Quotex Open OTC Asset Tabs across Forex, Crypto, Commodities & Stocks
   const [openTabs, setOpenTabs] = useState<AssetInfo[]>(() => {
     const savedSymbols = loadOpenAssetTabSymbols();
     const resolved = savedSymbols.map((s) => findAssetBySymbol(s)).filter(Boolean) as AssetInfo[];
     if (resolved.length > 0) return resolved;
-    return [];
+    return [
+      findAssetBySymbol('EUR/USD (OTC)'),
+      findAssetBySymbol('GBP/JPY (OTC)'),
+      findAssetBySymbol('BTC/USDT (OTC)'),
+      findAssetBySymbol('XAU/USD (OTC)'),
+      findAssetBySymbol('AAPL (OTC)'),
+    ];
   });
   const [selectedAsset, setSelectedAsset] = useState<AssetInfo>(() => {
     const savedSym = loadSelectedAssetSymbol();
@@ -455,6 +474,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   const [tradeResultOverlay, setTradeResultOverlay] = useState<{
     id: string;
     isWin: boolean;
+    isTie?: boolean;
     profitAmount: number;
     investment: number;
     asset: string;
@@ -466,6 +486,9 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     endTime: number;
   } | null>(null);
 
+  // Live Market Feed Status State (Binance WebSocket & Interbank FX)
+  const [feedStatus, setFeedStatus] = useState<LiveFeedStatus>(liveMarketFeed.getStatus());
+
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // Interactive Chart Trade History Overlay State (Disabled by default; no hardcoded history dots clutter)
@@ -475,11 +498,12 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   const tradeMarkersRef = useRef<TradeChartMarkerPoint[]>([]);
 
   // Active and real closed trades for this account (zero fake seeded trades)
-  const activeTrades = trades.filter((t) => t.status === 'active');
-  const userClosedTrades = trades.filter((t) => t.status === 'won' || t.status === 'lost');
+  const activeTrades = React.useMemo(() => trades.filter((t) => t.status === 'active'), [trades]);
   const closedTrades = React.useMemo(() => {
-    return [...userClosedTrades].sort((a, b) => b.endTime - a.endTime);
-  }, [userClosedTrades]);
+    return trades
+      .filter((t) => t.status === 'won' || t.status === 'lost' || t.status === 'tie')
+      .sort((a, b) => b.endTime - a.endTime);
+  }, [trades]);
 
   const activeInspectedMarker = hoveredTradeMarker || selectedTradeMarker;
   const effectiveInvestment =
@@ -666,9 +690,35 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     saveChartType(chartType);
   }, [chartType]);
 
-  // 1a-2. Supabase Realtime Market Price Sync Subscription & Initial Snapshot Restoration
+  // 1a-2. Live External Market REST Feed Subscription (Binance REST + Interbank FX + Authoritative Backend)
   useEffect(() => {
-    // 1. Subscribe to real-time market broadcast ticks from Supabase
+    liveMarketFeed.setActiveSymbol(selectedAsset.symbol);
+    const unsubStatus = liveMarketFeed.addStatusListener((status) => {
+      setFeedStatus(status);
+    });
+
+    const unsubLiveTicks = liveMarketFeed.addTickListener((tick) => {
+      const matchedAsset = findAssetBySymbol(tick.symbol);
+      if (matchedAsset) {
+        appendLiveTick(matchedAsset, tick.price, true);
+      }
+      if (normalizeAssetSymbol(tick.symbol) === normalizeAssetSymbol(selectedAsset.symbol)) {
+        setCurrentPrice(tick.price);
+        targetPriceRef.current = tick.price;
+
+        const sec = TIMEFRAME_SECONDS[timeframe];
+        const liveCandlesSeries = aggregateCandlesForTimeframe(selectedAsset, sec);
+        setCandles(liveCandlesSeries);
+
+        const symbolOffsetSec = Math.floor(getAssetTimeOffsetMs(selectedAsset.symbol, sec) / 1000);
+        const nextCountdown = calculateCandleCountdown(Date.now(), sec, symbolOffsetSec);
+        setCandleCountdown((prev) =>
+          prev.remainingSeconds === nextCountdown.remainingSeconds ? prev : nextCountdown
+        );
+      }
+    });
+
+    // Subscribe to synchronized market broadcast ticks from backend REST sync
     const unsubscribe = supabaseMarketSync.subscribeTicks((payload) => {
       if (normalizeAssetSymbol(payload.symbol) === normalizeAssetSymbol(selectedAsset.symbol)) {
         setCurrentPrice(payload.price);
@@ -686,7 +736,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       }
     });
 
-    // 2. Fetch latest snapshot from Supabase on mount / asset pair switch for instant state recovery
+    // Fetch latest snapshot on mount / asset pair switch for instant state recovery
     supabaseMarketSync.fetchMarketSnapshot(selectedAsset.symbol).then((snapshot) => {
       if (snapshot && snapshot.lastPrice) {
         const store = getOrCreateMasterHistory(selectedAsset);
@@ -702,6 +752,8 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     });
 
     return () => {
+      unsubStatus();
+      unsubLiveTicks();
       unsubscribe();
     };
   }, [selectedAsset, timeframe]);
@@ -932,22 +984,26 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
       tradesList.forEach((trade) => {
         if (now >= trade.endTime) {
+          const livePriceFromFeed = liveMarketFeed.getLatestPrice(trade.asset);
           const tradeMarket = getAssetMarketState(trade.asset);
           const finalPrice = trade.asset === selectedAsset.symbol
             ? currentPriceVal
-            : (tradeMarket?.lastPrice ?? trade.strikePrice);
+            : (livePriceFromFeed ?? tradeMarket?.lastPrice ?? trade.strikePrice);
 
-          const isWin =
-            (trade.direction === 'CALL' && finalPrice > trade.strikePrice) ||
-            (trade.direction === 'PUT' && finalPrice < trade.strikePrice);
+          const settlement = calculateTradeSettlement({
+            direction: trade.direction,
+            strikePrice: trade.strikePrice,
+            closePrice: finalPrice,
+            investment: trade.investment,
+            payoutPercentage: trade.payoutPercentage,
+          });
 
-          const profitReturn = isWin ? (trade.investment * trade.payoutPercentage) / 100 : -trade.investment;
-          const creditedAmount = isWin ? trade.investment + profitReturn : 0;
-
-          if (isWin) {
+          if (settlement.status === 'won') {
             soundEngine.playTradeWin();
-          } else {
+          } else if (settlement.status === 'lost') {
             soundEngine.playTradeLoss();
+          } else {
+            soundEngine.playUiClick();
           }
 
           // Trigger inline floating badge anchored directly at trade entry/expiration coordinate on the chart
@@ -955,8 +1011,9 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
           if (trade.asset === selectedAsset.symbol) {
             setTradeResultOverlay({
               id: trade.id,
-              isWin,
-              profitAmount: isWin ? Number(profitReturn.toFixed(2)) : -trade.investment,
+              isWin: settlement.status === 'won',
+              isTie: settlement.status === 'tie',
+              profitAmount: settlement.pnl,
               investment: trade.investment,
               asset: trade.asset,
               direction: trade.direction,
@@ -973,32 +1030,42 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
           const updatedTrade: BinaryTrade = {
             ...trade,
-            status: isWin ? 'won' : 'lost',
+            status: settlement.status,
             closePrice: finalPrice,
-            pnl: isWin ? profitReturn : -trade.investment,
+            pnl: settlement.pnl,
           };
           onUpdateTrade(updatedTrade);
 
-          supabase.rpc('settle_otc_trade', {
-            p_trade_id: trade.id,
-            p_final_price: finalPrice,
-          }).then(({ error }) => {
-            if (error) {
-              // Fallback gracefully
-            }
-          });
+          // Settle in persistent SQLite backend
+          apiSettleTrade({
+            tradeId: trade.id,
+            closePrice: finalPrice,
+            status: settlement.status,
+          }).catch(() => {});
 
-          const newBalance = Number((curAccount.currentBalance + creditedAmount).toFixed(2));
+          const newBalance = Number((curAccount.currentBalance + settlement.creditedAmount).toFixed(2));
+          const allTradesList = [...trades.filter((t) => t.id !== trade.id), updatedTrade];
+          const newWinRate = computeAccountWinRate(allTradesList);
+
           const updatedAccount: TradingAccount = {
             ...curAccount,
             currentBalance: newBalance,
             tradesCount: curAccount.tradesCount + 1,
+            winRate: newWinRate,
             equity: newBalance,
           };
+
           if (account) {
             onUpdateAccount(updatedAccount);
+            apiUpdateAccountState(curAccount.id, {
+              currentBalance: newBalance,
+              equity: newBalance,
+              tradesCount: updatedAccount.tradesCount,
+              winRate: newWinRate,
+            }).catch(() => {});
+
             // Check if a One-Step or Two-Step Challenge account just hit its profit target!
-            if (isWin && !isLiveFundedAccount(updatedAccount)) {
+            if (settlement.status === 'won' && !isLiveFundedAccount(updatedAccount)) {
               const targetStatus = getChallengeProfitTarget(updatedAccount);
               if (targetStatus.isTargetMet) {
                 setTimeout(() => {
@@ -1011,10 +1078,10 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
           }
         }
       });
-    }, 300);
+    }, 250);
 
     return () => clearInterval(timer);
-  }, [account, onUpdateTrade, onUpdateAccount, onPassChallengePhase]);
+  }, [account, onUpdateTrade, onUpdateAccount, onPassChallengePhase, trades, selectedAsset.symbol]);
 
   // Asset Tab Switching with Persistent Cross-View Synchronization
   const handleSelectTabAsset = (asset: AssetInfo) => {
@@ -1174,16 +1241,21 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     };
     if (account) {
       onUpdateAccount(deductedAcc);
+      apiUpdateAccountState(activeAcc.id, {
+        currentBalance: newBalance,
+        equity: newBalance,
+      }).catch(() => {});
     } else {
       setDemoPracticeAccount(deductedAcc);
     }
 
-    // Accurately determine trade strike price from the traded asset's isolated market state
+    // Accurately determine trade strike price from synchronized live feed or isolated market state
     const tradeMarket = getAssetMarketState(assetToTrade.symbol);
+    const liveFeedPrice = liveMarketFeed.getLatestPrice(assetToTrade.symbol);
     const assetLivePrice =
       assetToTrade.symbol === selectedAsset.symbol
         ? currentPrice
-        : (tradeMarket?.lastPrice ?? assetToTrade.basePrice);
+        : (liveFeedPrice ?? tradeMarket?.lastPrice ?? assetToTrade.basePrice);
 
     const newTrade: BinaryTrade = {
       id: `TRD-${Date.now().toString().slice(-6)}`,
@@ -1203,6 +1275,22 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     };
 
     onAddTrade(newTrade);
+
+    if (account) {
+      apiPlaceTrade({
+        id: newTrade.id,
+        accountId: activeAcc.id,
+        asset: newTrade.asset,
+        direction: newTrade.direction,
+        strikePrice: newTrade.strikePrice,
+        investment: newTrade.investment,
+        payoutPercentage: newTrade.payoutPercentage,
+        durationSeconds: newTrade.durationSeconds,
+        startTime: newTrade.startTime,
+        endTime: newTrade.endTime,
+        accountTier: newTrade.accountTier,
+      }).catch(() => {});
+    }
 
 
     setTradeSuccess(`Trade opened with price: ${assetLivePrice.toFixed(assetToTrade.pipDecimals)} ${assetToTrade.symbol}`);
@@ -3267,6 +3355,29 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               <Plus className="w-3.5 h-3.5" />
               <span>Add Asset</span>
             </button>
+
+            {/* Real-Time Live Synchronized 268+ Market Feed Badge */}
+            <div
+              data-testid="live-market-feed-badge"
+              className="ml-auto hidden sm:flex items-center gap-2 px-2.5 py-1 rounded-xl bg-[#141824] border border-[#2a2e39] shrink-0 text-xs font-mono select-none"
+              title={`Synchronized REST Market Engine • ${feedStatus.activePairsCount} Active Assets • Real-Time Latency: ${feedStatus.latencyMs}ms`}
+            >
+              <div className="flex items-center gap-1.5">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#00e676] opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-[#00e676]" />
+                </span>
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-200">
+                  {feedStatus.activePairsCount}+ Markets Sync
+                </span>
+              </div>
+              <span className="text-slate-600">|</span>
+              <span className="text-[10px] font-bold text-slate-400">1s Tick Engine</span>
+              <span className="text-slate-600">|</span>
+              <span className="text-[10px] font-black font-mono text-[#00e676]">
+                {feedStatus.latencyMs}ms
+              </span>
+            </div>
           </div>
 
           {/* Active Price Alert Floating Toast Notification */}
@@ -3897,32 +4008,22 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             );
           })()}
 
-          {/* Canvas Chart Area with Wheel Zoom, Drag-to-Pan and Technical Drawings */}
+          {/* Official TradingView Lightweight Charts Area with Live Trade Overlays */}
           <div
             ref={chartContainerRef}
             data-testid="otc-chart-container"
-            className={`flex-1 relative w-full h-full min-h-0 touch-none select-none overflow-hidden cursor-${
-              activeDrawingTool !== 'none'
-                ? 'crosshair'
-                : hoveredDrawingId || hoveredTradeMarker
-                ? 'pointer'
-                : isInteracting
-                ? 'grabbing'
-                : 'grab'
-            }`}
-            onWheel={handleWheel}
-            onMouseDown={handleMouseDown}
-            onMouseMove={handleMouseMove}
-            onMouseUp={handleMouseUp}
-            onMouseLeave={handleMouseLeave}
-            onTouchStart={handleTouchStart}
-            onTouchMove={handleTouchMove}
-            onTouchEnd={handleTouchEnd}
+            className="flex-1 relative w-full h-full min-h-0 select-none overflow-hidden"
           >
-            <canvas
-              ref={canvasRef}
-              data-testid="otc-candlestick-canvas"
-              className="w-full h-full block"
+            <LightweightTradingChart
+              asset={selectedAsset}
+              candles={candles}
+              currentPrice={currentPrice}
+              timeframe={timeframe}
+              chartType={chartType}
+              activeTrades={activeTrades}
+              indicators={indicators}
+              zoomLevel={zoomLevel}
+              onHoverCandle={setHoveredCandle}
             />
             {/* Quotex-style sleek floating notification pill when trade is opened */}
             {tradeSuccess && (

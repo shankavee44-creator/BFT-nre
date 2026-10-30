@@ -1,6 +1,7 @@
-import { TradingAccount, UserProfile, WithdrawalRequest, BinaryTrade, AssetInfo, Candle } from '../types';
+import type { TradingAccount, UserProfile, WithdrawalRequest, BinaryTrade, AssetInfo, Candle } from '../types/index.ts';
+import { OTC_ASSETS_CATALOG } from './otcAssetsCatalog.ts';
 
-export const DEFAULT_ASSETS: AssetInfo[] = [];
+export const DEFAULT_ASSETS: AssetInfo[] = OTC_ASSETS_CATALOG;
 
 /**
  * Computes a realistic live fluctuating payout percentage around the asset's base payout (79% - 97%).
@@ -56,11 +57,20 @@ export const SUPPORTED_COUNTRIES: Array<{ name: string; code: string; flag: stri
  */
 const SYMBOL_ALIASES: Record<string, string> = {
   'gold': 'XAU/USD (OTC)',
+  'xau/usd': 'XAU/USD (OTC)',
   'silver': 'XAG/USD (OTC)',
-  'oil': 'US Oil (OTC)',
-  'crude': 'US Oil (OTC)',
-  'brent': 'Brent Oil (OTC)',
-  'gas': 'Natural Gas (OTC)',
+  'xag/usd': 'XAG/USD (OTC)',
+  'oil': 'WTI/USD (OTC)',
+  'crude': 'CRUDE OIL (OTC)',
+  'crude oil': 'CRUDE OIL (OTC)',
+  'us oil': 'WTI/USD (OTC)',
+  'us oil (otc)': 'WTI/USD (OTC)',
+  'brent': 'BRENT/USD (OTC)',
+  'brent oil': 'BRENT/USD (OTC)',
+  'brent oil (otc)': 'BRENT/USD (OTC)',
+  'gas': 'NGAS/USD (OTC)',
+  'natural gas': 'NGAS/USD (OTC)',
+  'natural gas (otc)': 'NGAS/USD (OTC)',
   'nasdaq': 'NAS100 (OTC)',
   'ndx': 'NAS100 (OTC)',
   'spx': 'SPX500 (OTC)',
@@ -69,8 +79,11 @@ const SYMBOL_ALIASES: Record<string, string> = {
   'dow': 'US30 (OTC)',
   'dji': 'US30 (OTC)',
   'btc': 'BTC/USD (OTC)',
+  'btc/usdt': 'BTC/USDT (OTC)',
   'eth': 'ETH/USD (OTC)',
+  'eth/usdt': 'ETH/USDT (OTC)',
   'sol': 'SOL/USD (OTC)',
+  'sol/usdt': 'SOL/USDT (OTC)',
   'eurusd': 'EUR/USD (OTC)',
   'gbpjpy': 'GBP/JPY (OTC)',
   'gbpusd': 'GBP/USD (OTC)',
@@ -87,7 +100,7 @@ export function normalizeAssetSymbol(symbol: string): string {
   const cleaned = symbol.trim();
   const lower = cleaned.toLowerCase();
 
-  const allAssets = [...dynamicAssetsRegistry, ...DEFAULT_ASSETS];
+  const allAssets = dynamicAssetsRegistry.length > 0 ? dynamicAssetsRegistry : DEFAULT_ASSETS;
 
   // 1. Direct alias match
   if (SYMBOL_ALIASES[lower]) {
@@ -104,6 +117,9 @@ export function normalizeAssetSymbol(symbol: string): string {
 
   // 4. Strip OTC suffix comparison
   const withoutOtc = lower.replace(/\s*\(otc\)/gi, '').trim();
+  if (SYMBOL_ALIASES[withoutOtc]) {
+    return SYMBOL_ALIASES[withoutOtc];
+  }
   const strippedMatch = allAssets.find(
     (a) => a.symbol.toLowerCase().replace(/\s*\(otc\)/gi, '').trim() === withoutOtc
   );
@@ -113,20 +129,33 @@ export function normalizeAssetSymbol(symbol: string): string {
   return cleaned.includes('(OTC)') ? cleaned : `${cleaned} (OTC)`;
 }
 
-let dynamicAssetsRegistry: AssetInfo[] = [];
+let dynamicAssetsRegistry: AssetInfo[] = [...OTC_ASSETS_CATALOG];
 
 /**
- * Registers externally fetched assets (e.g. from Supabase) into the local lookup registry.
+ * Registers externally fetched assets into the local lookup registry while preserving the 260+ catalog.
  */
 export function registerDynamicAssets(assets: AssetInfo[]): void {
-  dynamicAssetsRegistry = assets;
+  if (!assets || assets.length === 0) {
+    dynamicAssetsRegistry = [...OTC_ASSETS_CATALOG];
+    return;
+  }
+  const bySymbol = new Map<string, AssetInfo>();
+  for (const catAsset of OTC_ASSETS_CATALOG) {
+    bySymbol.set(catAsset.symbol, catAsset);
+  }
+  for (const extAsset of assets) {
+    if (extAsset && extAsset.symbol) {
+      bySymbol.set(extAsset.symbol, extAsset);
+    }
+  }
+  dynamicAssetsRegistry = Array.from(bySymbol.values());
 }
 
 /**
- * Returns all currently registered dynamic assets.
+ * Returns all currently registered dynamic assets (268+ synchronized markets).
  */
 export function getDynamicAssets(): AssetInfo[] {
-  return dynamicAssetsRegistry;
+  return dynamicAssetsRegistry.length > 0 ? dynamicAssetsRegistry : OTC_ASSETS_CATALOG;
 }
 
 /**
@@ -135,20 +164,11 @@ export function getDynamicAssets(): AssetInfo[] {
  */
 export function findAssetBySymbol(symbol: string): AssetInfo {
   const allAssets = getDynamicAssets();
-  if (!symbol) return allAssets[0] || {
-    symbol: 'EUR/USD (OTC)',
-    name: 'EUR/USD (OTC)',
-    payout: 92,
-    category: 'Forex (OTC)',
-    basePrice: 1.085,
-    volatility: 0.0001,
-    pipDecimals: 5,
-    flag: '🇪🇺',
-  };
+  if (!symbol) return allAssets[0];
 
   const canonicalSymbol = normalizeAssetSymbol(symbol);
   
-  // 1. Check dynamic registry first (Supabase assets)
+  // 1. Check dynamic registry first
   const foundDynamic = allAssets.find((a) => a.symbol === canonicalSymbol);
   if (foundDynamic) return foundDynamic;
 

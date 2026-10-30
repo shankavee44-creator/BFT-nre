@@ -304,9 +304,10 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-1.5">
                           {items.map((t) => {
                             const isWin = t.status === 'won';
+                            const isTie = t.status === 'tie';
                             const isCall = t.direction === 'CALL';
                             const assetObj = findAssetBySymbol(t.asset);
-                            const netPnl = t.pnl ?? (isWin ? (t.investment * t.payoutPercentage) / 100 : -t.investment);
+                            const netPnl = t.pnl ?? (isWin ? (t.investment * t.payoutPercentage) / 100 : isTie ? 0 : -t.investment);
 
                             return (
                               <div
@@ -319,7 +320,7 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
                                   <div className="flex items-center gap-1.5 font-bold text-white text-[10.5px]">
                                     <span
                                       className={`w-2 h-2 rounded-full shrink-0 ${
-                                        isWin ? 'bg-[#00e676]' : 'bg-[#ff334b]'
+                                        isWin ? 'bg-[#00e676]' : isTie ? 'bg-amber-400' : 'bg-[#ff334b]'
                                       }`}
                                     />
                                     <span className="shrink-0">{assetObj?.flag || '📈'}</span>
@@ -328,6 +329,7 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
                                       {t.payoutPercentage}%
                                     </span>
                                   </div>
+
                                   <div className="flex items-center gap-1.5 text-[9.5px] text-slate-400 mt-0.5 tabular-nums">
                                     <span className={isCall ? 'text-[#00e676] font-bold' : 'text-rose-400 font-bold'}>
                                       {isCall ? '▲ Buy' : '▼ Sell'} ${t.investment}
@@ -346,16 +348,20 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
                                 <div className="text-right shrink-0 tabular-nums">
                                   <div
                                     className={`font-black text-[11px] ${
-                                      isWin ? 'text-[#00e676]' : 'text-rose-400'
+                                      isWin ? 'text-[#00e676]' : isTie ? 'text-amber-400' : 'text-rose-400'
                                     }`}
                                   >
                                     {isWin
                                       ? `+$${Math.abs(netPnl).toFixed(2)}`
+                                      : isTie
+                                      ? '±$0.00'
                                       : `-$${Math.abs(t.investment).toFixed(2)}`}
                                   </div>
                                   <div className="text-[9px] text-slate-500">
                                     {isWin
                                       ? `Payout: $${(t.investment + Math.abs(netPnl)).toFixed(2)}`
+                                      : isTie
+                                      ? `Refund: $${t.investment.toFixed(2)}`
                                       : '$0.00'}
                                   </div>
                                 </div>

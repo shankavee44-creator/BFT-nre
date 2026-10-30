@@ -221,7 +221,7 @@ test('Category Volatility: Crypto assets exhibit larger relative volatility and 
   assert.ok(maxEurDeltaPercent > 0);
 });
 
-test('DEFAULT_ASSETS provides 25+ OTC instruments in each of the 4 categories (Forex, Crypto, Commodities, Stocks)', () => {
+test('DEFAULT_ASSETS provides 250+ synchronized OTC instruments across Forex, Crypto, Commodities, and Stocks', () => {
   const forexOtc = DEFAULT_ASSETS.filter((a) => a.category === 'Forex (OTC)');
   const cryptoOtc = DEFAULT_ASSETS.filter((a) => a.category === 'Crypto (OTC)');
   const commoditiesOtc = DEFAULT_ASSETS.filter((a) => a.category === 'Commodities (OTC)');
@@ -231,7 +231,7 @@ test('DEFAULT_ASSETS provides 25+ OTC instruments in each of the 4 categories (F
   assert.ok(cryptoOtc.length >= 25, `Expected >= 25 Crypto (OTC) assets, got ${cryptoOtc.length}`);
   assert.ok(commoditiesOtc.length >= 25, `Expected >= 25 Commodities (OTC) assets, got ${commoditiesOtc.length}`);
   assert.ok(stocksOtc.length >= 25, `Expected >= 25 Stocks (OTC) assets, got ${stocksOtc.length}`);
-  assert.ok(DEFAULT_ASSETS.length >= 100);
+  assert.ok(DEFAULT_ASSETS.length >= 250, `Expected >= 250 total synchronized assets, got ${DEFAULT_ASSETS.length}`);
 
   for (const asset of DEFAULT_ASSETS) {
     const livePayout = getLivePayoutPercentage(asset, 100);
@@ -284,7 +284,7 @@ test('State Consistency 4.1: normalizeAssetSymbol normalizes OTC symbols, shorth
   assert.equal(normalizeAssetSymbol('btc/usd'), 'BTC/USD (OTC)');
   assert.equal(normalizeAssetSymbol('BTC/USD'), 'BTC/USD (OTC)');
   assert.equal(normalizeAssetSymbol('gold'), 'XAU/USD (OTC)');
-  assert.equal(normalizeAssetSymbol('oil'), 'US Oil (OTC)');
+  assert.equal(normalizeAssetSymbol('oil'), 'WTI/USD (OTC)');
   assert.equal(normalizeAssetSymbol('nasdaq'), 'NAS100 (OTC)');
   assert.equal(normalizeAssetSymbol('spx'), 'SPX500 (OTC)');
   assert.equal(normalizeAssetSymbol('gbpjpy'), 'GBP/JPY (OTC)');

@@ -311,6 +311,69 @@ export async function apiGetLeaderboard() {
   }
 }
 
+export async function apiGetLiveMarketPrices() {
+  try {
+    const res = await fetch('/api/market/live-prices');
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Failed to fetch live prices' };
+  }
+}
+
+export async function apiPlaceTrade(params: {
+  id?: string;
+  accountId: string;
+  asset: string;
+  direction: 'CALL' | 'PUT';
+  strikePrice: number;
+  investment: number;
+  payoutPercentage: number;
+  durationSeconds: number;
+  startTime?: number;
+  endTime?: number;
+  accountTier?: string;
+}) {
+  try {
+    const res = await fetch('/api/trades', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(params),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Trade placement request failed' };
+  }
+}
+
+export async function apiSettleTrade(params: {
+  tradeId: string;
+  closePrice: number;
+  status?: string;
+}) {
+  try {
+    const res = await fetch('/api/trades/settle', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(params),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Trade settlement request failed' };
+  }
+}
+
+export async function apiGetUserTrades(accountId?: string) {
+  try {
+    const qs = accountId ? `?accountId=${encodeURIComponent(accountId)}` : '';
+    const res = await fetch(`/api/trades${qs}`, {
+      headers: getAuthHeaders(),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Failed to fetch trades' };
+  }
+}
+
 export async function apiCheckAdminAccess() {
   try {
     const res = await fetch('/api/admin/check-access', {

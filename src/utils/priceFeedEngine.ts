@@ -1,11 +1,11 @@
-import { Candle, AssetInfo } from '../types';
+import type { Candle, AssetInfo } from '../types/index.ts';
 import {
   findAssetBySymbol,
   normalizeAssetSymbol,
   saveAssetHistoryToStorage,
   loadAssetHistoryFromStorage,
   loadSelectedAssetSymbol,
-} from './storage';
+} from './storage.ts';
 
 // Listener pattern to break circular dependency with supabaseMarketSync
 type BroadcastCallback = (payload: { symbol: string; price: number; prevPrice: number; timestamp: number }) => void;
@@ -151,20 +151,21 @@ function transitionRegime(
  * Calculates the deterministic base price for macro block M.
  */
 function getDeterministicBlockBasePrice(asset: AssetInfo, blockIndex: number): number {
-  const symbolSeed = hashSymbol(asset.symbol);
-  const catParams = getCategoryParameters(asset.category);
+  const canonical = normalizeAssetSymbol(asset.symbol);
+  const symbolSeed = hashSymbol(canonical);
+  const catParams = getCategoryParameters(asset.category, canonical);
 
   const primaryFreq = 0.0012 + (symbolSeed % 500) * 0.000015;
-  const secondaryFreq = 0.0003 + ((symbolSeed >> 4) % 500) * 0.000008;
-  const phaseOffset = (((symbolSeed >> 8) % 1000) / 1000) * Math.PI * 2;
+  const secondaryFreq = 0.0003 + ((symbolSeed >>> 4) % 500) * 0.000008;
+  const phaseOffset = (((symbolSeed >>> 8) % 1000) / 1000) * Math.PI * 2;
 
   const wave =
-    Math.sin(phaseOffset + blockIndex * primaryFreq) * 0.06 +
-    Math.cos(blockIndex * secondaryFreq) * 0.03;
+    Math.sin(phaseOffset + blockIndex * primaryFreq) * 0.0025 +
+    Math.cos(blockIndex * secondaryFreq) * 0.0012;
 
-  const blockHash = hashSymbol(`${asset.symbol}:blockDrift:${blockIndex}`);
+  const blockHash = hashSymbol(`${canonical}:blockDrift:${blockIndex}`);
   const rawDrift = ((blockHash % 10000) - 5000) / 5000;
-  const maxDrift = asset.basePrice * (catParams.volMultiplier > 1.5 ? 0.08 : 0.03);
+  const maxDrift = asset.basePrice * (catParams.volMultiplier > 1.5 ? 0.003 : 0.0015);
 
   const price = asset.basePrice * (1 + wave) + rawDrift * maxDrift;
   const minPip = Math.pow(10, -asset.pipDecimals);
@@ -179,7 +180,7 @@ export function getAssetTimeOffsetMs(symbol: string, timeframeSeconds: number): 
   const hash = hashSymbol(canonical);
   const tfSeconds = Math.max(5, timeframeSeconds);
   const subSteps = Math.max(1, Math.floor(tfSeconds / 5));
-  const stepIndex = (hash >> 3) % subSteps;
+  const stepIndex = (hash >>> 3) % subSteps;
   return stepIndex * 5000;
 }
 
@@ -202,23 +203,144 @@ function nextRandom(prng: PRNGState): number {
 }
 
 /**
+ * Deterministically computes the exact synchronized market tick and active 5s candle at timestamp `nowMs`.
+ * Identical across server and all connected client tabs.
+ */
+export function computeSynchronizedTickAtTime(
+  asset: AssetInfo,
+  nowMs: number = Date.now()
+): { price: number; open: number; high: number; low: number; close: number; bucketTime: number } {
+  const canonical = normalizeAssetSymbol(asset.symbol);
+  const tf = 5;
+  const tfMs = tf * 1000;
+  const offsetMs = getAssetTimeOffsetMs(canonical, tf);
+  const currentBucketTime = Math.floor((nowMs + offsetMs) / tfMs) * tfMs - offsetMs;
+  const bucketIdx = Math.floor((currentBucketTime - GLOBAL_EPOCH) / tfMs);
+
+  const candlesPerBlock = 500;
+  const blockIndex = Math.floor(bucketIdx / candlesPerBlock);
+  const indexInBlock = ((bucketIdx % candlesPerBlock) + candlesPerBlock) % candlesPerBlock;
+
+  const catParams = getCategoryParameters(asset.category, canonical);
+  const unitVol = asset.volatility * catParams.volMultiplier;
+  const minPip = Math.pow(10, -asset.pipDecimals);
+
+  const initialRegimes: MarketRegime[] = [
+    'bullish_trend',
+    'bearish_trend',
+    'consolidation',
+    'volatile_breakout',
+    'mean_reverting',
+  ];
+
+  const blockSeed = hashSymbol(`${canonical}:${tf}:block:${blockIndex}`);
+  const prng = createPRNG(blockSeed);
+  let currentPrice = getDeterministicBlockBasePrice(asset, blockIndex);
+  let volCluster = 1.0;
+
+  const regimeSeed = hashSymbol(`${canonical}:${tf}:regime:${blockIndex}`);
+  let currentRegime = initialRegimes[regimeSeed % initialRegimes.length];
+  let regimeTicksRemaining =
+    catParams.trendLengthMin + (regimeSeed % (catParams.trendLengthMax - catParams.trendLengthMin));
+  let regimeIntensity = 0.65 + (((regimeSeed >>> 3) % 50) / 50) * 0.7;
+
+  let open = currentPrice;
+  let close = currentPrice;
+  let high = currentPrice;
+  let low = currentPrice;
+
+  for (let j = 0; j <= indexInBlock; j++) {
+    open = currentPrice;
+    const u1 = Math.max(1e-7, nextRandom(prng));
+    const u2 = Math.max(1e-7, nextRandom(prng));
+    const shock = Math.abs(Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2));
+    volCluster = Math.max(0.45, Math.min(2.8, 0.72 * volCluster + 0.28 * shock));
+
+    regimeTicksRemaining--;
+    if (regimeTicksRemaining <= 0) {
+      currentRegime = transitionRegime(currentRegime, () => nextRandom(prng), catParams.breakoutChance);
+      regimeTicksRemaining =
+        catParams.trendLengthMin +
+        Math.floor(nextRandom(prng) * (catParams.trendLengthMax - catParams.trendLengthMin));
+      regimeIntensity = 0.6 + nextRandom(prng) * 0.8;
+    }
+
+    let trendDrift = 0;
+    if (currentRegime === 'bullish_trend') trendDrift = 0.28 * regimeIntensity;
+    else if (currentRegime === 'bearish_trend') trendDrift = -0.28 * regimeIntensity;
+    else if (currentRegime === 'volatile_breakout')
+      trendDrift = (nextRandom(prng) < 0.5 ? 1 : -1) * 0.5 * regimeIntensity;
+
+    const dirProb = Math.max(0.1, Math.min(0.9, 0.5 + trendDrift));
+    const sign = nextRandom(prng) < dirProb ? 1 : -1;
+    const u3 = Math.max(1e-7, nextRandom(prng));
+    const u4 = Math.max(1e-7, nextRandom(prng));
+    const shock2 = Math.abs(Math.sqrt(-2.0 * Math.log(u3)) * Math.cos(2.0 * Math.PI * u4));
+    const isJump = nextRandom(prng) < catParams.jumpChance;
+    const jumpBoost = isJump ? 1.8 + nextRandom(prng) * 1.4 : 1.0;
+    const bodyMag = Math.max(minPip * 3.5, (0.45 + shock2 * 0.85) * unitVol * volCluster * jumpBoost);
+
+    close = Number(Math.max(minPip * 10, open + sign * bodyMag).toFixed(asset.pipDecimals));
+    const bodyMax = Math.max(open, close);
+    const bodyMin = Math.min(open, close);
+    const upperWick = Math.max(
+      minPip * 3.0,
+      catParams.wickMultiplier * unitVol * volCluster * (0.38 + nextRandom(prng) * 0.88)
+    );
+    const lowerWick = Math.max(
+      minPip * 3.0,
+      catParams.wickMultiplier * unitVol * volCluster * (0.38 + nextRandom(prng) * 0.88)
+    );
+    high = bodyMax + upperWick;
+    low = Math.max(minPip * 5, bodyMin - lowerWick);
+    currentPrice = close;
+  }
+
+  // Smooth deterministic intra-bucket progression (every 250ms sub-step)
+  const elapsedMs = ((nowMs + offsetMs) % tfMs + tfMs) % tfMs;
+  const progress = elapsedMs / tfMs;
+  const subStep = Math.floor(nowMs / 250);
+  const pulseHash = hashSymbol(`${canonical}:subtick:${subStep}`);
+  const pu1 = Math.max(1e-7, (pulseHash % 10000) / 10000);
+  const pu2 = Math.max(1e-7, ((pulseHash >>> 5) % 10000) / 10000);
+  const pulseZ = Math.sqrt(-2.0 * Math.log(pu1)) * Math.cos(2.0 * Math.PI * pu2);
+  // Envelope goes to 0 at progress=0 and progress=1 so candle boundaries are 100% seamless
+  const envelope = Math.sin(progress * Math.PI);
+  const intraWave = pulseZ * unitVol * 0.45 * envelope;
+
+  const rawLivePrice = open + (close - open) * progress + intraWave;
+  const livePrice = Number(Math.max(minPip * 10, rawLivePrice).toFixed(asset.pipDecimals));
+
+  return {
+    price: livePrice,
+    open: Number(open.toFixed(asset.pipDecimals)),
+    high: Number(Math.max(open, livePrice, high * (0.3 + 0.7 * progress)).toFixed(asset.pipDecimals)),
+    low: Number(Math.min(open, livePrice, low / (0.3 + 0.7 * progress)).toFixed(asset.pipDecimals)),
+    close: livePrice,
+    bucketTime: currentBucketTime,
+  };
+}
+
+/**
  * Deterministically generates a sequence of timeframe candles anchored to a global UTC timeline.
  * Ensures that any user joining at any time sees the exact same historical and live candles.
  */
 function generateDeterministicTimeframeCandles(
   asset: AssetInfo,
   timeframeSeconds: number,
-  count: number = 1500
+  count: number = 1500,
+  anchorEndPrice?: number
 ): Candle[] {
+  const canonical = normalizeAssetSymbol(asset.symbol);
   const tf = Math.max(5, timeframeSeconds);
   const tfMs = tf * 1000;
-  const offsetMs = getAssetTimeOffsetMs(asset.symbol, tf);
+  const offsetMs = getAssetTimeOffsetMs(canonical, tf);
   const nowMs = Date.now();
   
   const currentBucketTime = Math.floor((nowMs + offsetMs) / tfMs) * tfMs - offsetMs;
   const startBucketTime = currentBucketTime - (count - 1) * tfMs;
 
-  const catParams = getCategoryParameters(asset.category, asset.symbol);
+  const catParams = getCategoryParameters(asset.category, canonical);
   const tfMultiplier = Math.pow(Math.max(1, tf / 5), 0.38);
   const unitVol = asset.volatility * tfMultiplier * catParams.volMultiplier;
   const minPip = Math.pow(10, -asset.pipDecimals);
@@ -246,52 +368,54 @@ function generateDeterministicTimeframeCandles(
     const candleTime = startBucketTime + i * tfMs;
     const bucketIdx = Math.floor((candleTime - GLOBAL_EPOCH) / tfMs);
     const blockIndex = Math.floor(bucketIdx / candlesPerBlock);
-    const indexInBlock = bucketIdx % candlesPerBlock;
+    const indexInBlock = ((bucketIdx % candlesPerBlock) + candlesPerBlock) % candlesPerBlock;
 
     if (blockIndex !== currentBlockIndex) {
       currentBlockIndex = blockIndex;
-      const blockSeed = hashSymbol(`${asset.symbol}:${tf}:block:${blockIndex}`);
+      const blockSeed = hashSymbol(`${canonical}:${tf}:block:${blockIndex}`);
       prng = createPRNG(blockSeed);
-      currentPrice = getDeterministicBlockBasePrice(asset, blockIndex);
       volCluster = 1.0;
 
-      const regimeSeed = hashSymbol(`${asset.symbol}:${tf}:regime:${blockIndex}`);
+      const regimeSeed = hashSymbol(`${canonical}:${tf}:regime:${blockIndex}`);
       currentRegime = initialRegimes[regimeSeed % initialRegimes.length];
       regimeTicksRemaining = catParams.trendLengthMin + (regimeSeed % (catParams.trendLengthMax - catParams.trendLengthMin));
       regimeIntensity = 0.65 + (((regimeSeed >> 3) % 50) / 50) * 0.7;
 
-      for (let j = 0; j < indexInBlock; j++) {
-        const u1 = Math.max(1e-7, nextRandom(prng));
-        const u2 = Math.max(1e-7, nextRandom(prng));
-        const shock = Math.abs(Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2));
-        volCluster = Math.max(0.45, Math.min(2.8, 0.72 * volCluster + 0.28 * shock));
+      if (i === 0) {
+        currentPrice = getDeterministicBlockBasePrice(asset, blockIndex);
+        for (let j = 0; j < indexInBlock; j++) {
+          const u1 = Math.max(1e-7, nextRandom(prng));
+          const u2 = Math.max(1e-7, nextRandom(prng));
+          const shock = Math.abs(Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2));
+          volCluster = Math.max(0.45, Math.min(2.8, 0.72 * volCluster + 0.28 * shock));
 
-        regimeTicksRemaining--;
-        if (regimeTicksRemaining <= 0) {
-          currentRegime = transitionRegime(currentRegime, () => nextRandom(prng), catParams.breakoutChance);
-          regimeTicksRemaining = catParams.trendLengthMin + Math.floor(nextRandom(prng) * (catParams.trendLengthMax - catParams.trendLengthMin));
-          regimeIntensity = 0.6 + nextRandom(prng) * 0.8;
+          regimeTicksRemaining--;
+          if (regimeTicksRemaining <= 0) {
+            currentRegime = transitionRegime(currentRegime, () => nextRandom(prng), catParams.breakoutChance);
+            regimeTicksRemaining = catParams.trendLengthMin + Math.floor(nextRandom(prng) * (catParams.trendLengthMax - catParams.trendLengthMin));
+            regimeIntensity = 0.6 + nextRandom(prng) * 0.8;
+          }
+
+          let trendDrift = 0;
+          if (currentRegime === 'bullish_trend') trendDrift = 0.28 * regimeIntensity;
+          else if (currentRegime === 'bearish_trend') trendDrift = -0.28 * regimeIntensity;
+          else if (currentRegime === 'volatile_breakout') trendDrift = (nextRandom(prng) < 0.5 ? 1 : -1) * 0.5 * regimeIntensity;
+
+          const dirProb = Math.max(0.1, Math.min(0.9, 0.5 + trendDrift));
+          const sign = nextRandom(prng) < dirProb ? 1 : -1;
+          const u3 = Math.max(1e-7, nextRandom(prng));
+          const u4 = Math.max(1e-7, nextRandom(prng));
+          const shock2 = Math.abs(Math.sqrt(-2.0 * Math.log(u3)) * Math.cos(2.0 * Math.PI * u4));
+          const isJump = nextRandom(prng) < catParams.jumpChance;
+          const jumpBoost = isJump ? 1.8 + nextRandom(prng) * 1.4 : 1.0;
+          const bodyMag = Math.max(minPip * 3.5, (0.45 + shock2 * 0.85) * unitVol * volCluster * jumpBoost);
+          
+          currentPrice = Number(Math.max(minPip * 10, currentPrice + sign * bodyMag).toFixed(asset.pipDecimals));
         }
-
-        let trendDrift = 0;
-        if (currentRegime === 'bullish_trend') trendDrift = 0.28 * regimeIntensity;
-        else if (currentRegime === 'bearish_trend') trendDrift = -0.28 * regimeIntensity;
-        else if (currentRegime === 'volatile_breakout') trendDrift = (nextRandom(prng) < 0.5 ? 1 : -1) * 0.5 * regimeIntensity;
-
-        const dirProb = Math.max(0.1, Math.min(0.9, 0.5 + trendDrift));
-        const sign = nextRandom(prng) < dirProb ? 1 : -1;
-        const u3 = Math.max(1e-7, nextRandom(prng));
-        const u4 = Math.max(1e-7, nextRandom(prng));
-        const shock2 = Math.abs(Math.sqrt(-2.0 * Math.log(u3)) * Math.cos(2.0 * Math.PI * u4));
-        const isJump = nextRandom(prng) < catParams.jumpChance;
-        const jumpBoost = isJump ? 1.8 + nextRandom(prng) * 1.4 : 1.0;
-        const bodyMag = Math.max(minPip * 3.5, (0.45 + shock2 * 0.85) * unitVol * volCluster * jumpBoost);
-        
-        currentPrice = Math.max(minPip * 10, currentPrice + sign * bodyMag);
       }
     }
 
-    const open = currentPrice;
+    const open = Number(currentPrice.toFixed(asset.pipDecimals));
     const u1 = Math.max(1e-7, nextRandom(prng));
     const u2 = Math.max(1e-7, nextRandom(prng));
     const shock = Math.abs(Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2));
@@ -318,7 +442,7 @@ function generateDeterministicTimeframeCandles(
     const jumpBoost = isJump ? 1.8 + nextRandom(prng) * 1.4 : 1.0;
     const bodyMag = Math.max(minPip * 3.5, (0.45 + shock2 * 0.85) * unitVol * volCluster * jumpBoost);
     
-    const close = Math.max(minPip * 10, open + sign * bodyMag);
+    const close = Number(Math.max(minPip * 10, open + sign * bodyMag).toFixed(asset.pipDecimals));
     const bodyMax = Math.max(open, close);
     const bodyMin = Math.min(open, close);
     const upperWick = Math.max(minPip * 3.0, catParams.wickMultiplier * unitVol * volCluster * (0.38 + nextRandom(prng) * 0.88));
@@ -326,14 +450,29 @@ function generateDeterministicTimeframeCandles(
 
     result[i] = {
       time: candleTime,
-      open: Number(open.toFixed(asset.pipDecimals)),
+      open,
       high: Number((bodyMax + upperWick).toFixed(asset.pipDecimals)),
-      low: Number((bodyMin - lowerWick).toFixed(asset.pipDecimals)),
-      close: Number(close.toFixed(asset.pipDecimals)),
+      low: Number(Math.max(minPip * 5, bodyMin - lowerWick).toFixed(asset.pipDecimals)),
+      close,
       volume: Math.floor(45 + volCluster * 65 + nextRandom(prng) * 110),
     };
 
     currentPrice = close;
+  }
+
+  // If an anchorEndPrice is provided (for higher timeframes 15s..1D), align the series smoothly to match the live 5s price
+  if (typeof anchorEndPrice === 'number' && anchorEndPrice > 0 && result.length > 0 && tf !== 5) {
+    const lastCandle = result[result.length - 1];
+    const diff = Number((anchorEndPrice - lastCandle.close).toFixed(asset.pipDecimals));
+    if (Math.abs(diff) > 0) {
+      for (let i = 0; i < result.length; i++) {
+        const c = result[i];
+        c.open = Number((c.open + diff).toFixed(asset.pipDecimals));
+        c.high = Number((c.high + diff).toFixed(asset.pipDecimals));
+        c.low = Number((c.low + diff).toFixed(asset.pipDecimals));
+        c.close = Number((c.close + diff).toFixed(asset.pipDecimals));
+      }
+    }
   }
 
   return result;
@@ -347,7 +486,7 @@ export function getOrCreateMasterHistory(asset: AssetInfo): AssetMarketState {
 
   if (!masterStores.has(symbolKey)) {
     const seed = hashSymbol(symbolKey);
-    const catParams = getCategoryParameters(asset.category);
+    const catParams = getCategoryParameters(asset.category, symbolKey);
 
     const initialRegimes: MarketRegime[] = [
       'bullish_trend',
@@ -364,8 +503,17 @@ export function getOrCreateMasterHistory(asset: AssetInfo): AssetMarketState {
     const secondaryFrequency = 0.04 + (((seed >> 4) % 100) / 100) * 0.14;
     const phaseOffset = (((seed >> 8) % 1000) / 1000) * Math.PI * 2;
 
+    const initNow = Date.now();
     const baseCandles = generateDeterministicTimeframeCandles(asset, 5, 1500);
-    const lastPrice = baseCandles.length > 0 ? baseCandles[baseCandles.length - 1].close : asset.basePrice;
+    const liveSnap = computeSynchronizedTickAtTime(asset, initNow);
+    lastSteppedTimeBySymbol.set(symbolKey, initNow);
+    if (baseCandles.length > 0) {
+      const last = baseCandles[baseCandles.length - 1];
+      last.close = liveSnap.price;
+      last.high = Math.max(last.open, liveSnap.price, liveSnap.high);
+      last.low = Math.min(last.open, liveSnap.price, liveSnap.low);
+    }
+    const lastPrice = liveSnap.price;
 
     const timeframeMap = new Map<number, Candle[]>();
     timeframeMap.set(5, baseCandles);
@@ -429,8 +577,11 @@ export function resetAssetMarketState(symbol?: string): void {
     const canonical = normalizeAssetSymbol(symbol);
     masterStores.delete(symbol);
     masterStores.delete(canonical);
+    lastSteppedTimeBySymbol.delete(symbol);
+    lastSteppedTimeBySymbol.delete(canonical);
   } else {
     masterStores.clear();
+    lastSteppedTimeBySymbol.clear();
   }
 }
 
@@ -489,7 +640,7 @@ export function calculateCandleCloseDynamics(
 
   if (isTighteningPhase) {
     const tightenDepth = Math.sin(((progress - 0.65) / 0.17) * Math.PI);
-    volatilityMultiplier = 1.0 - tightenDepth * 0.32;
+    volatilityMultiplier = 1.0 - tightenDepth * 0.22;
   } else if (isLastSecondSpike) {
     const spikeProgress = Math.min(1, Math.max(0, 1 - remainingMs / spikeWindowMs));
     volatilityMultiplier = 1.25 + spikeProgress * 0.85;
@@ -501,7 +652,7 @@ export function calculateCandleCloseDynamics(
     const subSecBucket = Math.floor(nowMs / 120);
     const burstHash = hashSymbol(`${normalizeAssetSymbol(symbol)}:closeBurst:${subSecBucket}`);
     const burstSign = (burstHash % 3 === 0) ? 0 : (burstHash % 2 === 0 ? 1 : -1);
-    const burstStrength = ((burstHash >> 4) % 1000) / 1000;
+    const burstStrength = ((burstHash >>> 4) % 1000) / 1000;
     microBurstImpulse = burstSign * (0.25 + burstStrength * 0.95) * (spikeProgress + (isChaosPhase ? 0.5 : 0));
   }
 
@@ -591,8 +742,10 @@ export function calculateRiskManagementOffset(params: {
   return { priceOffset, probabilityBias, strikeTightening };
 }
 
+const lastSteppedTimeBySymbol: Map<string, number> = new Map();
+
 /**
- * Advances live price deterministically based on absolute time.
+ * Advances live price deterministically based on absolute UTC time across all 268+ synchronized assets.
  */
 export function stepOrganicLiveTick(
   assetOrSymbol: AssetInfo | string,
@@ -602,8 +755,21 @@ export function stepOrganicLiveTick(
   if (!asset) return 1.085;
 
   const store = getOrCreateMasterHistory(asset);
-  // No more simulation here. Just return the last price we got from the backend.
-  return store.lastPrice;
+  store.tickCounter += 1;
+
+  let nowMs: number;
+  if (typeof options?.nowMs === 'number') {
+    nowMs = options.nowMs;
+  } else {
+    const rawNow = Date.now();
+    const prevNow = lastSteppedTimeBySymbol.get(store.symbol) || 0;
+    nowMs = rawNow < prevNow + 250 ? prevNow + 250 : rawNow;
+    lastSteppedTimeBySymbol.set(store.symbol, nowMs);
+  }
+
+  const snap = computeSynchronizedTickAtTime(asset, nowMs);
+  appendLiveTick(asset, snap.price, true);
+  return snap.price;
 }
 
 /**
@@ -612,6 +778,7 @@ export function stepOrganicLiveTick(
 export function appendLiveTick(asset: AssetInfo, newPrice: number, skipBroadcast = false): void {
   const store = getOrCreateMasterHistory(asset);
   const prevPrice = store.lastPrice;
+  store.prevPrice = prevPrice;
   store.lastPrice = newPrice;
   const now = Date.now();
 
@@ -619,7 +786,6 @@ export function appendLiveTick(asset: AssetInfo, newPrice: number, skipBroadcast
     updateCandleArrayWithTick(series, asset, tfSeconds, newPrice, now);
     
     // Performance optimization: only save history to localStorage for the active asset
-    // or throttle heavily for background assets to prevent main thread blocking
     const activeSym = loadSelectedAssetSymbol();
     if (asset.symbol === activeSym) {
       saveAssetHistoryToStorage(asset.symbol, series, tfSeconds);
@@ -674,7 +840,7 @@ function updateCandleArrayWithTick(
     if (newPrice < lastCandle.low) lastCandle.low = newPrice;
     lastCandle.volume += 1;
   } else if (lastCandle && currentBucket > lastCandle.time) {
-    const numBucketsPassed = Math.floor((currentBucket - lastCandle.time) / bucketMs);
+    const numBucketsPassed = Math.min(200, Math.floor((currentBucket - lastCandle.time) / bucketMs));
     let prevClose = lastCandle.close;
 
     for (let b = 1; b <= numBucketsPassed; b++) {
@@ -732,16 +898,8 @@ export function aggregateCandlesForTimeframe(
 
   let series = store.timeframeSeries.get(tf);
 
-  if (!series) {
-    const cached = loadAssetHistoryFromStorage(asset.symbol, tf);
-    if (cached && cached.length > 0) {
-      series = cached;
-      store.timeframeSeries.set(tf, series);
-    }
-  }
-
   if (!series || series.length === 0) {
-    series = generateDeterministicTimeframeCandles(asset, tf, 1500);
+    series = generateDeterministicTimeframeCandles(asset, tf, 1500, store.lastPrice);
     store.timeframeSeries.set(tf, series);
   }
 
@@ -757,7 +915,6 @@ export function aggregateCandlesForTimeframe(
   }
 
   store.timeframeSeries.set(tf, series);
-  saveAssetHistoryToStorage(asset.symbol, series, tf);
   return [...series];
 }
 

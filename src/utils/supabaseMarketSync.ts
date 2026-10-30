@@ -1,8 +1,7 @@
 import { supabase } from './supabase';
 import { Candle, AssetInfo, AssetCategory } from '../types';
-import { normalizeAssetSymbol, findAssetBySymbol } from './storage';
+import { normalizeAssetSymbol, findAssetBySymbol, DEFAULT_ASSETS } from './storage';
 import { getOrCreateMasterHistory, setMarketBroadcastListener, appendLiveTick } from './priceFeedEngine';
-
 
 export interface MarketTickPayload {
   symbol: string;
@@ -23,135 +22,81 @@ export interface MarketSnapshot {
 export type MarketTickCallback = (payload: MarketTickPayload) => void;
 
 export class SupabaseMarketSyncEngine {
-  private channel: ReturnType<typeof supabase.channel> | null = null;
-  private assetSubscription: ReturnType<typeof supabase.channel> | null = null;
   private listeners: Set<MarketTickCallback> = new Set();
   private lastBroadcastMs: Record<string, number> = {};
-  private isSubscribed = false;
+  private pollInterval: any = null;
 
   constructor() {
     if (typeof window !== 'undefined') {
       this.initRealtimeChannel();
-      // Register this instance as the global broadcast handler for the price engine
       setMarketBroadcastListener((payload) => this.broadcastTick(payload));
     }
   }
 
   /**
-   * Initializes the Supabase Realtime broadcast channel for high-frequency market tick sync across devices.
+   * Initializes REST polling against `/api/market/live-prices` instead of WebSockets
+   * to prevent ERR_CONNECTION_TIMED_OUT errors in firewall/cloud environments.
    */
   public initRealtimeChannel() {
-    if (this.channel) return;
+    if (this.pollInterval || typeof window === 'undefined') return;
 
-    try {
-      this.channel = supabase.channel('market-live-feed', {
-        config: {
-          broadcast: { self: true },
-        },
-      });
+    const pollServerPrices = async () => {
+      try {
+        const res = await fetch('/api/market/live-prices');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data?.ok && data.prices && typeof data.prices === 'object') {
+          const now = Date.now();
+          Object.entries(data.prices).forEach(([symbol, priceVal]) => {
+            const price = Number(priceVal);
+            if (!Number.isNaN(price) && price > 0) {
+              this.handleRemoteTick({
+                symbol,
+                price,
+                prevPrice: price,
+                timestamp: now,
+              });
+            }
+          });
+        }
+      } catch {
+        // Fail silently
+      }
+    };
 
-      this.channel
-        .on('broadcast', { event: 'price_tick' }, (response) => {
-          if (response?.payload) {
-            const payload = response.payload as MarketTickPayload;
-            this.handleRemoteTick(payload);
-          }
-        })
-        .on('broadcast', { event: 'price_batch' }, (response) => {
-          if (response?.payload?.ticks && Array.isArray(response.payload.ticks)) {
-            const ticks = response.payload.ticks as MarketTickPayload[];
-            ticks.forEach((tick) => this.handleRemoteTick(tick));
-          }
-        })
-        .subscribe((status) => {
-          if (status === 'SUBSCRIBED') {
-            this.isSubscribed = true;
-          }
-        });
-    } catch (e) {
-      console.warn('Supabase Realtime channel init failed, using fail-safe sync mode:', e);
-    }
+    pollServerPrices();
+    this.pollInterval = setInterval(pollServerPrices, 2500);
   }
 
   /**
-   * Fetches all 250+ assets directly from Supabase 'otc_assets' table.
+   * Returns all 268+ synchronized OTC assets and primes their live prices from `/api/market/live-prices`.
    */
   public async fetchAllOtcAssets(): Promise<AssetInfo[]> {
     try {
-      const { data, error } = await supabase
-        .from('otc_assets')
-        .select('*')
-        .order('symbol', { ascending: true });
-
-      if (error) throw error;
-      if (!data) return [];
-
-      return data.map((item: any) => {
-        const symbol = item.symbol || 'UNKNOWN';
-        return {
-          symbol,
-          name: item.name || symbol,
-          payout: Number(item.payout_rate) || 92,
-          category: (item.category as AssetCategory) || 'OTC',
-          basePrice: Number(item.current_price) || 1.0,
-          volatility: Number(item.volatility) || 0.00012,
-          pipDecimals: Number(item.pip_decimals) || (symbol.includes('JPY') ? 3 : symbol.includes('/') ? 5 : 2),
-          flag: item.flag || '📈',
-        };
-      });
-    } catch (err) {
-      console.error('Failed to fetch OTC assets from Supabase:', err);
-      return [];
+      const res = await fetch('/api/market/live-prices');
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.ok && data.prices && typeof data.prices === 'object') {
+          for (const asset of DEFAULT_ASSETS) {
+            const canonical = normalizeAssetSymbol(asset.symbol);
+            const livePrice = Number(data.prices[canonical] ?? data.prices[asset.symbol]);
+            if (!Number.isNaN(livePrice) && livePrice > 0) {
+              appendLiveTick(asset, livePrice, true);
+            }
+          }
+        }
+      }
+    } catch {
+      // Fallback to default assets
     }
+    return DEFAULT_ASSETS;
   }
 
   /**
-   * Enables Global Realtime Sync: Subscribes to 'otc_assets' table updates so every visitor
-   * sees the exact same price movement simultaneously.
+   * Synchronizes asset updates via REST polling (no WebSocket channels opened).
    */
-  public initGlobalMarketSync(onUpdate?: (asset: Partial<AssetInfo>) => void) {
-    if (typeof window === 'undefined') return;
-    if (this.assetSubscription) return;
-
-    this.assetSubscription = supabase
-      .channel('global-otc-sync')
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'otc_assets' },
-        (payload) => {
-          const updated = payload.new;
-          if (!updated || !updated.symbol) return;
-
-          const price = Number(updated.current_price);
-          if (Number.isNaN(price)) return;
-
-          const payout = updated.payout_rate ? Number(updated.payout_rate) : undefined;
-          
-          // Apply to local market engine
-          const store = getOrCreateMasterHistory({ symbol: updated.symbol } as AssetInfo);
-          if (store) {
-            store.prevPrice = store.lastPrice;
-            store.lastPrice = price;
-          }
-
-          // Notify UI components
-          this.notifySubscribers({
-            symbol: updated.symbol,
-            price: price,
-            prevPrice: store?.prevPrice || price,
-            timestamp: Date.now(),
-          });
-
-          if (onUpdate) {
-            onUpdate({
-              symbol: updated.symbol,
-              payout: payout,
-              basePrice: price,
-            });
-          }
-        }
-      )
-      .subscribe();
+  public initGlobalMarketSync(_onUpdate?: (asset: Partial<AssetInfo>) => void) {
+    this.initRealtimeChannel();
   }
 
   /**
@@ -165,59 +110,28 @@ export class SupabaseMarketSyncEngine {
   }
 
   /**
-   * Broadcasts a live market price tick to all connected tabs/devices via Supabase Realtime
+   * Dispatches a live market price tick to local subscribers
    */
   public async broadcastTick(payload: MarketTickPayload): Promise<void> {
     const symKey = normalizeAssetSymbol(payload.symbol);
     const now = Date.now();
 
-    // Notify local subscribers immediately
     this.notifySubscribers(payload);
-
-    // Rate-limit network broadcast to max once every 80ms per asset to prevent WebSocket congestion
-    if (this.lastBroadcastMs[symKey] && now - this.lastBroadcastMs[symKey] < 80) {
-      return;
-    }
     this.lastBroadcastMs[symKey] = now;
-
-    if (this.channel && this.isSubscribed) {
-      try {
-        await this.channel.send({
-          type: 'broadcast',
-          event: 'price_tick',
-          payload,
-        });
-      } catch (err) {
-        // Fallback silently if broadcast fails
-      }
-    }
-
-    // Persist snapshot to Supabase DB asynchronously (throttled every 3s in browser runtime)
-    // Note: If prices are managed by a backend cron/edge function, this client-side persist
-    // might be redundant, but we keep it as a fallback for user-driven ticks.
-    if (
-      typeof window !== 'undefined' &&
-      (!this.lastBroadcastMs[`${symKey}:db`] || now - this.lastBroadcastMs[`${symKey}:db`] > 3000)
-    ) {
-      this.lastBroadcastMs[`${symKey}:db`] = now;
-      this.persistSnapshotToSupabase(payload);
-    }
   }
 
   /**
-   * Handles incoming remote ticks from other clients/devices received via Supabase Realtime
+   * Handles incoming remote ticks from server REST sync
    */
   private handleRemoteTick(payload: MarketTickPayload) {
     if (!payload || !payload.symbol || typeof payload.price !== 'number') return;
 
-    // Apply remote tick to local market store
     const canonical = normalizeAssetSymbol(payload.symbol);
     const asset = findAssetBySymbol(canonical);
     if (asset) {
       appendLiveTick(asset, payload.price, true);
     }
 
-    // Notify local UI subscribers
     this.notifySubscribers(payload);
   }
 
@@ -225,72 +139,51 @@ export class SupabaseMarketSyncEngine {
     this.listeners.forEach((listener) => {
       try {
         listener(payload);
-      } catch (err) {
-        console.error('Error in market tick listener:', err);
+      } catch {
+        // ignore listener error
       }
     });
   }
 
   /**
-   * Persists market state snapshot to Supabase database table 'market_prices'
+   * No-op or lightweight persistence
    */
-  public async persistSnapshotToSupabase(payload: MarketTickPayload): Promise<void> {
-    try {
-      await supabase.from('market_prices').upsert(
-        {
-          symbol: normalizeAssetSymbol(payload.symbol),
-          last_price: payload.price,
-          prev_price: payload.prevPrice,
-          updated_at: new Date(payload.timestamp).toISOString(),
-        },
-        { onConflict: 'symbol' }
-      );
-    } catch (e) {
-      // Graceful fallback if table is unavailable
-    }
+  public async persistSnapshotToSupabase(_payload: MarketTickPayload): Promise<void> {
+    // Handled by backend SQLite & server memory cache
   }
 
   /**
-   * Fetches latest synchronized market state snapshot from Supabase
+   * Fetches latest synchronized market state snapshot from `/api/market/live-prices`
    */
   public async fetchMarketSnapshot(symbol: string): Promise<MarketSnapshot | null> {
     const canonical = normalizeAssetSymbol(symbol);
     try {
-      const { data, error } = await supabase
-        .from('market_prices')
-        .select('*')
-        .eq('symbol', canonical)
-        .maybeSingle();
-
-      if (error || !data) return null;
-
-      return {
-        symbol: data.symbol,
-        lastPrice: Number(data.last_price),
-        prevPrice: Number(data.prev_price),
-        updatedAt: new Date(data.updated_at).getTime(),
-      };
-    } catch (e) {
-      return null;
+      const res = await fetch('/api/market/live-prices');
+      if (res.ok) {
+        const data = await res.json();
+        const price = Number(data?.prices?.[canonical] ?? data?.prices?.[symbol]);
+        if (!Number.isNaN(price) && price > 0) {
+          return {
+            symbol: canonical,
+            lastPrice: price,
+            prevPrice: price,
+            updatedAt: Date.now(),
+          };
+        }
+      }
+    } catch {
+      // Fallback
     }
+    return null;
   }
 
   /**
-   * Disconnects and cleans up channel resources
+   * Cleans up polling resources
    */
   public cleanup() {
-    if (this.channel) {
-      try {
-        supabase.removeChannel(this.channel);
-      } catch (e) {
-        // Ignore cleanup errors
-      }
-      this.channel = null;
-      this.isSubscribed = false;
-    }
-    if (this.assetSubscription) {
-      supabase.removeChannel(this.assetSubscription);
-      this.assetSubscription = null;
+    if (this.pollInterval) {
+      clearInterval(this.pollInterval);
+      this.pollInterval = null;
     }
     this.listeners.clear();
   }

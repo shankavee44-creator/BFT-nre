@@ -98,7 +98,7 @@ export interface BinaryTrade {
   startTime: number;
   durationSeconds: number; // 30, 60, 180, 300
   endTime: number;
-  status: 'active' | 'won' | 'lost';
+  status: 'active' | 'won' | 'lost' | 'tie';
   pnl?: number;
   accountTier?: string; // e.g. 'demo', 'personal', 'one-step', 'two-step', 'instant'
 }

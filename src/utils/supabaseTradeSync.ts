@@ -192,58 +192,13 @@ export async function updateSupabaseTrade(trade: BinaryTrade, userId: string): P
 }
 
 /**
- * Subscribes to realtime updates for user trades if a valid Supabase UUID is available.
+ * Returns a clean subscription handle without opening WebSockets that time out in restricted networks.
+ * Trade updates are synchronized via REST polling and local state updates.
  */
-export function subscribeUserTrades(userId: string, callback: (payload: any) => void) {
-  if (!userId) return null;
-  
-  if (isValidUuid(userId)) {
-    return supabase
-      .channel(`user-trades-${userId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'user_trades',
-          filter: `user_id=eq.${userId}`,
-        },
-        (payload) => {
-          callback(payload);
-        }
-      )
-      .subscribe();
-  }
-
-  // If userId is not a direct UUID (e.g. 'usr_...'), attempt asynchronous Supabase Auth resolution
-  let innerChannel: any = null;
-  getEffectiveSupabaseUserId(userId).then((effectiveId) => {
-    if (effectiveId) {
-      innerChannel = supabase
-        .channel(`user-trades-${effectiveId}`)
-        .on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'user_trades',
-            filter: `user_id=eq.${effectiveId}`,
-          },
-          (payload) => callback(payload)
-        )
-        .subscribe();
-    }
-  });
-
+export function subscribeUserTrades(_userId: string, _callback: (payload: any) => void) {
   return {
     unsubscribe: () => {
-      if (innerChannel) {
-        try {
-          innerChannel.unsubscribe();
-        } catch {
-          // ignore
-        }
-      }
+      // No-op: REST API handles trade synchronization
     },
   };
 }
