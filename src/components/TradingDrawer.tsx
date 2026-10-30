@@ -231,15 +231,13 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
                             <Clock className="w-3 h-3 text-[#ff8800]" /> {secondsLeft}s
                           </span>
                           <div className="flex items-center gap-1">
-                            {onSettleTrade && (
-                              <button
-                                type="button"
-                                onClick={() => onSettleTrade(t)}
-                                className="px-1.5 py-0.5 rounded bg-[#ff8800]/20 hover:bg-[#ff8800]/30 text-[#ff8800] border border-[#ff8800]/40 text-[9px] font-bold cursor-pointer"
-                              >
-                                Settle
-                              </button>
-                            )}
+                            <span
+                              data-testid={`trade-locked-badge-${t.id}`}
+                              className="px-1.5 py-0.5 rounded bg-slate-800/80 text-slate-300 border border-white/10 text-[8.5px] font-bold uppercase tracking-wider"
+                              title="Trades are strictly locked until full expiration duration is met"
+                            >
+                              LOCKED
+                            </span>
                             {onDoubleUp && (
                               <button
                                 type="button"

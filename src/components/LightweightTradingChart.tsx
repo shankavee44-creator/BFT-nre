@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react';
+import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import {
   createChart,
   CandlestickSeries,
@@ -13,7 +13,7 @@ import {
   type IPriceLine,
   type UTCTimestamp,
 } from 'lightweight-charts';
-import { TrendingUp, TrendingDown, Clock } from 'lucide-react';
+import { TrendingUp, TrendingDown, Clock, Lock } from 'lucide-react';
 import type { AssetInfo, BinaryTrade, Candle } from '../types';
 import { normalizeAssetSymbol } from '../utils/storage';
 import {
@@ -21,8 +21,32 @@ import {
   calculateSMA,
   calculateEMA,
   calculateBollingerBands,
+  calculateRSI,
+  calculateMACD,
+  calculateFibonacciLevels,
+  calculateSupportResistanceLevels,
+  evaluateLiveTradeOverlayStatus,
   type IndicatorSettings,
 } from '../utils/technicalIndicators';
+import {
+  type DrawingToolId,
+  type DrawingLineStyle,
+  type ChartDrawingObject,
+  createInitialDrawing,
+  updateDrawingOnDrag,
+  finalizeDrawingObject,
+  translateDrawing,
+  updateDrawingHandle,
+  findHitDrawing,
+  findHitDrawingHandle,
+  renderDrawingOnCanvas,
+} from '../utils/drawingToolsEngine';
+import {
+  resolveTradingViewSymbol,
+  computeOrderLineState,
+  createTradingViewOrderLine,
+  type ITradingViewOrderLine,
+} from '../utils/tradingViewOrderLineEngine';
 
 export interface LightweightTradingChartProps {
   asset: AssetInfo;
@@ -34,6 +58,17 @@ export interface LightweightTradingChartProps {
   indicators?: IndicatorSettings;
   zoomLevel?: number;
   onHoverCandle?: (candle: Candle | null) => void;
+  // Interactive Drawing Tools props
+  drawings?: ChartDrawingObject[];
+  activeDrawingTool?: DrawingToolId;
+  drawingColor?: string;
+  drawingWidth?: number;
+  drawingLineStyle?: DrawingLineStyle;
+  selectedDrawingId?: string | null;
+  onSelectDrawing?: (id: string | null) => void;
+  onAddDrawing?: (drawing: ChartDrawingObject) => void;
+  onUpdateDrawing?: (drawing: ChartDrawingObject) => void;
+  onCompleteDrawingTool?: () => void;
 }
 
 interface FormattedBar {
@@ -42,13 +77,6 @@ interface FormattedBar {
   high: number;
   low: number;
   close: number;
-}
-
-function formatCountdown(secondsLeft: number): string {
-  const s = Math.max(0, Math.ceil(secondsLeft));
-  const mins = Math.floor(s / 60);
-  const secs = s % 60;
-  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
 }
 
 /**
@@ -98,20 +126,55 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = (
   indicators,
   zoomLevel = 1,
   onHoverCandle,
+  drawings = [],
+  activeDrawingTool = 'none',
+  drawingColor = '#ff8800',
+  drawingWidth = 2,
+  drawingLineStyle = 'solid',
+  selectedDrawingId = null,
+  onSelectDrawing,
+  onAddDrawing,
+  onUpdateDrawing,
+  onCompleteDrawingTool,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const mainSeriesRef = useRef<ISeriesApi<any> | null>(null);
   const smaSeriesRef = useRef<ISeriesApi<any> | null>(null);
   const emaSeriesRef = useRef<ISeriesApi<any> | null>(null);
   const bbUpperRef = useRef<ISeriesApi<any> | null>(null);
   const bbLowerRef = useRef<ISeriesApi<any> | null>(null);
-  const tradeLinesRef = useRef<Map<string, IPriceLine>>(new Map());
+
+  const tradeLinesRef = useRef<Map<string, ITradingViewOrderLine>>(new Map());
+  const srLinesRef = useRef<IPriceLine[]>([]);
+  const fibLinesRef = useRef<IPriceLine[]>([]);
+  const resolvedTvSymbol = useMemo(
+    () => resolveTradingViewSymbol(asset.symbol, asset.category),
+    [asset.symbol, asset.category]
+  );
 
   const prevDatasetKeyRef = useRef<string>('');
+  const prevIndicatorKeyRef = useRef<string>('');
   const prevBarsLenRef = useRef<number>(0);
+  const barsCacheRef = useRef<FormattedBar[]>([]);
+  const tickRafRef = useRef<number | null>(null);
+  const overlayRafRef = useRef<number | null>(null);
+
   const [, setNowTick] = useState<number>(() => Date.now());
-  const [tradeYCoords, setTradeYCoords] = useState<Record<string, number>>({});
+  const [tradeCoords, setTradeCoords] = useState<
+    Record<string, { y: number; entryX: number | null; liveX: number | null }>
+  >({});
+
+  // Interactive Drawing state on the overlay canvas
+  const [draftDrawing, setDraftDrawing] = useState<ChartDrawingObject | null>(null);
+  const draggingDrawingRef = useRef<{
+    id: string;
+    mode: 'move' | 'start' | 'end' | 'control';
+    lastX: number;
+    lastY: number;
+    drawing: ChartDrawingObject;
+  } | null>(null);
 
   // Filter active open trades belonging to the currently selected asset
   const assetActiveTrades = useMemo(() => {
@@ -121,40 +184,82 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = (
     );
   }, [activeTrades, asset.symbol]);
 
+  const computeTradeCoordinates = useCallback(() => {
+    if (!mainSeriesRef.current || !chartRef.current || assetActiveTrades.length === 0) return;
+    const series = mainSeriesRef.current;
+    const timeScale = chartRef.current.timeScale();
+    const bars = barsCacheRef.current;
+    const lastBarTime = bars.length > 0 ? bars[bars.length - 1].time : null;
+
+    let liveX: number | null = null;
+    if (lastBarTime !== null) {
+      try {
+        const lx = timeScale.timeToCoordinate(lastBarTime);
+        if (typeof lx === 'number' && !Number.isNaN(lx)) liveX = lx;
+      } catch {
+        // ignore
+      }
+    }
+
+    const nextCoords: Record<string, { y: number; entryX: number | null; liveX: number | null }> = {};
+    for (const t of assetActiveTrades) {
+      try {
+        const yCoord = series.priceToCoordinate(t.strikePrice);
+        if (typeof yCoord === 'number' && !Number.isNaN(yCoord)) {
+          let entryX: number | null = null;
+          if (bars.length > 0) {
+            const entrySec = Math.floor(t.startTime / 1000);
+            // Snap to nearest bar timestamp
+            let nearestTime = bars[bars.length - 1].time;
+            let minDiff = Infinity;
+            for (let i = Math.max(0, bars.length - 120); i < bars.length; i++) {
+              const diff = Math.abs((bars[i].time as number) - entrySec);
+              if (diff < minDiff) {
+                minDiff = diff;
+                nearestTime = bars[i].time;
+              }
+            }
+            const ex = timeScale.timeToCoordinate(nearestTime);
+            if (typeof ex === 'number' && !Number.isNaN(ex)) entryX = ex;
+          }
+          nextCoords[t.id] = { y: yCoord, entryX, liveX };
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    setTradeCoords((prev) => {
+      const prevKeys = Object.keys(prev);
+      const nextKeys = Object.keys(nextCoords);
+      if (
+        prevKeys.length === nextKeys.length &&
+        nextKeys.every(
+          (k) =>
+            prev[k] &&
+            Math.abs(prev[k].y - nextCoords[k].y) < 0.5 &&
+            Math.abs((prev[k].entryX ?? -999) - (nextCoords[k].entryX ?? -999)) < 1 &&
+            Math.abs((prev[k].liveX ?? -999) - (nextCoords[k].liveX ?? -999)) < 1
+        )
+      ) {
+        return prev;
+      }
+      return nextCoords;
+    });
+  }, [assetActiveTrades]);
+
   // 250ms ticker to keep countdown timers and Y-coordinate badges responsive
   useEffect(() => {
     if (assetActiveTrades.length === 0) return;
+    computeTradeCoordinates();
     const timer = setInterval(() => {
       setNowTick(Date.now());
-      if (mainSeriesRef.current && assetActiveTrades.length > 0) {
-        const nextCoords: Record<string, number> = {};
-        for (const t of assetActiveTrades) {
-          try {
-            const coord = mainSeriesRef.current.priceToCoordinate(t.strikePrice);
-            if (typeof coord === 'number' && !Number.isNaN(coord)) {
-              nextCoords[t.id] = coord;
-            }
-          } catch {
-            // ignore
-          }
-        }
-        setTradeYCoords((prev) => {
-          const prevKeys = Object.keys(prev);
-          const nextKeys = Object.keys(nextCoords);
-          if (
-            prevKeys.length === nextKeys.length &&
-            nextKeys.every((k) => Math.abs((prev[k] ?? -9999) - nextCoords[k]) < 0.5)
-          ) {
-            return prev;
-          }
-          return nextCoords;
-        });
-      }
+      computeTradeCoordinates();
     }, 250);
     return () => clearInterval(timer);
-  }, [assetActiveTrades]);
+  }, [assetActiveTrades, computeTradeCoordinates]);
 
-  // 1. Initialize TradingView Lightweight Chart instance once
+  // 1. Initialize TradingView Lightweight Chart instance once with PC & Mobile Touch Optimizations
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -191,16 +296,20 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = (
         borderColor: 'rgba(51, 65, 85, 0.6)',
         scaleMargins: {
           top: 0.14,
-          bottom: 0.14,
+          bottom: 0.18,
         },
       },
       timeScale: {
         borderColor: 'rgba(51, 65, 85, 0.6)',
         timeVisible: true,
         secondsVisible: true,
-        rightOffset: 8,
+        rightOffset: 10,
         barSpacing: 9,
-        minBarSpacing: 3,
+        minBarSpacing: 2.5,
+      },
+      kineticScroll: {
+        touch: true,
+        mouse: true,
       },
       handleScroll: {
         mouseWheel: true,
@@ -229,7 +338,11 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = (
 
     return () => {
       resizeObserver.disconnect();
+      if (tickRafRef.current) cancelAnimationFrame(tickRafRef.current);
+      if (overlayRafRef.current) cancelAnimationFrame(overlayRafRef.current);
       tradeLinesRef.current.clear();
+      srLinesRef.current = [];
+      fibLinesRef.current = [];
       mainSeriesRef.current = null;
       chartRef.current = null;
       chart.remove();
@@ -241,7 +354,6 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = (
     const chart = chartRef.current;
     if (!chart) return;
 
-    // Clean up existing series
     if (mainSeriesRef.current) {
       try {
         chart.removeSeries(mainSeriesRef.current);
@@ -250,6 +362,8 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = (
       }
       mainSeriesRef.current = null;
       tradeLinesRef.current.clear();
+      srLinesRef.current = [];
+      fibLinesRef.current = [];
     }
 
     const minMove = Number(Math.pow(10, -asset.pipDecimals).toFixed(asset.pipDecimals));
@@ -296,9 +410,9 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = (
     }
 
     mainSeriesRef.current = series;
-    prevDatasetKeyRef.current = ''; // Force full setData on next effect
+    prevDatasetKeyRef.current = '';
+    prevIndicatorKeyRef.current = '';
 
-    // Subscribe crosshair move for OHLC bar
     const handleCrosshair = (param: any) => {
       if (!onHoverCandle) return;
       if (!param || !param.time || !mainSeriesRef.current) {
@@ -349,70 +463,181 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = (
     chart.timeScale().applyOptions({ barSpacing: spacing });
   }, [zoomLevel]);
 
-  // 4. Update PriceFormat & Candle Data when Asset, Timeframe, or Live Ticks change
+  // 4. RequestAnimationFrame-Throttled Price & Indicator Updates for Butter-Smooth 60fps Performance
   useEffect(() => {
     const chart = chartRef.current;
     const series = mainSeriesRef.current;
     if (!chart || !series) return;
 
-    const minMove = Number(Math.pow(10, -asset.pipDecimals).toFixed(asset.pipDecimals));
-    series.applyOptions({
-      priceFormat: {
-        type: 'price',
-        precision: asset.pipDecimals,
-        minMove,
-      },
-    });
+    if (tickRafRef.current) {
+      cancelAnimationFrame(tickRafRef.current);
+    }
 
-    const bars = prepareLightweightBars(candles, chartType, asset.pipDecimals);
-    if (bars.length === 0) return;
+    tickRafRef.current = requestAnimationFrame(() => {
+      const minMove = Number(Math.pow(10, -asset.pipDecimals).toFixed(asset.pipDecimals));
+      series.applyOptions({
+        priceFormat: {
+          type: 'price',
+          precision: asset.pipDecimals,
+          minMove,
+        },
+      });
 
-    const datasetKey = `${asset.symbol}:${timeframe}:${chartType}`;
-    const isNewDataset = prevDatasetKeyRef.current !== datasetKey;
+      const bars = prepareLightweightBars(candles, chartType, asset.pipDecimals);
+      if (bars.length === 0) return;
 
-    if (isNewDataset || Math.abs(bars.length - prevBarsLenRef.current) > 3) {
-      if (chartType === 'line') {
-        series.setData(bars.map((b) => ({ time: b.time, value: b.close })));
-      } else {
-        series.setData(bars);
+      // Guard against 1-frame transitional render where `asset` updated before `candles` state updated
+      if (
+        asset.basePrice > 0 &&
+        bars[0].open > 0 &&
+        Math.abs(bars[0].open - asset.basePrice) / Math.max(asset.basePrice, bars[0].open) > 0.45
+      ) {
+        return;
       }
-      prevDatasetKeyRef.current = datasetKey;
-      prevBarsLenRef.current = bars.length;
-      chart.timeScale().scrollToRealTime();
-    } else {
-      // Incremental live tick update on the last 1-2 bars for 60fps smoothness
-      const prevBar = bars.length >= 2 ? bars[bars.length - 2] : null;
-      const lastBar = bars[bars.length - 1];
-      try {
-        if (prevBar) {
-          if (chartType === 'line') {
-            series.update({ time: prevBar.time, value: prevBar.close });
-          } else {
-            series.update(prevBar);
-          }
-        }
-        if (chartType === 'line') {
-          series.update({ time: lastBar.time, value: lastBar.close });
-        } else {
-          series.update(lastBar);
-        }
-        prevBarsLenRef.current = bars.length;
-      } catch {
-        // Fallback to full setData if out-of-order timestamp occurred
+
+      barsCacheRef.current = bars;
+
+      const firstBarSig = `${bars[0].time}:${bars[0].open.toFixed(asset.pipDecimals)}`;
+      const datasetKey = `${asset.symbol}:${timeframe}:${chartType}:${firstBarSig}`;
+      const isNewDataset = prevDatasetKeyRef.current !== datasetKey;
+
+      if (isNewDataset || Math.abs(bars.length - prevBarsLenRef.current) > 3) {
         if (chartType === 'line') {
           series.setData(bars.map((b) => ({ time: b.time, value: b.close })));
         } else {
           series.setData(bars);
         }
+        const fullRawCandles: Candle[] = bars.map((b) => ({
+          time: (b.time as number) * 1000,
+          open: b.open,
+          high: b.high,
+          low: b.low,
+          close: b.close,
+          volume: 100,
+        }));
+        if (indicators?.showSma && smaSeriesRef.current) {
+          const smaVals = calculateSMA(fullRawCandles, indicators.smaPeriod || 14);
+          const smaData = bars
+            .map((b, idx) => (smaVals[idx] !== null ? { time: b.time, value: smaVals[idx]! } : null))
+            .filter(Boolean) as Array<{ time: UTCTimestamp; value: number }>;
+          smaSeriesRef.current.setData(smaData);
+        }
+        if (indicators?.showEma && emaSeriesRef.current) {
+          const emaVals = calculateEMA(fullRawCandles, indicators.emaPeriod || 9);
+          const emaData = bars
+            .map((b, idx) => (emaVals[idx] !== null ? { time: b.time, value: emaVals[idx]! } : null))
+            .filter(Boolean) as Array<{ time: UTCTimestamp; value: number }>;
+          emaSeriesRef.current.setData(emaData);
+        }
+        if (indicators?.showBollinger && bbUpperRef.current && bbLowerRef.current) {
+          const bbVals = calculateBollingerBands(
+            fullRawCandles,
+            indicators.bollingerPeriod || 20,
+            indicators.bollingerStd || 2
+          );
+          const upperData: Array<{ time: UTCTimestamp; value: number }> = [];
+          const lowerData: Array<{ time: UTCTimestamp; value: number }> = [];
+          bars.forEach((b, idx) => {
+            if (bbVals.upper[idx] !== null && bbVals.lower[idx] !== null) {
+              upperData.push({ time: b.time, value: bbVals.upper[idx]! });
+              lowerData.push({ time: b.time, value: bbVals.lower[idx]! });
+            }
+          });
+          bbUpperRef.current.setData(upperData);
+          bbLowerRef.current.setData(lowerData);
+        }
+        prevDatasetKeyRef.current = datasetKey;
         prevBarsLenRef.current = bars.length;
-      }
-    }
-  }, [asset.symbol, asset.pipDecimals, candles, currentPrice, timeframe, chartType]);
+        prevIndicatorKeyRef.current = '';
+        chart.priceScale('right').applyOptions({ autoScale: true });
+        chart.timeScale().scrollToRealTime();
+      } else {
+        const prevBar = bars.length >= 2 ? bars[bars.length - 2] : null;
+        const lastBar = bars[bars.length - 1];
+        try {
+          if (prevBar) {
+            if (chartType === 'line') {
+              series.update({ time: prevBar.time, value: prevBar.close });
+            } else {
+              series.update(prevBar);
+            }
+          }
+          if (chartType === 'line') {
+            series.update({ time: lastBar.time, value: lastBar.close });
+          } else {
+            series.update(lastBar);
+          }
+          prevBarsLenRef.current = bars.length;
+        } catch {
+          if (chartType === 'line') {
+            series.setData(bars.map((b) => ({ time: b.time, value: b.close })));
+          } else {
+            series.setData(bars);
+          }
+          prevBarsLenRef.current = bars.length;
+        }
 
-  // 5. Optional Technical Indicator Overlays (SMA, EMA, Bollinger Bands)
+        // Incremental O(1) fast-tip update for active LineSeries indicators (SMA, EMA, Bollinger)
+        if (indicators && bars.length >= 30) {
+          const tailSlice = bars.slice(-60).map((b) => ({
+            time: (b.time as number) * 1000,
+            open: b.open,
+            high: b.high,
+            low: b.low,
+            close: b.close,
+            volume: 100,
+          }));
+          if (indicators.showSma && smaSeriesRef.current) {
+            const smaTail = calculateSMA(tailSlice, indicators.smaPeriod || 14);
+            const lastSma = smaTail[smaTail.length - 1];
+            if (lastSma !== null) {
+              try {
+                smaSeriesRef.current.update({ time: lastBar.time, value: lastSma });
+              } catch {
+                // ignore
+              }
+            }
+          }
+          if (indicators.showEma && emaSeriesRef.current) {
+            const emaTail = calculateEMA(tailSlice, indicators.emaPeriod || 9);
+            const lastEma = emaTail[emaTail.length - 1];
+            if (lastEma !== null) {
+              try {
+                emaSeriesRef.current.update({ time: lastBar.time, value: lastEma });
+              } catch {
+                // ignore
+              }
+            }
+          }
+          if (indicators.showBollinger && bbUpperRef.current && bbLowerRef.current) {
+            const bbTail = calculateBollingerBands(
+              tailSlice,
+              indicators.bollingerPeriod || 20,
+              indicators.bollingerStd || 2
+            );
+            const lastUp = bbTail.upper[bbTail.upper.length - 1];
+            const lastLow = bbTail.lower[bbTail.lower.length - 1];
+            if (lastUp !== null && lastLow !== null) {
+              try {
+                bbUpperRef.current.update({ time: lastBar.time, value: lastUp });
+                bbLowerRef.current.update({ time: lastBar.time, value: lastLow });
+              } catch {
+                // ignore
+              }
+            }
+          }
+        }
+      }
+
+      computeTradeCoordinates();
+    });
+  }, [asset.symbol, asset.basePrice, asset.pipDecimals, candles, currentPrice, timeframe, chartType, computeTradeCoordinates]);
+
+  // 5. Full Technical Indicator Setup (Only re-runs when indicator toggles/params or dataset changes, NOT on every tick!)
   useEffect(() => {
     const chart = chartRef.current;
-    if (!chart) return;
+    const series = mainSeriesRef.current;
+    if (!chart || !series) return;
 
     const removeIfPresent = (ref: React.MutableRefObject<ISeriesApi<any> | null>) => {
       if (ref.current) {
@@ -425,16 +650,55 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = (
       }
     };
 
+    const clearPriceLines = (listRef: React.MutableRefObject<IPriceLine[]>) => {
+      for (const l of listRef.current) {
+        try {
+          series.removePriceLine(l);
+        } catch {
+          // ignore
+        }
+      }
+      listRef.current = [];
+    };
+
     if (!indicators) {
       removeIfPresent(smaSeriesRef);
       removeIfPresent(emaSeriesRef);
       removeIfPresent(bbUpperRef);
       removeIfPresent(bbLowerRef);
+      clearPriceLines(srLinesRef);
+      clearPriceLines(fibLinesRef);
       return;
     }
 
     const bars = prepareLightweightBars(candles, chartType, asset.pipDecimals);
     if (bars.length === 0) return;
+
+    if (
+      asset.basePrice > 0 &&
+      bars[0].open > 0 &&
+      Math.abs(bars[0].open - asset.basePrice) / Math.max(asset.basePrice, bars[0].open) > 0.45
+    ) {
+      return;
+    }
+
+    const firstBarSig = `${bars[0].time}:${bars[0].open.toFixed(asset.pipDecimals)}`;
+    const indicatorKey = JSON.stringify({
+      sym: asset.symbol,
+      sig: firstBarSig,
+      tf: timeframe,
+      ct: chartType,
+      sma: indicators.showSma ? `${indicators.smaPeriod}:${indicators.smaColor}:${indicators.smaWidth}` : 'off',
+      ema: indicators.showEma ? `${indicators.emaPeriod}:${indicators.emaColor}:${indicators.emaWidth}` : 'off',
+      bb: indicators.showBollinger ? `${indicators.bollingerPeriod}:${indicators.bollingerStd}:${indicators.bollingerColor}` : 'off',
+      sr: Boolean(indicators.showSupportResistance),
+      fib: Boolean(indicators.showFib),
+    });
+
+    if (prevIndicatorKeyRef.current === indicatorKey) {
+      return;
+    }
+    prevIndicatorKeyRef.current = indicatorKey;
 
     const rawCandles: Candle[] = bars.map((b) => ({
       time: (b.time as number) * 1000,
@@ -449,13 +713,18 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = (
     if (indicators.showSma) {
       if (!smaSeriesRef.current) {
         smaSeriesRef.current = chart.addSeries(LineSeries, {
-          color: '#38bdf8',
-          lineWidth: 2,
+          color: indicators.smaColor || '#38bdf8',
+          lineWidth: (indicators.smaWidth || 2) as any,
           priceLineVisible: false,
           lastValueVisible: false,
         });
+      } else {
+        smaSeriesRef.current.applyOptions({
+          color: indicators.smaColor || '#38bdf8',
+          lineWidth: (indicators.smaWidth || 2) as any,
+        });
       }
-      const smaVals = calculateSMA(rawCandles, indicators.smaPeriod || 20);
+      const smaVals = calculateSMA(rawCandles, indicators.smaPeriod || 14);
       const smaData = bars
         .map((b, idx) => (smaVals[idx] !== null ? { time: b.time, value: smaVals[idx]! } : null))
         .filter(Boolean) as Array<{ time: UTCTimestamp; value: number }>;
@@ -468,13 +737,18 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = (
     if (indicators.showEma) {
       if (!emaSeriesRef.current) {
         emaSeriesRef.current = chart.addSeries(LineSeries, {
-          color: '#f59e0b',
-          lineWidth: 2,
+          color: indicators.emaColor || '#f59e0b',
+          lineWidth: (indicators.emaWidth || 2) as any,
           priceLineVisible: false,
           lastValueVisible: false,
         });
+      } else {
+        emaSeriesRef.current.applyOptions({
+          color: indicators.emaColor || '#f59e0b',
+          lineWidth: (indicators.emaWidth || 2) as any,
+        });
       }
-      const emaVals = calculateEMA(rawCandles, indicators.emaPeriod || 14);
+      const emaVals = calculateEMA(rawCandles, indicators.emaPeriod || 9);
       const emaData = bars
         .map((b, idx) => (emaVals[idx] !== null ? { time: b.time, value: emaVals[idx]! } : null))
         .filter(Boolean) as Array<{ time: UTCTimestamp; value: number }>;
@@ -485,9 +759,10 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = (
 
     // Bollinger Bands
     if (indicators.showBollinger) {
+      const bbColor = indicators.bollingerColor || 'rgba(168, 85, 247, 0.75)';
       if (!bbUpperRef.current) {
         bbUpperRef.current = chart.addSeries(LineSeries, {
-          color: 'rgba(168, 85, 247, 0.75)',
+          color: bbColor,
           lineWidth: 1,
           lineStyle: LineStyle.Dashed,
           priceLineVisible: false,
@@ -496,7 +771,7 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = (
       }
       if (!bbLowerRef.current) {
         bbLowerRef.current = chart.addSeries(LineSeries, {
-          color: 'rgba(168, 85, 247, 0.75)',
+          color: bbColor,
           lineWidth: 1,
           lineStyle: LineStyle.Dashed,
           priceLineVisible: false,
@@ -522,20 +797,90 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = (
       removeIfPresent(bbUpperRef);
       removeIfPresent(bbLowerRef);
     }
+
+    // Auto Support & Resistance Price Lines
+    clearPriceLines(srLinesRef);
+    if (indicators.showSupportResistance) {
+      const srLevels = calculateSupportResistanceLevels(rawCandles, asset.pipDecimals);
+      for (const lvl of srLevels) {
+        try {
+          const line = series.createPriceLine({
+            price: lvl.price,
+            color: lvl.type === 'resistance' ? 'rgba(255, 51, 75, 0.65)' : 'rgba(0, 230, 118, 0.65)',
+            lineWidth: 1,
+            lineStyle: LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: lvl.type === 'resistance' ? 'RESISTANCE' : 'SUPPORT',
+          });
+          srLinesRef.current.push(line);
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    // Fibonacci Retracement Price Lines
+    clearPriceLines(fibLinesRef);
+    if (indicators.showFib && rawCandles.length >= 10) {
+      const recent = rawCandles.slice(-80);
+      const high = Math.max(...recent.map((c) => c.high));
+      const low = Math.min(...recent.map((c) => c.low));
+      const fibs = calculateFibonacciLevels(high, low);
+      for (const f of fibs) {
+        try {
+          const line = series.createPriceLine({
+            price: Number(f.price.toFixed(asset.pipDecimals)),
+            color: f.ratio === 0.618 ? '#ff8800' : 'rgba(56, 189, 248, 0.55)',
+            lineWidth: 1,
+            lineStyle: LineStyle.Dotted,
+            axisLabelVisible: false,
+            title: `Fib ${f.label}`,
+          });
+          fibLinesRef.current.push(line);
+        } catch {
+          // ignore
+        }
+      }
+    }
+    // Adjust vertical scale margins when RSI or MACD sub-panes are active so candles never collide with sub-panes
+    try {
+      chart.priceScale('right').applyOptions({
+        scaleMargins: {
+          top: 0.14,
+          bottom: indicators.showRsi || indicators.showMacd ? 0.28 : 0.16,
+        },
+      });
+    } catch {
+      // ignore
+    }
   }, [
     indicators?.showSma,
     indicators?.smaPeriod,
+    indicators?.smaColor,
+    indicators?.smaWidth,
     indicators?.showEma,
     indicators?.emaPeriod,
+    indicators?.emaColor,
+    indicators?.emaWidth,
     indicators?.showBollinger,
     indicators?.bollingerPeriod,
     indicators?.bollingerStd,
-    candles,
-    chartType,
+    indicators?.bollingerColor,
+    indicators?.showSupportResistance,
+    indicators?.showFib,
+    indicators?.showRsi,
+    indicators?.showMacd,
+    asset.symbol,
+    asset.basePrice,
     asset.pipDecimals,
+    timeframe,
+    chartType,
+    candles.length,
+    candles[0]?.time,
+    candles[0]?.open,
   ]);
 
-  // 6. Synchronize Visual Trade Overlays (Horizontal Price Lines on TradingView Chart)
+  // 6. Synchronize Interactive Chart Trade Overlays (TradingView createOrderLine Primitive)
   useEffect(() => {
     const series = mainSeriesRef.current;
     if (!series) return;
@@ -543,93 +888,443 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = (
     const existingMap = tradeLinesRef.current;
     const activeIds = new Set(assetActiveTrades.map((t) => t.id));
 
-    // Remove expired or other-asset price lines
-    for (const [id, lineObj] of existingMap.entries()) {
+    // Automatically remove order lines upon final trade settlement / expiration
+    for (const [id, orderLineObj] of existingMap.entries()) {
       if (!activeIds.has(id)) {
-        try {
-          series.removePriceLine(lineObj);
-        } catch {
-          // ignore
-        }
+        orderLineObj.remove();
         existingMap.delete(id);
       }
     }
 
     const now = Date.now();
-    const nextCoords: Record<string, number> = {};
+    const isCompactViewport = (containerRef.current?.clientWidth || 800) < 540;
 
-    // Create or update horizontal trade lines for active trades on this asset
     for (const trade of assetActiveTrades) {
-      const isCall = trade.direction === 'CALL';
-      const priceDiff = currentPrice - trade.strikePrice;
-      const isTie = Math.abs(priceDiff) < 1e-7;
-      const isWinning = isTie
-        ? isCall // At exact entry tick, color Higher Green and Lower Red
-        : (isCall && priceDiff > 0) || (!isCall && priceDiff < 0);
+      const orderState = computeOrderLineState(trade, currentPrice, now, asset.pipDecimals);
+      const existingOrderLine = existingMap.get(trade.id);
 
-      const lineColor = isWinning ? '#00e676' : '#ff334b';
-      const secondsLeft = Math.max(0, Math.ceil((trade.endTime - now) / 1000));
-      const dirLabel = isCall ? '▲ HIGHER' : '▼ LOWER';
-      const statusTag = isTie ? 'ENTRY' : isWinning ? 'ITM' : 'OTM';
-      const title = `${dirLabel} $${trade.investment} • ${formatCountdown(secondsLeft)} (${statusTag})`;
-
-      const existingLine = existingMap.get(trade.id);
-      if (existingLine) {
-        try {
-          existingLine.applyOptions({
-            price: trade.strikePrice,
-            color: lineColor,
-            lineWidth: 2,
-            lineStyle: LineStyle.Solid,
-            axisLabelVisible: true,
-            title,
-          });
-        } catch {
-          // ignore
-        }
+      if (existingOrderLine && !existingOrderLine.isRemoved()) {
+        existingOrderLine
+          .setPrice(trade.strikePrice)
+          .setDirection(trade.direction)
+          .setQuantity(orderState.formattedAmount)
+          .setTimer(orderState.formattedTimer)
+          .setLineColor(orderState.lineColor)
+          .setBodyBackgroundColor(orderState.bodyBackgroundColor)
+          .setBodyBorderColor(orderState.bodyBorderColor)
+          .setBodyTextColor(orderState.bodyTextColor)
+          .setQuantityBackgroundColor(orderState.quantityBackgroundColor)
+          .setCancellable(false)
+          .applyState(orderState, isCompactViewport);
       } else {
         try {
-          const newLine = series.createPriceLine({
-            price: trade.strikePrice,
-            color: lineColor,
-            lineWidth: 2,
-            lineStyle: LineStyle.Solid,
-            axisLabelVisible: true,
-            title,
-          });
-          existingMap.set(trade.id, newLine);
+          const newOrderLine = createTradingViewOrderLine(
+            series as any,
+            orderState,
+            isCompactViewport
+          );
+          existingMap.set(trade.id, newOrderLine);
         } catch {
           // ignore
         }
-      }
-
-      try {
-        const coord = series.priceToCoordinate(trade.strikePrice);
-        if (typeof coord === 'number' && !Number.isNaN(coord)) {
-          nextCoords[trade.id] = coord;
-        }
-      } catch {
-        // ignore
       }
     }
 
-    setTradeYCoords((prev) => {
-      const prevKeys = Object.keys(prev);
-      const nextKeys = Object.keys(nextCoords);
-      if (
-        prevKeys.length === nextKeys.length &&
-        nextKeys.every((k) => Math.abs((prev[k] ?? -9999) - nextCoords[k]) < 0.5)
-      ) {
-        return prev;
+    computeTradeCoordinates();
+  }, [assetActiveTrades, currentPrice, chartType, asset.pipDecimals, computeTradeCoordinates]);
+
+  // 7. Synchronize Hardware-Accelerated Overlay Canvas (Legacy Trade Entry/Exit Nodes + Drawings + RSI/MACD Sub-panes)
+  useEffect(() => {
+    const canvas = overlayCanvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
+
+    if (overlayRafRef.current) {
+      cancelAnimationFrame(overlayRafRef.current);
+    }
+
+    overlayRafRef.current = requestAnimationFrame(() => {
+      const width = container.clientWidth || 800;
+      const height = container.clientHeight || 460;
+      const dpr = Math.max(1, typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1);
+
+      if (canvas.width !== Math.floor(width * dpr) || canvas.height !== Math.floor(height * dpr)) {
+        canvas.width = Math.floor(width * dpr);
+        canvas.height = Math.floor(height * dpr);
+        canvas.style.width = `${width}px`;
+        canvas.style.height = `${height}px`;
       }
-      return nextCoords;
+
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      ctx.save();
+      ctx.scale(dpr, dpr);
+      ctx.clearRect(0, 0, width, height);
+
+      const bars = barsCacheRef.current;
+      const recentBars = bars.slice(-80);
+      const minPrice = recentBars.length > 0 ? Math.min(...recentBars.map((b) => b.low)) : currentPrice * 0.99;
+      const maxPrice = recentBars.length > 0 ? Math.max(...recentBars.map((b) => b.high)) : currentPrice * 1.01;
+      const chartHeight = height - 28;
+
+      // A. Render TradingView OrderLine Primitive Annotations (Horizontal Entry Line + Execution Node + Expiry Marker)
+      if (assetActiveTrades.length > 0) {
+        const now = Date.now();
+        for (const trade of assetActiveTrades) {
+          const coords = tradeCoords[trade.id];
+          if (!coords) continue;
+          const orderState = computeOrderLineState(trade, currentPrice, now, asset.pipDecimals);
+          const { y, entryX, liveX } = coords;
+
+          // Reinforced Horizontal OrderLine across the chart canvas at the exact entry price Y coordinate
+          if (y >= 10 && y <= chartHeight) {
+            ctx.save();
+            ctx.strokeStyle = orderState.lineColor;
+            ctx.lineWidth = 2;
+            ctx.setLineDash([]);
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(width - 68, y);
+            ctx.stroke();
+            ctx.restore();
+          }
+
+          // Entry vertical dashed line & glowing execution dot
+          const nodeX = entryX ?? liveX ?? width - 160;
+          if (nodeX >= 10 && nodeX <= width - 70) {
+            ctx.save();
+            ctx.strokeStyle = orderState.isInTheMoney
+              ? 'rgba(0, 230, 118, 0.35)'
+              : 'rgba(255, 51, 75, 0.35)';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([4, 4]);
+            ctx.beginPath();
+            ctx.moveTo(nodeX, 12);
+            ctx.lineTo(nodeX, chartHeight);
+            ctx.stroke();
+
+            // Outer glow ring at execution coordinate
+            ctx.setLineDash([]);
+            ctx.beginPath();
+            ctx.arc(nodeX, y, 8, 0, Math.PI * 2);
+            ctx.fillStyle = orderState.isInTheMoney
+              ? 'rgba(0, 230, 118, 0.25)'
+              : 'rgba(255, 51, 75, 0.25)';
+            ctx.fill();
+
+            // Inner solid entry point dot
+            ctx.beginPath();
+            ctx.arc(nodeX, y, 4, 0, Math.PI * 2);
+            ctx.fillStyle = orderState.lineColor;
+            ctx.fill();
+            ctx.lineWidth = 1.5;
+            ctx.strokeStyle = '#ffffff';
+            ctx.stroke();
+            ctx.restore();
+          }
+
+          // Expiration vertical line ("End of trade") ahead of live candle
+          const expX = Math.min(width - 78, (liveX ?? width - 140) + 52);
+          ctx.save();
+          ctx.strokeStyle = 'rgba(255, 136, 0, 0.45)';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([3, 3]);
+          ctx.beginPath();
+          ctx.moveTo(expX, 12);
+          ctx.lineTo(expX, chartHeight);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle = '#ff8800';
+          ctx.font = 'bold 9px JetBrains Mono, monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText(`EXP ${orderState.formattedTimer}`, expX, 20);
+          ctx.restore();
+        }
+      }
+
+      // B. Render User Technical Drawings (Trendline, Horizontal S/R, Fibonacci, Channels, etc.)
+      const allDrawings = [...drawings, ...(draftDrawing ? [draftDrawing] : [])];
+      for (const d of allDrawings) {
+        renderDrawingOnCanvas(
+          ctx,
+          d,
+          width,
+          height,
+          chartHeight,
+          minPrice,
+          maxPrice,
+          asset.pipDecimals,
+          d.id === selectedDrawingId
+        );
+      }
+
+      // C. Render RSI / MACD Compact Sub-Pane Overlay above the bottom floating toolbar
+      let bottomCursor = height - 54;
+      if (indicators?.showRsi && bars.length > 15) {
+        const rsiH = 48;
+        const rsiTop = bottomCursor - rsiH;
+        bottomCursor = rsiTop - 4;
+
+        ctx.save();
+        ctx.fillStyle = 'rgba(11, 14, 20, 0.92)';
+        ctx.fillRect(0, rsiTop, width - 65, rsiH);
+        ctx.strokeStyle = 'rgba(51, 65, 85, 0.6)';
+        ctx.strokeRect(0, rsiTop, width - 65, rsiH);
+
+        // Overbought 70 & Oversold 30 lines
+        ctx.strokeStyle = 'rgba(255, 51, 75, 0.35)';
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(0, rsiTop + rsiH * 0.3);
+        ctx.lineTo(width - 65, rsiTop + rsiH * 0.3);
+        ctx.stroke();
+
+        ctx.strokeStyle = 'rgba(0, 230, 118, 0.35)';
+        ctx.beginPath();
+        ctx.moveTo(0, rsiTop + rsiH * 0.7);
+        ctx.lineTo(width - 65, rsiTop + rsiH * 0.7);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        const slice = bars.slice(-80).map((b) => ({
+          time: (b.time as number) * 1000,
+          open: b.open,
+          high: b.high,
+          low: b.low,
+          close: b.close,
+          volume: 100,
+        }));
+        const rsiVals = calculateRSI(slice, indicators.rsiPeriod || 14);
+        ctx.strokeStyle = indicators.rsiColor || '#00e5ff';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        let started = false;
+        const plotW = width - 75;
+        rsiVals.forEach((v, idx) => {
+          if (v !== null) {
+            const x = 8 + (idx / Math.max(1, rsiVals.length - 1)) * plotW;
+            const y = rsiTop + rsiH - (v / 100) * rsiH;
+            if (!started) {
+              ctx.moveTo(x, y);
+              started = true;
+            } else {
+              ctx.lineTo(x, y);
+            }
+          }
+        });
+        ctx.stroke();
+
+        const lastRsi = rsiVals[rsiVals.length - 1];
+        ctx.fillStyle = indicators.rsiColor || '#00e5ff';
+        ctx.font = 'bold 10px JetBrains Mono, monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(
+          `RSI (${indicators.rsiPeriod || 14}): ${lastRsi !== null && lastRsi !== undefined ? lastRsi.toFixed(1) : '--'}`,
+          10,
+          rsiTop + 13
+        );
+        ctx.restore();
+      }
+
+      if (indicators?.showMacd && bars.length > 26) {
+        const macdH = 54;
+        const macdTop = bottomCursor - macdH;
+
+        ctx.save();
+        ctx.fillStyle = 'rgba(11, 14, 20, 0.92)';
+        ctx.fillRect(0, macdTop, width - 65, macdH);
+        ctx.strokeStyle = 'rgba(51, 65, 85, 0.6)';
+        ctx.strokeRect(0, macdTop, width - 65, macdH);
+
+        const slice = bars.slice(-80).map((b) => ({
+          time: (b.time as number) * 1000,
+          open: b.open,
+          high: b.high,
+          low: b.low,
+          close: b.close,
+          volume: 100,
+        }));
+        const macdRes = calculateMACD(
+          slice,
+          indicators.macdFast || 12,
+          indicators.macdSlow || 26,
+          indicators.macdSignal || 9
+        );
+        const zeroY = macdTop + macdH / 2;
+        const mags = [
+          ...macdRes.macd.filter((v): v is number => v !== null).map((v) => Math.abs(v)),
+          ...macdRes.signal.filter((v): v is number => v !== null).map((v) => Math.abs(v)),
+        ];
+        const maxAbs = Math.max(1e-5, ...mags);
+        const scale = (macdH * 0.4) / maxAbs;
+        const plotW = width - 75;
+
+        macdRes.histogram.forEach((h, idx) => {
+          if (h !== null) {
+            const x = 8 + (idx / Math.max(1, slice.length - 1)) * plotW;
+            const barH = h * scale;
+            ctx.fillStyle = h >= 0 ? 'rgba(0, 230, 118, 0.65)' : 'rgba(255, 51, 75, 0.65)';
+            ctx.fillRect(x - 1.5, zeroY - barH, 3, barH);
+          }
+        });
+
+        ctx.strokeStyle = indicators.macdColor || '#2962ff';
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        let s1 = false;
+        macdRes.macd.forEach((v, idx) => {
+          if (v !== null) {
+            const x = 8 + (idx / Math.max(1, slice.length - 1)) * plotW;
+            const y = zeroY - v * scale;
+            if (!s1) {
+              ctx.moveTo(x, y);
+              s1 = true;
+            } else {
+              ctx.lineTo(x, y);
+            }
+          }
+        });
+        ctx.stroke();
+
+        ctx.fillStyle = '#38bdf8';
+        ctx.font = 'bold 10px JetBrains Mono, monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(
+          `MACD (${indicators.macdFast || 12},${indicators.macdSlow || 26},${indicators.macdSignal || 9})`,
+          10,
+          macdTop + 13
+        );
+        ctx.restore();
+      }
+
+      ctx.restore();
     });
-  }, [assetActiveTrades, currentPrice, chartType]);
+  }, [
+    assetActiveTrades,
+    tradeCoords,
+    currentPrice,
+    drawings,
+    draftDrawing,
+    selectedDrawingId,
+    indicators?.showRsi,
+    indicators?.rsiPeriod,
+    indicators?.rsiColor,
+    indicators?.showMacd,
+    indicators?.macdFast,
+    indicators?.macdSlow,
+    indicators?.macdSignal,
+    asset.pipDecimals,
+  ]);
+
+  // 8. Interactive Mouse & Touch Handlers for Drawing Tools Overlay
+  const getRelativePoint = (clientX: number, clientY: number) => {
+    const rect = overlayCanvasRef.current?.getBoundingClientRect();
+    if (!rect) return { x: 0, y: 0 };
+    return {
+      x: clientX - rect.left,
+      y: clientY - rect.top,
+    };
+  };
+
+  const handlePointerStart = (clientX: number, clientY: number) => {
+    const pt = getRelativePoint(clientX, clientY);
+    const width = containerRef.current?.clientWidth || 800;
+    const height = containerRef.current?.clientHeight || 460;
+
+    if (activeDrawingTool !== 'none') {
+      const initial = createInitialDrawing(
+        activeDrawingTool,
+        pt.x,
+        pt.y,
+        drawingColor,
+        drawingWidth,
+        drawingLineStyle
+      );
+      setDraftDrawing(initial);
+      onSelectDrawing?.(null);
+      return true;
+    }
+
+    const selectedObj = drawings.find((d) => d.id === selectedDrawingId);
+    if (selectedObj) {
+      const handle = findHitDrawingHandle(pt.x, pt.y, selectedObj, 14);
+      if (handle) {
+        draggingDrawingRef.current = {
+          id: selectedObj.id,
+          mode: handle,
+          lastX: pt.x,
+          lastY: pt.y,
+          drawing: selectedObj,
+        };
+        return true;
+      }
+    }
+
+    const hit = findHitDrawing(pt.x, pt.y, drawings, width, height, 12);
+    if (hit) {
+      onSelectDrawing?.(hit.id);
+      draggingDrawingRef.current = {
+        id: hit.id,
+        mode: 'move',
+        lastX: pt.x,
+        lastY: pt.y,
+        drawing: hit,
+      };
+      return true;
+    }
+
+    if (selectedDrawingId) {
+      onSelectDrawing?.(null);
+    }
+    return false;
+  };
+
+  const handlePointerMove = (clientX: number, clientY: number) => {
+    const pt = getRelativePoint(clientX, clientY);
+    if (draftDrawing) {
+      setDraftDrawing((prev) => (prev ? updateDrawingOnDrag(prev, pt.x, pt.y) : null));
+      return;
+    }
+    if (draggingDrawingRef.current) {
+      const state = draggingDrawingRef.current;
+      const dx = pt.x - state.lastX;
+      const dy = pt.y - state.lastY;
+      const updated =
+        state.mode === 'move'
+          ? translateDrawing(state.drawing, dx, dy)
+          : updateDrawingHandle(state.drawing, state.mode, pt.x, pt.y);
+      draggingDrawingRef.current = {
+        ...state,
+        lastX: pt.x,
+        lastY: pt.y,
+        drawing: updated,
+      };
+      onUpdateDrawing?.(updated);
+    }
+  };
+
+  const handlePointerEnd = () => {
+    if (draftDrawing) {
+      const finalized = finalizeDrawingObject(draftDrawing);
+      onAddDrawing?.(finalized);
+      onSelectDrawing?.(finalized.id);
+      setDraftDrawing(null);
+      onCompleteDrawingTool?.();
+    }
+    draggingDrawingRef.current = null;
+  };
+
+  const isOverlayInteractive = activeDrawingTool !== 'none' || Boolean(draftDrawing) || Boolean(draggingDrawingRef.current);
 
   return (
     <div
       data-testid="lightweight-chart-wrapper"
-      className="relative w-full h-full min-h-[280px] bg-[#0b0e14] overflow-hidden select-none"
+      data-tv-symbol={resolvedTvSymbol.tvSymbol}
+      data-tv-exchange={resolvedTvSymbol.exchange}
+      data-tv-category={resolvedTvSymbol.marketCategory}
+      data-active-orderlines={assetActiveTrades.length}
+      className="relative w-full h-full min-h-[280px] bg-[#0b0e14] overflow-hidden select-none touch-pan-y"
     >
       {/* Official TradingView Lightweight Charts Mount Container */}
       <div
@@ -638,7 +1333,42 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = (
         className="w-full h-full"
       />
 
-      {/* High-Visibility Visual Trade Overlays Pinned to Entry Price Lines */}
+      {/* Synchronized Hardware-Accelerated Canvas Overlay for Drawings, S/R, RSI/MACD & Trade OrderLines */}
+      <canvas
+        ref={overlayCanvasRef}
+        data-testid="chart-technical-overlay-canvas"
+        style={{
+          pointerEvents: isOverlayInteractive || drawings.length > 0 ? 'auto' : 'none',
+          touchAction: activeDrawingTool !== 'none' ? 'none' : 'pan-y',
+        }}
+        onMouseDown={(e) => {
+          const captured = handlePointerStart(e.clientX, e.clientY);
+          if (!captured && activeDrawingTool === 'none') {
+            // Forward pointer interaction to underlying chart when clicking empty space
+          }
+        }}
+        onMouseMove={(e) => handlePointerMove(e.clientX, e.clientY)}
+        onMouseUp={handlePointerEnd}
+        onMouseLeave={handlePointerEnd}
+        onTouchStart={(e) => {
+          if (e.touches.length === 1 && activeDrawingTool !== 'none') {
+            e.preventDefault();
+            handlePointerStart(e.touches[0].clientX, e.touches[0].clientY);
+          }
+        }}
+        onTouchMove={(e) => {
+          if (e.touches.length === 1 && (draftDrawing || draggingDrawingRef.current)) {
+            e.preventDefault();
+            handlePointerMove(e.touches[0].clientX, e.touches[0].clientY);
+          }
+        }}
+        onTouchEnd={handlePointerEnd}
+        className={`absolute inset-0 z-15 ${
+          activeDrawingTool !== 'none' ? 'cursor-crosshair' : 'pointer-events-none'
+        }`}
+      />
+
+      {/* Interactive TradingView OrderLine (`createOrderLine`) Overlays Pinned to Entry Price Lines */}
       {assetActiveTrades.length > 0 && (
         <div
           data-testid="chart-active-trade-overlays"
@@ -647,22 +1377,22 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = (
           {(() => {
             const usedYs: number[] = [];
             const maxH = (containerRef.current?.clientHeight || 420) - 64;
-            return assetActiveTrades.map((trade, index) => {
-              const isCall = trade.direction === 'CALL';
-              const priceDiff = currentPrice - trade.strikePrice;
-              const isTie = Math.abs(priceDiff) < 1e-7;
-              const isWinning = isTie
-                ? isCall
-                : (isCall && priceDiff > 0) || (!isCall && priceDiff < 0);
+            const now = Date.now();
 
-              const secondsLeft = Math.max(0, Math.ceil((trade.endTime - Date.now()) / 1000));
-              const rawY = tradeYCoords[trade.id];
+            return assetActiveTrades.map((trade, index) => {
+              const orderState = computeOrderLineState(
+                trade,
+                currentPrice,
+                now,
+                asset.pipDecimals
+              );
+              const evalStatus = evaluateLiveTradeOverlayStatus(trade, currentPrice, now);
+              const rawY = tradeCoords[trade.id]?.y;
               let clampedY =
                 typeof rawY === 'number'
                   ? Math.max(48, Math.min(maxH, rawY))
                   : 90 + index * 44;
 
-              // Prevent vertical overlap when multiple trades are placed at nearby strike prices
               for (const prevY of usedYs) {
                 if (Math.abs(clampedY - prevY) < 38) {
                   clampedY = Math.min(maxH, prevY + 40);
@@ -670,66 +1400,83 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = (
               }
               usedYs.push(clampedY);
 
-              const profitAmount = ((trade.investment * trade.payoutPercentage) / 100).toFixed(2);
-
               return (
                 <div
                   key={trade.id}
                   data-testid={`chart-trade-overlay-${trade.id}`}
-                  style={{ top: `${clampedY - 16}px` }}
-                  className="absolute left-3 sm:left-4 flex items-center gap-2 transition-all duration-150"
+                  data-orderline-id={trade.id}
+                  data-orderline-direction={trade.direction}
+                  data-orderline-status={orderState.isInTheMoney ? 'ITM' : 'OTM'}
+                  data-orderline-color={orderState.lineColor}
+                  data-orderline-price={trade.strikePrice.toFixed(asset.pipDecimals)}
+                  style={{ transform: `translate3d(0, ${clampedY - 16}px, 0)` }}
+                  className="absolute top-0 left-3 sm:left-4 right-16 flex items-center gap-2 transition-transform duration-100 will-change-transform"
                 >
-                <div
-                  className={`flex items-center gap-2 px-2.5 py-1 rounded-lg border font-mono text-[11px] shadow-xl backdrop-blur-md ${
-                    isWinning
-                      ? 'bg-[#052e16]/95 border-[#00e676] text-[#00e676] shadow-emerald-950/50'
-                      : 'bg-[#3b0712]/95 border-[#ff334b] text-[#ff4d63] shadow-rose-950/50'
-                  }`}
-                >
-                  {/* Direction Icon & Label */}
-                  <span
-                    className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${
-                      isCall
-                        ? 'bg-[#00e676] text-slate-950'
-                        : 'bg-[#ff334b] text-white'
+                  {/* TradingView OrderLine Tag Body (Direction | Amount | ITM/OTM Color Status | Expiration Timer) */}
+                  <div
+                    className={`flex items-center gap-1.5 sm:gap-2 px-2.5 py-1 rounded-md border-2 font-mono text-[10.5px] sm:text-[11px] shadow-xl backdrop-blur-md shrink-0 ${
+                      orderState.isInTheMoney
+                        ? 'bg-[#052e16]/95 border-[#00e676] text-[#00e676] shadow-emerald-950/60'
+                        : 'bg-[#3b0712]/95 border-[#ff334b] text-[#ff4d63] shadow-rose-950/60'
                     }`}
                   >
-                    {isCall ? (
-                      <TrendingUp className="w-3 h-3 stroke-[3]" />
-                    ) : (
-                      <TrendingDown className="w-3 h-3 stroke-[3]" />
-                    )}
-                    <span>{isCall ? 'HIGHER' : 'LOWER'}</span>
-                  </span>
-
-                  {/* Entry Stake & Strike Price */}
-                  <span className="font-black text-white">
-                    ${trade.investment.toFixed(2)}
-                  </span>
-                  <span className="text-[10px] text-slate-300 hidden sm:inline">
-                    @ {trade.strikePrice.toFixed(asset.pipDecimals)}
-                  </span>
-
-                  {/* Live ITM / OTM Dynamic Status */}
-                  <span
-                    data-testid={`chart-trade-itm-badge-${trade.id}`}
-                    className={`px-1.5 py-0.2 rounded text-[10px] font-black uppercase ${
-                      isWinning
-                        ? 'bg-[#00e676]/20 text-[#00e676] border border-[#00e676]/50'
-                        : 'bg-[#ff334b]/20 text-[#ff4d63] border border-[#ff334b]/50'
-                    }`}
-                  >
-                    {isWinning ? `ITM +$${profitAmount}` : `OTM -$${trade.investment.toFixed(2)}`}
-                  </span>
-
-                  {/* Live Countdown Timer */}
-                  <span className="inline-flex items-center gap-1 pl-1.5 border-l border-white/15 font-black text-white">
-                    <Clock className="w-3 h-3 text-[#ff8800]" />
-                    <span data-testid={`chart-trade-timer-${trade.id}`}>
-                      {formatCountdown(secondsLeft)}
+                    {/* Direction Badge (CALL / PUT) */}
+                    <span
+                      data-testid={`chart-trade-direction-${trade.id}`}
+                      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${
+                        evalStatus.isCall
+                          ? 'bg-[#00e676] text-slate-950'
+                          : 'bg-[#ff334b] text-white'
+                      }`}
+                    >
+                      {evalStatus.isCall ? (
+                        <TrendingUp className="w-3 h-3 stroke-[3]" />
+                      ) : (
+                        <TrendingDown className="w-3 h-3 stroke-[3]" />
+                      )}
+                      <span>{trade.direction}</span>
                     </span>
-                  </span>
-                </div>
+
+                    {/* OrderLine Quantity / Amount & Entry Strike Price */}
+                    <span
+                      data-testid={`chart-trade-stake-${trade.id}`}
+                      className="font-black text-white tabular-nums"
+                    >
+                      {orderState.formattedAmount}
+                    </span>
+                    <span
+                      data-testid={`chart-trade-entry-price-${trade.id}`}
+                      className="text-[10px] text-slate-300 hidden sm:inline tabular-nums"
+                    >
+                      @ {trade.strikePrice.toFixed(asset.pipDecimals)}
+                    </span>
+
+                    {/* Dynamic Color Status Indicator (Green ITM / Red OTM) */}
+                    <span
+                      data-testid={`chart-trade-itm-badge-${trade.id}`}
+                      className={`px-1.5 py-0.2 rounded text-[10px] font-black uppercase tabular-nums ${
+                        orderState.isInTheMoney
+                          ? 'bg-[#00e676]/20 text-[#00e676] border border-[#00e676]/50'
+                          : 'bg-[#ff334b]/20 text-[#ff4d63] border border-[#ff334b]/50'
+                      }`}
+                    >
+                      {orderState.isInTheMoney
+                        ? `ITM ${orderState.formattedPnl}`
+                        : `OTM ${orderState.formattedPnl}`}
+                    </span>
+
+                    {/* Expiration Timer + Locked Settlement Indicator */}
+                    <span className="inline-flex items-center gap-1 pl-1.5 border-l border-white/15 font-black text-white tabular-nums">
+                      <Clock className="w-3 h-3 text-[#ff8800]" />
+                      <span data-testid={`chart-trade-timer-${trade.id}`}>
+                        {orderState.formattedTimer}
+                      </span>
+                      <Lock
+                        className="w-2.5 h-2.5 text-slate-300 ml-0.5"
+                        aria-label="Trade locked until expiry"
+                      />
+                    </span>
+                  </div>
                 </div>
               );
             });

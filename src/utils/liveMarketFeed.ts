@@ -407,3 +407,35 @@ export function computeAccountWinRate(trades: Array<{ status: 'won' | 'lost' | '
   const wonTrades = closedTrades.filter((t) => t.status === 'won').length;
   return Number(((wonTrades / closedTrades.length) * 100).toFixed(1));
 }
+
+/**
+ * Locked Trade Execution Guard:
+ * Ensures active binary option trades cannot be closed, cancelled, or cashed out prematurely
+ * once placed, forcing them to run strictly until full expiration duration is met.
+ */
+export function isTradeLockedUntilExpiry(
+  trade: { status?: string; startTime: number; endTime: number },
+  nowMs: number = Date.now()
+): boolean {
+  if (trade.status && trade.status !== 'active') return false;
+  return nowMs < trade.endTime;
+}
+
+export function canSettleTradeAtTime(
+  trade: { status?: string; startTime: number; endTime: number },
+  nowMs: number = Date.now()
+): { allowed: boolean; remainingMs: number; reason?: string } {
+  const remainingMs = Math.max(0, trade.endTime - nowMs);
+  if (remainingMs > 0) {
+    return {
+      allowed: false,
+      remainingMs,
+      reason: `Trade is locked until expiration (${Math.ceil(remainingMs / 1000)}s remaining). Early closure or cancellation is prohibited.`,
+    };
+  }
+  return {
+    allowed: true,
+    remainingMs: 0,
+  };
+}
+

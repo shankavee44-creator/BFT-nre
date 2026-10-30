@@ -2310,6 +2310,13 @@ export function settleTradeInDb(userId: string, tradeId: string, closePrice: num
     return { trade: mapTradeRow(tradeRow), account: acc, alreadySettled: true };
   }
 
+  // Enforce strict Locked Trade Execution: disallow premature closure/settlement before expiration (with 1s clock skew tolerance)
+  const nowCheck = Date.now();
+  if (nowCheck + 1000 < Number(tradeRow.end_time)) {
+    const secsLeft = Math.ceil((Number(tradeRow.end_time) - nowCheck) / 1000);
+    throw new Error(`Trade is locked until expiration (${secsLeft}s remaining) and cannot be closed or cancelled early.`);
+  }
+
   const finalPrice = Number(closePrice);
   const strike = Number(tradeRow.strike_price);
   const investment = Number(tradeRow.investment);

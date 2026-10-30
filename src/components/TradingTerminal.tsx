@@ -172,6 +172,10 @@ import {
   resolveMobileTradesDrawerAction,
   MobileTradesTab,
 } from '../utils/quotexMobile';
+import {
+  resolveTradingViewSymbol,
+  evaluateLockedTradeSettlement,
+} from '../utils/tradingViewOrderLineEngine';
 
 interface TradingTerminalProps {
   account?: TradingAccount | null;
@@ -531,7 +535,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   });
 
   // Dual-Breach System vs No Active Account State
-  const hasNoAccount = !account;
+  const hasNoAccount = !effectiveAccount;
   const isSoftBreached = Boolean(account && (account.status === 'soft-breached' || account.breachType === 'soft'));
   const isHardBreached = Boolean(
     account &&
@@ -736,8 +740,11 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       }
     });
 
+    let isCancelled = false;
+
     // Fetch latest snapshot on mount / asset pair switch for instant state recovery
     supabaseMarketSync.fetchMarketSnapshot(selectedAsset.symbol).then((snapshot) => {
+      if (isCancelled || selectedAssetRef.current.symbol !== selectedAsset.symbol) return;
       if (snapshot && snapshot.lastPrice) {
         const store = getOrCreateMasterHistory(selectedAsset);
         store.prevPrice = snapshot.prevPrice || snapshot.lastPrice;
@@ -752,6 +759,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     });
 
     return () => {
+      isCancelled = true;
       unsubStatus();
       unsubLiveTicks();
       unsubscribe();
@@ -759,52 +767,12 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   }, [selectedAsset, timeframe]);
 
 
-  // 1b. Butter-Smooth 60fps Price & Inertia Momentum Panning Loop
+  // 1b. Synchronize smoothPrice with currentPrice without triggering 30fps full-component React re-renders
   useEffect(() => {
     targetPriceRef.current = currentPrice;
+    smoothPriceRef.current = currentPrice;
+    setSmoothPrice(currentPrice);
   }, [currentPrice]);
-
-  useEffect(() => {
-    let rafId: number;
-    const animate60fps = () => {
-      const target = targetPriceRef.current;
-      const prev = smoothPriceRef.current;
-      const diff = target - prev;
-      if (Math.abs(diff) < 1e-6) {
-        smoothPriceRef.current = target;
-      } else {
-        smoothPriceRef.current = prev + diff * 0.28;
-      }
-
-      // Throttle React state update to ~30fps (every 33ms) so React doesn't re-render entire tree 60fps
-      const now = performance.now();
-      if (now - lastSmoothStateUpdateRef.current >= 33) {
-        lastSmoothStateUpdateRef.current = now;
-        setSmoothPrice((cur) => {
-          const next = smoothPriceRef.current;
-          return Math.abs(next - cur) > 1e-5 ? next : cur;
-        });
-      }
-
-      // Step momentum inertia panning when user releases drag with velocity
-      if (Math.abs(panVelocityRef.current) >= 0.05) {
-        const maxVis = Math.max(
-          18,
-          Math.floor(((canvasRef.current?.width || 800) - 75) / (11 * zoomLevel))
-        );
-        const maxPan = Math.max(0, candles.length - maxVis);
-        const step = stepMomentum(panOffsetFloatRef.current, panVelocityRef.current, 0.93, 0.012, maxPan);
-        panOffsetFloatRef.current = step.nextPanOffset;
-        panVelocityRef.current = step.nextVelocity;
-        const rounded = Math.round(step.nextPanOffset);
-        setPanOffset((prevOffset) => (prevOffset === rounded ? prevOffset : rounded));
-      }
-
-      rafId = requestAnimationFrame(animate60fps);
-    };
-    rafId = requestAnimationFrame(animate60fps);
-    return () => cancelAnimationFrame(rafId);
-  }, [candles.length, zoomLevel]);
 
   // 1. Initial Market Bootstrap & Realtime Price Pulse
   const alertsRef = useRef(alerts);
@@ -956,7 +924,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
       const nextSeed = Math.floor(Date.now() / 3000);
       setPayoutSeed((prev) => (prev === nextSeed ? prev : nextSeed));
-    }, 100);
+    }, 250);
 
     return () => {
       clearInterval(interval);
@@ -983,13 +951,21 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       if (!curAccount) return;
 
       tradesList.forEach((trade) => {
-        if (now >= trade.endTime) {
-          const livePriceFromFeed = liveMarketFeed.getLatestPrice(trade.asset);
-          const tradeMarket = getAssetMarketState(trade.asset);
-          const finalPrice = trade.asset === selectedAsset.symbol
+        const livePriceFromFeed = liveMarketFeed.getLatestPrice(trade.asset);
+        const tradeMarket = getAssetMarketState(trade.asset);
+        const finalPrice =
+          trade.asset === selectedAsset.symbol
             ? currentPriceVal
             : (livePriceFromFeed ?? tradeMarket?.lastPrice ?? trade.strikePrice);
 
+        const lockedSettlement = evaluateLockedTradeSettlement(
+          trade,
+          finalPrice,
+          curAccount.currentBalance,
+          now
+        );
+
+        if (lockedSettlement.shouldSettleNow) {
           const settlement = calculateTradeSettlement({
             direction: trade.direction,
             strikePrice: trade.strikePrice,
@@ -3297,13 +3273,12 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               const displayPrice = isTabActive
                 ? smoothPrice
                 : (tabState?.lastPrice ?? tabAsset.basePrice);
+              const tabTv = resolveTradingViewSymbol(tabAsset.symbol, tabAsset.category);
               return (
                 <div
                   key={tabAsset.symbol}
-                  onClick={() => {
-                    soundEngine.playUiClick();
-                    setSelectedAsset(tabAsset);
-                  }}
+                  data-testid={`open-asset-tab-${tabTv.cleanTicker.replace(/[^A-Z0-9]/g, '')}`}
+                  onClick={() => handleSelectTabAsset(tabAsset)}
                   className={`flex items-center gap-1.5 px-2.5 py-1 md:px-3 md:py-1.5 rounded-lg border transition-all cursor-pointer shrink-0 ${
                     isTabActive
                       ? 'bg-[#141720] border-[#ff8800] text-white shadow-sm'
@@ -3324,15 +3299,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                     <button
                       type="button"
                       aria-label={`Close tab ${tabAsset.symbol}`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        soundEngine.playUiClick();
-                        const nextTabs = openTabs.filter((t) => t.symbol !== tabAsset.symbol);
-                        setOpenTabs(nextTabs);
-                        if (isTabActive && nextTabs.length > 0) {
-                          setSelectedAsset(nextTabs[0]);
-                        }
-                      }}
+                      onClick={(e) => handleCloseTab(e, tabAsset.symbol)}
                       className="p-0.5 rounded hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer ml-1"
                     >
                       <X className="w-3 h-3" />
@@ -3724,6 +3691,12 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                       active: indicators.showMacd,
                     },
                     {
+                      key: 'showSupportResistance' as const,
+                      label: 'Auto Support & Resistance Levels',
+                      desc: 'Key institutional swing high/low price zones',
+                      active: Boolean(indicators.showSupportResistance),
+                    },
+                    {
                       key: 'showFib' as const,
                       label: 'Fibonacci Retracement Levels',
                       desc: 'Auto 23.6%, 38.2%, 50%, 61.8% levels',
@@ -3949,7 +3922,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             </div>
           )}
 
-          {/* TradingView Live OHLCV Hover Inspector Bar */}
+          {/* TradingView Live Symbol Selector Override & OHLCV Hover Inspector Bar */}
           {(() => {
             const inspectedCandle =
               hoveredCandle || (candles.length > 0 ? candles[candles.length - 1] : null);
@@ -3960,43 +3933,70 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               inspectedCandle.open !== 0
                 ? (changeAbs / inspectedCandle.open) * 100
                 : 0;
+            const tvResolved = resolveTradingViewSymbol(
+              selectedAsset.symbol,
+              selectedAsset.category
+            );
             return (
               <div
                 data-testid="chart-ohlc-bar"
-                className="absolute top-12 left-2.5 md:top-14 md:left-3 z-15 px-2.5 py-1 rounded-lg bg-[#141722]/90 backdrop-blur-md border border-white/10 flex flex-wrap items-center gap-2 md:gap-3 font-mono text-[10px] md:text-[11px] pointer-events-none select-none"
+                className="absolute top-12 left-2.5 md:top-14 md:left-3 z-20 px-2.5 py-1 rounded-lg bg-[#141722]/92 backdrop-blur-md border border-white/10 flex flex-wrap items-center gap-2 md:gap-3 font-mono text-[10px] md:text-[11px] select-none"
               >
-                <span className="font-black text-white flex items-center gap-1">
-                  <span>{selectedAsset.symbol}</span>
+                {/* Native Platform Symbol Selector Override for TradingView Chart */}
+                <button
+                  type="button"
+                  data-testid="tv-chart-symbol-selector-btn"
+                  onClick={() => {
+                    soundEngine.playUiClick();
+                    setIsAssetModalOpen(true);
+                  }}
+                  title="Switch TradingView Chart Market (Forex, Crypto, Stocks, Commodities)"
+                  className="font-black text-white flex items-center gap-1.5 hover:text-[#ff8800] transition-colors cursor-pointer pointer-events-auto"
+                >
+                  <span data-testid="tv-chart-active-symbol">{selectedAsset.symbol}</span>
+                  <span
+                    data-testid="tv-chart-resolved-symbol"
+                    className="text-[9px] px-1.5 py-0.2 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-bold"
+                  >
+                    {tvResolved.tvSymbol}
+                  </span>
+                  <span
+                    data-testid="tv-chart-category-badge"
+                    className="text-[9px] px-1.5 py-0.2 rounded bg-white/5 text-slate-300 border border-white/10 font-bold hidden sm:inline"
+                  >
+                    {tvResolved.marketCategory}
+                  </span>
                   <span className="text-[9px] px-1.5 py-0.2 rounded bg-[#ff8800]/20 text-[#ff8800] font-bold">
                     {timeframe}
                   </span>
-                </span>
-                <span className="text-slate-400">
+                  <ChevronDown className="w-3 h-3 text-slate-400" />
+                </button>
+                <span className="text-slate-400 pointer-events-none">
                   O{' '}
                   <strong className={isBull ? 'text-[#00e676]' : 'text-[#ff334b]'}>
                     {inspectedCandle.open.toFixed(selectedAsset.pipDecimals)}
                   </strong>
                 </span>
-                <span className="text-slate-400">
+                <span className="text-slate-400 pointer-events-none">
                   H{' '}
                   <strong className={isBull ? 'text-[#00e676]' : 'text-[#ff334b]'}>
                     {inspectedCandle.high.toFixed(selectedAsset.pipDecimals)}
                   </strong>
                 </span>
-                <span className="text-slate-400">
+                <span className="text-slate-400 pointer-events-none">
                   L{' '}
                   <strong className={isBull ? 'text-[#00e676]' : 'text-[#ff334b]'}>
                     {inspectedCandle.low.toFixed(selectedAsset.pipDecimals)}
                   </strong>
                 </span>
-                <span className="text-slate-400">
+                <span className="text-slate-400 pointer-events-none">
                   C{' '}
                   <strong className={isBull ? 'text-[#00e676]' : 'text-[#ff334b]'}>
                     {inspectedCandle.close.toFixed(selectedAsset.pipDecimals)}
                   </strong>
                 </span>
                 <span
-                  className={`font-bold hidden sm:inline ${
+                  className={`font-bold hidden sm:inline pointer-events-none ${
                     isBull ? 'text-[#00e676]' : 'text-[#ff334b]'
                   }`}
                 >
@@ -4024,6 +4024,18 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               indicators={indicators}
               zoomLevel={zoomLevel}
               onHoverCandle={setHoveredCandle}
+              drawings={drawings}
+              activeDrawingTool={activeDrawingTool}
+              drawingColor={drawingColor}
+              drawingWidth={drawingWidth}
+              drawingLineStyle={drawingLineStyle}
+              selectedDrawingId={selectedDrawingId}
+              onSelectDrawing={setSelectedDrawingId}
+              onAddDrawing={(d) => setDrawings((prev) => [...prev, d])}
+              onUpdateDrawing={(updated) =>
+                setDrawings((prev) => prev.map((d) => (d.id === updated.id ? updated : d)))
+              }
+              onCompleteDrawingTool={() => setActiveDrawingTool('none')}
             />
             {/* Quotex-style sleek floating notification pill when trade is opened */}
             {tradeSuccess && (
@@ -4221,6 +4233,82 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               >
                 <Pencil className="w-3.5 h-3.5" />
               </button>
+
+              {/* Quick Technical Analysis Toggles (Trendline, MA, RSI, S/R) */}
+              <div className="flex items-center gap-1 bg-[#0a0a0a] rounded-lg p-0.5 border border-white/10">
+                <button
+                  type="button"
+                  data-testid="quick-tool-trendline"
+                  onClick={() =>
+                    handleSelectDrawingTool(
+                      activeDrawingTool === 'trendline' ? 'none' : 'trendline'
+                    )
+                  }
+                  className={`px-1.5 py-1 rounded text-[10px] font-bold transition-colors cursor-pointer ${
+                    activeDrawingTool === 'trendline'
+                      ? 'bg-[#ff8800] text-slate-950 font-black'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="Draw Trendline on Chart"
+                >
+                  Trend
+                </button>
+                <button
+                  type="button"
+                  data-testid="quick-ind-ma"
+                  onClick={() => {
+                    soundEngine.playUiClick();
+                    setIndicators((prev) => ({
+                      ...prev,
+                      showSma: !prev.showSma,
+                      showEma: !prev.showSma,
+                    }));
+                  }}
+                  className={`px-1.5 py-1 rounded text-[10px] font-bold transition-colors cursor-pointer ${
+                    indicators.showSma || indicators.showEma
+                      ? 'bg-sky-500/20 text-sky-300 border border-sky-500/40 font-black'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="Toggle Moving Averages (SMA 14 & EMA 9)"
+                >
+                  MA
+                </button>
+                <button
+                  type="button"
+                  data-testid="quick-ind-rsi"
+                  onClick={() => {
+                    soundEngine.playUiClick();
+                    setIndicators((prev) => ({ ...prev, showRsi: !prev.showRsi }));
+                  }}
+                  className={`px-1.5 py-1 rounded text-[10px] font-bold transition-colors cursor-pointer ${
+                    indicators.showRsi
+                      ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-black'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="Toggle Relative Strength Index (RSI 14)"
+                >
+                  RSI
+                </button>
+                <button
+                  type="button"
+                  data-testid="quick-ind-sr"
+                  onClick={() => {
+                    soundEngine.playUiClick();
+                    setIndicators((prev) => ({
+                      ...prev,
+                      showSupportResistance: !prev.showSupportResistance,
+                    }));
+                  }}
+                  className={`px-1.5 py-1 rounded text-[10px] font-bold transition-colors cursor-pointer ${
+                    indicators.showSupportResistance
+                      ? 'bg-emerald-500/20 text-[#00e676] border border-[#00e676]/40 font-black'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="Toggle Support & Resistance Levels"
+                >
+                  S/R
+                </button>
+              </div>
 
               {/* Chart Type Selector (Desktop) */}
               <div className="hidden md:flex bg-[#0a0a0a] rounded-lg p-0.5 border border-white/10">
@@ -5028,6 +5116,14 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                           </span>
 
                           <div className="flex items-center gap-1">
+                            <span
+                              data-testid={`right-panel-trade-locked-${t.id}`}
+                              className="px-1.5 py-0.2 rounded bg-slate-800/90 text-slate-300 border border-white/10 text-[8px] font-bold uppercase tracking-wider flex items-center gap-0.5"
+                              title="Trade is strictly locked until full expiration duration is met"
+                            >
+                              <Lock className="w-2.5 h-2.5 text-[#ff8800]" />
+                              <span>LOCKED</span>
+                            </span>
                             <button
                               type="button"
                               onClick={() => handleDoubleUp(t)}
@@ -5036,20 +5132,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                             >
                               x2
                             </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                onUpdateTrade({
-                                  ...t,
-                                  endTime: Date.now() - 10,
-                                })
-                              }
-                              className="px-1 py-0.2 rounded bg-[#ff8800]/20 hover:bg-[#ff8800]/30 text-[#ff8800] border border-[#ff8800]/40 text-[8.5px] font-bold cursor-pointer"
-                              title="Settle trade immediately"
-                            >
-                              Settle
-                            </button>
-                            <span className={`font-black ${isInTheMoney ? 'text-[#00e676]' : 'text-rose-400'}`}>
+                            <span className={`font-black tabular-nums ${isInTheMoney ? 'text-[#00e676]' : 'text-rose-400'}`}>
                               {isInTheMoney ? `+$${t.potentialPayout.toFixed(2)}` : `-$${t.investment.toFixed(2)}`}
                             </span>
                           </div>

@@ -9,6 +9,7 @@ import {
 } from '../utils/storage';
 import { getAssetMarketState } from '../utils/priceFeedEngine';
 import { soundEngine } from '../utils/soundEffects';
+import { resolveTradingViewSymbol } from '../utils/tradingViewOrderLineEngine';
 
 interface QuotexAssetModalProps {
   isOpen: boolean;
@@ -96,9 +97,12 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
 
   const filteredAssets = allAssets.filter((asset) => {
     // 1. Filter by Search Query
+    const tvInfo = resolveTradingViewSymbol(asset.symbol, asset.category);
+    const q = searchQuery.toLowerCase();
     const matchesSearch =
-      asset.symbol.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      asset.name.toLowerCase().includes(searchQuery.toLowerCase());
+      asset.symbol.toLowerCase().includes(q) ||
+      asset.name.toLowerCase().includes(q) ||
+      tvInfo.tvSymbol.toLowerCase().includes(q);
 
     if (searchQuery.trim().length > 0) {
       return matchesSearch;
@@ -115,7 +119,10 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
   });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-bft-modal">
+    <div
+      data-testid="native-asset-selector-modal"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-bft-modal"
+    >
       <div className="w-full max-w-3xl rounded-2xl bg-[#0e0e12] border border-[#ff8800]/40 shadow-2xl overflow-hidden flex flex-col max-h-[86vh]">
         {/* Header */}
         <div className="p-4 bg-[#0a0a0d] border-b border-white/10 flex items-center justify-between">
@@ -125,17 +132,19 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
             </div>
             <div>
               <h3 className="text-base font-black text-white font-mono flex items-center gap-2">
-                Select OTC Trading Instrument
+                Select TradingView Market Instrument
                 <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30">
-                  {getDynamicAssets().length}+ Live OTC Feeds • Up to 95% Payout
+                  {getDynamicAssets().length}+ Live Markets • Up to 95% Payout
                 </span>
               </h3>
               <p className="text-xs text-slate-400">
-                Explore a wide range of institutional OTC instruments including Forex, Crypto, and Commodities.
+                Select any Forex, Crypto, Stock, or Commodity market to instantly synchronize the TradingView chart.
               </p>
             </div>
           </div>
           <button
+            type="button"
+            data-testid="close-asset-modal-btn"
             onClick={() => {
               soundEngine.playUiClick();
               onClose();
@@ -152,7 +161,8 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
             <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
             <input
               type="text"
-              placeholder="Search 100+ OTC markets (e.g. EUR/USD, BTC, Gold, Silver, Tesla, Apple, NVIDIA)..."
+              data-testid="asset-modal-search-input"
+              placeholder="Search 260+ markets or TradingView tickers (e.g. FX:EURUSD, BINANCE:BTCUSDT, NASDAQ:AAPL, OANDA:XAUUSD)..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-10 pr-4 py-2.5 bg-[#0a0a0d] border border-white/15 rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-[#ff8800] transition-colors font-mono"
@@ -166,6 +176,8 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
               return (
                 <button
                   key={tab.id}
+                  type="button"
+                  data-testid={`asset-category-tab-${tab.id}`}
                   onClick={() => {
                     soundEngine.playUiClick();
                     setSearchQuery('');
@@ -195,7 +207,7 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
         <div className="p-3 overflow-y-auto divide-y divide-white/5 font-mono flex-1">
           {filteredAssets.length === 0 ? (
             <div className="py-12 text-center text-slate-500 text-xs">
-              No matching OTC trading instruments found.
+              No matching trading instruments found.
             </div>
           ) : (
             filteredAssets.map((asset) => {
@@ -204,10 +216,12 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
               const livePayout = getLivePayoutPercentage(asset, payoutSeed);
               const marketState = getAssetMarketState(asset.symbol);
               const displayPrice = marketState?.lastPrice ?? asset.basePrice;
+              const tvResolved = resolveTradingViewSymbol(asset.symbol, asset.category);
 
               return (
                 <div
                   key={asset.symbol}
+                  data-testid={`asset-row-${tvResolved.cleanTicker.replace(/[^A-Z0-9]/g, '')}`}
                   onClick={() => {
                     soundEngine.playUiClick();
                     onSelectAsset({ ...asset, payout: livePayout });
@@ -221,6 +235,7 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
                 >
                   <div className="flex items-center gap-3">
                     <button
+                      type="button"
                       onClick={(e) => toggleFavorite(e, asset.symbol)}
                       className="p-1 hover:text-[#ff8800] text-slate-600 transition-colors cursor-pointer"
                     >
@@ -236,9 +251,12 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
                     </div>
 
                     <div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-black text-white text-sm">
                           {asset.symbol}
+                        </span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-bold">
+                          {tvResolved.tvSymbol}
                         </span>
                         <span className="text-[10px] px-2 py-0.5 rounded bg-white/5 text-[#ffaa00] border border-[#ff8800]/25 uppercase font-bold">
                           {asset.category}

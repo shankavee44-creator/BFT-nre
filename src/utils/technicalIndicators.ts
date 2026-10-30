@@ -1,4 +1,4 @@
-import { Candle } from '../types';
+import type { Candle } from '../types';
 
 export interface IndicatorSettings {
   showSma: boolean;
@@ -29,6 +29,7 @@ export interface IndicatorSettings {
 
   showVolume: boolean;
   showFib?: boolean;
+  showSupportResistance?: boolean;
 }
 
 export const DEFAULT_INDICATOR_SETTINGS: IndicatorSettings = {
@@ -47,7 +48,7 @@ export const DEFAULT_INDICATOR_SETTINGS: IndicatorSettings = {
   bollingerStd: 2,
   bollingerColor: 'rgba(0, 229, 255, 0.5)',
 
-  showRsi: true,
+  showRsi: false,
   rsiPeriod: 14,
   rsiColor: '#00e5ff',
 
@@ -60,6 +61,7 @@ export const DEFAULT_INDICATOR_SETTINGS: IndicatorSettings = {
 
   showVolume: true,
   showFib: false,
+  showSupportResistance: true,
 };
 
 /**
@@ -310,3 +312,140 @@ export function calculateFibonacciLevels(
     price: Number((low + diff * item.ratio).toFixed(5)),
   }));
 }
+
+/**
+ * Automatic Support & Resistance Levels detector using recent swing high/low pivots
+ */
+export interface SupportResistanceLevel {
+  price: number;
+  type: 'support' | 'resistance';
+  label: string;
+  strength: number;
+}
+
+export function calculateSupportResistanceLevels(
+  candles: Candle[],
+  decimals: number = 5
+): SupportResistanceLevel[] {
+  if (!candles || candles.length < 10) return [];
+  const windowSlice = candles.slice(-120);
+  const currentClose = windowSlice[windowSlice.length - 1].close;
+
+  const swingHighs: number[] = [];
+  const swingLows: number[] = [];
+
+  for (let i = 3; i < windowSlice.length - 3; i++) {
+    const c = windowSlice[i];
+    const isSwingHigh =
+      c.high >= windowSlice[i - 1].high &&
+      c.high >= windowSlice[i - 2].high &&
+      c.high >= windowSlice[i - 3].high &&
+      c.high >= windowSlice[i + 1].high &&
+      c.high >= windowSlice[i + 2].high &&
+      c.high >= windowSlice[i + 3].high;
+    const isSwingLow =
+      c.low <= windowSlice[i - 1].low &&
+      c.low <= windowSlice[i - 2].low &&
+      c.low <= windowSlice[i - 3].low &&
+      c.low <= windowSlice[i + 1].low &&
+      c.low <= windowSlice[i + 2].low &&
+      c.low <= windowSlice[i + 3].low;
+
+    if (isSwingHigh) swingHighs.push(c.high);
+    if (isSwingLow) swingLows.push(c.low);
+  }
+
+  const allHighs = windowSlice.map((c) => c.high);
+  const allLows = windowSlice.map((c) => c.low);
+  const maxHigh = Math.max(...allHighs);
+  const minLow = Math.min(...allLows);
+
+  const resPrice =
+    swingHighs.filter((h) => h >= currentClose).sort((a, b) => b - a)[0] ?? maxHigh;
+  const supPrice =
+    swingLows.filter((l) => l <= currentClose).sort((a, b) => a - b)[0] ?? minLow;
+
+  const levels: SupportResistanceLevel[] = [
+    {
+      price: Number(resPrice.toFixed(decimals)),
+      type: 'resistance',
+      label: `RES • ${resPrice.toFixed(decimals)}`,
+      strength: 2,
+    },
+    {
+      price: Number(supPrice.toFixed(decimals)),
+      type: 'support',
+      label: `SUP • ${supPrice.toFixed(decimals)}`,
+      strength: 2,
+    },
+  ];
+
+  return levels;
+}
+
+/**
+ * Pure evaluator for Visual Trade Overlay on Chart (Legacy Style)
+ * Computes real-time ITM/OTM status, color coding, formatted countdown, and strict lock state.
+ */
+export interface LiveTradeOverlayStatus {
+  isCall: boolean;
+  isWinning: boolean;
+  isTie: boolean;
+  statusTag: 'ITM' | 'OTM' | 'ENTRY';
+  directionLabel: 'HIGHER' | 'LOWER';
+  lineColor: '#00e676' | '#ff334b';
+  secondsLeft: number;
+  formattedCountdown: string;
+  profitAmount: number;
+  pnlDisplay: string;
+  isLockedUntilExpiry: boolean;
+}
+
+export function evaluateLiveTradeOverlayStatus(
+  trade: {
+    direction: 'CALL' | 'PUT';
+    strikePrice: number;
+    investment: number;
+    payoutPercentage: number;
+    startTime: number;
+    endTime: number;
+  },
+  currentPrice: number,
+  nowMs: number = Date.now()
+): LiveTradeOverlayStatus {
+  const isCall = trade.direction === 'CALL';
+  const priceDiff = currentPrice - trade.strikePrice;
+  const isTie = Math.abs(priceDiff) < 1e-7;
+  const isWinning = isTie
+    ? isCall // At exact entry tick, Higher is green and Lower is red
+    : (isCall && priceDiff > 0) || (!isCall && priceDiff < 0);
+
+  const statusTag: 'ITM' | 'OTM' | 'ENTRY' = isTie ? 'ENTRY' : isWinning ? 'ITM' : 'OTM';
+  const directionLabel: 'HIGHER' | 'LOWER' = isCall ? 'HIGHER' : 'LOWER';
+  const lineColor: '#00e676' | '#ff334b' = isWinning ? '#00e676' : '#ff334b';
+
+  const secondsLeft = Math.max(0, Math.ceil((trade.endTime - nowMs) / 1000));
+  const mins = Math.floor(secondsLeft / 60);
+  const secs = secondsLeft % 60;
+  const formattedCountdown = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+
+  const profitAmount = Number(((trade.investment * trade.payoutPercentage) / 100).toFixed(2));
+  const pnlDisplay = isWinning
+    ? `+$${profitAmount.toFixed(2)}`
+    : `-$${trade.investment.toFixed(2)}`;
+
+  return {
+    isCall,
+    isWinning,
+    isTie,
+    statusTag,
+    directionLabel,
+    lineColor,
+    secondsLeft,
+    formattedCountdown,
+    profitAmount,
+    pnlDisplay,
+    isLockedUntilExpiry: nowMs < trade.endTime,
+  };
+}
+

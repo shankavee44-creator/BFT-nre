@@ -1,27 +1,9 @@
 import React, { useEffect, useRef, memo } from 'react';
+import { resolveTradingViewSymbol } from '../utils/tradingViewOrderLineEngine';
 
 interface TradingViewWidgetProps {
-  symbol: string; // e.g. 'EUR/USD', 'BTC/USD', 'ETH/USD'
-  timeframe: string; // '1', '5', '15', '60', '240', 'D'
-}
-
-function getTradingViewSymbol(bftSymbol: string): string {
-  switch (bftSymbol) {
-    case 'EUR/USD':
-      return 'FX:EURUSD';
-    case 'BTC/USD':
-      return 'BINANCE:BTCUSDT';
-    case 'GBP/USD':
-      return 'FX:GBPUSD';
-    case 'ETH/USD':
-      return 'BINANCE:ETHUSDT';
-    case 'USD/JPY':
-      return 'FX:USDJPY';
-    case 'XAU/USD':
-      return 'OANDA:XAUUSD';
-    default:
-      return 'FX:EURUSD';
-  }
+  symbol: string; // e.g. 'EUR/USD (OTC)', 'BTC/USDT (OTC)', 'AAPL (OTC)', 'XAU/USD (OTC)'
+  timeframe: string; // '5s', '15s', '30s', '1m', '5m', '15m', '1h', '4h', '1D'
 }
 
 function mapTimeframeToTv(tf: string): string {
@@ -29,6 +11,7 @@ function mapTimeframeToTv(tf: string): string {
     case '1s':
     case '5s':
     case '15s':
+    case '30s':
     case '1m':
       return '1';
     case '5m':
@@ -39,6 +22,9 @@ function mapTimeframeToTv(tf: string): string {
       return '60';
     case '4h':
       return '240';
+    case '1D':
+    case 'D':
+      return 'D';
     default:
       return '1';
   }
@@ -46,6 +32,7 @@ function mapTimeframeToTv(tf: string): string {
 
 export const TradingViewWidget: React.FC<TradingViewWidgetProps> = memo(({ symbol, timeframe }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const resolved = resolveTradingViewSymbol(symbol);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -53,7 +40,7 @@ export const TradingViewWidget: React.FC<TradingViewWidgetProps> = memo(({ symbo
     // Clear previous contents
     containerRef.current.innerHTML = '';
 
-    const tvSymbol = getTradingViewSymbol(symbol);
+    const tvSymbol = resolved.tvSymbol;
     const interval = mapTimeframeToTv(timeframe);
 
     const script = document.createElement('script');
@@ -69,18 +56,18 @@ export const TradingViewWidget: React.FC<TradingViewWidgetProps> = memo(({ symbo
       style: '1',
       locale: 'en',
       enable_publishing: false,
-      backgroundColor: '#050914',
-      gridColor: 'rgba(255, 255, 255, 0.04)',
-      hide_top_toolbar: false,
+      backgroundColor: '#0b0e14',
+      gridColor: 'rgba(30, 41, 59, 0.45)',
+      hide_top_toolbar: true,
       hide_legend: false,
       save_image: false,
       calendar: false,
       hide_volume: false,
       support_host: 'https://www.tradingview.com',
-      toolbar_bg: '#080d1a',
-      withdateranges: true,
+      toolbar_bg: '#0b0e14',
+      withdateranges: false,
       allow_symbol_change: false,
-      details: true,
+      details: false,
       hotlist: false,
     });
 
@@ -97,11 +84,13 @@ export const TradingViewWidget: React.FC<TradingViewWidgetProps> = memo(({ symbo
         containerRef.current.innerHTML = '';
       }
     };
-  }, [symbol, timeframe]);
+  }, [resolved.tvSymbol, timeframe]);
 
   return (
     <div
-      className="w-full h-full relative overflow-hidden rounded-xl bg-[#050914]"
+      data-testid="tradingview-widget-embed"
+      data-tv-symbol={resolved.tvSymbol}
+      className="w-full h-full relative overflow-hidden rounded-xl bg-[#0b0e14]"
       style={{
         transform: 'translate3d(0, 0, 0)',
         backfaceVisibility: 'hidden',
@@ -112,3 +101,4 @@ export const TradingViewWidget: React.FC<TradingViewWidgetProps> = memo(({ symbo
     </div>
   );
 });
+

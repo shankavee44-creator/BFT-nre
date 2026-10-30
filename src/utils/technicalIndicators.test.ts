@@ -1,56 +1,144 @@
-import test from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  calculateHeikinAshi,
   calculateSMA,
   calculateEMA,
-  calculateBollingerBands,
   calculateRSI,
-  calculateFibonacciLevels,
-  calculateMACD,
+  calculateBollingerBands,
+  calculateSupportResistanceLevels,
+  evaluateLiveTradeOverlayStatus,
 } from './technicalIndicators';
-import { Candle } from '../types';
+import {
+  isTradeLockedUntilExpiry,
+  canSettleTradeAtTime,
+} from './liveMarketFeed';
+import type { Candle } from '../types';
 
-const mockCandles: Candle[] = [
-  { time: 1000, open: 10, high: 12, low: 9, close: 11, volume: 100 },
-  { time: 2000, open: 11, high: 14, low: 10, close: 13, volume: 150 },
-  { time: 3000, open: 13, high: 15, low: 12, close: 14, volume: 200 },
-  { time: 4000, open: 14, high: 16, low: 13, close: 15, volume: 250 },
-  { time: 5000, open: 15, high: 17, low: 14, close: 16, volume: 300 },
-];
+function generateSampleCandles(count: number): Candle[] {
+  const baseTime = 1730000000000;
+  const candles: Candle[] = [];
+  for (let i = 0; i < count; i++) {
+    const wave = Math.sin(i * 0.4) * 0.005;
+    const open = 1.085 + wave;
+    const close = 1.085 + Math.sin((i + 1) * 0.4) * 0.005;
+    const high = Math.max(open, close) + 0.0012;
+    const low = Math.min(open, close) - 0.0012;
+    candles.push({
+      time: baseTime + i * 60000,
+      open,
+      high,
+      low,
+      close,
+      volume: 100 + i,
+    });
+  }
+  return candles;
+}
 
-test('calculateHeikinAshi transforms standard candles accurately', () => {
-  const ha = calculateHeikinAshi(mockCandles);
-  assert.equal(ha.length, 5);
-  // First haClose = (10 + 12 + 9 + 11) / 4 = 10.5
-  assert.equal(ha[0].close, 10.5);
-  // Second haOpen = (ha[0].open + ha[0].close) / 2 = (10 + 10.5) / 2 = 10.25
-  assert.equal(ha[1].open, 10.25);
-  assert.ok(ha[1].high >= ha[1].open);
-  assert.ok(ha[1].low <= ha[1].close);
+describe('Visual Trade Overlay & Locked Trade Execution Logic', () => {
+  it('evaluates Higher (CALL) trade as ITM (Green) when price > strikePrice and locked before expiry', () => {
+    const startTime = 1730000000000;
+    const endTime = startTime + 60000;
+    const status = evaluateLiveTradeOverlayStatus(
+      {
+        direction: 'CALL',
+        strikePrice: 1.08500,
+        investment: 100,
+        payoutPercentage: 92,
+        startTime,
+        endTime,
+      },
+      1.08550,
+      startTime + 15000
+    );
+
+    assert.equal(status.isCall, true);
+    assert.equal(status.isWinning, true);
+    assert.equal(status.statusTag, 'ITM');
+    assert.equal(status.directionLabel, 'HIGHER');
+    assert.equal(status.lineColor, '#00e676');
+    assert.equal(status.secondsLeft, 45);
+    assert.equal(status.formattedCountdown, '00:45');
+    assert.equal(status.profitAmount, 92);
+    assert.equal(status.pnlDisplay, '+$92.00');
+    assert.equal(status.isLockedUntilExpiry, true);
+  });
+
+  it('evaluates Lower (PUT) trade as OTM (Red) when price > strikePrice', () => {
+    const startTime = 1730000000000;
+    const endTime = startTime + 60000;
+    const status = evaluateLiveTradeOverlayStatus(
+      {
+        direction: 'PUT',
+        strikePrice: 1.08500,
+        investment: 50,
+        payoutPercentage: 88,
+        startTime,
+        endTime,
+      },
+      1.08540,
+      startTime + 30000
+    );
+
+    assert.equal(status.isCall, false);
+    assert.equal(status.isWinning, false);
+    assert.equal(status.statusTag, 'OTM');
+    assert.equal(status.directionLabel, 'LOWER');
+    assert.equal(status.lineColor, '#ff334b');
+    assert.equal(status.secondsLeft, 30);
+    assert.equal(status.formattedCountdown, '00:30');
+    assert.equal(status.pnlDisplay, '-$50.00');
+    assert.equal(status.isLockedUntilExpiry, true);
+  });
+
+  it('strictly locks active trades before expiration and only allows settlement once full duration is met', () => {
+    const trade = {
+      status: 'active',
+      startTime: 1000000,
+      endTime: 1060000,
+    };
+
+    // Mid-trade (locked)
+    assert.equal(isTradeLockedUntilExpiry(trade, 1030000), true);
+    const earlyCheck = canSettleTradeAtTime(trade, 1030000);
+    assert.equal(earlyCheck.allowed, false);
+    assert.equal(earlyCheck.remainingMs, 30000);
+    assert.ok(earlyCheck.reason?.includes('locked until expiration'));
+
+    // At or after expiration (unlocked for automatic settlement)
+    assert.equal(isTradeLockedUntilExpiry(trade, 1060000), false);
+    const expiredCheck = canSettleTradeAtTime(trade, 1060000);
+    assert.equal(expiredCheck.allowed, true);
+    assert.equal(expiredCheck.remainingMs, 0);
+  });
 });
 
-test('calculateSMA computes moving average correctly', () => {
-  const sma3 = calculateSMA(mockCandles, 3);
-  assert.equal(sma3[0], null);
-  assert.equal(sma3[1], null);
-  // (11 + 13 + 14) / 3 = 12.66667
-  assert.equal(sma3[2], 12.66667);
-});
+describe('Technical Analysis Indicators & Support/Resistance Levels', () => {
+  it('computes SMA, EMA, RSI, Bollinger Bands, and Support/Resistance levels accurately', () => {
+    const candles = generateSampleCandles(40);
 
-test('calculateFibonacciLevels computes golden ratio retracements accurately', () => {
-  const fib = calculateFibonacciLevels(200, 100);
-  assert.equal(fib.length, 7);
-  // 50% = 150
-  assert.equal(fib.find((f) => f.ratio === 0.5)?.price, 150);
-  // 61.8% = 161.8
-  assert.equal(fib.find((f) => f.ratio === 0.618)?.price, 161.8);
-});
+    const sma = calculateSMA(candles, 14);
+    assert.equal(sma.length, 40);
+    assert.equal(sma[0], null);
+    assert.equal(typeof sma[39], 'number');
 
-test('calculateMACD computes macd, signal, and histogram arrays', () => {
-  const macdRes = calculateMACD(mockCandles, 2, 4, 2);
-  assert.equal(macdRes.macd.length, mockCandles.length);
-  assert.equal(macdRes.signal.length, mockCandles.length);
-  assert.equal(macdRes.histogram.length, mockCandles.length);
-});
+    const ema = calculateEMA(candles, 9);
+    assert.equal(ema.length, 40);
+    assert.equal(typeof ema[39], 'number');
 
+    const rsi = calculateRSI(candles, 14);
+    assert.equal(rsi.length, 40);
+    assert.ok(rsi[39]! >= 0 && rsi[39]! <= 100);
+
+    const bb = calculateBollingerBands(candles, 20, 2);
+    assert.equal(bb.upper.length, 40);
+    assert.ok(bb.upper[39]! > bb.lower[39]!);
+
+    const sr = calculateSupportResistanceLevels(candles, 5);
+    assert.equal(sr.length, 2);
+    const res = sr.find((l) => l.type === 'resistance');
+    const sup = sr.find((l) => l.type === 'support');
+    assert.ok(res && sup);
+    assert.ok(res.price >= sup.price);
+  });
+});

@@ -4,6 +4,16 @@
  * with safe JSON parsing and JWT bearer authentication.
  */
 
+const hasJwtSession = (): boolean => {
+  try {
+    return Boolean(
+      localStorage.getItem('bft_jwt_session') || sessionStorage.getItem('bft_jwt_session')
+    );
+  } catch {
+    return false;
+  }
+};
+
 const getAuthHeaders = (): HeadersInit => {
   let token = '';
   let adminKey = '';
@@ -201,6 +211,7 @@ export async function apiSubmitWithdrawal(params: {
 }
 
 export async function apiGetWithdrawals() {
+  if (!hasJwtSession()) return { ok: false, withdrawals: [] };
   try {
     const res = await fetch('/api/withdrawals', {
       headers: getAuthHeaders(),
@@ -279,6 +290,14 @@ export async function apiUpdateAccountState(
     certificateId?: string;
   }
 ) {
+  if (
+    !hasJwtSession() ||
+    !accountId ||
+    accountId.startsWith('BFT-DEMO') ||
+    accountId === 'BFT-10000'
+  ) {
+    return { ok: true, localOnly: true };
+  }
   try {
     const res = await fetch(`/api/accounts/${encodeURIComponent(accountId)}`, {
       method: 'PUT',
@@ -333,6 +352,14 @@ export async function apiPlaceTrade(params: {
   endTime?: number;
   accountTier?: string;
 }) {
+  if (
+    !hasJwtSession() ||
+    params.accountTier === 'demo' ||
+    params.accountId.startsWith('BFT-DEMO') ||
+    params.accountId === 'BFT-10000'
+  ) {
+    return { ok: true, localOnly: true };
+  }
   try {
     const res = await fetch('/api/trades', {
       method: 'POST',
@@ -350,6 +377,7 @@ export async function apiSettleTrade(params: {
   closePrice: number;
   status?: string;
 }) {
+  if (!hasJwtSession()) return { ok: true, localOnly: true };
   try {
     const res = await fetch('/api/trades/settle', {
       method: 'POST',
@@ -363,6 +391,12 @@ export async function apiSettleTrade(params: {
 }
 
 export async function apiGetUserTrades(accountId?: string) {
+  if (
+    !hasJwtSession() ||
+    (accountId && (accountId.startsWith('BFT-DEMO') || accountId === 'BFT-10000'))
+  ) {
+    return { ok: true, trades: [] };
+  }
   try {
     const qs = accountId ? `?accountId=${encodeURIComponent(accountId)}` : '';
     const res = await fetch(`/api/trades${qs}`, {

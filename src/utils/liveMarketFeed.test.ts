@@ -132,10 +132,10 @@ test('Database Trade Execution & Settlement - Atomic Balance Updates', () => {
   const initialBalance = targetAcc.currentBalance;
   assert.equal(initialBalance, 500);
 
-  // 1. Place a trade of $100
+  // 1. Place a trade of $100 that is still active (30s in future) and verify early settlement is strictly blocked
   const tradeStake = 100;
-  const placement = recordTradeInDb(testUserId, {
-    id: `TRD-TEST-${Date.now()}`,
+  const activePlacement = recordTradeInDb(testUserId, {
+    id: `TRD-ACTIVE-${Date.now()}`,
     accountId: targetAcc.id,
     asset: 'BTC/USD (OTC)',
     direction: 'CALL',
@@ -145,25 +145,48 @@ test('Database Trade Execution & Settlement - Atomic Balance Updates', () => {
     durationSeconds: 30,
   });
 
-  assert.ok(placement.trade);
-  assert.equal(placement.trade.status, 'active');
-  assert.equal(placement.account.currentBalance, Number((initialBalance - tradeStake).toFixed(2)));
+  assert.ok(activePlacement.trade);
+  assert.equal(activePlacement.trade.status, 'active');
+  assert.equal(activePlacement.account.currentBalance, Number((initialBalance - tradeStake).toFixed(2)));
 
-  // 2. Settle trade as WON at higher close price (e.g. 96550)
-  const settlement = settleTradeInDb(testUserId, placement.trade.id, 96550.0);
+  // Premature settlement before expiration must be rejected
+  assert.throws(
+    () => settleTradeInDb(testUserId, activePlacement.trade!.id, 96550.0),
+    /locked until expiration/i
+  );
+
+  // 2. Place a trade whose expiration duration has completed and settle it as WON
+  const expiredStart = Date.now() - 31000;
+  const expiredEnd = Date.now() - 1000;
+  const placement = recordTradeInDb(testUserId, {
+    id: `TRD-TEST-${Date.now()}`,
+    accountId: targetAcc.id,
+    asset: 'BTC/USD (OTC)',
+    direction: 'CALL',
+    strikePrice: 96500.0,
+    investment: tradeStake,
+    payoutPercentage: 92,
+    durationSeconds: 30,
+    startTime: expiredStart,
+    endTime: expiredEnd,
+  });
+  assert.ok(placement.trade);
+
+  const settlement = settleTradeInDb(testUserId, placement.trade!.id, 96550.0);
   assert.ok(settlement.settlement);
   assert.equal(settlement.settlement.status, 'won');
   assert.equal(settlement.settlement.pnl, 92.0);
   assert.equal(settlement.settlement.creditedAmount, 192.0);
 
-  // Expected balance: initialBalance - 100 + 192 = initialBalance + 92 = 592
-  assert.equal(settlement.account.currentBalance, Number((initialBalance + 92).toFixed(2)));
+  // Expected balance: 500 - 100 (active) - 100 (expired) + 192 (won) = 492
+  assert.equal(settlement.account.currentBalance, Number((initialBalance - tradeStake + 92).toFixed(2)));
   assert.equal(settlement.account.tradesCount, 1);
   assert.equal(settlement.account.winRate, 100.0);
 
   // Verify trade history in database
   const userTrades = getUserTradesFromDb(testUserId, targetAcc.id);
-  assert.ok(userTrades.length > 0 && userTrades[0]);
-  assert.equal(userTrades[0].id, placement.trade.id);
-  assert.equal(userTrades[0].status, 'won');
+  const settledTrade = userTrades.find((t) => t?.id === placement.trade!.id);
+  assert.ok(settledTrade);
+  assert.equal(settledTrade.status, 'won');
 });
+
