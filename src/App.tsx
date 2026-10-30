@@ -700,6 +700,8 @@ export default function App() {
   const handleUpdateTrade = (trade: BinaryTrade) => {
     setTrades((prev) => {
       const updated = prev.map((t) => (t.id === trade.id ? trade : t));
+      // LocalStorage fallback
+      localStorage.setItem('bft_trades', JSON.stringify(updated));
       return updated;
     });
     broadcastSyncEvent('TRADE_UPDATED', trade);
@@ -960,11 +962,8 @@ export default function App() {
     return list;
   }, [baseOwnedAccounts, userProfile.isLoggedIn, userProfile.id, userProfile.email]);
 
-  const matchedById = userAccounts.find((acc) => acc.id === activeAccountId);
   const activeAccount =
-    (matchedById && matchedById.currentBalance > 0 ? matchedById : undefined) ||
-    userAccounts.find((acc) => acc.currentBalance > 0) ||
-    matchedById ||
+    userAccounts.find((acc) => acc.id === activeAccountId) ||
     userAccounts[0] ||
     undefined;
 

@@ -475,20 +475,23 @@ test('Personal Live account bypasses prop drawdown locks and allows 100% capital
   });
   assert.equal(validCapWithdrawal.valid, true);
 
-  // Minimum $250 threshold still enforced on Personal Live account
-  const belowMin = validateWithdrawalRequest(personalAcc, 150);
+  // Minimum $10 threshold enforced on Personal Live account
+  const belowMin = validateWithdrawalRequest(personalAcc, 5);
   assert.equal(belowMin.valid, false);
   assert.equal(belowMin.code, 'AMOUNT_TOO_LOW');
+
+  const validPersonal = validateWithdrawalRequest(personalAcc, 150);
+  assert.equal(validPersonal.valid, true);
 
   // Cannot withdraw more than available Personal Live balance
   const exceedsBal = validateWithdrawalRequest(personalAcc, 750);
   assert.equal(exceedsBal.valid, false);
   assert.equal(exceedsBal.code, 'EXCEEDS_BALANCE');
 
-  // Withdrawal breakdown shows 100% retention and 10% standard fee
+  // Withdrawal breakdown shows 100% retention and 3% fee for Personal Live
   const breakdown = calculateWithdrawalBreakdown(400, 0, true);
   assert.equal(breakdown.profitSplitPercent, 100);
-  assert.equal(breakdown.withdrawalFeeAmount, 40);
-  assert.equal(breakdown.netPayoutToReceive, 360);
+  assert.equal(breakdown.withdrawalFeeAmount, 12);
+  assert.equal(breakdown.netPayoutToReceive, 388);
 });
 

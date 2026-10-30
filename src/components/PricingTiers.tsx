@@ -60,7 +60,7 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
   const pricingImg2 = '/assets/aistudio/1793211061879.jpg_eb93d08e.jpeg';
 
   return (
-    <section id="pricing" className="py-16 md:py-24 relative bg-[#0a0a0a] border-b border-white/10 overflow-hidden">
+    <section id="pricing" className="py-16 md:py-24 relative bg-[#0a0a0a] border-b border-white/10 overflow-hidden will-change-transform">
       {/* Animated Spooky Pricing Background Layers */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden select-none z-0">
         <div

@@ -240,15 +240,16 @@ button:active:not(:disabled),
   animation: bftSpookyEmber 6s ease-out infinite;
 }
 
-/* Mobile Responsive Spooky Background Tuning */
-.mobile-spooky-bg-1 {
-  background-position: 20% center;
+.animate-bft-bg-1 {
+  animation: bftCrossFadeLayer1 14s ease-in-out infinite;
   background-size: cover;
+  background-position: center;
 }
 
-.mobile-spooky-bg-2 {
-  background-position: 28% center;
+.animate-bft-bg-2 {
+  animation: bftCrossFadeLayer2 14s ease-in-out infinite;
   background-size: cover;
+  background-position: center;
 }
 
 @media (max-width: 640px) {

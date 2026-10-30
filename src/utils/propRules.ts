@@ -665,7 +665,7 @@ export function calculateWithdrawalBreakdown(
   const scalingPlanActive = isPersonalLive ? true : monthsCompleted >= 3;
   const profitSplitPercent = isPersonalLive ? 100 : scalingPlanActive ? 90 : 80;
   const traderShareBeforeFee = Number(((requestedPayoutAmount * profitSplitPercent) / 100).toFixed(2));
-  const withdrawalFeePercent = WITHDRAWAL_FEE_PERCENT;
+  const withdrawalFeePercent = isPersonalLive ? 3 : 10; // 3% for Personal Live, 10% for Funded
   const withdrawalFeeAmount = Number(((requestedPayoutAmount * withdrawalFeePercent) / 100).toFixed(2));
   const netPayoutToReceive = Number((requestedPayoutAmount - withdrawalFeeAmount).toFixed(2));
   const affiliateWithdrawalBonus8Percent = Number((requestedPayoutAmount * 0.08).toFixed(2));
@@ -789,21 +789,22 @@ export function validateWithdrawalRequest(
   }
 
   // Personal Live (Self-Funded) Accounts:
-  // Users can withdraw both personal profits AND deposited capital following the $250 minimum threshold and 10% fee,
+  // Users can withdraw both personal profits AND deposited capital following the $10 minimum threshold and 3% fee,
   // without being bound by prop challenge target phases, profit-only restrictions, or 14-day waiting periods.
   if (isPersonalLiveAccount(account)) {
-    if (account.currentBalance < MIN_WITHDRAWAL_PROFIT) {
+    const MIN_PERSONAL_WITHDRAWAL = 10;
+    if (account.currentBalance < MIN_PERSONAL_WITHDRAWAL) {
       return {
         valid: false,
-        reason: `Minimum withdrawal balance is $${MIN_WITHDRAWAL_PROFIT}. Current Personal Live balance is $${account.currentBalance.toFixed(2)}.`,
+        reason: `Minimum withdrawal balance is $${MIN_PERSONAL_WITHDRAWAL}. Current Personal Live balance is $${account.currentBalance.toFixed(2)}.`,
         code: 'BELOW_MIN_BALANCE',
       };
     }
 
-    if (requestedAmount < MIN_WITHDRAWAL_PROFIT) {
+    if (requestedAmount < MIN_PERSONAL_WITHDRAWAL) {
       return {
         valid: false,
-        reason: `Minimum withdrawal amount is $${MIN_WITHDRAWAL_PROFIT}.`,
+        reason: `Minimum withdrawal amount is $${MIN_PERSONAL_WITHDRAWAL}.`,
         code: 'AMOUNT_TOO_LOW',
       };
     }

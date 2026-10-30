@@ -41,13 +41,13 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
       <div className="absolute inset-0 pointer-events-none overflow-hidden select-none">
         {/* Layer 1: Moonlit Jack-O'-Lantern & Tree */}
         <div
-          className="absolute inset-0 mobile-spooky-bg-1 animate-bft-bg-1"
+          className="absolute inset-0 mobile-spooky-bg-1 animate-bft-bg-1 will-change-transform"
           style={{ backgroundImage: `url("${img1Url}")` }}
         />
 
         {/* Layer 2: Spooky Haunted Mansion & Graveyard */}
         <div
-          className="absolute inset-0 mobile-spooky-bg-2 animate-bft-bg-2"
+          className="absolute inset-0 mobile-spooky-bg-2 animate-bft-bg-2 will-change-transform"
           style={{ backgroundImage: `url("${img2Url}")` }}
         />
 
@@ -61,10 +61,10 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
 
         {/* Floating Spooky Ember Particles */}
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          <div className="absolute bottom-10 left-[10%] sm:left-[15%] w-2 h-2 rounded-full bg-[#ff8800] blur-[1px] animate-spooky-ember" style={{ animationDelay: '0s' }} />
-          <div className="absolute bottom-20 left-[30%] sm:left-[35%] w-2.5 h-2.5 rounded-full bg-[#ffaa00] blur-[1px] animate-spooky-ember" style={{ animationDelay: '2s' }} />
-          <div className="absolute bottom-12 left-[60%] sm:left-[65%] w-1.5 h-1.5 rounded-full bg-[#ff8800] blur-[1px] animate-spooky-ember" style={{ animationDelay: '4s' }} />
-          <div className="absolute bottom-16 left-[85%] sm:left-[82%] w-2 h-2 rounded-full bg-[#ffbb00] blur-[1px] animate-spooky-ember" style={{ animationDelay: '1.5s' }} />
+          <div className="absolute bottom-10 left-[10%] sm:left-[15%] w-2 h-2 rounded-full bg-[#ff8800] blur-[1px] animate-spooky-ember will-change-transform" style={{ animationDelay: '0s' }} />
+          <div className="absolute bottom-20 left-[30%] sm:left-[35%] w-2.5 h-2.5 rounded-full bg-[#ffaa00] blur-[1px] animate-spooky-ember will-change-transform" style={{ animationDelay: '2s' }} />
+          <div className="absolute bottom-12 left-[60%] sm:left-[65%] w-1.5 h-1.5 rounded-full bg-[#ff8800] blur-[1px] animate-spooky-ember will-change-transform" style={{ animationDelay: '4s' }} />
+          <div className="absolute bottom-16 left-[85%] sm:left-[82%] w-2 h-2 rounded-full bg-[#ffbb00] blur-[1px] animate-spooky-ember will-change-transform" style={{ animationDelay: '1.5s' }} />
         </div>
       </div>
 
