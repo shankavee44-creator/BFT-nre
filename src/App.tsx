@@ -12,6 +12,7 @@ import { WithdrawalModal } from './components/WithdrawalModal';
 import { UserDashboard } from './components/UserDashboard';
 import { AuthModal } from './components/AuthModal';
 import { CertificateModal } from './components/CertificateModal';
+import { AdminDashboard } from './components/AdminDashboard';
 import { LiveChatWidget } from './components/LiveChatWidget';
 import { FAQSection } from './components/FAQSection';
 import { Footer } from './components/Footer';
@@ -115,6 +116,7 @@ export default function App() {
   const [isWithdrawalModalOpen, setIsWithdrawalModalOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authModalMode, setAuthModalMode] = useState<'login' | 'register'>('login');
+  const [isAdminDashboardOpen, setIsAdminDashboardOpen] = useState(false);
 
   // Certificate Modal state when passing Step 1 / Phase 2
   const [certificateModalState, setCertificateModalState] = useState<{
@@ -140,6 +142,12 @@ export default function App() {
     setAffiliateUsers(loadAffiliateUsers());
     setAffiliateReferrals(loadAffiliateReferrals());
     setAffiliatePayouts(loadAffiliatePayouts());
+
+    // Check URL for admin access challenge
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('admin') === '1' || window.location.pathname === '/admin') {
+      setIsAdminDashboardOpen(true);
+    }
 
     // Check live database session on backend
     const initialStored = loadProfile();
@@ -912,6 +920,7 @@ export default function App() {
           onOpenAuthModal={handleOpenAuthModal}
           onLogout={handleLogout}
           onOpenChallengeModal={() => setSelectedPackageToBuy(PACKAGES[2])}
+          onOpenAdminDashboard={() => setIsAdminDashboardOpen(true)}
         />
       </div>
 
@@ -1075,6 +1084,7 @@ export default function App() {
             onPassChallengePhase={handlePassChallengePhase}
             initialTab={currentTab === 'affiliate' ? 'affiliate' : 'accounts'}
             onLogout={handleLogout}
+            onOpenAdminDashboard={() => setIsAdminDashboardOpen(true)}
           />
         )}
       </main>
@@ -1262,13 +1272,42 @@ export default function App() {
         }}
       />
 
+      {/* Institutional Admin Dashboard (Protected by RBAC & Key Challenge) */}
+      {isAdminDashboardOpen && (
+        <AdminDashboard
+          currentUser={userProfile}
+          onClose={() => setIsAdminDashboardOpen(false)}
+          onRefreshUserData={() => {
+            if (userProfile.id) {
+              apiGetMe({ userId: userProfile.id, email: userProfile.email })
+                .then((res) => {
+                  if (res?.ok && res.user) {
+                    setUserProfile((prev) => ({
+                      ...prev,
+                      role: res.user.role || prev.role,
+                      isAdmin: res.user.isAdmin ?? prev.isAdmin,
+                      kycStatus: res.user.kycStatus || prev.kycStatus,
+                    }));
+                  }
+                })
+                .catch(() => {});
+            }
+          }}
+        />
+      )}
+
       {/* Interactive Live Support Chat Widget (Hidden on mobile terminal where bottom nav handles Support) */}
       <div className={currentTab === 'terminal' ? 'hidden md:block' : 'block'}>
         <LiveChatWidget />
       </div>
 
       {/* Institutional Footer */}
-      {currentTab !== 'terminal' && <Footer onNavigate={handleNavigateTab} />}
+      {currentTab !== 'terminal' && (
+        <Footer
+          onNavigate={handleNavigateTab}
+          onOpenAdminDashboard={() => setIsAdminDashboardOpen(true)}
+        />
+      )}
     </div>
   );
 }

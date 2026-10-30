@@ -546,6 +546,8 @@ const kycAlterColumns = [
   `ALTER TABLE users ADD COLUMN kyc_front_filename TEXT;`,
   `ALTER TABLE users ADD COLUMN kyc_back_filename TEXT;`,
   `ALTER TABLE users ADD COLUMN kyc_submitted_at TEXT;`,
+  `ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'trader';`,
+  `ALTER TABLE withdrawals ADD COLUMN admin_notes TEXT;`,
 ];
 for (const stmt of kycAlterColumns) {
   try {
@@ -573,6 +575,32 @@ db.exec(`
     status TEXT NOT NULL DEFAULT 'unverified',
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS deposits (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    account_id TEXT,
+    amount REAL NOT NULL,
+    payment_method TEXT NOT NULL,
+    currency TEXT DEFAULT 'USDT',
+    network TEXT DEFAULT 'TRC-20',
+    tx_hash TEXT,
+    deposit_slip_url TEXT,
+    status TEXT DEFAULT 'pending',
+    decline_reason TEXT,
+    created_at INTEGER NOT NULL,
+    processed_at INTEGER
+  );
+
+  CREATE TABLE IF NOT EXISTS admin_audit_logs (
+    id TEXT PRIMARY KEY,
+    admin_user_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    target_type TEXT NOT NULL,
+    details TEXT,
+    created_at INTEGER NOT NULL
   );
 `);
 
@@ -1445,3 +1473,705 @@ export function getWeeklyLeaderboardQuery() {
     payoutTime: r.payout_time,
   }));
 }
+
+// ============================================================================
+// Comprehensive Admin Operations & 3-Level Commission Management
+// ============================================================================
+
+export function recordAdminAuditLog(adminUserId: string, action: string, targetId: string, targetType: string, details?: any) {
+  const id = `AUDIT-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  db.prepare(`
+    INSERT INTO admin_audit_logs (id, admin_user_id, action, target_id, target_type, details, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    adminUserId,
+    action,
+    targetId,
+    targetType,
+    details ? (typeof details === 'string' ? details : JSON.stringify(details)) : null,
+    Date.now()
+  );
+}
+
+export function getAdminMetrics() {
+  const totalUsers = Number((db.prepare('SELECT COUNT(*) as c FROM users').get() as any)?.c || 0);
+  const totalAccounts = Number((db.prepare('SELECT COUNT(*) as c FROM accounts').get() as any)?.c || 0);
+  const totalActiveBalance = Number((db.prepare('SELECT SUM(current_balance) as s FROM accounts').get() as any)?.s || 0);
+  const totalDeposited = Number((db.prepare('SELECT SUM(deposited_capital) as s FROM accounts').get() as any)?.s || 0);
+  const pendingDeposits = Number((db.prepare("SELECT COUNT(*) as c FROM deposits WHERE status = 'pending'").get() as any)?.c || 0);
+  const pendingDepositsSum = Number((db.prepare("SELECT SUM(amount) as s FROM deposits WHERE status = 'pending'").get() as any)?.s || 0);
+  const pendingWithdrawals = Number((db.prepare("SELECT COUNT(*) as c FROM withdrawals WHERE status = 'pending'").get() as any)?.c || 0);
+  const pendingWithdrawalsSum = Number((db.prepare("SELECT SUM(gross_amount) as s FROM withdrawals WHERE status = 'pending'").get() as any)?.s || 0);
+  const pendingKyc = Number((db.prepare("SELECT COUNT(*) as c FROM users WHERE kyc_status IN ('pending', 'Pending Verification')").get() as any)?.c || 0);
+  const totalCommissions = Number((db.prepare("SELECT SUM(commission_amount) as s FROM commissions WHERE status = 'paid'").get() as any)?.s || 0);
+  const totalAffiliates = Number((db.prepare("SELECT COUNT(DISTINCT sponsor_id) as c FROM referrals").get() as any)?.c || 0);
+
+  return {
+    totalUsers,
+    totalAccounts,
+    totalActiveBalance: Number(totalActiveBalance.toFixed(2)),
+    totalDeposited: Number(totalDeposited.toFixed(2)),
+    pendingDepositsCount: pendingDeposits,
+    pendingDepositsAmount: Number(pendingDepositsSum.toFixed(2)),
+    pendingWithdrawalsCount: pendingWithdrawals,
+    pendingWithdrawalsAmount: Number(pendingWithdrawalsSum.toFixed(2)),
+    pendingKycCount: pendingKyc,
+    totalCommissionsPaid: Number(totalCommissions.toFixed(2)),
+    totalAffiliatesCount: totalAffiliates,
+  };
+}
+
+export function getAdminUsersList() {
+  const users = db.prepare(`
+    SELECT u.*,
+           (SELECT COUNT(*) FROM accounts a WHERE a.user_id = u.id) as accounts_count,
+           (SELECT SUM(current_balance) FROM accounts a WHERE a.user_id = u.id) as total_balance,
+           (SELECT full_name FROM users s WHERE s.id = u.referred_by) as sponsor_name
+    FROM users u
+    ORDER BY u.created_at DESC
+  `).all() as any[];
+
+  return users.map((u) => {
+    const userAccounts = db.prepare('SELECT * FROM accounts WHERE user_id = ? ORDER BY created_at DESC').all(u.id) as any[];
+    return {
+      id: u.id,
+      email: u.email,
+      fullName: u.full_name,
+      role: u.role || 'trader',
+      avatarUrl: u.avatar_url,
+      country: u.country,
+      referralCode: u.referral_code,
+      referredBy: u.referred_by,
+      sponsorName: u.sponsor_name || null,
+      kycStatus: u.kyc_status,
+      profileLocked: Boolean(u.profile_locked),
+      address: u.address,
+      dateOfBirth: u.date_of_birth,
+      telegramHandle: u.telegram_handle,
+      accountsCount: u.accounts_count || 0,
+      totalBalance: Number((u.total_balance || 0).toFixed(2)),
+      createdAt: u.created_at,
+      accounts: userAccounts.map(mapAccountRowToTradingAccount),
+    };
+  });
+}
+
+export function adminUpdateAccountBalance(params: {
+  accountId: string;
+  newBalance: number;
+  reason: string;
+  adminUserId: string;
+}) {
+  const account = db.prepare('SELECT * FROM accounts WHERE id = ?').get(params.accountId) as any;
+  if (!account) throw new Error(`Trading account ${params.accountId} not found.`);
+
+  const oldBalance = Number(account.current_balance);
+  const targetBalance = Number(Number(params.newBalance).toFixed(2));
+  if (!Number.isFinite(targetBalance) || targetBalance < 0) {
+    throw new Error('New balance must be a non-negative number.');
+  }
+
+  const delta = targetBalance - oldBalance;
+  const newEquity = Number((account.equity + delta).toFixed(2));
+  const newStartingDay = Number((account.starting_day_equity + delta).toFixed(2));
+  const now = Date.now();
+
+  db.prepare(`
+    UPDATE accounts SET
+      current_balance = ?,
+      equity = ?,
+      starting_day_equity = ?,
+      updated_at = ?
+    WHERE id = ?
+  `).run(targetBalance, newEquity, newStartingDay, now, params.accountId);
+
+  recordAdminAuditLog(
+    params.adminUserId,
+    'MODIFY_BALANCE',
+    params.accountId,
+    'account',
+    { oldBalance, newBalance: targetBalance, delta, reason: params.reason }
+  );
+
+  return getAccountById(params.accountId);
+}
+
+export function adminSetUserRole(userId: string, newRole: 'admin' | 'trader', adminUserId: string) {
+  const user = getUserById(userId);
+  if (!user) throw new Error('User not found.');
+
+  db.prepare('UPDATE users SET role = ?, updated_at = ? WHERE id = ?').run(newRole, Date.now(), userId);
+  recordAdminAuditLog(adminUserId, 'CHANGE_ROLE', userId, 'user', { oldRole: user.role, newRole });
+  return getUserById(userId);
+}
+
+export function createDepositRequest(params: {
+  userId: string;
+  accountId?: string;
+  amount: number;
+  paymentMethod: string;
+  currency?: string;
+  network?: string;
+  txHash?: string;
+  depositSlipUrl?: string;
+}) {
+  const now = Date.now();
+  const id = `DEP-${now.toString(36).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`;
+  const cleanAmount = Number(params.amount.toFixed(2));
+  if (cleanAmount <= 0) throw new Error('Deposit amount must be greater than $0.');
+
+  db.prepare(`
+    INSERT INTO deposits (
+      id, user_id, account_id, amount, payment_method, currency, network, tx_hash, deposit_slip_url, status, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+  `).run(
+    id,
+    params.userId,
+    params.accountId || null,
+    cleanAmount,
+    params.paymentMethod,
+    params.currency || 'USDT',
+    params.network || 'TRC-20',
+    params.txHash || null,
+    params.depositSlipUrl || null,
+    now
+  );
+
+  return db.prepare('SELECT * FROM deposits WHERE id = ?').get(id) as any;
+}
+
+export function getAdminDeposits(statusFilter?: string) {
+  let query = `
+    SELECT d.*, u.full_name as user_name, u.email as user_email, a.tier_name as account_tier
+    FROM deposits d
+    JOIN users u ON d.user_id = u.id
+    LEFT JOIN accounts a ON d.account_id = a.id
+  `;
+  const params: any[] = [];
+  if (statusFilter && statusFilter !== 'all') {
+    query += ' WHERE d.status = ?';
+    params.push(statusFilter);
+  }
+  query += ' ORDER BY d.created_at DESC';
+
+  return db.prepare(query).all(...params) as any[];
+}
+
+export function adminApproveDeposit(depositId: string, adminUserId: string) {
+  const deposit = db.prepare('SELECT * FROM deposits WHERE id = ?').get(depositId) as any;
+  if (!deposit) throw new Error('Deposit record not found.');
+  if (deposit.status === 'approved') throw new Error('Deposit is already approved.');
+
+  const now = Date.now();
+  db.prepare(`
+    UPDATE deposits SET
+      status = 'approved',
+      processed_at = ?
+    WHERE id = ?
+  `).run(now, depositId);
+
+  // Credit user's personal live account or target account
+  let targetAccount = deposit.account_id ? getAccountById(deposit.account_id) : null;
+  if (!targetAccount) {
+    targetAccount = ensurePersonalLiveAccountForUser(deposit.user_id);
+  }
+
+  let updatedAccount = null;
+  if (targetAccount) {
+    updatedAccount = creditPersonalAccountDepositInDb({
+      userId: deposit.user_id,
+      accountId: targetAccount.id,
+      amountUsdt: deposit.amount,
+    });
+  }
+
+  // Execute 3-Level Referral Commission Distribution (10% L1, 5% L2, 2% L3)
+  const commissionsDistributed = distribute3TierCommissions(
+    deposit.user_id,
+    deposit.amount,
+    'deposit',
+    `Deposit of $${deposit.amount.toFixed(2)} USDT by ${deposit.user_name || 'Trader'}`
+  );
+
+  recordAdminAuditLog(adminUserId, 'APPROVE_DEPOSIT', depositId, 'deposit', {
+    amount: deposit.amount,
+    userId: deposit.user_id,
+    creditedAccountId: targetAccount?.id,
+    commissionsDistributed,
+  });
+
+  return {
+    ok: true,
+    deposit: db.prepare('SELECT * FROM deposits WHERE id = ?').get(depositId),
+    updatedAccount,
+    commissionsDistributed,
+  };
+}
+
+export function adminDeclineDeposit(depositId: string, reason: string, adminUserId: string) {
+  const deposit = db.prepare('SELECT * FROM deposits WHERE id = ?').get(depositId) as any;
+  if (!deposit) throw new Error('Deposit record not found.');
+  if (deposit.status !== 'pending') throw new Error(`Deposit cannot be declined from status: ${deposit.status}`);
+
+  const now = Date.now();
+  db.prepare(`
+    UPDATE deposits SET
+      status = 'declined',
+      decline_reason = ?,
+      processed_at = ?
+    WHERE id = ?
+  `).run(reason || 'Declined by administrator', now, depositId);
+
+  recordAdminAuditLog(adminUserId, 'DECLINE_DEPOSIT', depositId, 'deposit', { reason });
+
+  return {
+    ok: true,
+    deposit: db.prepare('SELECT * FROM deposits WHERE id = ?').get(depositId),
+  };
+}
+
+export function getAdminWithdrawals(statusFilter?: string) {
+  let query = `
+    SELECT w.*, u.full_name as user_name, u.email as user_email, a.tier_name as account_tier, a.current_balance as account_balance
+    FROM withdrawals w
+    JOIN users u ON w.user_id = u.id
+    LEFT JOIN accounts a ON w.account_id = a.id
+  `;
+  const params: any[] = [];
+  if (statusFilter && statusFilter !== 'all') {
+    query += ' WHERE w.status = ?';
+    params.push(statusFilter);
+  }
+  query += ' ORDER BY w.requested_at DESC';
+
+  return db.prepare(query).all(...params) as any[];
+}
+
+export function adminApproveWithdrawal(withdrawalId: string, adminUserId: string) {
+  const withdrawal = db.prepare('SELECT * FROM withdrawals WHERE id = ?').get(withdrawalId) as any;
+  if (!withdrawal) throw new Error('Withdrawal record not found.');
+  if (withdrawal.status === 'completed') throw new Error('Withdrawal is already approved/completed.');
+
+  const now = Date.now();
+  const txHash = withdrawal.tx_hash || `tron_tx_${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`;
+
+  db.prepare(`
+    UPDATE withdrawals SET
+      status = 'completed',
+      tx_hash = ?,
+      processed_at = ?
+    WHERE id = ?
+  `).run(txHash, now, withdrawalId);
+
+  // Debit the trading account balance
+  const account = getAccountById(withdrawal.account_id);
+  let updatedAccount = null;
+  if (account) {
+    const newBalance = Math.max(0, Number((account.currentBalance - withdrawal.gross_amount).toFixed(2)));
+    const newEquity = Math.max(0, Number((account.equity - withdrawal.gross_amount).toFixed(2)));
+    db.prepare(`
+      UPDATE accounts SET
+        current_balance = ?,
+        equity = ?,
+        first_withdrawal_completed = 1,
+        updated_at = ?
+      WHERE id = ?
+    `).run(newBalance, newEquity, now, account.id);
+    updatedAccount = getAccountById(account.id);
+  }
+
+  // 8% Direct Referral Payout Bonus to Direct Sponsor
+  const user = getUserById(withdrawal.user_id);
+  if (user?.referred_by) {
+    const existingBonus = db.prepare(`
+      SELECT * FROM commissions WHERE source_type = 'withdrawal' AND referred_user_id = ? AND base_amount = ?
+    `).get(withdrawal.user_id, withdrawal.gross_amount);
+
+    if (!existingBonus) {
+      const bonusAmount = Number((withdrawal.gross_amount * 0.08).toFixed(2));
+      const commId = `COMM-WD-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+      db.prepare(`
+        INSERT INTO commissions (
+          id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, status, created_at
+        ) VALUES (?, ?, ?, 'withdrawal', 1, ?, ?, 0.08, ?, 'paid', ?)
+      `).run(
+        commId,
+        user.referred_by,
+        user.id,
+        `Direct Referral Payout Bonus (8% of $${withdrawal.gross_amount.toFixed(2)} Withdrawal by ${user.full_name})`,
+        withdrawal.gross_amount,
+        bonusAmount,
+        now
+      );
+    }
+  }
+
+  recordAdminAuditLog(adminUserId, 'APPROVE_WITHDRAWAL', withdrawalId, 'withdrawal', {
+    grossAmount: withdrawal.gross_amount,
+    netPayout: withdrawal.net_payout,
+    txHash,
+  });
+
+  return {
+    ok: true,
+    withdrawal: db.prepare('SELECT * FROM withdrawals WHERE id = ?').get(withdrawalId),
+    updatedAccount,
+  };
+}
+
+export function adminDeclineWithdrawal(withdrawalId: string, reason: string, adminUserId: string) {
+  const withdrawal = db.prepare('SELECT * FROM withdrawals WHERE id = ?').get(withdrawalId) as any;
+  if (!withdrawal) throw new Error('Withdrawal record not found.');
+  if (withdrawal.status !== 'pending') throw new Error(`Withdrawal cannot be declined from status: ${withdrawal.status}`);
+
+  const now = Date.now();
+  db.prepare(`
+    UPDATE withdrawals SET
+      status = 'rejected',
+      rejection_reason = ?,
+      processed_at = ?
+    WHERE id = ?
+  `).run(reason || 'Declined by administrator', now, withdrawalId);
+
+  recordAdminAuditLog(adminUserId, 'DECLINE_WITHDRAWAL', withdrawalId, 'withdrawal', { reason });
+
+  return {
+    ok: true,
+    withdrawal: db.prepare('SELECT * FROM withdrawals WHERE id = ?').get(withdrawalId),
+  };
+}
+
+export function getAdminKycSubmissions(statusFilter?: string) {
+  let query = `
+    SELECT k.*, u.email as user_email, u.full_name as user_name, u.country as user_country, u.created_at as user_created_at
+    FROM kyc_submissions k
+    JOIN users u ON k.user_id = u.id
+  `;
+  const params: any[] = [];
+  if (statusFilter && statusFilter !== 'all') {
+    if (statusFilter === 'pending') {
+      query += " WHERE k.status IN ('pending', 'Pending Verification')";
+    } else {
+      query += " WHERE k.status = ?";
+      params.push(statusFilter);
+    }
+  }
+  query += ' ORDER BY k.updated_at DESC';
+
+  return db.prepare(query).all(...params) as any[];
+}
+
+export function adminApproveKyc(userId: string, adminUserId: string) {
+  const user = getUserById(userId);
+  if (!user) throw new Error('User not found.');
+
+  const now = Date.now();
+  db.prepare(`
+    UPDATE users SET
+      kyc_status = 'verified',
+      kyc_verified_at = ?,
+      profile_locked = 1,
+      updated_at = ?
+    WHERE id = ?
+  `).run(now, now, userId);
+
+  db.prepare(`
+    UPDATE kyc_submissions SET
+      status = 'verified',
+      profile_locked = 1,
+      updated_at = ?
+    WHERE user_id = ?
+  `).run(now, userId);
+
+  recordAdminAuditLog(adminUserId, 'APPROVE_KYC', userId, 'user', { previousStatus: user.kyc_status });
+
+  return getUserById(userId);
+}
+
+export function adminRejectKyc(userId: string, reason: string, adminUserId: string) {
+  const user = getUserById(userId);
+  if (!user) throw new Error('User not found.');
+
+  const now = Date.now();
+  db.prepare(`
+    UPDATE users SET
+      kyc_status = 'rejected',
+      updated_at = ?
+    WHERE id = ?
+  `).run(now, userId);
+
+  db.prepare(`
+    UPDATE kyc_submissions SET
+      status = 'rejected',
+      updated_at = ?
+    WHERE user_id = ?
+  `).run(now, userId);
+
+  recordAdminAuditLog(adminUserId, 'REJECT_KYC', userId, 'user', { reason });
+
+  return getUserById(userId);
+}
+
+/**
+ * Robust 3-Level Referral Commission Distribution
+ * Level 1: 10%
+ * Level 2: 5%
+ * Level 3: 2%
+ */
+export function distribute3TierCommissions(
+  buyerUserId: string,
+  baseAmount: number,
+  sourceType: 'deposit' | 'purchase' | 'trade_activity' = 'deposit',
+  details?: string
+) {
+  const buyer = getUserById(buyerUserId);
+  if (!buyer?.referred_by) return [];
+
+  const now = Date.now();
+  const commissions: any[] = [];
+
+  // Level 1: 10%
+  const l1SponsorId = buyer.referred_by;
+  const l1Amount = Number((baseAmount * 0.10).toFixed(2));
+  const l1Id = `COMM-L1-${now.toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
+
+  db.prepare(`
+    INSERT INTO commissions (
+      id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, status, created_at
+    ) VALUES (?, ?, ?, ?, 1, ?, ?, 0.10, ?, 'paid', ?)
+  `).run(
+    l1Id,
+    l1SponsorId,
+    buyer.id,
+    sourceType,
+    details || `Level 1 Commission: 10% of $${baseAmount.toFixed(2)} ${sourceType}`,
+    baseAmount,
+    l1Amount,
+    now
+  );
+  commissions.push({ id: l1Id, level: 1, sponsorId: l1SponsorId, amount: l1Amount });
+
+  // Level 2: 5%
+  const l1User = getUserById(l1SponsorId);
+  if (l1User?.referred_by) {
+    const l2SponsorId = l1User.referred_by;
+    const l2Amount = Number((baseAmount * 0.05).toFixed(2));
+    const l2Id = `COMM-L2-${now.toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
+
+    db.prepare(`
+      INSERT INTO commissions (
+        id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, status, created_at
+      ) VALUES (?, ?, ?, ?, 2, ?, ?, 0.05, ?, 'paid', ?)
+    `).run(
+      l2Id,
+      l2SponsorId,
+      buyer.id,
+      sourceType,
+      details || `Level 2 Commission: 5% of $${baseAmount.toFixed(2)} ${sourceType}`,
+      baseAmount,
+      l2Amount,
+      now
+    );
+    commissions.push({ id: l2Id, level: 2, sponsorId: l2SponsorId, amount: l2Amount });
+
+    // Level 3: 2%
+    const l2User = getUserById(l2SponsorId);
+    if (l2User?.referred_by) {
+      const l3SponsorId = l2User.referred_by;
+      const l3Amount = Number((baseAmount * 0.02).toFixed(2));
+      const l3Id = `COMM-L3-${now.toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
+
+      db.prepare(`
+        INSERT INTO commissions (
+          id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, status, created_at
+        ) VALUES (?, ?, ?, ?, 3, ?, ?, 0.02, ?, 'paid', ?)
+      `).run(
+        l3Id,
+        l3SponsorId,
+        buyer.id,
+        sourceType,
+        details || `Level 3 Commission: 2% of $${baseAmount.toFixed(2)} ${sourceType}`,
+        baseAmount,
+        l3Amount,
+        now
+      );
+      commissions.push({ id: l3Id, level: 3, sponsorId: l3SponsorId, amount: l3Amount });
+    }
+  }
+
+  return commissions;
+}
+
+export function getAdminReferralTree() {
+  const sponsors = db.prepare(`
+    SELECT DISTINCT u.id, u.full_name, u.email, u.referral_code,
+           (SELECT COUNT(*) FROM referrals r WHERE r.sponsor_id = u.id AND r.tier_level = 1) as l1_count,
+           (SELECT COUNT(*) FROM referrals r WHERE r.sponsor_id = u.id AND r.tier_level = 2) as l2_count,
+           (SELECT COUNT(*) FROM referrals r WHERE r.sponsor_id = u.id AND r.tier_level = 3) as l3_count,
+           (SELECT SUM(commission_amount) FROM commissions c WHERE c.sponsor_id = u.id AND c.status = 'paid') as total_earned
+    FROM users u
+    WHERE EXISTS (SELECT 1 FROM referrals r WHERE r.sponsor_id = u.id)
+       OR EXISTS (SELECT 1 FROM commissions c WHERE c.sponsor_id = u.id)
+    ORDER BY total_earned DESC
+  `).all() as any[];
+
+  return sponsors.map((s) => {
+    const l1Referrals = db.prepare(`
+      SELECT r.referred_user_id, u.full_name, u.email, u.created_at,
+             (SELECT SUM(current_balance) FROM accounts a WHERE a.user_id = u.id) as balance
+      FROM referrals r
+      JOIN users u ON r.referred_user_id = u.id
+      WHERE r.sponsor_id = ? AND r.tier_level = 1
+    `).all(s.id) as any[];
+
+    return {
+      sponsorId: s.id,
+      sponsorName: s.full_name,
+      sponsorEmail: s.email,
+      referralCode: s.referral_code,
+      level1Count: s.l1_count || 0,
+      level2Count: s.l2_count || 0,
+      level3Count: s.l3_count || 0,
+      totalDownlineCount: (s.l1_count || 0) + (s.l2_count || 0) + (s.l3_count || 0),
+      totalEarned: Number((s.total_earned || 0).toFixed(2)),
+      level1Members: l1Referrals.map((m) => ({
+        id: m.referred_user_id,
+        name: m.full_name,
+        email: m.email,
+        balance: Number((m.balance || 0).toFixed(2)),
+        joinedAt: m.created_at,
+      })),
+    };
+  });
+}
+
+export function getAdminCommissionsLedger(limit: number = 100) {
+  return db.prepare(`
+    SELECT c.*,
+           s.full_name as sponsor_name, s.email as sponsor_email,
+           b.full_name as buyer_name, b.email as buyer_email
+    FROM commissions c
+    JOIN users s ON c.sponsor_id = s.id
+    JOIN users b ON c.referred_user_id = b.id
+    ORDER BY c.created_at DESC
+    LIMIT ?
+  `).all(limit) as any[];
+}
+
+export function getAdminAuditLogs(limit: number = 50) {
+  return db.prepare(`
+    SELECT a.*, u.full_name as admin_name, u.email as admin_email
+    FROM admin_audit_logs a
+    LEFT JOIN users u ON a.admin_user_id = u.id
+    ORDER BY a.created_at DESC
+    LIMIT ?
+  `).all(limit) as any[];
+}
+
+/**
+ * Idempotent seed function to guarantee admin accounts, sample pending deposits,
+ * pending withdrawals, and pending KYC requests are present.
+ */
+export function ensureAdminSeedData() {
+  const now = Date.now();
+
+  // 1. Ensure user Shankavee (shankavee44@gmail.com) has role='admin'
+  const shankavee = getUserByEmail('shankavee44@gmail.com');
+  if (shankavee) {
+    db.prepare("UPDATE users SET role = 'admin' WHERE id = ?").run(shankavee.id);
+  } else {
+    ensureUserInDb({
+      id: 'usr_admin_shankavee',
+      email: 'shankavee44@gmail.com',
+      fullName: 'Shankavee (Admin)',
+    });
+    db.prepare("UPDATE users SET role = 'admin' WHERE email = 'shankavee44@gmail.com'").run();
+  }
+
+  // 2. Ensure Superadmin (admin@bft.io) has role='admin'
+  const bftAdmin = getUserByEmail('admin@bft.io');
+  if (bftAdmin) {
+    db.prepare("UPDATE users SET role = 'admin' WHERE id = ?").run(bftAdmin.id);
+  } else {
+    ensureUserInDb({
+      id: 'usr_admin_master',
+      email: 'admin@bft.io',
+      fullName: 'BFT Super Administrator',
+    });
+    db.prepare("UPDATE users SET role = 'admin' WHERE email = 'admin@bft.io'").run();
+  }
+
+  // 3. Ensure Viktor Vance has role='admin'
+  db.prepare("UPDATE users SET role = 'admin' WHERE id = 'USR-MASTER-88'").run();
+
+  // 4. Seed initial pending and approved deposits if deposits table is empty
+  const depositCount = Number((db.prepare('SELECT COUNT(*) as c FROM deposits').get() as any)?.c || 0);
+  if (depositCount === 0) {
+    const seedDeposits = [
+      { id: 'DEP-REQ-981', userId: 'USR-SUB-101', accId: null, amount: 750.00, method: 'USDT (TRC-20)', status: 'pending', tx: '0x8f7d6a5e4c3b2a10', ts: now - 3600000 * 2 },
+      { id: 'DEP-REQ-982', userId: 'USR-SUB-102', accId: null, amount: 1500.00, method: 'USDT (TRC-20)', status: 'pending', tx: '0x1a2b3c4d5e6f7a8b', ts: now - 3600000 * 5 },
+      { id: 'DEP-REQ-980', userId: 'usr_bft_001', accId: 'BFT-91823', amount: 500.00, method: 'USDT (TRC-20)', status: 'approved', tx: '0x99aa88bb77cc66dd', ts: now - 86400000 * 3 },
+    ];
+    for (const d of seedDeposits) {
+      db.prepare(`
+        INSERT INTO deposits (id, user_id, account_id, amount, payment_method, status, tx_hash, created_at, processed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(d.id, d.userId, d.accId, d.amount, d.method, d.status, d.tx, d.ts, d.status === 'approved' ? d.ts + 60000 : null);
+    }
+  }
+
+  // 5. Seed a pending withdrawal for USR-SUB-101 if no pending withdrawals exist
+  const pendingWdCount = Number((db.prepare("SELECT COUNT(*) as c FROM withdrawals WHERE status = 'pending'").get() as any)?.c || 0);
+  if (pendingWdCount === 0) {
+    db.prepare(`
+      INSERT INTO withdrawals (
+        id, user_id, account_id, gross_amount, net_profit, max_allowed_profit, profit_share_rate, fee_amount, net_payout,
+        wallet_address, network, payment_method, status, reference_number, tx_hash, requested_at, processed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 0.80, ?, ?, ?, 'TRON (TRC-20)', 'crypto_trc20', 'pending', ?, NULL, ?, NULL)
+    `).run(
+      'WD-REQ-77401',
+      'USR-SUB-101',
+      'BFT-91823',
+      420.00,
+      600.00,
+      480.00,
+      42.00,
+      378.00,
+      'TQn9Y2khEsLJW1ChVWFMSMeRDow5KcbLSE',
+      'REF-77401',
+      now - 3600000 * 4
+    );
+  }
+
+  // 6. Seed a pending KYC submission for USR-SUB-101 (Marco Rossi) if none pending
+  const pendingKycCount = Number((db.prepare("SELECT COUNT(*) as c FROM kyc_submissions WHERE status IN ('pending', 'Pending Verification')").get() as any)?.c || 0);
+  if (pendingKycCount === 0) {
+    db.prepare(`
+      INSERT OR REPLACE INTO kyc_submissions (
+        id, user_id, full_name, address, date_of_birth, country, profile_locked, doc_type, document_number,
+        front_document_url, back_document_url, front_file_name, back_file_name, status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+    `).run(
+      'KYC-SUB-USR-SUB-101',
+      'USR-SUB-101',
+      'Marco Rossi',
+      'Via Montenapoleone 8, 20121 Milan',
+      '1992-03-14',
+      'Italy',
+      'ID Card',
+      'ITA-8910482',
+      'https://images.unsplash.com/photo-1544717305-2782549b5136?w=600',
+      'https://images.unsplash.com/photo-1544717305-2782549b5136?w=600',
+      'marco_id_front.jpg',
+      'marco_id_back.jpg',
+      now - 86400000 * 2,
+      now - 86400000 * 2
+    );
+
+    db.prepare("UPDATE users SET kyc_status = 'pending' WHERE id = 'USR-SUB-101'").run();
+  }
+}
+
+ensureAdminSeedData();
+

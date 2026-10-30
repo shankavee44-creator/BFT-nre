@@ -3,9 +3,10 @@ import { Zap, AlertTriangle, ArrowUp } from 'lucide-react';
 
 interface FooterProps {
   onNavigate: (tab: string) => void;
+  onOpenAdminDashboard?: () => void;
 }
 
-export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
+export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenAdminDashboard }) => {
   const scrollToTop = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -120,7 +121,19 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
           </div>
           <div className="flex flex-col sm:flex-row items-center justify-between text-slate-500 pt-2 font-mono">
             <span>© {new Date().getFullYear()} Binary Funded Trader (BFT) Global Capital. All rights reserved.</span>
-            <span>Platform Brand Shortcode: BFT • Institutional FTMO Edition</span>
+            <div className="flex items-center gap-3">
+              <span>Platform Brand Shortcode: BFT • Institutional FTMO Edition</span>
+              {onOpenAdminDashboard && (
+                <button
+                  type="button"
+                  data-testid="footer-admin-portal-link"
+                  onClick={onOpenAdminDashboard}
+                  className="text-purple-400 hover:text-purple-300 hover:underline cursor-pointer transition-colors"
+                >
+                  Admin Portal
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>

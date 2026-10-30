@@ -96,6 +96,7 @@ interface UserDashboardProps {
   onPassChallengePhase?: (account: TradingAccount) => void;
   initialTab?: 'accounts' | 'analytics' | 'affiliate' | 'kyc' | 'profile' | 'security' | 'admin_users';
   onLogout?: () => void;
+  onOpenAdminDashboard?: () => void;
 }
 
 export const UserDashboard: React.FC<UserDashboardProps> = ({
@@ -115,10 +116,18 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   onPassChallengePhase,
   initialTab = 'accounts',
   onLogout,
+  onOpenAdminDashboard,
 }) => {
+  const ADMIN_EMAILS = ['shankavee44@gmail.com', 'admin@bft.io', 'viktor.v@quant-prop.io'];
+  const isUserAdmin = Boolean(
+    userProfile.role === 'admin' ||
+    userProfile.isAdmin ||
+    ADMIN_EMAILS.includes((userProfile.email || '').toLowerCase().trim())
+  );
+
   const [activeTab, setActiveTab] = useState<
     'accounts' | 'analytics' | 'affiliate' | 'kyc' | 'profile' | 'security' | 'admin_users'
-  >(initialTab);
+  >(initialTab === 'admin_users' && !isUserAdmin ? 'accounts' : initialTab);
 
   // Personal Profile Details State (Full Name, Address, Date of Birth)
   const [fullName, setFullName] = useState(userProfile.fullName || '');
@@ -927,6 +936,26 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               {accounts.length === 0 ? 'Choose a Plan / Buy Challenge' : '+ Buy Another Account'}
             </button>
 
+            {isUserAdmin && (
+              <button
+                type="button"
+                data-testid="dashboard-open-admin-btn"
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  if (onOpenAdminDashboard) {
+                    onOpenAdminDashboard();
+                  } else {
+                    setActiveTab('admin_users');
+                  }
+                }}
+                className="px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-mono text-xs font-black transition-colors flex items-center gap-1.5 cursor-pointer shrink-0 shadow-lg shadow-purple-600/25"
+                title="Open Administrative Command Center"
+              >
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>Admin Console</span>
+              </button>
+            )}
+
             {onLogout && (
               <button
                 type="button"
@@ -1014,7 +1043,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           { id: 'analytics', label: 'Performance Analytics' },
           { id: 'affiliate', label: 'Affiliate Program (10%/5%/2% + 8%)' },
           { id: 'security', label: 'Security & 2FA' },
-          { id: 'admin_users', label: `User Management (${adminUsersList.length || 'Google & Email'})` },
+          ...(isUserAdmin ? [{ id: 'admin_users', label: 'Admin Command Center (RBAC)' }] : []),
         ].map((tab) => (
           <button
             key={tab.id}
@@ -2411,10 +2440,44 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         </div>
       )}
 
-      {/* Tab 7: User Management (Google & Email Users) */}
+      {/* Tab 7: User Management / Admin Command Center */}
       {activeTab === 'admin_users' && (
-        <div className="p-6 sm:p-8 rounded-3xl bg-[#0a0a0a] border border-[#ff8800]/40 w-full font-mono">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+        !isUserAdmin ? (
+          <div className="p-8 rounded-3xl bg-[#0a0a0a] border border-rose-500/40 text-center font-mono space-y-3">
+            <div className="w-12 h-12 rounded-xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-rose-400 mx-auto">
+              <Lock className="w-6 h-6" />
+            </div>
+            <h3 className="text-lg font-black text-white">Access Denied: Admin Role Required</h3>
+            <p className="text-xs text-slate-400 max-w-md mx-auto">
+              This area is restricted to authorized administrative personnel only. Your current account role does not have administrative clearance.
+            </p>
+          </div>
+        ) : (
+        <div className="p-6 sm:p-8 rounded-3xl bg-[#0a0a0a] border border-purple-500/40 w-full font-mono space-y-6">
+          {/* Admin Command Center Launcher Card */}
+          <div className="p-5 rounded-2xl bg-gradient-to-r from-purple-950/40 to-[#12111c] border border-purple-500/40 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div>
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/40 text-[10px] font-bold uppercase mb-1">
+                <ShieldCheck className="w-3.5 h-3.5" /> Superadmin Console Access
+              </span>
+              <h3 className="text-lg font-black text-white">Full Operations & Financial Command Center</h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Manage user account balances, review/approve deposits & withdrawals, verify KYC IDs, and inspect the 3-level referral matrix.
+              </p>
+            </div>
+            {onOpenAdminDashboard && (
+              <button
+                type="button"
+                onClick={onOpenAdminDashboard}
+                className="px-5 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-black text-xs uppercase tracking-wider flex items-center gap-2 cursor-pointer transition-colors shadow-lg shadow-purple-600/30 shrink-0"
+              >
+                <ShieldCheck className="w-4 h-4" />
+                <span>Launch Full Admin Dashboard</span>
+              </button>
+            )}
+          </div>
+
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
               <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded bg-[#ff8800]/15 border border-[#ff8800]/40 text-[#ff8800] text-[11px] font-bold uppercase mb-1">
                 <UserCheck className="w-3.5 h-3.5" /> Registered Platform Accounts
@@ -2499,6 +2562,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             </table>
           </div>
         </div>
+        )
       )}
     </div>
   );

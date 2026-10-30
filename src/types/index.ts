@@ -198,6 +198,8 @@ export interface UserProfile {
   referredBy?: string;
   isLoggedIn?: boolean;
   rememberMe?: boolean;
+  role?: 'admin' | 'trader' | string;
+  isAdmin?: boolean;
 }
 
 export interface UserAccount {

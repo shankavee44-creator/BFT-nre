@@ -6,8 +6,10 @@
 
 const getAuthHeaders = (): HeadersInit => {
   let token = '';
+  let adminKey = '';
   try {
     token = localStorage.getItem('bft_jwt_session') || sessionStorage.getItem('bft_jwt_session') || '';
+    adminKey = localStorage.getItem('bft_admin_key') || sessionStorage.getItem('bft_admin_key') || '';
   } catch {
     // storage not available
   }
@@ -16,6 +18,9 @@ const getAuthHeaders = (): HeadersInit => {
   };
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
+  }
+  if (adminKey) {
+    headers['x-admin-key'] = adminKey;
   }
   return headers;
 };
@@ -306,6 +311,49 @@ export async function apiGetLeaderboard() {
   }
 }
 
+export async function apiCheckAdminAccess() {
+  try {
+    const res = await fetch('/api/admin/check-access', {
+      headers: getAuthHeaders(),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, isAdmin: false, error: e?.message || 'Failed to verify admin status' };
+  }
+}
+
+export async function apiVerifyAdminKey(adminKey: string) {
+  try {
+    const res = await fetch('/api/admin/auth/verify-key', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminKey }),
+    });
+    const data = await safeJsonResponse(res);
+    if (data.ok && data.adminKey) {
+      try {
+        localStorage.setItem('bft_admin_key', data.adminKey);
+      } catch {
+        // ignore
+      }
+    }
+    return data;
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Admin key verification failed' };
+  }
+}
+
+export async function apiGetAdminMetrics() {
+  try {
+    const res = await fetch('/api/admin/metrics', {
+      headers: getAuthHeaders(),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Failed to fetch admin metrics' };
+  }
+}
+
 export async function apiGetAdminUsers() {
   try {
     const res = await fetch('/api/admin/users', {
@@ -316,3 +364,220 @@ export async function apiGetAdminUsers() {
     return { ok: false, error: e?.message || 'Failed to fetch platform users' };
   }
 }
+
+export async function apiAdminUpdateBalance(params: {
+  userId: string;
+  accountId: string;
+  newBalance: number;
+  reason?: string;
+}) {
+  try {
+    const res = await fetch(`/api/admin/users/${encodeURIComponent(params.userId)}/accounts/${encodeURIComponent(params.accountId)}/balance`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        newBalance: params.newBalance,
+        reason: params.reason || 'Admin balance adjustment',
+      }),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Failed to update user balance' };
+  }
+}
+
+export async function apiAdminSetRole(params: { userId: string; role: 'admin' | 'trader' }) {
+  try {
+    const res = await fetch(`/api/admin/users/${encodeURIComponent(params.userId)}/role`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ role: params.role }),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Failed to update user role' };
+  }
+}
+
+export async function apiGetAdminDeposits(status?: string) {
+  try {
+    const query = status ? `?status=${encodeURIComponent(status)}` : '';
+    const res = await fetch(`/api/admin/deposits${query}`, {
+      headers: getAuthHeaders(),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Failed to fetch deposits' };
+  }
+}
+
+export async function apiAdminApproveDeposit(depositId: string) {
+  try {
+    const res = await fetch(`/api/admin/deposits/${encodeURIComponent(depositId)}/approve`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Failed to approve deposit' };
+  }
+}
+
+export async function apiAdminDeclineDeposit(depositId: string, reason?: string) {
+  try {
+    const res = await fetch(`/api/admin/deposits/${encodeURIComponent(depositId)}/decline`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ reason }),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Failed to decline deposit' };
+  }
+}
+
+export async function apiAdminCreateDeposit(params: {
+  userId: string;
+  accountId?: string;
+  amount: number;
+  paymentMethod?: string;
+  txHash?: string;
+  depositSlipUrl?: string;
+}) {
+  try {
+    const res = await fetch('/api/admin/deposits/create', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(params),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Failed to create deposit' };
+  }
+}
+
+export async function apiGetAdminWithdrawals(status?: string) {
+  try {
+    const query = status ? `?status=${encodeURIComponent(status)}` : '';
+    const res = await fetch(`/api/admin/withdrawals${query}`, {
+      headers: getAuthHeaders(),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Failed to fetch withdrawals' };
+  }
+}
+
+export async function apiAdminApproveWithdrawal(withdrawalId: string) {
+  try {
+    const res = await fetch(`/api/admin/withdrawals/${encodeURIComponent(withdrawalId)}/approve`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Failed to approve withdrawal' };
+  }
+}
+
+export async function apiAdminDeclineWithdrawal(withdrawalId: string, reason?: string) {
+  try {
+    const res = await fetch(`/api/admin/withdrawals/${encodeURIComponent(withdrawalId)}/decline`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ reason }),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Failed to decline withdrawal' };
+  }
+}
+
+export async function apiGetAdminKyc(status?: string) {
+  try {
+    const query = status ? `?status=${encodeURIComponent(status)}` : '';
+    const res = await fetch(`/api/admin/kyc${query}`, {
+      headers: getAuthHeaders(),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Failed to fetch KYC submissions' };
+  }
+}
+
+export async function apiAdminApproveKyc(userId: string) {
+  try {
+    const res = await fetch(`/api/admin/kyc/${encodeURIComponent(userId)}/approve`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Failed to approve KYC' };
+  }
+}
+
+export async function apiAdminRejectKyc(userId: string, reason?: string) {
+  try {
+    const res = await fetch(`/api/admin/kyc/${encodeURIComponent(userId)}/reject`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ reason }),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Failed to reject KYC' };
+  }
+}
+
+export async function apiGetAdminReferralTree() {
+  try {
+    const res = await fetch('/api/admin/referrals/tree', {
+      headers: getAuthHeaders(),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Failed to fetch referral tree' };
+  }
+}
+
+export async function apiGetAdminCommissions(limit: number = 100) {
+  try {
+    const res = await fetch(`/api/admin/referrals/commissions?limit=${limit}`, {
+      headers: getAuthHeaders(),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Failed to fetch commissions ledger' };
+  }
+}
+
+export async function apiAdminDistributeCommission(params: {
+  userId: string;
+  amount: number;
+  sourceType: 'deposit' | 'trade_activity';
+  details?: string;
+}) {
+  try {
+    const res = await fetch('/api/admin/referrals/distribute-commission', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(params),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Failed to distribute referral commission' };
+  }
+}
+
+export async function apiGetAdminAuditLogs(limit: number = 50) {
+  try {
+    const res = await fetch(`/api/admin/audit-logs?limit=${limit}`, {
+      headers: getAuthHeaders(),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Failed to fetch audit logs' };
+  }
+}
+

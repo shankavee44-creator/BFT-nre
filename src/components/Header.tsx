@@ -13,6 +13,7 @@ import {
   Lock,
   Menu,
   X,
+  ShieldCheck,
 } from 'lucide-react';
 import { TradingAccount, UserProfile, PromoCodeType } from '../types';
 import { CryptoTickerBar } from './CryptoTickerBar';
@@ -40,6 +41,7 @@ interface HeaderProps {
   onSimulateReferralUrl?: (refCode: string) => void;
   onLogout?: () => void;
   onOpenChallengeModal: () => void;
+  onOpenAdminDashboard?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -57,10 +59,20 @@ export const Header: React.FC<HeaderProps> = ({
   onSimulateReferralUrl,
   onLogout,
   onOpenChallengeModal,
+  onOpenAdminDashboard,
 }) => {
   const [accountDropdownOpen, setAccountDropdownOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [soundActive, setSoundActive] = useState(soundEngine.isEnabled());
+
+  const ADMIN_EMAILS = ['shankavee44@gmail.com', 'admin@bft.io', 'viktor.v@quant-prop.io'];
+  const isUserAdmin = Boolean(
+    userProfile.isLoggedIn && (
+      userProfile.role === 'admin' ||
+      userProfile.isAdmin ||
+      ADMIN_EMAILS.includes((userProfile.email || '').toLowerCase().trim())
+    )
+  );
 
   useEffect(() => {
     const handleToggle = (e: any) => {
@@ -425,6 +437,20 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           )}
 
+          {/* Admin Command Center (Only visible for authorized admin accounts) */}
+          {isUserAdmin && onOpenAdminDashboard && (
+            <button
+              type="button"
+              data-testid="header-admin-portal-btn"
+              onClick={onOpenAdminDashboard}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-black transition-all cursor-pointer whitespace-nowrap shadow-md shadow-purple-600/30"
+              title="Open Administrative Command Center"
+            >
+              <ShieldCheck className="w-3.5 h-3.5 fill-current" />
+              <span className="hidden sm:inline">Admin</span>
+            </button>
+          )}
+
           {/* Dynamic Auth State: Logged-In User Profile & Logout vs Logged-Out Sign In & Register */}
           {userProfile.isLoggedIn ? (
             <div className="flex items-center gap-1.5">
@@ -622,6 +648,27 @@ export const Header: React.FC<HeaderProps> = ({
               );
             })}
           </div>
+
+          {/* Admin Command Center button for authorized admin accounts on mobile */}
+          {isUserAdmin && onOpenAdminDashboard && (
+            <button
+              type="button"
+              data-testid="mobile-admin-portal-btn"
+              onClick={() => {
+                setMobileMenuOpen(false);
+                onOpenAdminDashboard();
+              }}
+              className="w-full flex items-center justify-between p-3 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-mono text-xs font-black shadow-lg shadow-purple-600/30 cursor-pointer transition-all"
+            >
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 fill-current" />
+                <span>Admin Command Center</span>
+              </div>
+              <span className="text-[10px] uppercase font-mono font-black bg-white/20 px-2 py-0.5 rounded">
+                Superadmin
+              </span>
+            </button>
+          )}
 
           {/* Bottom Action inside Drawer */}
           <div className="pt-2 border-t border-white/10 flex items-center justify-between gap-2">

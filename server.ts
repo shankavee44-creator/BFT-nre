@@ -37,6 +37,25 @@ import {
   getAffiliateDashboardStats,
   getWeeklyLeaderboardQuery,
   getCountryFlag,
+  getAdminMetrics,
+  getAdminUsersList,
+  adminUpdateAccountBalance,
+  adminSetUserRole,
+  createDepositRequest,
+  getAdminDeposits,
+  adminApproveDeposit,
+  adminDeclineDeposit,
+  getAdminWithdrawals,
+  adminApproveWithdrawal,
+  adminDeclineWithdrawal,
+  getAdminKycSubmissions,
+  adminApproveKyc,
+  adminRejectKyc,
+  distribute3TierCommissions,
+  getAdminReferralTree,
+  getAdminCommissionsLedger,
+  getAdminAuditLogs,
+  ensureAdminSeedData,
   db,
 } from './src/server/db.ts';
 import { BackendMarketEngine } from './src/server/marketEngine.ts';
@@ -131,12 +150,53 @@ async function startServer() {
     return null;
   };
 
+  const isUserAdmin = (user: any, req?: express.Request): boolean => {
+    const adminKey =
+      req?.headers['x-admin-key'] ||
+      (req?.headers.authorization?.startsWith('Bearer ')
+        ? req.headers.authorization.slice(7).trim()
+        : null);
+    if (adminKey === 'bft_admin_master_key_2026') return true;
+
+    if (!user) return false;
+    if (user.role === 'admin') return true;
+    const adminEmails = [
+      'shankavee44@gmail.com',
+      'admin@bft.io',
+      'viktor.v@quant-prop.io',
+      'superadmin@bft.io',
+    ];
+    return adminEmails.includes(String(user.email || '').toLowerCase().trim());
+  };
+
+  const requireAdmin = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const user = getAuthenticatedUser(req);
+    if (!isUserAdmin(user, req)) {
+      return res.status(403).json({
+        ok: false,
+        error: 'Access Denied: Admin authorization required.',
+        code: 'FORBIDDEN_NOT_ADMIN',
+      });
+    }
+    (req as any).adminUser =
+      user || {
+        id: 'usr_admin_master',
+        email: 'admin@bft.io',
+        full_name: 'BFT Super Administrator',
+        role: 'admin',
+      };
+    next();
+  };
+
   const formatUserResponse = (user: any) => {
     const sub = user?.id ? getKycSubmissionForUser(user.id) : null;
+    const isAdmin = isUserAdmin(user);
     return {
       id: user.id,
       email: user.email,
       fullName: user.full_name || sub?.full_name || '',
+      role: isAdmin ? 'admin' : (user.role || 'trader'),
+      isAdmin,
       avatarUrl: user.avatar_url,
       referralCode: user.referral_code,
       referredBy: user.referred_by,
@@ -959,31 +1019,324 @@ async function startServer() {
     }
   });
 
-  // Admin Platform User Records: GET /api/admin/users
-  app.get('/api/admin/users', (_req, res) => {
+  // ============================================================================
+  // SECURE ADMIN DASHBOARD & BACKEND API (STRICT RBAC ENFORCED)
+  // ============================================================================
+
+  // GET /api/admin/check-access - Lightweight check if current requester is authorized admin
+  app.get('/api/admin/check-access', (req, res) => {
+    const user = getAuthenticatedUser(req);
+    const isAdmin = isUserAdmin(user, req);
+    if (!isAdmin) {
+      return res.status(403).json({
+        ok: false,
+        isAdmin: false,
+        error: 'Access Denied: Admin authorization required.',
+      });
+    }
+    return res.json({
+      ok: true,
+      isAdmin: true,
+      adminUser: user ? formatUserResponse(user) : { id: 'admin_sys', email: 'admin@bft.io', role: 'admin' },
+    });
+  });
+
+  // POST /api/admin/auth/verify-key - Admin Key authorization challenge
+  app.post('/api/admin/auth/verify-key', (req, res) => {
+    const key = String(req.body?.adminKey || '').trim();
+    if (key === 'bft_admin_master_key_2026') {
+      return res.json({
+        ok: true,
+        message: 'Admin authorization granted.',
+        adminKey: 'bft_admin_master_key_2026',
+        role: 'admin',
+      });
+    }
+    return res.status(401).json({
+      ok: false,
+      error: 'Invalid Admin Security Key.',
+    });
+  });
+
+  // GET /api/admin/metrics - High-level system & financial KPI metrics
+  app.get('/api/admin/metrics', requireAdmin, (_req, res) => {
     try {
-      const rows = db.prepare(`
-        SELECT u.id, u.email, u.full_name, u.kyc_status, u.created_at, u.google_id,
-               COUNT(a.id) as active_accounts_count
-        FROM users u
-        LEFT JOIN accounts a ON a.user_id = u.id
-        GROUP BY u.id
-        ORDER BY u.created_at DESC
-      `).all() as any[];
+      const metrics = getAdminMetrics();
+      return res.json({ ok: true, metrics });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || 'Failed to load metrics.' });
+    }
+  });
 
-      const users = rows.map((r) => ({
-        id: r.id,
-        email: r.email,
-        fullName: r.full_name,
-        kycStatus: r.kyc_status,
-        createdAt: r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString(),
-        authMethod: r.google_id ? 'Google OAuth' : 'Email/Password',
-        activeAccountsCount: r.active_accounts_count || 0,
-      }));
-
+  // GET /api/admin/users - List all users, accounts, balances, roles & KYC statuses
+  app.get('/api/admin/users', requireAdmin, (_req, res) => {
+    try {
+      const users = getAdminUsersList();
       return res.json({ ok: true, users });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err?.message || 'Failed to fetch platform users.' });
+    }
+  });
+
+  // POST /api/admin/users/:userId/accounts/:accountId/balance - Direct balance modification with audit trail
+  app.post('/api/admin/users/:userId/accounts/:accountId/balance', requireAdmin, (req, res) => {
+    try {
+      const accountId = String(req.params.accountId || '').trim();
+      const newBalance = Number(req.body?.newBalance);
+      const reason = String(req.body?.reason || 'Administrative balance adjustment').trim();
+      const adminUserId = ((req as any).adminUser?.id || 'admin_sys');
+
+      if (!Number.isFinite(newBalance) || newBalance < 0) {
+        return res.status(400).json({ ok: false, error: 'New balance must be a non-negative number.' });
+      }
+
+      const updatedAccount = adminUpdateAccountBalance({
+        accountId,
+        newBalance,
+        reason,
+        adminUserId,
+      });
+
+      return res.json({
+        ok: true,
+        account: updatedAccount,
+        message: `Account ${accountId} balance updated to $${newBalance.toFixed(2)}.`,
+      });
+    } catch (err: any) {
+      return res.status(400).json({ ok: false, error: err?.message || 'Failed to update balance.' });
+    }
+  });
+
+  // POST /api/admin/users/:userId/role - Grant or revoke admin role
+  app.post('/api/admin/users/:userId/role', requireAdmin, (req, res) => {
+    try {
+      const userId = String(req.params.userId || '').trim();
+      const newRole = req.body?.role === 'admin' ? 'admin' : 'trader';
+      const adminUserId = ((req as any).adminUser?.id || 'admin_sys');
+
+      const updatedUser = adminSetUserRole(userId, newRole, adminUserId);
+      return res.json({ ok: true, user: formatUserResponse(updatedUser) });
+    } catch (err: any) {
+      return res.status(400).json({ ok: false, error: err?.message || 'Failed to update user role.' });
+    }
+  });
+
+  // GET /api/admin/deposits - View all user deposit requests (pending, approved, declined)
+  app.get('/api/admin/deposits', requireAdmin, (req, res) => {
+    try {
+      const statusFilter = typeof req.query.status === 'string' ? req.query.status.trim() : undefined;
+      const deposits = getAdminDeposits(statusFilter);
+      return res.json({ ok: true, deposits });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || 'Failed to fetch deposits.' });
+    }
+  });
+
+  // POST /api/admin/deposits/:depositId/approve - Approve deposit, auto-credit user account & distribute 3-level commissions
+  app.post('/api/admin/deposits/:depositId/approve', requireAdmin, (req, res) => {
+    try {
+      const depositId = String(req.params.depositId || '').trim();
+      const adminUserId = ((req as any).adminUser?.id || 'admin_sys');
+
+      const result = adminApproveDeposit(depositId, adminUserId);
+      return res.json({
+        ...result,
+        message: 'Deposit approved! User balance credited and 3-level commissions distributed.',
+      });
+    } catch (err: any) {
+      return res.status(400).json({ ok: false, error: err?.message || 'Failed to approve deposit.' });
+    }
+  });
+
+  // POST /api/admin/deposits/:depositId/decline - Decline pending deposit
+  app.post('/api/admin/deposits/:depositId/decline', requireAdmin, (req, res) => {
+    try {
+      const depositId = String(req.params.depositId || '').trim();
+      const reason = String(req.body?.reason || 'Transaction could not be verified on-chain.').trim();
+      const adminUserId = ((req as any).adminUser?.id || 'admin_sys');
+
+      const result = adminDeclineDeposit(depositId, reason, adminUserId);
+      return res.json({
+        ...result,
+        message: 'Deposit request declined.',
+      });
+    } catch (err: any) {
+      return res.status(400).json({ ok: false, error: err?.message || 'Failed to decline deposit.' });
+    }
+  });
+
+  // POST /api/admin/deposits/create - Create manual deposit or test submission
+  app.post('/api/admin/deposits/create', requireAdmin, (req, res) => {
+    try {
+      const { userId, accountId, amount, paymentMethod, txHash, depositSlipUrl } = req.body || {};
+      if (!userId || !amount) {
+        return res.status(400).json({ ok: false, error: 'User ID and Amount are required.' });
+      }
+
+      const deposit = createDepositRequest({
+        userId: String(userId),
+        accountId: accountId ? String(accountId) : undefined,
+        amount: Number(amount),
+        paymentMethod: paymentMethod ? String(paymentMethod) : 'USDT (TRC-20)',
+        txHash: txHash ? String(txHash) : undefined,
+        depositSlipUrl: depositSlipUrl ? String(depositSlipUrl) : undefined,
+      });
+
+      return res.json({ ok: true, deposit });
+    } catch (err: any) {
+      return res.status(400).json({ ok: false, error: err?.message || 'Failed to create deposit record.' });
+    }
+  });
+
+  // GET /api/admin/withdrawals - View all user withdrawal requests
+  app.get('/api/admin/withdrawals', requireAdmin, (req, res) => {
+    try {
+      const statusFilter = typeof req.query.status === 'string' ? req.query.status.trim() : undefined;
+      const withdrawals = getAdminWithdrawals(statusFilter);
+      return res.json({ ok: true, withdrawals });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || 'Failed to fetch withdrawals.' });
+    }
+  });
+
+  // POST /api/admin/withdrawals/:withdrawalId/approve - Approve withdrawal, auto-debit account & pay 8% referral bonus
+  app.post('/api/admin/withdrawals/:withdrawalId/approve', requireAdmin, (req, res) => {
+    try {
+      const withdrawalId = String(req.params.withdrawalId || '').trim();
+      const adminUserId = ((req as any).adminUser?.id || 'admin_sys');
+
+      const result = adminApproveWithdrawal(withdrawalId, adminUserId);
+      return res.json({
+        ...result,
+        message: 'Withdrawal approved! Account balance debited and payout processed.',
+      });
+    } catch (err: any) {
+      return res.status(400).json({ ok: false, error: err?.message || 'Failed to approve withdrawal.' });
+    }
+  });
+
+  // POST /api/admin/withdrawals/:withdrawalId/decline - Decline pending withdrawal
+  app.post('/api/admin/withdrawals/:withdrawalId/decline', requireAdmin, (req, res) => {
+    try {
+      const withdrawalId = String(req.params.withdrawalId || '').trim();
+      const reason = String(req.body?.reason || 'Security review required / Invalid payout destination.').trim();
+      const adminUserId = ((req as any).adminUser?.id || 'admin_sys');
+
+      const result = adminDeclineWithdrawal(withdrawalId, reason, adminUserId);
+      return res.json({
+        ...result,
+        message: 'Withdrawal request declined.',
+      });
+    } catch (err: any) {
+      return res.status(400).json({ ok: false, error: err?.message || 'Failed to decline withdrawal.' });
+    }
+  });
+
+  // GET /api/admin/kyc - Review user KYC submissions with document previews
+  app.get('/api/admin/kyc', requireAdmin, (req, res) => {
+    try {
+      const statusFilter = typeof req.query.status === 'string' ? req.query.status.trim() : undefined;
+      const kycSubmissions = getAdminKycSubmissions(statusFilter);
+      return res.json({ ok: true, kycSubmissions });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || 'Failed to fetch KYC submissions.' });
+    }
+  });
+
+  // POST /api/admin/kyc/:userId/approve - Manually approve user KYC verification
+  app.post('/api/admin/kyc/:userId/approve', requireAdmin, (req, res) => {
+    try {
+      const userId = String(req.params.userId || '').trim();
+      const adminUserId = ((req as any).adminUser?.id || 'admin_sys');
+
+      const updatedUser = adminApproveKyc(userId, adminUserId);
+      return res.json({
+        ok: true,
+        user: formatUserResponse(updatedUser),
+        message: `KYC for ${updatedUser.full_name || userId} approved successfully!`,
+      });
+    } catch (err: any) {
+      return res.status(400).json({ ok: false, error: err?.message || 'Failed to approve KYC.' });
+    }
+  });
+
+  // POST /api/admin/kyc/:userId/reject - Manually reject user KYC verification
+  app.post('/api/admin/kyc/:userId/reject', requireAdmin, (req, res) => {
+    try {
+      const userId = String(req.params.userId || '').trim();
+      const reason = String(req.body?.reason || 'Document unreadable or invalid address proof.').trim();
+      const adminUserId = ((req as any).adminUser?.id || 'admin_sys');
+
+      const updatedUser = adminRejectKyc(userId, reason, adminUserId);
+      return res.json({
+        ok: true,
+        user: formatUserResponse(updatedUser),
+        message: `KYC for ${updatedUser.full_name || userId} rejected.`,
+      });
+    } catch (err: any) {
+      return res.status(400).json({ ok: false, error: err?.message || 'Failed to reject KYC.' });
+    }
+  });
+
+  // GET /api/admin/referrals/tree - 3-Level Referral Program network tree
+  app.get('/api/admin/referrals/tree', requireAdmin, (_req, res) => {
+    try {
+      const tree = getAdminReferralTree();
+      return res.json({ ok: true, tree });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || 'Failed to fetch referral tree.' });
+    }
+  });
+
+  // GET /api/admin/referrals/commissions - Full 3-Level commissions ledger
+  app.get('/api/admin/referrals/commissions', requireAdmin, (req, res) => {
+    try {
+      const limit = Number(req.query.limit) || 100;
+      const commissions = getAdminCommissionsLedger(limit);
+      return res.json({ ok: true, commissions });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || 'Failed to fetch commissions ledger.' });
+    }
+  });
+
+  // POST /api/admin/referrals/distribute-commission - Manually trigger 3-level commission distribution for user trading activity or deposits
+  app.post('/api/admin/referrals/distribute-commission', requireAdmin, (req, res) => {
+    try {
+      const { userId, amount, sourceType, details } = req.body || {};
+      if (!userId || !amount) {
+        return res.status(400).json({ ok: false, error: 'User ID and Amount are required.' });
+      }
+
+      const cleanAmount = Number(amount);
+      if (cleanAmount <= 0) {
+        return res.status(400).json({ ok: false, error: 'Amount must be greater than $0.' });
+      }
+
+      const commissions = distribute3TierCommissions(
+        String(userId),
+        cleanAmount,
+        sourceType === 'trade_activity' ? 'trade_activity' : 'deposit',
+        details ? String(details) : undefined
+      );
+
+      return res.json({
+        ok: true,
+        commissions,
+        message: `Successfully distributed ${commissions.length} referral commissions across 3 levels.`,
+      });
+    } catch (err: any) {
+      return res.status(400).json({ ok: false, error: err?.message || 'Failed to distribute referral commissions.' });
+    }
+  });
+
+  // GET /api/admin/audit-logs - View administrative action audit logs
+  app.get('/api/admin/audit-logs', requireAdmin, (req, res) => {
+    try {
+      const limit = Number(req.query.limit) || 50;
+      const logs = getAdminAuditLogs(limit);
+      return res.json({ ok: true, logs });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || 'Failed to fetch audit logs.' });
     }
   });
 
