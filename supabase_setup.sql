@@ -148,9 +148,20 @@ CREATE TABLE IF NOT EXISTS public.referral_commissions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- USER PURCHASES TABLE
+CREATE TABLE IF NOT EXISTS public.user_purchases (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  package_name TEXT NOT NULL,
+  package_amount NUMERIC(15, 2) NOT NULL CHECK (package_amount > 0),
+  is_self_funded BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Enable Realtime
 ALTER PUBLICATION supabase_realtime ADD TABLE public.referral_commissions;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.profiles;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.user_purchases;
 
 -- AFFILIATE COMMISSIONS TABLE (User requested)
 CREATE TABLE IF NOT EXISTS public.affiliate_commissions (
@@ -406,6 +417,69 @@ CREATE TRIGGER trg_referral_withdrawal
   AFTER UPDATE ON public.withdrawals
   FOR EACH ROW
   EXECUTE FUNCTION public.handle_referral_withdrawal();
+
+-- 3-Tier Purchase Commission Trigger for user_purchases
+CREATE OR REPLACE FUNCTION public.handle_user_purchase_commission()
+RETURNS TRIGGER AS $$
+DECLARE
+  l1_id UUID;
+  l2_id UUID;
+  l3_id UUID;
+  comm_amount NUMERIC(15, 2);
+BEGIN
+  IF NOT NEW.is_self_funded THEN
+    SELECT referred_by INTO l1_id FROM public.profiles WHERE id = NEW.user_id;
+    
+    IF l1_id IS NOT NULL THEN
+      -- Tier 1 (10%)
+      comm_amount := ROUND(NEW.package_amount * 0.10, 2);
+      INSERT INTO public.referral_commissions (earner_id, source_user_id, level, source_type, amount, package_amount, description)
+      VALUES (l1_id, NEW.user_id, 1, 'purchase', comm_amount, NEW.package_amount, 'Direct Referral Purchase Commission (10%)');
+      UPDATE public.profiles SET balance = balance + comm_amount, total_referral_earnings = total_referral_earnings + comm_amount WHERE id = l1_id;
+      
+      -- Tier 2 (5%)
+      SELECT referred_by INTO l2_id FROM public.profiles WHERE id = l1_id;
+      IF l2_id IS NOT NULL THEN
+        comm_amount := ROUND(NEW.package_amount * 0.05, 2);
+        INSERT INTO public.referral_commissions (earner_id, source_user_id, level, source_type, amount, package_amount, description)
+        VALUES (l2_id, NEW.user_id, 2, 'purchase', comm_amount, NEW.package_amount, 'Sub-Upline Referral Purchase Commission (5%)');
+        UPDATE public.profiles SET balance = balance + comm_amount, total_referral_earnings = total_referral_earnings + comm_amount WHERE id = l2_id;
+        
+        -- Tier 3 (2%)
+        SELECT referred_by INTO l3_id FROM public.profiles WHERE id = l2_id;
+        IF l3_id IS NOT NULL THEN
+          comm_amount := ROUND(NEW.package_amount * 0.02, 2);
+          INSERT INTO public.referral_commissions (earner_id, source_user_id, level, source_type, amount, package_amount, description)
+          VALUES (l3_id, NEW.user_id, 3, 'purchase', comm_amount, NEW.package_amount, 'Network Upline Referral Purchase Commission (2%)');
+          UPDATE public.profiles SET balance = balance + comm_amount, total_referral_earnings = total_referral_earnings + comm_amount WHERE id = l3_id;
+        END IF;
+      END IF;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS trg_user_purchase_commission ON public.user_purchases;
+CREATE TRIGGER trg_user_purchase_commission
+  AFTER INSERT ON public.user_purchases
+  FOR EACH ROW
+  EXECUTE FUNCTION public.handle_user_purchase_commission();
+
+-- Admin: Manual Account Assignment
+CREATE OR REPLACE FUNCTION public.admin_assign_package(
+  target_user_id UUID,
+  pkg_name TEXT,
+  pkg_amount NUMERIC
+) RETURNS VOID AS $$
+BEGIN
+  IF NOT public.is_bft_admin() THEN
+    RAISE EXCEPTION 'Unauthorized';
+  END IF;
+  INSERT INTO public.user_purchases (user_id, package_name, package_amount, is_self_funded)
+  VALUES (target_user_id, pkg_name, pkg_amount, FALSE);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 
 -- ============================================================================
