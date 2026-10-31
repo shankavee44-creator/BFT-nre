@@ -13,6 +13,7 @@ import { UserDashboard } from './components/UserDashboard';
 import { AuthModal } from './components/AuthModal';
 import { CertificateModal } from './components/CertificateModal';
 import { AdminDashboard } from './components/AdminDashboard';
+import { GitHubSyncModal } from './components/GitHubSyncModal';
 import { LiveChatWidget } from './components/LiveChatWidget';
 import { FAQSection } from './components/FAQSection';
 import { Footer } from './components/Footer';
@@ -138,6 +139,7 @@ export default function App() {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authModalMode, setAuthModalMode] = useState<'login' | 'register'>('login');
   const [isAdminDashboardOpen, setIsAdminDashboardOpen] = useState(false);
+  const [isGitHubSyncOpen, setIsGitHubSyncOpen] = useState(false);
 
   // Certificate Modal state when passing Step 1 / Phase 2
   const [certificateModalState, setCertificateModalState] = useState<{
@@ -241,6 +243,7 @@ export default function App() {
             dateOfBirth: res.user.dateOfBirth || (isSameUser ? prev.dateOfBirth : ''),
             country: res.user.country || (isSameUser ? prev.country : 'United States'),
             telegramHandle: res.user.telegramHandle || (isSameUser ? prev.telegramHandle : ''),
+            selfBalance: res.user.selfBalance !== undefined ? res.user.selfBalance : prev.selfBalance,
             isLoggedIn: true,
           };
           saveProfile(synced);
@@ -259,6 +262,54 @@ export default function App() {
           const nextActiveId = fundedAcc?.id || 'BFT-DEMO-001';
           setActiveAccountId(nextActiveId);
           saveActiveAccountId(nextActiveId);
+        }
+
+        const userIdForProfile = res.user.id;
+        if (userIdForProfile) {
+          Promise.resolve(
+            supabase
+              .from('profiles')
+              .select('id, email, full_name, self_balance, demo_balance, funded_balance')
+              .eq('id', userIdForProfile)
+              .maybeSingle()
+          )
+            .then(({ data: pRow }) => {
+              if (pRow) {
+                const sBal = pRow.self_balance !== undefined && pRow.self_balance !== null ? Number(pRow.self_balance) : undefined;
+                const dBal = pRow.demo_balance !== undefined && pRow.demo_balance !== null ? Number(pRow.demo_balance) : undefined;
+                const fBal = pRow.funded_balance !== undefined && pRow.funded_balance !== null ? Number(pRow.funded_balance) : undefined;
+                
+                setUserProfile((prev) => {
+                  const updated = { 
+                    ...prev, 
+                    selfBalance: sBal !== undefined ? sBal : prev.selfBalance,
+                    demoBalance: dBal !== undefined ? dBal : prev.demoBalance,
+                    fundedBalance: fBal !== undefined ? fBal : prev.fundedBalance
+                  };
+                  saveProfile(updated);
+                  return updated;
+                });
+                
+                setAccounts((prevAccounts) =>
+                  prevAccounts.map((acc) => {
+                    if (isPersonalLiveAccount(acc) && sBal !== undefined) {
+                      return { ...acc, currentBalance: sBal, equity: sBal };
+                    }
+                    if (isDemoAccount(acc) && dBal !== undefined) {
+                      return { ...acc, currentBalance: dBal, equity: dBal };
+                    }
+                    // For funded accounts, if userProfile.fundedBalance is set, we might want to sync it if it's a generic "funded" display
+                    // but prop accounts usually have their own balances in the accounts table.
+                    // The user requested Funded Mode (funded_balance), so we'll apply it to 'funded' phase accounts if provided.
+                    if (acc.phase === 'funded' && fBal !== undefined) {
+                       return { ...acc, currentBalance: fBal, equity: fBal };
+                    }
+                    return acc;
+                  })
+                );
+              }
+            })
+            .catch(() => {});
         }
 
         apiGetWithdrawals()
@@ -358,6 +409,60 @@ export default function App() {
     };
   }, [userProfile.id, userProfile.isLoggedIn]);
 
+  // Real-time Supabase profile balance synchronization
+  useEffect(() => {
+    if (!userProfile.id || !userProfile.isLoggedIn) return;
+    const channel = supabase
+      .channel(`public:profiles:balances:${userProfile.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'profiles',
+          filter: `id=eq.${userProfile.id}`,
+        },
+        (payload) => {
+          if (payload.new) {
+            const newSelf = payload.new.self_balance !== undefined && payload.new.self_balance !== null ? Number(payload.new.self_balance) : undefined;
+            const newDemo = payload.new.demo_balance !== undefined && payload.new.demo_balance !== null ? Number(payload.new.demo_balance) : undefined;
+            const newFunded = payload.new.funded_balance !== undefined && payload.new.funded_balance !== null ? Number(payload.new.funded_balance) : undefined;
+
+            setUserProfile((prev) => {
+              const updated = { 
+                ...prev, 
+                selfBalance: newSelf !== undefined ? newSelf : prev.selfBalance,
+                demoBalance: newDemo !== undefined ? newDemo : prev.demoBalance,
+                fundedBalance: newFunded !== undefined ? newFunded : prev.fundedBalance
+              };
+              saveProfile(updated);
+              return updated;
+            });
+
+            setAccounts((prevAccounts) =>
+              prevAccounts.map((acc) => {
+                if (isPersonalLiveAccount(acc) && newSelf !== undefined) {
+                  return { ...acc, currentBalance: newSelf, equity: newSelf };
+                }
+                if (isDemoAccount(acc) && newDemo !== undefined) {
+                  return { ...acc, currentBalance: newDemo, equity: newDemo };
+                }
+                if (acc.phase === 'funded' && newFunded !== undefined) {
+                  return { ...acc, currentBalance: newFunded, equity: newFunded };
+                }
+                return acc;
+              })
+            );
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [userProfile.id, userProfile.isLoggedIn]);
+
   // Multi-Tab & Multi-View State Synchronization (BroadcastChannel & Storage Event bus)
   useEffect(() => {
     const unsubscribeSync = subscribeToSyncEvents((msg) => {
@@ -411,7 +516,7 @@ export default function App() {
       try {
         const { data: p } = await supabase
           .from('profiles')
-          .select('*')
+          .select('id, email, full_name, kyc_status, self_balance, address, date_of_birth, country, referral_code, referred_by, profile_locked')
           .eq('id', sessionUser.id)
           .maybeSingle();
         existingProfile = p;
@@ -465,6 +570,7 @@ export default function App() {
         address: backendSync?.user?.address || resolvedProfile.address,
         dateOfBirth: backendSync?.user?.dateOfBirth || resolvedProfile.dateOfBirth,
         country: backendSync?.user?.country || resolvedProfile.country,
+        selfBalance: backendSync?.user?.selfBalance !== undefined ? backendSync.user.selfBalance : resolvedProfile.selfBalance,
       });
 
       setUserProfile(loaded);
@@ -504,6 +610,32 @@ export default function App() {
         tradingDaysCompleted: updated.tradingDaysCompleted,
         certificateId: updated.certificateId,
       }).catch(() => {});
+    }
+
+    // Synchronize account balances with Supabase profiles table for persistence
+    if (userProfile.id && userProfile.isLoggedIn) {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userProfile.id);
+      if (isUuid) {
+        if (isPersonalLiveAccount(updated)) {
+          supabase
+            .from('profiles')
+            .update({ self_balance: updated.currentBalance })
+            .eq('id', userProfile.id)
+            .then(() => {});
+        } else if (isDemoAccount(updated)) {
+          supabase
+            .from('profiles')
+            .update({ demo_balance: updated.currentBalance })
+            .eq('id', userProfile.id)
+            .then(() => {});
+        } else if (updated.phase === 'funded') {
+          supabase
+            .from('profiles')
+            .update({ funded_balance: updated.currentBalance })
+            .eq('id', userProfile.id)
+            .then(() => {});
+        }
+      }
     }
   };
 
@@ -565,7 +697,34 @@ export default function App() {
         }).catch(() => {});
         const nextList = [...updated, createdWithId];
         saveAccounts(nextList);
+        
+        // Synchronize fresh Personal balance to Supabase after auto-provisioning
+        if (userProfile.id && userProfile.isLoggedIn) {
+          const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userProfile.id);
+          if (isUuid) {
+            supabase
+              .from('profiles')
+              .update({ self_balance: amountUsdt })
+              .eq('id', userProfile.id)
+              .then(() => {});
+          }
+        }
         return nextList;
+      }
+
+      // Synchronize fresh Personal balance to Supabase for existing account
+      const matchedPersonal = updated.find(a => a.id === accountId && isPersonalLiveAccount(a));
+      if (matchedPersonal && userProfile.id && userProfile.isLoggedIn) {
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userProfile.id);
+        if (isUuid) {
+          supabase
+            .from('profiles')
+            .update({ self_balance: matchedPersonal.currentBalance })
+            .eq('id', userProfile.id)
+            .then(() => {});
+          
+          setUserProfile(prev => ({ ...prev, selfBalance: matchedPersonal.currentBalance }));
+        }
       }
 
       saveAccounts(updated);
@@ -601,7 +760,7 @@ export default function App() {
       try {
         const { data: p } = await supabase
           .from('profiles')
-          .select('*')
+          .select('id, email, full_name, kyc_status, self_balance, demo_balance, funded_balance, address, date_of_birth, country, referral_code, profile_locked')
           .eq('id', userProfile.id)
           .maybeSingle();
 
@@ -626,7 +785,17 @@ export default function App() {
                 nextKycStatus === 'pending'
             );
 
-            if (nextKycStatus === prev.kycStatus && nextLocked === Boolean(prev.profileLocked)) {
+            const sBal = p.self_balance !== undefined && p.self_balance !== null ? Number(p.self_balance) : prev.selfBalance;
+            const dBal = p.demo_balance !== undefined && p.demo_balance !== null ? Number(p.demo_balance) : prev.demoBalance;
+            const fBal = p.funded_balance !== undefined && p.funded_balance !== null ? Number(p.funded_balance) : prev.fundedBalance;
+
+            if (
+              nextKycStatus === prev.kycStatus && 
+              nextLocked === Boolean(prev.profileLocked) &&
+              sBal === prev.selfBalance &&
+              dBal === prev.demoBalance &&
+              fBal === prev.fundedBalance
+            ) {
               return prev;
             }
 
@@ -638,6 +807,9 @@ export default function App() {
               address: p.address || prev.address,
               dateOfBirth: p.date_of_birth || prev.dateOfBirth,
               country: p.country || prev.country,
+              selfBalance: sBal,
+              demoBalance: dBal,
+              fundedBalance: fBal,
             };
             saveProfile(updated);
             return updated;
@@ -916,14 +1088,43 @@ export default function App() {
   const baseOwnedAccounts = filterAccountsForUser(accounts, userProfile);
   const userAccounts: TradingAccount[] = React.useMemo(() => {
     if (!userProfile?.isLoggedIn) return [];
-    const list = [...baseOwnedAccounts];
+    
+    // Ensure every authenticated user's Personal Live accounts reflect the dynamic selfBalance from Supabase/Profile
+    const list = baseOwnedAccounts.map((acc) => {
+      if (isPersonalLiveAccount(acc) && userProfile.selfBalance !== undefined) {
+        return {
+          ...acc,
+          currentBalance: userProfile.selfBalance,
+          equity: userProfile.selfBalance,
+        };
+      }
+      if (isDemoAccount(acc) && userProfile.demoBalance !== undefined) {
+        return {
+          ...acc,
+          currentBalance: userProfile.demoBalance,
+          equity: userProfile.demoBalance,
+        };
+      }
+      if (acc.phase === 'funded' && userProfile.fundedBalance !== undefined) {
+        return {
+          ...acc,
+          currentBalance: userProfile.fundedBalance,
+          equity: userProfile.fundedBalance,
+        };
+      }
+      return acc;
+    });
 
     // Ensure every authenticated user has a Personal Live (Self-Funded) account alongside Prop accounts
     if (!list.some((a) => isPersonalLiveAccount(a))) {
+      const initialBal = userProfile.selfBalance !== undefined 
+        ? userProfile.selfBalance 
+        : 0;
+
       const defaultPersonal = createDefaultPersonalLiveAccount(
         userProfile.id || 'usr_bft_001',
         userProfile.email || 'trader@binaryfunded.com',
-        userProfile.id === 'usr_bft_001' ? 1250 : 0
+        initialBal
       );
       list.push(defaultPersonal);
     }
@@ -931,6 +1132,8 @@ export default function App() {
     // Ensure every authenticated user also has a Demo Practice account for effortless switching
     if (!list.some((a) => isDemoAccount(a))) {
       const today = new Date().toISOString().split('T')[0];
+      const initialDemoBal = userProfile.demoBalance !== undefined ? userProfile.demoBalance : 10000;
+      
       list.push({
         id: 'BFT-DEMO-001',
         ownerId: userProfile.id,
@@ -943,9 +1146,9 @@ export default function App() {
         depositedCapital: 0,
         size: 10000,
         initialBalance: 10000,
-        currentBalance: 10000,
-        startingDayEquity: 10000,
-        equity: 10000,
+        currentBalance: initialDemoBal,
+        startingDayEquity: initialDemoBal,
+        equity: initialDemoBal,
         dailyLossLimitPercent: 0,
         maxOverallLossPercent: 0,
         maxRiskPerTradePercent: 100,
@@ -960,7 +1163,7 @@ export default function App() {
     }
 
     return list;
-  }, [baseOwnedAccounts, userProfile.isLoggedIn, userProfile.id, userProfile.email]);
+  }, [baseOwnedAccounts, userProfile.isLoggedIn, userProfile.id, userProfile.email, userProfile.selfBalance, userProfile.demoBalance, userProfile.fundedBalance]);
 
   const activeAccount =
     userAccounts.find((acc) => acc.id === activeAccountId) ||
@@ -991,6 +1194,7 @@ export default function App() {
           onLogout={handleLogout}
           onOpenChallengeModal={() => setSelectedPackageToBuy(PACKAGES[2])}
           onOpenAdminDashboard={() => setIsAdminDashboardOpen(true)}
+          onOpenGitHubSync={() => setIsGitHubSyncOpen(true)}
         />
       </div>
 
@@ -1259,6 +1463,7 @@ export default function App() {
             country: serverUser?.country,
             telegramHandle: serverUser?.telegramHandle,
             avatarUrl: serverUser?.avatarUrl,
+            selfBalance: serverUser?.selfBalance,
           });
           setUserProfile(loadedOrCreatedProfile);
 
@@ -1363,8 +1568,15 @@ export default function App() {
                 .catch(() => {});
             }
           }}
+          onOpenGitHubSync={() => setIsGitHubSyncOpen(true)}
         />
       )}
+
+      {/* GitHub Sync & Push Repository Modal */}
+      <GitHubSyncModal
+        isOpen={isGitHubSyncOpen}
+        onClose={() => setIsGitHubSyncOpen(false)}
+      />
 
       {/* Interactive Live Support Chat Widget (Hidden on mobile terminal where bottom nav handles Support) */}
       <div className={currentTab === 'terminal' ? 'hidden md:block' : 'block'}>

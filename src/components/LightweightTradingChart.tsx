@@ -88,6 +88,28 @@ function prepareLightweightBars(
   return Array.from(bySec.values()).sort((a, b) => (a.time as number) - (b.time as number));
 }
 
+function createSeriesForType(chart: IChartApi, type: 'candles' | 'heikin-ashi' | 'line' | 'bars'): ISeriesApi<any> {
+  const seriesOptions = {
+    upColor: '#00E676',
+    downColor: '#FF1744',
+    wickUpColor: '#00E676',
+    wickDownColor: '#FF1744',
+    borderUpColor: '#00E676',
+    borderDownColor: '#FF1744',
+    priceLineVisible: true,
+    lastValueVisible: true,
+    priceLineColor: '#00E676',
+    priceLineStyle: LineStyle.Dotted,
+  };
+  if (type === 'line') {
+    return chart.addSeries(AreaSeries, { ...seriesOptions, lineColor: '#00E676' });
+  } else if (type === 'bars') {
+    return chart.addSeries(BarSeries, seriesOptions);
+  } else {
+    return chart.addSeries(CandlestickSeries, seriesOptions);
+  }
+}
+
 export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = React.memo(({
   asset,
   candles,
@@ -102,12 +124,16 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
   const seriesRef = useRef<ISeriesApi<any> | null>(null);
   const priceLinesRef = useRef<Map<string, IPriceLine>>(new Map());
   const lastLoadedSymbolRef = useRef<string>('');
+  const lastLoadedTimeframeRef = useRef<string>('');
+  const lastLoadedChartTypeRef = useRef<string>('');
+  const barsCountRef = useRef<number>(0);
 
   const [badgeCoords, setBadgeCoords] = useState<Record<string, { y: number; x: number }>>({});
   const [resultBadgeCoords, setResultBadgeCoords] = useState<{ y: number; x: number } | null>(null);
   const [currentPriceY, setCurrentPriceY] = useState<number>(0);
   const [candleCountdown, setCandleCountdown] = useState<string>('00:30');
   const [now, setNow] = useState<number>(Date.now());
+  const [isScrolledFromLive, setIsScrolledFromLive] = useState<boolean>(false);
 
   const assetActiveTrades = useMemo(() => {
     const targetSym = normalizeAssetSymbol(asset.symbol);
@@ -159,7 +185,7 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
         mouseWheel: true,
         pressedMouseMove: true,
         horzTouchDrag: true,
-        vertTouchDrag: true,
+        vertTouchDrag: false,
       },
       handleScale: {
         axisPressedMouseMove: true,
@@ -188,37 +214,36 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
     });
     chartRef.current = chart;
 
-    const seriesOptions = {
-      upColor: '#00E676',
-      downColor: '#FF1744',
-      wickUpColor: '#00E676',
-      wickDownColor: '#FF1744',
-      borderUpColor: '#00E676',
-      borderDownColor: '#FF1744',
-      priceLineVisible: true,
-      lastValueVisible: true,
-    };
-
-    let series: ISeriesApi<any>;
-    if (chartType === 'line') {
-      series = chart.addSeries(AreaSeries, { ...seriesOptions, lineColor: '#00E676' });
-    } else if (chartType === 'bars') {
-      series = chart.addSeries(BarSeries, seriesOptions);
-    } else {
-      series = chart.addSeries(CandlestickSeries, seriesOptions);
-    }
+    const series = createSeriesForType(chart, chartType);
     seriesRef.current = series;
 
     const bars = prepareLightweightBars(candles, chartType, asset.pipDecimals);
+    barsCountRef.current = bars.length;
     if (bars.length > 0) {
       if (chartType === 'line') {
-        series.setData(bars.map(b => ({ time: b.time, value: b.close })));
+        series.setData(bars.map((b: FormattedBar) => ({ time: b.time, value: b.close })));
       } else {
         series.setData(bars);
       }
       lastLoadedSymbolRef.current = asset.symbol;
+      lastLoadedTimeframeRef.current = timeframe;
+      lastLoadedChartTypeRef.current = chartType;
       chart.timeScale().fitContent();
     }
+
+    const handleLogicalRangeChange = (logicalRange: { from: number; to: number } | null) => {
+      if (!logicalRange || barsCountRef.current === 0) {
+        setIsScrolledFromLive(false);
+        return;
+      }
+      const lastBarIndex = barsCountRef.current - 1;
+      if (logicalRange.to < lastBarIndex - 2) {
+        setIsScrolledFromLive(true);
+      } else {
+        setIsScrolledFromLive(false);
+      }
+    };
+    chart.timeScale().subscribeVisibleLogicalRangeChange(handleLogicalRangeChange);
 
     const resizeObserver = new ResizeObserver((entries) => {
       for (const entry of entries) {
@@ -237,6 +262,7 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
     return () => {
       resizeObserver.disconnect();
       try {
+        chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleLogicalRangeChange);
         chart.remove();
       } catch {
         // ignore
@@ -246,27 +272,57 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const lastBarsLengthRef = useRef<number>(0);
-  const lastBarTimeRef = useRef<number>(0);
-
   // 2. Stream Series Data using series.update on live ticks without touching timeScale
   useEffect(() => {
-    const series = seriesRef.current;
     const chart = chartRef.current;
-    if (!series || !chart) return;
+    if (!chart) return;
 
     const bars = prepareLightweightBars(candles, chartType, asset.pipDecimals);
+    barsCountRef.current = bars.length;
     if (bars.length === 0) return;
 
     const isSymbolChanged = lastLoadedSymbolRef.current !== asset.symbol;
+    const isTimeframeChanged = lastLoadedTimeframeRef.current !== timeframe;
+    const isChartTypeChanged = lastLoadedChartTypeRef.current !== chartType;
     const lastBar = bars[bars.length - 1];
-    const lastBarTime = lastBar ? (lastBar.time as number) : 0;
 
-    if (isSymbolChanged) {
+    if (isChartTypeChanged || isSymbolChanged) {
+      if (seriesRef.current) {
+        try {
+          chart.removeSeries(seriesRef.current);
+        } catch {
+          // ignore
+        }
+      }
+      priceLinesRef.current.clear();
+      const newSeries = createSeriesForType(chart, chartType);
+      seriesRef.current = newSeries;
+      
       lastLoadedSymbolRef.current = asset.symbol;
+      lastLoadedTimeframeRef.current = timeframe;
+      lastLoadedChartTypeRef.current = chartType;
+
       try {
         if (chartType === 'line') {
-          series.setData(bars.map((b) => ({ time: b.time, value: b.close })));
+          newSeries.setData(bars.map((b: FormattedBar) => ({ time: b.time, value: b.close })));
+        } else {
+          newSeries.setData(bars);
+        }
+        chart.timeScale().fitContent();
+      } catch {
+        // ignore
+      }
+      return;
+    }
+
+    const series = seriesRef.current;
+    if (!series) return;
+
+    if (isTimeframeChanged) {
+      lastLoadedTimeframeRef.current = timeframe;
+      try {
+        if (chartType === 'line') {
+          series.setData(bars.map((b: FormattedBar) => ({ time: b.time, value: b.close })));
         } else {
           series.setData(bars);
         }
@@ -285,7 +341,7 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
         // Mismatch fallback
         try {
           if (chartType === 'line') {
-            series.setData(bars.map((b) => ({ time: b.time, value: b.close })));
+            series.setData(bars.map((b: FormattedBar) => ({ time: b.time, value: b.close })));
           } else {
             series.setData(bars);
           }
@@ -294,10 +350,7 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
         }
       }
     }
-
-    lastBarsLengthRef.current = bars.length;
-    lastBarTimeRef.current = lastBarTime;
-  }, [candles, chartType, asset.pipDecimals, asset.symbol]);
+  }, [candles, chartType, timeframe, asset.pipDecimals, asset.symbol]);
 
   // 3. Native Canvas Trade Execution Lines (series.createPriceLine)
   useEffect(() => {
@@ -425,6 +478,13 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
     return () => cancelAnimationFrame(animId);
   }, [updateCoordinates]);
 
+  const handleGoToLive = useCallback(() => {
+    if (chartRef.current) {
+      chartRef.current.timeScale().scrollToRealTime();
+      setIsScrolledFromLive(false);
+    }
+  }, []);
+
   return (
     <div
       ref={containerRef}
@@ -432,8 +492,21 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
       style={{
         background: "url('/1793209787676.jpg.jpeg') center/cover no-repeat",
         transform: 'translateZ(0)',
+        touchAction: 'pan-y',
       }}
     >
+      {/* Loading state indicator when data is empty or fetching */}
+      {(!candles || candles.length === 0) && (
+        <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-[#0b0e14]/80 backdrop-blur-sm pointer-events-none select-none">
+          <div className="flex items-center gap-3 px-4 py-2.5 rounded-lg bg-[#111827]/90 border border-cyan-500/40 shadow-2xl">
+            <div className="w-4 h-4 rounded-full border-2 border-cyan-400 border-t-transparent animate-spin" />
+            <span className="text-xs font-mono font-medium text-cyan-200 tracking-wide">
+              Loading Chart Data...
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Live Moving Price Tag & Candle Countdown Timer pinned right below it on the price axis */}
       {currentPriceY > 0 && (
         <div
@@ -523,6 +596,31 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
           </div>
         </div>
       )}
+
+      {/* Quotex-style Floating 'Go to Live' Button */}
+      {isScrolledFromLive && (
+        <button
+          onClick={handleGoToLive}
+          data-testid="go-to-live-button"
+          className="absolute bottom-12 right-16 z-40 flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#0b0e14]/90 hover:bg-[#151c28] text-cyan-400 hover:text-cyan-300 border border-cyan-500/50 hover:border-cyan-400 shadow-[0_4px_25px_rgba(0,229,255,0.25)] backdrop-blur-md transition-all duration-200 cursor-pointer animate-in fade-in zoom-in-95 slide-in-from-bottom-3 group select-none"
+          title="Snap back to real-time market candles"
+        >
+          <span className="relative flex h-2.5 w-2.5">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-cyan-500"></span>
+          </span>
+          <span className="text-[11px] font-bold tracking-wider font-mono uppercase">Go to Live</span>
+          <svg
+            className="w-3.5 h-3.5 transform group-hover:translate-x-0.5 transition-transform text-cyan-400"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 5l7 7-m0 0l-7 7m7-7H3" />
+          </svg>
+        </button>
+      )}
     </div>
   );
 });
+

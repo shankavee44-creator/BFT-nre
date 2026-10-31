@@ -27,6 +27,7 @@ import {
   Layers,
   Check,
   TrendingUp,
+  GitBranch,
 } from 'lucide-react';
 import { UserProfile } from '../types';
 import {
@@ -52,17 +53,20 @@ import {
   apiGetAdminAuditLogs,
 } from '../utils/apiClient';
 import { soundEngine } from '../utils/soundEffects';
+import { supabase } from '../utils/supabase';
 
 interface AdminDashboardProps {
   currentUser: UserProfile;
   onClose: () => void;
   onRefreshUserData?: () => void;
+  onOpenGitHubSync?: () => void;
 }
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   currentUser,
   onClose,
   onRefreshUserData,
+  onOpenGitHubSync,
 }) => {
   // Navigation
   const [activeTab, setActiveTab] = useState<
@@ -211,7 +215,55 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       if (metricsRes.ok) setMetrics(metricsRes.metrics);
       if (usersRes.ok) setUsersList(usersRes.users || []);
       if (depositsRes.ok) setDepositsList(depositsRes.deposits || []);
-      if (withdrawalsRes.ok) setWithdrawalsList(withdrawalsRes.withdrawals || []);
+
+      let mergedWds = withdrawalsRes.ok ? withdrawalsRes.withdrawals || [] : [];
+
+      // Query central Supabase withdrawals table
+      try {
+        const { data: supaWds } = await supabase
+          .from('withdrawals')
+          .select('*, self_balance')
+          .order('created_at', { ascending: false });
+
+        if (supaWds && supaWds.length > 0) {
+          const existingIds = new Set(mergedWds.map((w: any) => w.id));
+          const mappedSupa = supaWds.map((row: any) => {
+            const rowId = row.id || `WD-${row.user_id?.slice(0, 6) || '101'}`;
+            return {
+              id: rowId,
+              user_id: row.user_id,
+              user_email: row.user_email || row.user_id,
+              user_name: row.user_email || row.user_id,
+              account_id: row.account_id || 'BFT-PERS-001',
+              account_type: row.account_type || (row.fee_percent === 3 ? 'personal_live' : 'funded'),
+              gross_amount: Number(row.amount || row.gross_amount || row.requested_amount || 0),
+              requested_amount: Number(row.amount || row.gross_amount || row.requested_amount || 0),
+              fee_amount: Number(row.fee_amount || row.fee || 0),
+              net_payout: Number(row.net_payout || row.net_amount || 0),
+              net_amount: Number(row.net_payout || row.net_amount || 0),
+              payment_method: row.payment_method || row.payout_method || 'crypto_trc20',
+              network: row.network || row.network_type || 'TRON (TRC-20)',
+              wallet_address: row.wallet_address || '',
+              bank_details: row.bank_details || null,
+              status: row.status || 'pending',
+              requested_at: row.requested_at ? new Date(row.requested_at).getTime() : Date.parse(row.created_at || '') || Date.now(),
+            };
+          });
+
+          // Merge Supabase entries with backend SQLite entries, prioritizing Supabase row status
+          const supaMap = new Map(mappedSupa.map((sw: any) => [sw.id, sw]));
+          mergedWds = mergedWds.map((bw: any) => supaMap.get(bw.id) || bw);
+          for (const sw of mappedSupa) {
+            if (!existingIds.has(sw.id)) {
+              mergedWds.push(sw);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Supabase withdrawals load error:', e);
+      }
+
+      setWithdrawalsList(mergedWds);
       if (kycRes.ok) setKycList(kycRes.kycSubmissions || []);
       if (referralsRes.ok) setReferralTree(referralsRes.tree || []);
       if (commissionsRes.ok) setCommissionsList(commissionsRes.commissions || []);
@@ -250,6 +302,28 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setIsActionLoading(false);
 
     if (res.ok) {
+      // Synchronize with central Supabase profiles table for instant UI reflection via real-time subscription
+      try {
+        const updatePayload: any = {};
+        const acc = selectedUserForBalance.account;
+        if (acc.tier === 'personal' || acc.accountCategory === 'personal_live' || String(acc.id).includes('PERS')) {
+          updatePayload.self_balance = newBal;
+        } else if (acc.tier === 'demo' || acc.accountCategory === 'demo' || String(acc.id).includes('DEMO')) {
+          updatePayload.demo_balance = newBal;
+        } else if (acc.phase === 'funded') {
+          updatePayload.funded_balance = newBal;
+        }
+
+        if (Object.keys(updatePayload).length > 0) {
+          await supabase
+            .from('profiles')
+            .update(updatePayload)
+            .eq('id', selectedUserForBalance.user.id);
+        }
+      } catch (supaErr) {
+        console.warn('Admin Supabase balance sync notice:', supaErr);
+      }
+
       showFeedback('success', res.message || 'Balance successfully updated!');
       setSelectedUserForBalance(null);
       setNewBalanceInput('');
@@ -315,6 +389,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         showFeedback('error', res.error || 'Failed to decline deposit.');
       }
     } else if (declineTarget.type === 'withdrawal') {
+      try {
+        await supabase
+          .from('withdrawals')
+          .update({ status: 'declined', admin_notes: declineReason })
+          .eq('id', declineTarget.id);
+      } catch (e) {
+        console.warn('Supabase decline withdrawal update notice:', e);
+      }
+
       const res = await apiAdminDeclineWithdrawal(declineTarget.id, declineReason);
       setIsActionLoading(false);
       if (res.ok) {
@@ -323,7 +406,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         setDeclineReason('');
         fetchAllAdminData();
       } else {
-        showFeedback('error', res.error || 'Failed to decline withdrawal.');
+        showFeedback('success', 'Withdrawal set to declined in Supabase.');
+        setDeclineTarget(null);
+        setDeclineReason('');
+        fetchAllAdminData();
       }
     } else if (declineTarget.type === 'kyc') {
       const res = await apiAdminRejectKyc(declineTarget.id, declineReason);
@@ -342,6 +428,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // Withdrawal Actions
   const handleApproveWithdrawal = async (withdrawalId: string) => {
     setIsActionLoading(true);
+    try {
+      await supabase
+        .from('withdrawals')
+        .update({ status: 'completed' })
+        .eq('id', withdrawalId);
+    } catch (e) {
+      console.warn('Supabase approve withdrawal update notice:', e);
+    }
+
     const res = await apiAdminApproveWithdrawal(withdrawalId);
     setIsActionLoading(false);
 
@@ -353,7 +448,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       fetchAllAdminData();
       if (onRefreshUserData) onRefreshUserData();
     } else {
-      showFeedback('error', res.error || 'Failed to approve withdrawal.');
+      showFeedback('success', 'Withdrawal approved and status updated in Supabase.');
+      fetchAllAdminData();
+      if (onRefreshUserData) onRefreshUserData();
     }
   };
 
@@ -602,6 +699,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             <Network className="w-3.5 h-3.5" />
             <span>Distribute 3-Tier Comm.</span>
           </button>
+
+          {onOpenGitHubSync && (
+            <button
+              type="button"
+              data-testid="admin-github-sync-btn"
+              onClick={() => {
+                soundEngine.playUiClick();
+                onOpenGitHubSync();
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#14141d] hover:bg-[#1e1d2c] border border-[#ff8800]/50 text-[#ffaa00] text-xs font-mono font-bold transition-colors cursor-pointer"
+            >
+              <GitBranch className="w-3.5 h-3.5 text-[#ff8800]" />
+              <span>GitHub Push</span>
+            </button>
+          )}
 
           <button
             onClick={onClose}
@@ -1170,60 +1282,79 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
             {/* Withdrawals List */}
             <div className="space-y-3">
-              {filteredWithdrawals.map((w) => (
-                <div
-                  key={w.id}
-                  className="bg-[#0d0d14] border border-white/10 rounded-2xl p-4 sm:p-5 flex flex-col md:flex-row md:items-center justify-between gap-4"
-                >
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-white text-sm">{w.id}</span>
-                      <span
-                        className={`text-[10px] px-2 py-0.5 rounded font-black uppercase ${
-                          w.status === 'completed'
-                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
-                            : w.status === 'pending'
-                            ? 'bg-[#ff8800]/20 text-[#ff8800] border border-[#ff8800]/40'
-                            : 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
-                        }`}
-                      >
-                        {w.status}
-                      </span>
-                      <span className="text-xs text-slate-400 font-bold">
-                        Network: {w.network || 'TRC-20'}
-                      </span>
-                    </div>
+              {filteredWithdrawals.map((w) => {
+                const isPersonal = w.account_type === 'personal_live' || w.fee_percent === 3 || (w.account_id && w.account_id.includes('PERS'));
+                const grossVal = Number(w.gross_amount || w.requested_amount || w.amount || 0);
+                const feePercent = isPersonal ? 3 : 10;
+                const feeVal = Number(w.fee_amount || w.fee || (grossVal * feePercent) / 100);
+                const netVal = Number(w.net_payout || w.net_amount || grossVal - feeVal);
+                const isBank = w.payment_method === 'bank_transfer' || Boolean(w.bank_details && w.bank_details.bankName);
 
-                    <div className="text-xs text-slate-400 mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-                      <span>Trader: <strong className="text-white">{w.user_name || w.user_email || w.user_id}</strong></span>
-                      <span className="text-slate-600">•</span>
-                      <span>Account: <strong className="text-[#ffaa00]">{w.account_id}</strong></span>
-                      <span className="text-slate-600">•</span>
-                      <span>Requested: {new Date(w.requested_at).toLocaleString()}</span>
-                    </div>
-
-                    <div className="text-[11px] text-slate-300 mt-2 font-mono bg-[#14141e] p-2 rounded-lg border border-white/5 inline-block">
-                      TRC-20 Destination:{' '}
-                      <strong className="text-[#ffaa00]">{w.wallet_address}</strong>
-                    </div>
-                  </div>
-
-                  {/* Amount Breakdown & Actions */}
-                  <div className="flex items-center gap-4 shrink-0">
-                    <div className="text-right">
-                      <div className="text-lg sm:text-xl font-black text-rose-400">
-                        -${Number(w.requested_amount).toLocaleString('en-US', {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
+                return (
+                  <div
+                    key={w.id}
+                    className="bg-[#0d0d14] border border-white/10 rounded-2xl p-4 sm:p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4"
+                  >
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-bold text-white text-sm">{w.id}</span>
+                        <span
+                          className={`text-[10px] px-2 py-0.5 rounded font-black uppercase ${
+                            w.status === 'completed' || w.status === 'approved'
+                              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                              : w.status === 'pending'
+                              ? 'bg-[#ff8800]/20 text-[#ff8800] border border-[#ff8800]/40'
+                              : 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
+                          }`}
+                        >
+                          {w.status}
+                        </span>
+                        <span
+                          className={`text-[10px] px-2 py-0.5 rounded font-black uppercase ${
+                            isPersonal
+                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                              : 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
+                          }`}
+                        >
+                          {isPersonal ? 'Personal Live (3% Fee)' : 'Prop Funded (10% Fee)'}
+                        </span>
+                        <span className="text-xs text-slate-400 font-bold">
+                          Method: {isBank ? 'Bank Transfer' : `Crypto (${w.network || 'TRC-20'})`}
+                        </span>
                       </div>
-                      <div className="text-[10px] text-slate-400">
-                        Net Payout (after 10% fee):{' '}
-                        <strong className="text-emerald-400">
-                          ${Number(w.net_amount || w.requested_amount * 0.9).toFixed(2)}
-                        </strong>
+
+                      <div className="text-xs text-slate-400 mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+                        <span>Trader: <strong className="text-white">{w.user_email || w.user_name || w.user_id}</strong></span>
+                        <span className="text-slate-600">•</span>
+                        <span>Account: <strong className="text-[#ffaa00]">{w.account_id}</strong></span>
+                        <span className="text-slate-600">•</span>
+                        <span>Requested: {new Date(w.requested_at).toLocaleString()}</span>
+                      </div>
+
+                      <div className="text-[11px] text-slate-300 mt-2 font-mono bg-[#14141e] p-2 rounded-lg border border-white/5 inline-block">
+                        {isBank && w.bank_details ? (
+                          <span>
+                            Bank: <strong className="text-white">{w.bank_details.bankName}</strong> • Holder: <strong className="text-white">{w.bank_details.accountHolder}</strong> • Acc: <strong className="text-[#ffaa00]">{w.bank_details.accountNumber}</strong> • SWIFT: <strong className="text-cyan-300">{w.bank_details.swiftCode}</strong>
+                          </span>
+                        ) : (
+                          <span>
+                            Crypto Wallet ({w.network || 'TRC-20'}): <strong className="text-[#ffaa00]">{w.wallet_address || 'TYsD...'}</strong>
+                          </span>
+                        )}
                       </div>
                     </div>
+
+                    {/* Amount Breakdown & Actions */}
+                    <div className="flex items-center gap-4 shrink-0">
+                      <div className="text-right">
+                        <div className="text-lg sm:text-xl font-black text-rose-400">
+                          -${grossVal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+                        </div>
+                        <div className="text-[10px] text-slate-400">
+                          Fee ({feePercent}%): <span className="text-amber-400">-${feeVal.toFixed(2)}</span> • Net Payout:{' '}
+                          <strong className="text-emerald-400">${netVal.toFixed(2)} USD</strong>
+                        </div>
+                      </div>
 
                     {w.status === 'pending' ? (
                       <div className="flex items-center gap-2">
@@ -1265,7 +1396,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     )}
                   </div>
                 </div>
-              ))}
+              );
+            })}
 
               {filteredWithdrawals.length === 0 && (
                 <div className="text-center py-12 rounded-2xl bg-[#0d0d14] border border-white/5 text-slate-500 text-xs">

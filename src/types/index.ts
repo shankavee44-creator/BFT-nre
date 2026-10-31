@@ -106,7 +106,7 @@ export interface BinaryTrade {
 export interface TradeResultOverlayData {
   id: string;
   isWin: boolean;
-  isTie: boolean;
+  isTie?: boolean;
   profitAmount: number;
   investment: number;
   asset: string;
@@ -139,6 +139,8 @@ export type AssetCategory =
   | 'Indices'
   | 'Stocks'
   | 'Stocks & Indices'
+  | 'Deriv Synthetics'
+  | 'Synthetics'
   | 'OTC';
 
 export interface AssetInfo {
@@ -216,6 +218,9 @@ export interface UserProfile {
   rememberMe?: boolean;
   role?: 'admin' | 'trader' | string;
   isAdmin?: boolean;
+  selfBalance?: number;
+  demoBalance?: number;
+  fundedBalance?: number;
 }
 
 export interface UserAccount {

@@ -4,6 +4,7 @@ export interface LeaderboardTrader {
   name: string;
   country: string;
   flag: string;
+  isoCode?: string;
   accountTier: string;
   profit: number;
   winRate: number;
@@ -17,6 +18,7 @@ export const KASUN_PERERA_ENTRY: LeaderboardTrader = {
   name: 'Kasun Perera',
   country: 'Sri Lanka',
   flag: '🇱🇰',
+  isoCode: 'LK',
   accountTier: '$10,000 Instant Funded',
   profit: 18995.22,
   winRate: 77.9,
@@ -24,36 +26,79 @@ export const KASUN_PERERA_ENTRY: LeaderboardTrader = {
 };
 
 export const WEEKLY_LEADERBOARD_TRADERS: LeaderboardTrader[] = [
-  { id: 'usr_01', rank: 1, name: 'Rashid Al-Maktoum', country: 'Dubai, UAE', flag: '🇦🇪', accountTier: '$100,000 Instant Funded', profit: 48990.50, winRate: 79.4, payoutTime: '1m 14s' },
-  { id: 'usr_02', rank: 2, name: 'Arjun Malhotra', country: 'India', flag: '🇮🇳', accountTier: '$50,000 Two-Step', profit: 42150.80, winRate: 77.2, payoutTime: '1m 28s' },
-  { id: 'usr_03', rank: 3, name: 'Faizal Zulkifli', country: 'Malaysia', flag: '🇲🇾', accountTier: '$50,000 One-Step', profit: 36508.00, winRate: 75.8, payoutTime: '1m 18s' },
-  { id: 'usr_04', rank: 4, name: 'Hamza Qureshi', country: 'Pakistan', flag: '🇵🇰', accountTier: '$25,000 Instant Funded', profit: 31840.40, winRate: 74.1, payoutTime: '1m 42s' },
-  { id: 'usr_05', rank: 5, name: 'Tariq Al-Mansoor', country: 'Dubai, UAE', flag: '🇦🇪', accountTier: '$25,000 One-Step', profit: 28460.00, winRate: 72.6, payoutTime: '1m 31s' },
-  { id: 'usr_06', rank: 6, name: 'Vikramjit Singh', country: 'India', flag: '🇮🇳', accountTier: '$25,000 Two-Step', profit: 24404.00, winRate: 71.3, payoutTime: '1m 49s' },
-  { id: 'usr_07', rank: 7, name: 'Nurul Hidayah', country: 'Malaysia', flag: '🇲🇾', accountTier: '$10,000 One-Step', profit: 21940.00, winRate: 70.5, payoutTime: '1m 15s' },
-  { id: 'usr_08', rank: 8, name: 'Bilal Ahmed Khan', country: 'Pakistan', flag: '🇵🇰', accountTier: '$10,000 Two-Step', profit: 19720.20, winRate: 69.4, payoutTime: '1m 36s' },
+  { id: 'usr_01', rank: 1, name: 'Rashid Al-Maktoum', country: 'Dubai, UAE', flag: '🇦🇪', isoCode: 'AE', accountTier: '$100,000 Instant Funded', profit: 48990.50, winRate: 79.4, payoutTime: '1m 14s' },
+  { id: 'usr_02', rank: 2, name: 'Arjun Malhotra', country: 'India', flag: '🇮🇳', isoCode: 'IN', accountTier: '$50,000 Two-Step', profit: 42150.80, winRate: 77.2, payoutTime: '1m 28s' },
+  { id: 'usr_03', rank: 3, name: 'Faizal Zulkifli', country: 'Malaysia', flag: '🇲🇾', isoCode: 'MY', accountTier: '$50,000 One-Step', profit: 36508.00, winRate: 75.8, payoutTime: '1m 18s' },
+  { id: 'usr_04', rank: 4, name: 'Hamza Qureshi', country: 'Pakistan', flag: '🇵🇰', isoCode: 'PK', accountTier: '$25,000 Instant Funded', profit: 31840.40, winRate: 74.1, payoutTime: '1m 42s' },
+  { id: 'usr_05', rank: 5, name: 'Tariq Al-Mansoor', country: 'Dubai, UAE', flag: '🇦🇪', isoCode: 'AE', accountTier: '$25,000 One-Step', profit: 28460.00, winRate: 72.6, payoutTime: '1m 31s' },
+  { id: 'usr_06', rank: 6, name: 'Vikramjit Singh', country: 'India', flag: '🇮🇳', isoCode: 'IN', accountTier: '$25,000 Two-Step', profit: 24404.00, winRate: 71.3, payoutTime: '1m 49s' },
+  { id: 'usr_07', rank: 7, name: 'Nurul Hidayah', country: 'Malaysia', flag: '🇲🇾', isoCode: 'MY', accountTier: '$10,000 One-Step', profit: 21940.00, winRate: 70.5, payoutTime: '1m 15s' },
+  { id: 'usr_08', rank: 8, name: 'Bilal Ahmed Khan', country: 'Pakistan', flag: '🇵🇰', isoCode: 'PK', accountTier: '$10,000 Two-Step', profit: 19720.20, winRate: 69.4, payoutTime: '1m 36s' },
   KASUN_PERERA_ENTRY,
-  { id: 'usr_10', rank: 10, name: 'Ananya Sharma', country: 'India', flag: '🇮🇳', accountTier: '$10,000 One-Step', profit: 17380.00, winRate: 68.1, payoutTime: '1m 41s' },
-  { id: 'usr_11', rank: 11, name: 'Zainab Al-Hashemi', country: 'Dubai, UAE', flag: '🇦🇪', accountTier: '$10,000 Instant Funded', profit: 15940.00, winRate: 67.4, payoutTime: '1m 29s' },
-  { id: 'usr_12', rank: 12, name: 'Syed Usman Ali', country: 'Pakistan', flag: '🇵🇰', accountTier: '$10,000 Two-Step', profit: 14820.50, winRate: 66.8, payoutTime: '1m 52s' },
-  { id: 'usr_13', rank: 13, name: 'Chong Wei Ming', country: 'Malaysia', flag: '🇲🇾', accountTier: '$5,000 One-Step', profit: 13750.00, winRate: 66.0, payoutTime: '1m 20s' },
-  { id: 'usr_14', rank: 14, name: 'Rohan Deshmukh', country: 'India', flag: '🇮🇳', accountTier: '$10,000 Instant Funded', profit: 12890.10, winRate: 65.2, payoutTime: '1m 47s' },
-  { id: 'usr_15', rank: 15, name: 'Khalid Bin Zayed', country: 'Dubai, UAE', flag: '🇦🇪', accountTier: '$5,000 Two-Step', profit: 11940.00, winRate: 64.5, payoutTime: '1m 30s' },
+  { id: 'usr_10', rank: 10, name: 'Ananya Sharma', country: 'India', flag: '🇮🇳', isoCode: 'IN', accountTier: '$10,000 One-Step', profit: 17380.00, winRate: 68.1, payoutTime: '1m 41s' },
+  { id: 'usr_11', rank: 11, name: 'Zainab Al-Hashemi', country: 'Dubai, UAE', flag: '🇦🇪', isoCode: 'AE', accountTier: '$10,000 Instant Funded', profit: 15940.00, winRate: 67.4, payoutTime: '1m 29s' },
+  { id: 'usr_12', rank: 12, name: 'Syed Usman Ali', country: 'Pakistan', flag: '🇵🇰', isoCode: 'PK', accountTier: '$10,000 Two-Step', profit: 14820.50, winRate: 66.8, payoutTime: '1m 52s' },
+  { id: 'usr_13', rank: 13, name: 'Chong Wei Ming', country: 'Malaysia', flag: '🇲🇾', isoCode: 'MY', accountTier: '$5,000 One-Step', profit: 13750.00, winRate: 66.0, payoutTime: '1m 20s' },
+  { id: 'usr_14', rank: 14, name: 'Rohan Deshmukh', country: 'India', flag: '🇮🇳', isoCode: 'IN', accountTier: '$10,000 Instant Funded', profit: 12890.10, winRate: 65.2, payoutTime: '1m 47s' },
+  { id: 'usr_15', rank: 15, name: 'Khalid Bin Zayed', country: 'Dubai, UAE', flag: '🇦🇪', isoCode: 'AE', accountTier: '$5,000 Two-Step', profit: 11940.00, winRate: 64.5, payoutTime: '1m 30s' },
 ];
 
 /**
+ * Validates if an account qualifies for Leaderboard calculation.
+ * Strictly excludes Demo accounts, Personal (self-funded) accounts, and active Evaluation Challenge accounts.
+ * Only Live/Active Funded Accounts qualify.
+ */
+export function isEligibleLeaderboardAccount(account?: any | null): boolean {
+  if (!account) return false;
+  
+  const tier = (account.tier || '').toLowerCase();
+  const category = (account.accountCategory || account.account_category || '').toLowerCase();
+  const phase = (account.phase || '').toLowerCase();
+  const id = (account.id || '').toUpperCase();
+
+  // 1. Exclude Demo
+  if (tier === 'demo' || category === 'demo' || phase === 'demo' || id.startsWith('BFT-DEMO')) {
+    return false;
+  }
+
+  // 2. Exclude Personal Live (Self-Funded)
+  if (tier === 'personal' || category === 'personal_live' || phase === 'personal_live' || id.includes('PERS')) {
+    return false;
+  }
+
+  // 3. Exclude Active Evaluation Challenge phase
+  if (phase === 'phase_1' || phase === 'phase_2' || phase === 'evaluation' || phase === 'step_1' || phase === 'step_2') {
+    return false;
+  }
+
+  // 4. Require Funded status
+  const isFunded = phase === 'funded' || tier === 'instant' || account.status === 'passed' || account.status === 'active_funded';
+  return isFunded;
+}
+
+/**
  * Determines the user's leaderboard rank display.
- * Any trader with <= $0 profit or 0 active weekly trades is unranked and displays "1000+".
+ * Any trader with <= $0 profit, 0 active weekly trades, or ranked below 20th place (position 21+) displays "1000+".
  */
 export function resolveUserLeaderboardPosition(
   userProfit: number,
   weeklyTradesCount: number = 0,
-  traders: LeaderboardTrader[] = WEEKLY_LEADERBOARD_TRADERS
+  traders: LeaderboardTrader[] = WEEKLY_LEADERBOARD_TRADERS,
+  account?: any | null
 ): {
   isUnranked: boolean;
   rankLabel: string;
   verifiedWeeklyProfit: number;
 } {
+  // If account is supplied and not a Live Funded Account, return 1000+ unranked
+  if (account && !isEligibleLeaderboardAccount(account)) {
+    return {
+      isUnranked: true,
+      rankLabel: '1000+',
+      verifiedWeeklyProfit: 0,
+    };
+  }
+
   const cleanProfit = Number.isFinite(userProfit) ? Number(userProfit.toFixed(2)) : 0;
   if (cleanProfit <= 0 || weeklyTradesCount <= 0) {
     return {
@@ -67,7 +112,8 @@ export function resolveUserLeaderboardPosition(
   const higherCount = traders.filter((t) => t.profit > cleanProfit).length;
   const computedRank = higherCount + 1;
 
-  if (computedRank > 1000) {
+  // Position Display Logic ("1000+"): For any trader ranked below 20th place (position 21 and beyond), display "1000+"
+  if (computedRank > 20) {
     return {
       isUnranked: true,
       rankLabel: '1000+',

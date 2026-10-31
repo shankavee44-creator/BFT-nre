@@ -101,9 +101,11 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
   const netProfit = accountSummary.availableForWithdrawal;
   const firstWithdrawalCheck = useMemo(() => checkFirstWithdrawalWaitingPeriod(account), [account]);
 
-  // Quotex Form State (Minimum withdrawal strictly $250)
+  // Quotex Form State (Minimum withdrawal $10 for Personal Live, $250 for Funded)
+  const isPersonal = isPersonalLiveAccount(account);
+  const minThreshold = isPersonal ? 10 : MIN_WITHDRAWAL_PROFIT;
   const [amount, setAmount] = useState<number>(
-    netProfit >= MIN_WITHDRAWAL_PROFIT ? Math.max(MIN_WITHDRAWAL_PROFIT, Math.min(350, netProfit)) : MIN_WITHDRAWAL_PROFIT
+    netProfit >= minThreshold ? Math.max(minThreshold, Math.min(350, netProfit)) : minThreshold
   );
   const [monthsActive] = useState<number>(account?.monthsCompleted || 1);
   const [quotexMethod, setQuotexMethod] = useState<QuotexPaymentMethodOption>('USDT');
@@ -138,14 +140,15 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
 
   useEffect(() => {
     if (!account) return;
-    const isPersonal = isPersonalLiveAccount(account);
-    const updatedWithdrawable = isPersonal
+    const isPersonalAcc = isPersonalLiveAccount(account);
+    const minVal = isPersonalAcc ? 10 : MIN_WITHDRAWAL_PROFIT;
+    const updatedWithdrawable = isPersonalAcc
       ? Math.max(0, Number(account.currentBalance.toFixed(2)))
       : Math.max(0, Number((account.currentBalance - account.initialBalance).toFixed(2)));
-    if (updatedWithdrawable >= MIN_WITHDRAWAL_PROFIT) {
-      setAmount(Math.max(MIN_WITHDRAWAL_PROFIT, Math.min(350, updatedWithdrawable)));
+    if (updatedWithdrawable >= minVal) {
+      setAmount(Math.max(minVal, Math.min(350, updatedWithdrawable)));
     } else {
-      setAmount(MIN_WITHDRAWAL_PROFIT);
+      setAmount(minVal);
     }
     setError(null);
   }, [account?.id]);
@@ -288,21 +291,45 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
       // Supabase persistent insertion into withdrawals table
       try {
         const { data: { user } } = await supabase.auth.getUser();
-        const candidateId = user?.id || userProfile?.id;
-        const isCandidateUuid = candidateId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(candidateId.trim());
-        if (isCandidateUuid) {
-          const bankDetailsPayload =
-            paymentMethod === 'bank_transfer'
-              ? { bankName: bankName.trim(), accountHolder: accountHolder.trim(), accountNumber: accountNumber.trim(), swiftCode: swiftCode.trim().toUpperCase() }
-              : { trc20Address: purseAddress.trim(), network, quotexMethod };
+        const candidateId = user?.id || userProfile?.id || account.ownerId || 'usr_bft_001';
+        const bankDetailsPayload =
+          paymentMethod === 'bank_transfer'
+            ? {
+                bankName: bankName.trim(),
+                accountHolder: accountHolder.trim(),
+                accountNumber: accountNumber.trim(),
+                swiftCode: swiftCode.trim().toUpperCase(),
+              }
+            : { trc20Address: purseAddress.trim(), network, quotexMethod };
 
-          await supabase.from('withdrawals').insert({
-            user_id: candidateId.trim(),
-            amount: amount,
-            bank_details: bankDetailsPayload,
-            status: 'pending',
-          });
-        }
+        const isPersonalAcc = isPersonalLiveAccount(account);
+        const feeVal = breakdown.withdrawalFeeAmount;
+        const netVal = breakdown.netPayoutToReceive;
+        const grossVal = breakdown.requestedAmount;
+
+        await supabase.from('withdrawals').insert({
+          user_id: candidateId,
+          user_email: userProfile?.email || user?.email || 'trader@binaryfunded.com',
+          account_id: account.id,
+          account_type: isPersonalAcc ? 'personal_live' : 'funded',
+          amount: grossVal,
+          gross_amount: grossVal,
+          requested_amount: grossVal,
+          fee: feeVal,
+          fee_amount: feeVal,
+          fee_percent: isPersonalAcc ? 3 : 10,
+          net_amount: netVal,
+          net_payout: netVal,
+          payout_method: paymentMethod,
+          payment_method: paymentMethod,
+          network_type: paymentMethod === 'crypto_trc20' ? network : 'SWIFT/SEPA',
+          network: paymentMethod === 'crypto_trc20' ? network : 'SWIFT/SEPA',
+          wallet_address: walletAddr,
+          bank_details: bankDetailsPayload,
+          status: 'pending',
+          created_at: new Date().toISOString(),
+          requested_at: Date.now(),
+        });
       } catch (e) {
         console.warn('Supabase withdrawal insert notice:', e);
       }
@@ -715,7 +742,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                       </span>
                     </div>
                     <p className="text-[11px] text-[#94a3b8] leading-relaxed">
-                      You are withdrawing from your <strong className="text-[#ff8800]">Personal Live Balance ({account?.id})</strong>. Personal Live accounts are not bound by challenge target phases, 14-day waiting periods, or prop profit split ceilings—withdraw both your <strong className="text-white">personal trading profits and deposited capital</strong> anytime following the standard <strong className="text-[#00c853]">$250.00 minimum threshold</strong> and <strong className="text-white">10% withdrawal fee</strong>.
+                      You are withdrawing from your <strong className="text-[#ff8800]">Personal Live Balance ({account?.id})</strong>. Personal Live accounts are not bound by challenge target phases, 14-day waiting periods, or prop profit split ceilings—withdraw both your <strong className="text-white">personal trading profits and deposited capital</strong> anytime following the <strong className="text-[#00c853]">$10.00 minimum threshold</strong> and <strong className="text-white">3% withdrawal fee</strong>.
                     </p>
                   </div>
                 ) : (
@@ -809,14 +836,14 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                     >
                       <span className="text-[#8c96a6]">Withdrawal Fee (Deducted):</span>
                       <span className="font-bold font-mono tabular-nums text-[#ff8800]">
-                        {WITHDRAWAL_FEE_PERCENT}% (-${breakdown.withdrawalFeeAmount.toFixed(2)})
+                        {breakdown.withdrawalFeePercent}% (-${breakdown.withdrawalFeeAmount.toFixed(2)})
                       </span>
                     </div>
                     <div
                       data-testid="card-net-payout-receive"
                       className="flex items-center justify-between px-4 py-3 text-xs sm:text-sm bg-[#121622]"
                     >
-                      <span className="text-[#cbd5e1] font-semibold">Net Payout to Receive (After 10% Fee):</span>
+                      <span className="text-[#cbd5e1] font-semibold">Net Payout to Receive (After {breakdown.withdrawalFeePercent}% Fee):</span>
                       <span className="font-black font-mono tabular-nums text-[#00c853]">
                         {breakdown.netPayoutToReceive.toFixed(2)} $
                       </span>
@@ -832,8 +859,8 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                       data-testid="min-withdrawal-250-badge"
                       className="text-[11px] font-mono font-bold text-[#cbd5e1] bg-[#0e1017] px-2.5 py-1 rounded border border-[#262c3a]"
                     >
-                      Minimum Withdrawal: <strong className="text-[#00c853]">$250.00</strong> • Fee:{' '}
-                      <strong className="text-[#ff8800]">10%</strong>
+                      Minimum Withdrawal: <strong className="text-[#00c853]">${isPersonalLiveAccount(account) ? '10.00' : '250.00'}</strong> • Fee:{' '}
+                      <strong className="text-[#ff8800]">{breakdown.withdrawalFeePercent}%</strong>
                     </span>
                   </div>
 
@@ -1028,24 +1055,32 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                   </div>
                 </form>
 
-                {/* Footer Security Badges & Minimum Withdrawal Limit Notices (Zero Deposit Mentions) */}
+                {/* Footer Security Badges & Minimum Withdrawal Limit Notices */}
                 <div className="pt-5 border-t border-[#1e2330] space-y-4">
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-[11px] text-[#8c96a6]">
                     <div>
                       <span className="block text-[#64748b]">Minimum withdrawal amount:</span>
-                      <strong className="text-white font-mono tabular-nums">$250.00 USD</strong>
+                      <strong className="text-white font-mono tabular-nums">
+                        ${isPersonalLiveAccount(account) ? '10.00' : '250.00'} USD
+                      </strong>
                     </div>
                     <div>
                       <span className="block text-[#64748b]">Withdrawal Fee:</span>
-                      <strong className="text-[#ff8800] font-mono tabular-nums">10% Deducted</strong>
+                      <strong className="text-[#ff8800] font-mono tabular-nums">
+                        {isPersonalLiveAccount(account) ? '3%' : '10%'} Deducted
+                      </strong>
                     </div>
                     <div>
                       <span className="block text-[#64748b]">First Withdrawal Lock:</span>
-                      <strong className="text-white font-mono">14 Days Mandatory</strong>
+                      <strong className="text-white font-mono">
+                        {isPersonalLiveAccount(account) ? 'None (Instant Unlocked)' : '14 Days Mandatory'}
+                      </strong>
                     </div>
                     <div>
                       <span className="block text-[#64748b]">Settlement SLA:</span>
-                      <strong className="text-[#00c853] font-mono">3 Min (2x Guarantee)</strong>
+                      <strong className="text-[#00c853] font-mono">
+                        {isPersonalLiveAccount(account) ? '1 Hour (Pending Review)' : '3 Min (2x Guarantee)'}
+                      </strong>
                     </div>
                   </div>
 

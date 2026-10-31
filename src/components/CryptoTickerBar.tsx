@@ -1,12 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { Trophy } from 'lucide-react';
+import { CountryFlagIcon } from './CountryFlagIcon';
 import {
   WEEKLY_LEADERBOARD_TRADERS,
   normalizeWeeklyLeaderboard,
   formatCleanLeaderboardRow,
 } from '../utils/leaderboardEngine';
 
-export const CryptoTickerBar: React.FC = () => {
+interface CryptoTickerBarProps {
+  onSelectPair?: () => void;
+}
+
+export const CryptoTickerBar: React.FC<CryptoTickerBarProps> = ({ onSelectPair }) => {
   const [traders, setTraders] = useState(() => normalizeWeeklyLeaderboard(WEEKLY_LEADERBOARD_TRADERS));
 
   // Periodic leaderboard update simulation
@@ -43,7 +48,14 @@ export const CryptoTickerBar: React.FC = () => {
                 className="flex items-center gap-2 shrink-0 text-xs"
               >
                 <span className="font-mono font-bold text-slate-500">#{row.rank}</span>
-                <span className="text-base">{row.flag}</span>
+                <span className="flex items-center justify-center shrink-0">
+                  <CountryFlagIcon
+                    country={trader.country}
+                    isoCode={trader.isoCode}
+                    flagEmoji={row.flag}
+                    className="w-5 h-3.5 rounded-[2px] shadow-sm border border-white/10 shrink-0 inline-block align-middle object-cover"
+                  />
+                </span>
                 <span className="font-sans font-bold text-white">{row.name}</span>
                 <span className="font-mono font-black text-[#00e676]">{row.profitFormatted}</span>
               </div>

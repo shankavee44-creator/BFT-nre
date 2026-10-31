@@ -54,6 +54,7 @@ import {
 import { exportTradesToCSV } from '../utils/csvExport';
 import { BUILTIN_AVATARS, SUPPORTED_COUNTRIES, getFlagForCountry } from '../utils/storage';
 import { soundEngine } from '../utils/soundEffects';
+import { CountryFlagIcon } from './CountryFlagIcon';
 import { AffiliateDashboard } from './AffiliateDashboard';
 import {
   canUserWithdraw,
@@ -222,7 +223,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         if (targetUuid) {
           const { data: p } = await supabase
             .from('profiles')
-            .select('*')
+            .select('id, email, full_name, kyc_status, self_balance, demo_balance, funded_balance, address, date_of_birth, country, referral_code, referred_by')
             .eq('id', targetUuid)
             .maybeSingle();
           if (p) supaProfile = p;
@@ -329,7 +330,10 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             (resolvedLocked && resolvedCountry && resolvedCountry !== latest.country) ||
             (resolvedFullName && resolvedFullName !== latest.fullName) ||
             (resolvedFrontUrl && resolvedFrontUrl !== latest.kycFrontDocumentUrl) ||
-            (resolvedBackUrl && resolvedBackUrl !== latest.kycBackDocumentUrl);
+            (resolvedBackUrl && resolvedBackUrl !== latest.kycBackDocumentUrl) ||
+            (supaProfile?.self_balance !== undefined && Number(supaProfile.self_balance) !== latest.selfBalance) ||
+            (supaProfile?.demo_balance !== undefined && Number(supaProfile.demo_balance) !== latest.demoBalance) ||
+            (supaProfile?.funded_balance !== undefined && Number(supaProfile.funded_balance) !== latest.fundedBalance);
 
           if (hasChanges) {
             onUpdateProfile({
@@ -350,6 +354,9 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               kycBackDocumentUrl: resolvedBackUrl || latest.kycBackDocumentUrl,
               kycDocumentFileName: resolvedFrontFile || latest.kycDocumentFileName,
               kycBackDocumentFileName: resolvedBackFile || latest.kycBackDocumentFileName,
+              selfBalance: supaProfile?.self_balance !== undefined ? Number(supaProfile.self_balance) : latest.selfBalance,
+              demoBalance: supaProfile?.demo_balance !== undefined ? Number(supaProfile.demo_balance) : latest.demoBalance,
+              fundedBalance: supaProfile?.funded_balance !== undefined ? Number(supaProfile.funded_balance) : latest.fundedBalance,
             });
           }
         }
@@ -873,8 +880,8 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               <p className="text-xs text-slate-400 mt-1 font-mono">{userProfile.email}</p>
               <div className="flex flex-wrap items-center justify-center sm:justify-start gap-3 mt-3 text-xs text-slate-300">
                 <span data-testid="profile-header-country" className="flex items-center gap-1.5 font-mono">
-                  <Globe className="w-3.5 h-3.5 text-[#ff8800]" />
-                  <span>{getFlagForCountry(userProfile.country)}</span>
+                  <Globe className="w-3.5 h-3.5 text-[#ff8800] shrink-0" />
+                  <CountryFlagIcon country={userProfile.country} className="w-5 h-3.5 rounded-[2px] shadow-sm border border-white/10 shrink-0 inline-block align-middle object-cover" />
                   <span>{userProfile.country || 'United States'}</span>
                 </span>
                 {userProfile.dateOfBirth && (

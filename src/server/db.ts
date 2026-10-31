@@ -568,6 +568,9 @@ const kycAlterColumns = [
   `ALTER TABLE users ADD COLUMN kyc_back_filename TEXT;`,
   `ALTER TABLE users ADD COLUMN kyc_submitted_at TEXT;`,
   `ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'trader';`,
+  `ALTER TABLE users ADD COLUMN self_balance REAL DEFAULT 0;`,
+  `ALTER TABLE users ADD COLUMN demo_balance REAL DEFAULT 10000;`,
+  `ALTER TABLE users ADD COLUMN funded_balance REAL DEFAULT 0;`,
   `ALTER TABLE withdrawals ADD COLUMN admin_notes TEXT;`,
 ];
 for (const stmt of kycAlterColumns) {
@@ -734,7 +737,7 @@ export function ensurePersonalLiveAccountForUser(userId: string) {
   const nowIso = new Date(now).toISOString().split('T')[0];
   const suffix = userId.replace(/[^a-zA-Z0-9]/g, '').slice(-5).toUpperCase() || '001';
   const accountId = userId === 'usr_bft_001' ? 'BFT-PERS-001' : `BFT-PERS-${suffix}`;
-  const initialDeposit = userId === 'usr_bft_001' ? 1250 : 0;
+  const initialDeposit = 0;
 
   db.prepare(`
     INSERT OR IGNORE INTO accounts (
@@ -816,6 +819,10 @@ export function creditPersonalAccountDepositInDb(params: {
     personalAcc.id,
     params.userId
   );
+
+  try {
+    db.prepare(`UPDATE users SET self_balance = ? WHERE id = ?`).run(nextCurrent, params.userId);
+  } catch {}
 
   return getAccountById(personalAcc.id);
 }
@@ -1227,14 +1234,14 @@ export function processWithdrawalRequest(params: {
     }
 
     const availableBalance = Math.max(0, Number(account.current_balance.toFixed(2)));
-    if (availableBalance < 250) {
+    if (availableBalance < 10) {
       throw new Error(
-        `Minimum withdrawal threshold is $250.00. Current Personal Live balance is $${availableBalance.toFixed(2)}.`
+        `Minimum withdrawal threshold is $10.00. Current Personal Live balance is $${availableBalance.toFixed(2)}.`
       );
     }
 
-    if (params.requestedAmount < 250) {
-      throw new Error('Minimum withdrawal amount is $250.00 USD.');
+    if (params.requestedAmount < 10) {
+      throw new Error('Minimum withdrawal amount is $10.00 USD.');
     }
 
     if (params.requestedAmount > availableBalance) {
@@ -1243,7 +1250,7 @@ export function processWithdrawalRequest(params: {
       );
     }
 
-    const feeAmount = Number((params.requestedAmount * 0.10).toFixed(2));
+    const feeAmount = Number((params.requestedAmount * 0.03).toFixed(2));
     const netPayout = Number((params.requestedAmount - feeAmount).toFixed(2));
     const now = Date.now();
     const withdrawalId = `WD-${Math.floor(51940000000 + Math.random() * 99999999)}`;
@@ -1592,6 +1599,7 @@ export function getAdminUsersList() {
       address: u.address,
       dateOfBirth: u.date_of_birth,
       telegramHandle: u.telegram_handle,
+      selfBalance: u.self_balance ?? 0,
       accountsCount: u.accounts_count || 0,
       totalBalance: Number((u.total_balance || 0).toFixed(2)),
       createdAt: u.created_at,
@@ -1628,6 +1636,20 @@ export function adminUpdateAccountBalance(params: {
       updated_at = ?
     WHERE id = ?
   `).run(targetBalance, newEquity, newStartingDay, now, params.accountId);
+
+  if (account.tier === 'personal' || account.account_category === 'personal_live' || String(params.accountId).includes('PERS')) {
+    try {
+      db.prepare(`UPDATE users SET self_balance = ? WHERE id = ?`).run(targetBalance, account.user_id);
+    } catch {}
+  } else if (account.tier === 'demo' || account.account_category === 'demo' || String(params.accountId).includes('DEMO')) {
+    try {
+      db.prepare(`UPDATE users SET demo_balance = ? WHERE id = ?`).run(targetBalance, account.user_id);
+    } catch {}
+  } else if (account.phase === 'funded') {
+    try {
+      db.prepare(`UPDATE users SET funded_balance = ? WHERE id = ?`).run(targetBalance, account.user_id);
+    } catch {}
+  }
 
   recordAdminAuditLog(
     params.adminUserId,
@@ -2292,6 +2314,26 @@ export function recordTradeInDb(userId: string, trade: {
     WHERE id = ?
   `).run(nextBalance, nextBalance, now, trade.accountId);
 
+  if (account.tier === 'personal' || account.accountCategory === 'personal_live' || String(trade.accountId).includes('PERS')) {
+    try {
+      db.prepare(`UPDATE users SET self_balance = ? WHERE id = ?`).run(nextBalance, userId);
+    } catch (e) {
+      console.warn('SQLite self_balance recordTrade sync error:', e);
+    }
+  } else if (account.tier === 'demo' || account.accountCategory === 'demo' || String(trade.accountId).includes('DEMO')) {
+    try {
+      db.prepare(`UPDATE users SET demo_balance = ? WHERE id = ?`).run(nextBalance, userId);
+    } catch (e) {
+      console.warn('SQLite demo_balance recordTrade sync error:', e);
+    }
+  } else if (account.phase === 'funded' || account.status === 'active') {
+    try {
+      db.prepare(`UPDATE users SET funded_balance = ? WHERE id = ?`).run(nextBalance, userId);
+    } catch (e) {
+      console.warn('SQLite funded_balance recordTrade sync error:', e);
+    }
+  }
+
   const savedTrade = db.prepare('SELECT * FROM trades WHERE id = ?').get(tradeId) as any;
   const updatedAccount = getAccountById(trade.accountId);
 
@@ -2384,6 +2426,22 @@ export function settleTradeInDb(userId: string, tradeId: string, closePrice: num
 
   const updatedTrade = db.prepare('SELECT * FROM trades WHERE id = ?').get(tradeId) as any;
   const updatedAccount = getAccountById(tradeRow.account_id);
+
+  if (updatedAccount) {
+    if (updatedAccount.tier === 'personal' || updatedAccount.accountCategory === 'personal_live' || updatedAccount.phase === 'personal_live') {
+      try {
+        db.prepare(`UPDATE users SET self_balance = ? WHERE id = ?`).run(nextBalance, userId);
+      } catch {}
+    } else if (updatedAccount.tier === 'demo' || updatedAccount.accountCategory === 'demo' || updatedAccount.phase === 'demo') {
+      try {
+        db.prepare(`UPDATE users SET demo_balance = ? WHERE id = ?`).run(nextBalance, userId);
+      } catch {}
+    } else if (updatedAccount.phase === 'funded') {
+      try {
+        db.prepare(`UPDATE users SET funded_balance = ? WHERE id = ?`).run(nextBalance, userId);
+      } catch {}
+    }
+  }
 
   return {
     trade: mapTradeRow(updatedTrade),

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { X, Trophy, HelpCircle, ChevronDown, ChevronUp, CalendarClock } from 'lucide-react';
+import { X, Trophy, HelpCircle, ChevronDown, ChevronUp, CalendarClock, ShieldAlert } from 'lucide-react';
 import { soundEngine } from '../utils/soundEffects';
+import { CountryFlagIcon } from './CountryFlagIcon';
 import {
   LeaderboardTrader,
   WEEKLY_LEADERBOARD_TRADERS,
@@ -9,6 +10,7 @@ import {
   normalizeWeeklyLeaderboard,
   getMondayWeeklyResetInfo,
   formatCleanLeaderboardRow,
+  isEligibleLeaderboardAccount,
 } from '../utils/leaderboardEngine';
 
 export type { LeaderboardTrader };
@@ -20,6 +22,7 @@ interface QuotexLeaderboardModalProps {
   weeklyTradesCount?: number;
   userName?: string;
   userAccountId?: string;
+  activeAccount?: any;
 }
 
 export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
@@ -29,6 +32,7 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
   weeklyTradesCount = 0,
   userName = 'Trader',
   userAccountId = 'UNRANKED',
+  activeAccount,
 }) => {
   const [traders, setTraders] = useState<LeaderboardTrader[]>(() =>
     normalizeWeeklyLeaderboard(WEEKLY_LEADERBOARD_TRADERS)
@@ -71,10 +75,12 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
 
   if (!isOpen) return null;
 
+  const isEligible = activeAccount ? isEligibleLeaderboardAccount(activeAccount) : true;
   const userPosition = resolveUserLeaderboardPosition(
-    userProfit,
-    weeklyTradesCount,
-    traders
+    isEligible ? userProfit : 0,
+    isEligible ? weeklyTradesCount : 0,
+    traders,
+    activeAccount
   );
 
   return (
@@ -95,7 +101,7 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
             </div>
             <div className="min-w-0">
               <h3 className="text-sm sm:text-base font-bold text-white truncate">
-                Leader Panel
+                Past Week Best Funded Traders
               </h3>
               <div
                 data-testid="leaderboard-weekly-reset"
@@ -121,7 +127,7 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
           </button>
         </div>
 
-        {/* 2. Quotex Personal Summary Card ("Your profit" & "Your position") */}
+        {/* 2. Personal Summary Card ("Your profit" & "Your position") */}
         <div className="p-3.5 bg-[#0e1016] border-b border-white/10 shrink-0 space-y-2.5">
           <div className="flex items-center justify-between text-xs">
             <div className="flex items-center gap-2 min-w-0">
@@ -149,6 +155,16 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
               )}
             </button>
           </div>
+
+          {/* Account Eligibility Banner (if using Demo, Personal, or Challenge Account) */}
+          {activeAccount && !isEligible && (
+            <div className="px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/25 text-[11px] text-amber-300 flex items-center gap-1.5 font-mono">
+              <ShieldAlert className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              <span className="truncate">
+                Active account ({activeAccount.tierName || activeAccount.tier}) excluded. Only Live Active Funded Accounts qualify.
+              </span>
+            </div>
+          )}
 
           {/* Side-by-Side Quotex Summary Boxes */}
           <div className="grid grid-cols-2 gap-2.5">
@@ -181,9 +197,9 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
           {/* Collapsible Weekly Reset Rules */}
           {showHowItWorks && (
             <div className="p-3 rounded-xl bg-[#141720] border border-white/10 text-[11px] text-slate-300 leading-relaxed font-sans">
-              Rankings reflect verified net profit from closed trades during the current week (starting{' '}
+              Rankings strictly reflect verified net profit from closed trades on <span className="text-[#00e676] font-semibold">Live Active Funded Accounts</span> during the current week (starting{' '}
               <span className="font-mono text-white">{resetInfo.weekStartIso}</span>) and reset automatically every{' '}
-              <span className="text-[#ff8800] font-semibold">Monday at 00:00 UTC</span>. Accounts with $0.00 weekly profit remain at position <span className="font-mono text-white">1000+</span>.
+              <span className="text-[#ff8800] font-semibold">Monday at 00:00 UTC</span>. Demo, Personal, and Challenge accounts are excluded. All traders ranked below 20th place display position <span className="font-mono text-white">1000+</span>.
             </div>
           )}
         </div>
@@ -222,10 +238,15 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
                   </span>
 
                   <span
-                    className="text-base sm:text-lg leading-none shrink-0"
+                    className="flex items-center justify-center shrink-0 w-6 h-4"
                     title={trader.country}
                   >
-                    {row.flag}
+                    <CountryFlagIcon
+                      country={trader.country}
+                      isoCode={trader.isoCode}
+                      flagEmoji={row.flag}
+                      className="w-5 h-3.5 rounded-[2px] shadow-sm border border-white/10 shrink-0 inline-block align-middle object-cover"
+                    />
                   </span>
 
                   <span className="text-xs sm:text-sm font-semibold text-slate-100 truncate">
@@ -248,4 +269,5 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
     </div>
   );
 };
+
 

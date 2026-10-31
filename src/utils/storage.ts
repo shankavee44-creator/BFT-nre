@@ -217,6 +217,9 @@ export function loadProfile(): UserProfile {
     profileLocked: false,
     twoFactorEnabled: false,
     activeAccountId: '',
+    selfBalance: undefined,
+    demoBalance: undefined,
+    fundedBalance: undefined,
     isLoggedIn: false,
   };
 }
@@ -271,6 +274,9 @@ export function loadOrCreateUserProfileByEmail(params: {
   rememberMe?: boolean;
   profileLocked?: boolean;
   isNewRegistration?: boolean;
+  selfBalance?: number;
+  demoBalance?: number;
+  fundedBalance?: number;
 }): UserProfile {
   const emailKey = params.email.toLowerCase().trim();
   try {
@@ -299,6 +305,9 @@ export function loadOrCreateUserProfileByEmail(params: {
             kycDocumentFileName: params.kycDocumentFileName || existing.kycDocumentFileName,
             kycBackDocumentFileName: params.kycBackDocumentFileName || existing.kycBackDocumentFileName,
             kycSubmittedAt: params.kycSubmittedAt || existing.kycSubmittedAt,
+            selfBalance: params.selfBalance !== undefined ? params.selfBalance : existing.selfBalance,
+            demoBalance: params.demoBalance !== undefined ? params.demoBalance : existing.demoBalance,
+            fundedBalance: params.fundedBalance !== undefined ? params.fundedBalance : existing.fundedBalance,
             profileLocked: Boolean(
               params.profileLocked ||
                 existing.profileLocked ||
@@ -326,6 +335,9 @@ export function loadOrCreateUserProfileByEmail(params: {
     id: params.userId || 'trader_' + Math.floor(Math.random() * 900000 + 100000),
     email: params.email.trim(),
     fullName: params.fullName.trim(),
+    selfBalance: params.selfBalance,
+    demoBalance: params.demoBalance,
+    fundedBalance: params.fundedBalance,
     address: params.address || '',
     dateOfBirth: params.dateOfBirth || '',
     profileLocked: Boolean(

@@ -7,7 +7,9 @@ import {
   normalizeWeeklyLeaderboard,
   getMondayWeeklyResetInfo,
   formatCleanLeaderboardRow,
+  isEligibleLeaderboardAccount,
 } from './leaderboardEngine.ts';
+import { getIsoCountryCode } from '../components/CountryFlagIcon.tsx';
 
 test('Kasun Perera is positioned at 9th place with Sri Lankan flag and $18,995.22 profit', () => {
   const normalized = normalizeWeeklyLeaderboard(WEEKLY_LEADERBOARD_TRADERS);
@@ -20,7 +22,7 @@ test('Kasun Perera is positioned at 9th place with Sri Lankan flag and $18,995.2
   assert.equal(KASUN_PERERA_ENTRY.profit, 18995.22);
 });
 
-test('Weekly leaderboard includes traders from India, Pakistan, Malaysia, and Dubai', () => {
+test('Weekly leaderboard includes traders from India, Pakistan, Malaysia, and Dubai with valid ISO codes', () => {
   const countries = new Set(WEEKLY_LEADERBOARD_TRADERS.map((t) => t.country));
   const flags = new Set(WEEKLY_LEADERBOARD_TRADERS.map((t) => t.flag));
 
@@ -34,9 +36,26 @@ test('Weekly leaderboard includes traders from India, Pakistan, Malaysia, and Du
   assert.equal(flags.has('🇲🇾'), true);
   assert.equal(flags.has('🇦🇪'), true);
   assert.equal(flags.has('🇱🇰'), true);
+
+  assert.equal(getIsoCountryCode('Malaysia'), 'my');
+  assert.equal(getIsoCountryCode('Pakistan'), 'pk');
+  assert.equal(getIsoCountryCode('Dubai, UAE'), 'ae');
+  assert.equal(getIsoCountryCode('India'), 'in');
+  assert.equal(getIsoCountryCode('Sri Lanka'), 'lk');
 });
 
-test('resolveUserLeaderboardPosition returns 1000+ when profit is $0 or weekly trades count is 0', () => {
+test('isEligibleLeaderboardAccount excludes Demo, Personal, and Challenge accounts', () => {
+  assert.equal(isEligibleLeaderboardAccount({ tier: 'demo', phase: 'demo' }), false);
+  assert.equal(isEligibleLeaderboardAccount({ tier: 'personal', phase: 'personal_live', id: 'BFT-PERS-001' }), false);
+  assert.equal(isEligibleLeaderboardAccount({ tier: 'two-step', phase: 'phase_1' }), false);
+  assert.equal(isEligibleLeaderboardAccount({ tier: 'one-step', phase: 'phase_2' }), false);
+
+  // Live Funded accounts qualify
+  assert.equal(isEligibleLeaderboardAccount({ tier: 'instant', phase: 'funded', status: 'active' }), true);
+  assert.equal(isEligibleLeaderboardAccount({ tier: 'two-step', phase: 'funded', status: 'passed' }), true);
+});
+
+test('resolveUserLeaderboardPosition returns 1000+ when profit is $0, 0 trades, ineligible account, or rank > 20', () => {
   const zeroProfit = resolveUserLeaderboardPosition(0, 0);
   assert.equal(zeroProfit.isUnranked, true);
   assert.equal(zeroProfit.rankLabel, '1000+');
@@ -51,10 +70,22 @@ test('resolveUserLeaderboardPosition returns 1000+ when profit is $0 or weekly t
   assert.equal(noTrades.isUnranked, true);
   assert.equal(noTrades.rankLabel, '1000+');
 
-  const activeRanked = resolveUserLeaderboardPosition(25000, 6);
+  // Ineligible Demo / Challenge account -> 1000+
+  const demoResult = resolveUserLeaderboardPosition(15000, 10, WEEKLY_LEADERBOARD_TRADERS, { tier: 'demo' });
+  assert.equal(demoResult.isUnranked, true);
+  assert.equal(demoResult.rankLabel, '1000+');
+
+  // Rank 6 (top 20) -> #6
+  const fundedEligible = { tier: 'instant', phase: 'funded' };
+  const activeRanked = resolveUserLeaderboardPosition(25000, 6, WEEKLY_LEADERBOARD_TRADERS, fundedEligible);
   assert.equal(activeRanked.isUnranked, false);
   assert.equal(activeRanked.rankLabel, '#6');
   assert.equal(activeRanked.verifiedWeeklyProfit, 25000);
+
+  // Profit below 20th place -> 1000+
+  const belowTop20 = resolveUserLeaderboardPosition(100, 5, WEEKLY_LEADERBOARD_TRADERS, fundedEligible);
+  assert.equal(belowTop20.isUnranked, true);
+  assert.equal(belowTop20.rankLabel, '1000+');
 });
 
 test('getMondayWeeklyResetInfo computes valid Monday UTC reset schedule', () => {
@@ -88,4 +119,5 @@ test('formatCleanLeaderboardRow formats strictly rank number, flag, trader name,
     isTopThree: false,
   });
 });
+
 

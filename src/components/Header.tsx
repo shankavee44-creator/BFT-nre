@@ -14,6 +14,8 @@ import {
   Menu,
   X,
   ShieldCheck,
+  GitBranch,
+  UploadCloud,
 } from 'lucide-react';
 import { TradingAccount, UserProfile, PromoCodeType } from '../types';
 import { CryptoTickerBar } from './CryptoTickerBar';
@@ -42,6 +44,7 @@ interface HeaderProps {
   onLogout?: () => void;
   onOpenChallengeModal: () => void;
   onOpenAdminDashboard?: () => void;
+  onOpenGitHubSync?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -60,6 +63,7 @@ export const Header: React.FC<HeaderProps> = ({
   onLogout,
   onOpenChallengeModal,
   onOpenAdminDashboard,
+  onOpenGitHubSync,
 }) => {
   const [accountDropdownOpen, setAccountDropdownOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -269,6 +273,24 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           )}
 
+          {/* GitHub Push / Sync Button */}
+          {onOpenGitHubSync && (
+            <button
+              type="button"
+              data-testid="header-github-sync-btn"
+              onClick={() => {
+                soundEngine.playUiClick();
+                onOpenGitHubSync();
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#14141a] hover:bg-[#1e1e28] border border-[#ff8800]/40 text-[#ff8800] hover:text-[#ffaa00] text-xs font-mono font-bold transition-all cursor-pointer whitespace-nowrap shadow-sm shadow-[#ff8800]/10"
+              title="Open GitHub Sync & Push Repository Portal"
+            >
+              <GitBranch className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline font-black">GitHub Push</span>
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            </button>
+          )}
+
           {/* Dynamic Auth State: Logged-In User Profile & Logout vs Logged-Out Sign In & Register */}
           {userProfile.isLoggedIn ? (
             <div className="flex items-center gap-1.5">
@@ -344,14 +366,7 @@ export const Header: React.FC<HeaderProps> = ({
             {mobileMenuOpen ? <X className="w-4 h-4 text-[#ff8800]" /> : <Menu className="w-4 h-4 text-white" />}
           </button>
 
-          {/* Get Funded Button */}
-          <button
-            onClick={onOpenChallengeModal}
-            className="hidden xl:inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] text-slate-950 text-xs font-black cursor-pointer transition-colors whitespace-nowrap"
-          >
-            Get Funded
-            <ArrowUpRight className="w-3.5 h-3.5" />
-          </button>
+
         </div>
       </div>
 

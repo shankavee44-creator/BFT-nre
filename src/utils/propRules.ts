@@ -514,7 +514,7 @@ export function isDemoAccount(account?: TradingAccount | null): boolean {
 export function createDefaultPersonalLiveAccount(
   ownerId: string = 'usr_bft_001',
   ownerEmail: string = 'trader@binaryfunded.com',
-  initialDeposit: number = 1250
+  initialDeposit: number = 0
 ): TradingAccount {
   const suffix = ownerId.replace(/[^a-zA-Z0-9]/g, '').slice(-5).toUpperCase() || '001';
   const id = ownerId === 'usr_bft_001' ? 'BFT-PERS-001' : `BFT-PERS-${suffix}`;

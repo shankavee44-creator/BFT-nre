@@ -300,6 +300,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     return store?.lastPrice ?? selectedAsset?.basePrice ?? 1.08425;
   });
   const [candles, setCandles] = useState<Candle[]>([]);
+  const [isLoadingChart, setIsLoadingChart] = useState<boolean>(true);
   const [payoutSeed, setPayoutSeed] = useState<number>(() => Math.floor(Date.now() / 3000));
 
   // Charting controls & Asset-Specific State Isolation for Indicators & Drawings
@@ -653,16 +654,26 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     const isNewAsset = prevAssetSymbolRef.current !== selectedAsset.symbol;
     prevAssetSymbolRef.current = selectedAsset.symbol;
 
+    if (isNewAsset) {
+      setIsLoadingChart(true);
+      setCandles([]);
+    }
+
     const store = getOrCreateMasterHistory(selectedAsset);
     const prevSec = TIMEFRAME_SECONDS[prevTimeframeRef.current];
     const nextSec = TIMEFRAME_SECONDS[timeframe];
     prevTimeframeRef.current = timeframe;
 
     const aggregated = aggregateCandlesForTimeframe(selectedAsset, nextSec);
-    setCandles(aggregated);
-    setCurrentPrice(store.lastPrice);
-    setSmoothPrice(store.lastPrice);
-    targetPriceRef.current = store.lastPrice;
+    
+    // Safety: only set candles if it matches the current asset symbol
+    if (selectedAssetRef.current.symbol === selectedAsset.symbol) {
+      setCandles(aggregated);
+      setCurrentPrice(store.lastPrice);
+      setSmoothPrice(store.lastPrice);
+      targetPriceRef.current = store.lastPrice;
+      setIsLoadingChart(false);
+    }
 
     // Immediately synchronize candle expiry countdown for the newly selected timeframe and asset phase
     const symbolOffsetSec = Math.floor(getAssetTimeOffsetMs(selectedAsset.symbol, nextSec) / 1000);
@@ -703,6 +714,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     });
 
     const unsubLiveTicks = liveMarketFeed.addTickListener((tick) => {
+      if (isLoadingChart) return;
       const matchedAsset = findAssetBySymbol(tick.symbol);
       if (matchedAsset) {
         appendLiveTick(matchedAsset, tick.price, true);
@@ -725,6 +737,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
     // Subscribe to synchronized market broadcast ticks from backend REST sync
     const unsubscribe = supabaseMarketSync.subscribeTicks((payload) => {
+      if (isLoadingChart) return;
       if (normalizeAssetSymbol(payload.symbol) === normalizeAssetSymbol(selectedAsset.symbol)) {
         setCurrentPrice(payload.price);
         targetPriceRef.current = payload.price;
@@ -746,6 +759,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     let unsubDeriv = () => {};
     if (isDerivAsset) {
       unsubDeriv = derivClient.subscribeTicks(selectedAsset.symbol, (tick) => {
+        if (isLoadingChart) return;
         if (tick && tick.price > 0) {
           appendLiveTick(selectedAsset, tick.price, true);
           setCurrentPrice(tick.price);
@@ -779,6 +793,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         const sec = TIMEFRAME_SECONDS[timeframe];
         const liveCandlesSeries = aggregateCandlesForTimeframe(selectedAsset, sec);
         setCandles(liveCandlesSeries);
+        setIsLoadingChart(false);
       }
     });
 
@@ -869,6 +884,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     bootstrapGlobalMarket();
 
     const interval = setInterval(() => {
+      if (isLoadingChart) return;
       const sec = TIMEFRAME_SECONDS[timeframe];
       const nowMs = Date.now();
       const assetActiveTrades = activeTradesRef.current.filter(
@@ -1086,7 +1102,10 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
   // Asset Tab Switching with Persistent Cross-View Synchronization
   const handleSelectTabAsset = (asset: AssetInfo) => {
+    if (asset.symbol === selectedAsset.symbol) return;
     soundEngine.playUiClick();
+    setIsLoadingChart(true);
+    setCandles([]);
     setSelectedAsset(asset);
     saveSelectedAssetSymbol(asset.symbol);
     broadcastSyncEvent('ASSET_SELECTED', asset.symbol);
@@ -1107,6 +1126,8 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     saveOpenAssetTabSymbols(remaining.map((t) => t.symbol));
     broadcastSyncEvent('TABS_UPDATED', remaining.map((t) => t.symbol));
     if (selectedAsset.symbol === symbol) {
+      setIsLoadingChart(true);
+      setCandles([]);
       setSelectedAsset(remaining[0]);
       saveSelectedAssetSymbol(remaining[0].symbol);
       broadcastSyncEvent('ASSET_SELECTED', remaining[0].symbol);
@@ -2736,7 +2757,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   }, []);
 
   return (
-    <div className="flex flex-col h-[100dvh] md:h-[calc(100vh-60px)] md:min-h-[720px] bg-[#0a0a0a] text-slate-100 overflow-hidden font-sans select-none relative">
+    <div className="flex flex-col min-h-[100dvh] md:h-[calc(100vh-60px)] md:min-h-[720px] bg-[#0a0a0a] text-slate-100 overflow-x-hidden overflow-y-auto font-sans select-none relative">
       {/* Global Assets Loading Overlay */}
       {isLoadingAssets && (
         <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-[#0a0a0a]/98 backdrop-blur-md pointer-events-auto font-mono text-center px-6">
@@ -4053,7 +4074,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               onSelectDrawing={setSelectedDrawingId}
               onAddDrawing={handleAddNewDrawing}
               onUpdateDrawing={handleUpdateDrawing}
-              onCompleteDrawingTool={() => setActiveDrawingTool(null)}
+              onCompleteDrawingTool={() => setActiveDrawingTool('none')}
             />
             {/* Quotex-style sleek floating notification pill when trade is opened */}
             {tradeSuccess && (
@@ -5194,6 +5215,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         weeklyTradesCount={trades.filter((t) => t.status === 'won' || t.status === 'lost').length}
         userName={userProfile?.fullName || userProfile?.email || 'Trader'}
         userAccountId={effectiveAccount.id || 'UNRANKED'}
+        activeAccount={effectiveAccount}
       />
 
       {/* Indicator Settings Modal */}

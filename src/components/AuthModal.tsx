@@ -131,7 +131,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     try {
       const { data: profileData } = await supabase
         .from('profiles')
-        .select('*')
+        .select('id, email, full_name, kyc_status, self_balance, address, date_of_birth, country, referral_code, referred_by, profile_locked')
         .eq('id', user.id)
         .maybeSingle();
       existingProfile = profileData;
@@ -194,6 +194,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       dateOfBirth: resolvedProfile.dateOfBirth,
       country: resolvedProfile.country,
       balance: resolvedProfile.balance,
+      selfBalance: resolvedProfile.selfBalance,
     };
 
     onAuthSuccess({
