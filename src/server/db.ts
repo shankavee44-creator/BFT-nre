@@ -1816,14 +1816,14 @@ export function getAdminWithdrawals(statusFilter?: string) {
 export function adminApproveWithdrawal(withdrawalId: string, adminUserId: string) {
   const withdrawal = db.prepare('SELECT * FROM withdrawals WHERE id = ?').get(withdrawalId) as any;
   if (!withdrawal) throw new Error('Withdrawal record not found.');
-  if (withdrawal.status === 'completed') throw new Error('Withdrawal is already approved/completed.');
+  if (withdrawal.status === 'completed' || withdrawal.status === 'success') throw new Error('Withdrawal is already approved/completed.');
 
   const now = Date.now();
   const txHash = withdrawal.tx_hash || `tron_tx_${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`;
 
   db.prepare(`
     UPDATE withdrawals SET
-      status = 'completed',
+      status = 'success',
       tx_hash = ?,
       processed_at = ?
     WHERE id = ?
@@ -1891,19 +1891,53 @@ export function adminDeclineWithdrawal(withdrawalId: string, reason: string, adm
   if (withdrawal.status !== 'pending') throw new Error(`Withdrawal cannot be declined from status: ${withdrawal.status}`);
 
   const now = Date.now();
-  db.prepare(`
-    UPDATE withdrawals SET
-      status = 'rejected',
-      rejection_reason = ?,
-      processed_at = ?
-    WHERE id = ?
-  `).run(reason || 'Declined by administrator', now, withdrawalId);
+  
+  try {
+    db.exec('BEGIN TRANSACTION');
 
-  recordAdminAuditLog(adminUserId, 'DECLINE_WITHDRAWAL', withdrawalId, 'withdrawal', { reason });
+    // 1. Update status
+    db.prepare(`
+      UPDATE withdrawals SET
+        status = 'rejected',
+        rejection_reason = ?,
+        processed_at = ?
+      WHERE id = ? AND status = 'pending'
+    `).run(reason || 'Declined by administrator', now, withdrawalId);
+
+    // 2. Refund the trading account balance
+    const account = getAccountById(withdrawal.account_id);
+    if (account) {
+      const newBalance = Number((account.currentBalance + withdrawal.gross_amount).toFixed(2));
+      const newEquity = Number((account.equity + withdrawal.gross_amount).toFixed(2));
+      
+      db.prepare(`
+        UPDATE accounts SET
+          current_balance = ?,
+          equity = ?,
+          updated_at = ?
+        WHERE id = ?
+      `).run(newBalance, newEquity, now, account.id);
+      
+      // Update user table balance
+      if (account.tier === 'personal' || account.accountCategory === 'personal_live' || String(withdrawal.account_id).includes('PERS')) {
+          db.prepare(`UPDATE users SET self_balance = ? WHERE id = ?`).run(newBalance, withdrawal.user_id);
+      } else if (account.phase === 'funded') {
+          db.prepare(`UPDATE users SET funded_balance = ? WHERE id = ?`).run(newBalance, withdrawal.user_id);
+      }
+    }
+
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+
+  recordAdminAuditLog(adminUserId, 'DECLINE_WITHDRAWAL', withdrawalId, 'withdrawal', { reason, refundedAmount: withdrawal.gross_amount });
 
   return {
     ok: true,
     withdrawal: db.prepare('SELECT * FROM withdrawals WHERE id = ?').get(withdrawalId),
+    updatedAccount: getAccountById(withdrawal.account_id),
   };
 }
 
@@ -2492,3 +2526,54 @@ function mapTradeRow(row: any) {
 }
 
 
+export function cancelWithdrawalRequest(userId: string, withdrawalId: string) {
+  const withdrawal = db.prepare('SELECT * FROM withdrawals WHERE id = ? AND user_id = ?').get(withdrawalId, userId) as any;
+  if (!withdrawal) throw new Error('Withdrawal record not found.');
+  if (withdrawal.status !== 'pending') throw new Error(`Withdrawal cannot be cancelled from status: ${withdrawal.status}`);
+
+  const now = Date.now();
+  
+  try {
+    db.exec('BEGIN TRANSACTION');
+
+    // 1. Update status
+    const info = db.prepare(`
+      UPDATE withdrawals SET
+        status = 'cancelled',
+        processed_at = ?
+      WHERE id = ? AND status = 'pending'
+    `).run(now, withdrawalId);
+
+    if (info.changes === 0) {
+      throw new Error('Withdrawal request is no longer pending or already processed.');
+    }
+
+    // 2. Refund balance
+    const account = getAccountById(withdrawal.account_id);
+    if (account) {
+      const newBalance = Number((account.currentBalance + withdrawal.gross_amount).toFixed(2));
+      const newEquity = Number((account.equity + withdrawal.gross_amount).toFixed(2));
+      
+      db.prepare(`
+        UPDATE accounts SET
+          current_balance = ?,
+          equity = ?,
+          updated_at = ?
+        WHERE id = ?
+      `).run(newBalance, newEquity, now, account.id);
+      
+      // Update user table balance
+      if (account.tier === 'personal' || account.account_category === 'personal_live' || String(withdrawal.account_id).includes('PERS')) {
+          db.prepare(`UPDATE users SET self_balance = ? WHERE id = ?`).run(newBalance, userId);
+      } else if (account.phase === 'funded') {
+          db.prepare(`UPDATE users SET funded_balance = ? WHERE id = ?`).run(newBalance, userId);
+      }
+    }
+
+    db.exec('COMMIT');
+    return { ok: true, withdrawal: db.prepare('SELECT * FROM withdrawals WHERE id = ?').get(withdrawalId) };
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}

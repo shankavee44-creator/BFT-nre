@@ -91,7 +91,15 @@ export function mapFromSupabaseRow(row: any): BinaryTrade {
     : 85;
   const createdMs = row.created_at ? new Date(row.created_at).getTime() : Date.now();
   const expiresMs = row.expires_at ? new Date(row.expires_at).getTime() : createdMs + 60000;
+  const now = Date.now();
   
+  // A trade is only 'active' if status is OPEN and it hasn't expired yet.
+  // Expired OPEN trades are 'zombies' that should be settled or ignored.
+  const isExpired = now >= expiresMs;
+  let status: 'active' | 'won' | 'lost' | 'tie' = row.status === 'OPEN' 
+    ? (isExpired ? 'lost' : 'active') // Default to 'lost' if zombie, or 'active' if valid
+    : (row.status.toLowerCase() as 'won' | 'lost' | 'tie');
+
   return {
     id: row.id,
     accountId: row.account_id || 'BFT-LIVE-DB', 
@@ -106,10 +114,10 @@ export function mapFromSupabaseRow(row: any): BinaryTrade {
     startTime: createdMs,
     durationSeconds: Math.max(5, Math.round((expiresMs - createdMs) / 1000)),
     endTime: expiresMs,
-    status: row.status === 'OPEN' ? 'active' : row.status.toLowerCase() as 'won' | 'lost',
-    pnl: row.status === 'WON' 
+    status,
+    pnl: status === 'won'
       ? Number(row.amount) * (payoutPercentage / 100) 
-      : (row.status === 'LOST' ? -Number(row.amount) : 0),
+      : (status === 'lost' ? -Number(row.amount) : 0),
     accountTier: row.account_type === 'REAL' ? 'personal' : row.account_type?.toLowerCase(),
   };
 }

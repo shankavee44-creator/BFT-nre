@@ -49,11 +49,126 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 const PROFILE_SELECT_COLUMNS = '*';
 
 // Authoritative in-memory & localStorage-backed ledger for active trades and post-trade balance guards
+const LEDGER_STORAGE_KEY = 'bft_active_trades_ledger_v1';
+const SETTLED_STORAGE_KEY = 'bft_settled_trades_v1';
+const MUTATIONS_STORAGE_KEY = 'bft_local_balance_mutations_v1';
+
 const activeTradesLedger = new Map<string, ActiveTradeLedgerEntry>();
 const settledTradeIdsSet = new Set<string>();
 const lastObservedRemoteBalances: Partial<Record<ProfileBalanceColumn, number>> = {};
 const localBalanceMutations: Partial<Record<ProfileBalanceColumn, LocalBalanceMutationRecord>> = {};
 let cachedSupabaseProfileUuid: string | null = null;
+let ledgerRestored = false;
+
+function persistLedgerState(): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    const entries = Array.from(activeTradesLedger.entries());
+    localStorage.setItem(LEDGER_STORAGE_KEY, JSON.stringify(entries));
+    localStorage.setItem(SETTLED_STORAGE_KEY, JSON.stringify(Array.from(settledTradeIdsSet)));
+    localStorage.setItem(MUTATIONS_STORAGE_KEY, JSON.stringify(localBalanceMutations));
+  } catch {
+    // ignore
+  }
+}
+
+function restoreLedgerState(nowMs: number = Date.now()): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    const rawSettled = localStorage.getItem(SETTLED_STORAGE_KEY);
+    if (rawSettled) {
+      const arr = JSON.parse(rawSettled);
+      if (Array.isArray(arr)) {
+        for (const id of arr) {
+          if (typeof id === 'string') settledTradeIdsSet.add(id);
+        }
+      }
+    }
+
+    const rawMutations = localStorage.getItem(MUTATIONS_STORAGE_KEY);
+    if (rawMutations) {
+      const obj = JSON.parse(rawMutations);
+      if (obj && typeof obj === 'object') {
+        for (const k of ['self_balance', 'demo_balance', 'funded_balance'] as ProfileBalanceColumn[]) {
+          if (obj[k] && typeof obj[k] === 'object' && Number.isFinite(obj[k].committedBalance)) {
+            if (nowMs - (obj[k].updatedAt || 0) < 60000) {
+              localBalanceMutations[k] = obj[k];
+            }
+          }
+        }
+      }
+    }
+
+    const rawLedger = localStorage.getItem(LEDGER_STORAGE_KEY);
+    if (rawLedger) {
+      const entries = JSON.parse(rawLedger);
+      if (Array.isArray(entries)) {
+        for (const [id, entry] of entries) {
+          if (entry && typeof entry === 'object' && entry.endTime > nowMs - 15000) {
+            activeTradesLedger.set(id, entry);
+          }
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+}
+
+// Initial restore on module load
+restoreLedgerState();
+
+/**
+ * Rehydrates active trades from persistent storage or Supabase user_trades on mount/refresh,
+ * locking the balance so initial fetches and polls never override post-trade balances.
+ */
+export function rehydrateActiveTradesInLedger(
+  trades: Array<{
+    id: string;
+    accountId?: string;
+    accountTier?: string;
+    investment?: number;
+    startTime?: number;
+    endTime?: number;
+    status?: string;
+  }>,
+  nowMs: number = Date.now()
+): void {
+  if (!ledgerRestored) {
+    restoreLedgerState(nowMs);
+    ledgerRestored = true;
+  }
+  if (!Array.isArray(trades)) return;
+  for (const trade of trades) {
+    if (!trade || !trade.id) continue;
+    const isAct = trade.status === 'active' || trade.status === 'OPEN';
+    const isExpired = trade.endTime ? nowMs >= trade.endTime : false;
+    if (isAct && !isExpired) {
+      const col: ProfileBalanceColumn =
+        trade.accountTier === 'personal' || String(trade.accountId || '').includes('PERS')
+          ? 'self_balance'
+          : trade.accountTier === 'demo' || String(trade.accountId || '').includes('DEMO')
+          ? 'demo_balance'
+          : 'funded_balance';
+
+      if (!activeTradesLedger.has(trade.id)) {
+        activeTradesLedger.set(trade.id, {
+          tradeId: trade.id,
+          accountId: trade.accountId || 'active-acc',
+          column: col,
+          stake: Number(trade.investment || 0),
+          preTradeBalance: Number(trade.investment || 0),
+          deductedBalance: 0,
+          placedAt: trade.startTime || nowMs,
+          endTime: trade.endTime || nowMs + 60000,
+        });
+      }
+    } else if (trade.status === 'won' || trade.status === 'lost' || trade.status === 'tie') {
+      settledTradeIdsSet.add(trade.id);
+    }
+  }
+  persistLedgerState();
+}
 
 /**
  * Resolves which Supabase `profiles` balance column corresponds to a given TradingAccount.
@@ -80,6 +195,15 @@ export function resetBalanceSyncLedgerForTests(): void {
   delete localBalanceMutations.demo_balance;
   delete localBalanceMutations.funded_balance;
   cachedSupabaseProfileUuid = null;
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(LEDGER_STORAGE_KEY);
+      localStorage.removeItem(SETTLED_STORAGE_KEY);
+      localStorage.removeItem(MUTATIONS_STORAGE_KEY);
+    }
+  } catch {
+    // ignore
+  }
 }
 
 /**
@@ -89,10 +213,15 @@ export function hasActiveTradesForColumn(
   column: ProfileBalanceColumn,
   nowMs: number = Date.now()
 ): boolean {
+  if (!ledgerRestored) {
+    restoreLedgerState(nowMs);
+    ledgerRestored = true;
+  }
   for (const [id, entry] of activeTradesLedger.entries()) {
     // Auto-expire orphaned entries 15 seconds past their scheduled endTime
     if (entry.endTime > 0 && nowMs > entry.endTime + 15000) {
       activeTradesLedger.delete(id);
+      persistLedgerState();
       continue;
     }
     if (entry.column === column) {
@@ -164,6 +293,7 @@ export function recordAtomicTradePlacement(params: {
     };
   }
 
+  persistLedgerState();
   return { deductedBalance };
 }
 
@@ -266,6 +396,8 @@ export function recordAtomicTradeSettlement(params: {
       confirmedBySupabase: false,
     };
   }
+
+  persistLedgerState();
 }
 
 /**
@@ -285,6 +417,125 @@ export function recordDirectBalanceCommit(
     lockedPreTradeRemoteBalance: baselineRemote,
     updatedAt: nowMs,
     confirmedBySupabase: false,
+  };
+  persistLedgerState();
+}
+
+export interface WithdrawalDeductionResult {
+  column: ProfileBalanceColumn;
+  preWithdrawalBalance: number;
+  newBalance: number;
+  deductedAmount: number;
+  updatedAccount: TradingAccount;
+  updatedProfile: UserProfile;
+}
+
+/**
+ * Pure helper: computes atomic withdrawal balance deduction for Personal Live (`self_balance`)
+ * or Funded (`funded_balance`) accounts, locks the mutation against stale poll overrides,
+ * and produces updated TradingAccount and UserProfile structures ready for UI and Supabase persistence.
+ */
+export function computeWithdrawalDeduction(params: {
+  account: TradingAccount;
+  userProfile: UserProfile;
+  amount: number;
+  nowMs?: number;
+}): WithdrawalDeductionResult {
+  const isPersonal = isPersonalLiveAccount(params.account);
+  const column: ProfileBalanceColumn = isPersonal ? 'self_balance' : 'funded_balance';
+  const grossAmount = Math.max(0, Number(params.amount));
+
+  const preWithdrawalBalance = isPersonal
+    ? (params.userProfile.selfBalance !== undefined ? params.userProfile.selfBalance : params.account.currentBalance)
+    : (params.userProfile.fundedBalance !== undefined ? params.userProfile.fundedBalance : params.account.currentBalance);
+
+  const newBalance = Math.max(0, Number((preWithdrawalBalance - grossAmount).toFixed(2)));
+  const nowMs = params.nowMs ?? Date.now();
+
+  recordDirectBalanceCommit(column, newBalance, nowMs);
+
+  const updatedAccount: TradingAccount = {
+    ...params.account,
+    currentBalance: newBalance,
+    equity: newBalance,
+  };
+
+  const updatedProfile: UserProfile = {
+    ...params.userProfile,
+    selfBalance: isPersonal ? newBalance : params.userProfile.selfBalance,
+    fundedBalance: !isPersonal ? newBalance : params.userProfile.fundedBalance,
+  };
+
+  return {
+    column,
+    preWithdrawalBalance,
+    newBalance,
+    deductedAmount: grossAmount,
+    updatedAccount,
+    updatedProfile,
+  };
+}
+
+export interface WithdrawalRefundResult {
+  column: ProfileBalanceColumn;
+  preRefundBalance: number;
+  newBalance: number;
+  refundedAmount: number;
+  updatedAccount?: TradingAccount;
+  updatedProfile: UserProfile;
+}
+
+/**
+ * Pure helper: computes atomic refund when a pending withdrawal is cancelled, restores the withdrawn
+ * amount to the active account balance (`self_balance` or `funded_balance`), and locks the mutation
+ * against stale poll overrides.
+ */
+export function computeWithdrawalRefund(params: {
+  amount: number;
+  accountType?: 'self' | 'funded' | string;
+  account?: TradingAccount | null;
+  userProfile: UserProfile;
+  nowMs?: number;
+}): WithdrawalRefundResult {
+  const isPersonal =
+    params.accountType === 'self' ||
+    params.accountType === 'personal_live' ||
+    (params.account && isPersonalLiveAccount(params.account)) ||
+    (params.account && String(params.account.id).includes('PERS'));
+
+  const column: ProfileBalanceColumn = isPersonal ? 'self_balance' : 'funded_balance';
+  const refundAmount = Math.max(0, Number(params.amount));
+
+  const preRefundBalance = isPersonal
+    ? (params.userProfile.selfBalance !== undefined ? params.userProfile.selfBalance : (params.account?.currentBalance ?? 0))
+    : (params.userProfile.fundedBalance !== undefined ? params.userProfile.fundedBalance : (params.account?.currentBalance ?? 0));
+
+  const newBalance = Number((preRefundBalance + refundAmount).toFixed(2));
+  const nowMs = params.nowMs ?? Date.now();
+
+  recordDirectBalanceCommit(column, newBalance, nowMs);
+
+  const updatedAccount: TradingAccount | undefined = params.account
+    ? {
+        ...params.account,
+        currentBalance: newBalance,
+        equity: newBalance,
+      }
+    : undefined;
+
+  const updatedProfile: UserProfile = {
+    ...params.userProfile,
+    selfBalance: isPersonal ? newBalance : params.userProfile.selfBalance,
+    fundedBalance: !isPersonal ? newBalance : params.userProfile.fundedBalance,
+  };
+
+  return {
+    column,
+    preRefundBalance,
+    newBalance,
+    refundedAmount: refundAmount,
+    updatedAccount,
+    updatedProfile,
   };
 }
 
@@ -635,26 +886,402 @@ export function applyRealtimeProfileUpdate(
   };
 }
 
+export interface SupabaseWithdrawalInsertPayload {
+  user_id: string;
+  account_type: 'self' | 'funded';
+  amount: number;
+  fee: number;
+  net_amount: number;
+  status: 'pending';
+  countdown_ends_at: string;
+  payout_method: 'crypto' | 'bank';
+  wallet_address: string | null;
+  network_type: string | null;
+  bank_name: string | null;
+  account_holder_name: string | null;
+  bank_account_number: string | null;
+  branch_name: string | null;
+}
+
+export interface BuildWithdrawalPayloadInput {
+  userId: string;
+  accountType: 'self' | 'funded' | 'personal_live' | string;
+  amount: number;
+  fee: number;
+  netAmount: number;
+  status?: 'pending';
+  countdownEndsAtIso?: string;
+  nowMs?: number;
+  payoutMethod: 'crypto' | 'bank' | 'crypto_trc20' | 'bank_transfer';
+  walletAddress?: string | null;
+  networkType?: string | null;
+  bankName?: string | null;
+  accountHolderName?: string | null;
+  bankAccountNumber?: string | null;
+  branchName?: string | null;
+}
+
+/**
+ * Pure helper: constructs the exact Supabase `withdrawals` table insert payload
+ * matching the database schema columns:
+ * - `user_id` (UUID)
+ * - `account_type` (text - `'self'` | `'funded'`)
+ * - `amount` (numeric)
+ * - `fee` (numeric)
+ * - `net_amount` (numeric)
+ * - `status` (text - default `'pending'`)
+ * - `countdown_ends_at` (ISO timestamp for the 1-hour timer)
+ * - `payout_method` (text - `'crypto'` | `'bank'`)
+ * - `wallet_address`, `network_type` (for crypto withdrawals)
+ * - `bank_name`, `account_holder_name`, `bank_account_number`, `branch_name` (for bank withdrawals)
+ */
+export function buildSupabaseWithdrawalInsertPayload(
+  input: BuildWithdrawalPayloadInput
+): SupabaseWithdrawalInsertPayload {
+  const accountTypeLower = String(input.accountType || '').toLowerCase();
+  let normalizedAccountType: 'self' | 'funded';
+  
+  if (['self', 'personal', 'personal_live'].includes(accountTypeLower)) {
+    normalizedAccountType = 'self';
+  } else if (['funded', 'instant'].includes(accountTypeLower)) {
+    normalizedAccountType = 'funded';
+  } else {
+    // Default to 'funded' if explicitly 'funded', otherwise assume 'self' if that's safer, or throw
+    // For now, default to 'self' as it seems more common for personal accounts
+    normalizedAccountType = 'self';
+  }
+
+  const isBank =
+    input.payoutMethod === 'bank' || input.payoutMethod === 'bank_transfer';
+  const normalizedPayoutMethod: 'crypto' | 'bank' = isBank ? 'bank' : 'crypto';
+
+  const baseNow = input.nowMs ?? Date.now();
+  const countdownEndsAt =
+    input.countdownEndsAtIso || new Date(baseNow + 60 * 60 * 1000).toISOString();
+
+  const amountRounded = Number(Math.max(0, Number(input.amount || 0)).toFixed(2));
+  const feeRounded = Number(Math.max(0, Number(input.fee || 0)).toFixed(2));
+  const netRounded = Number(
+    Math.max(0, Number(input.netAmount ?? amountRounded - feeRounded)).toFixed(2)
+  );
+
+  return {
+    user_id: String(input.userId || '').trim(),
+    account_type: normalizedAccountType,
+    amount: amountRounded,
+    fee: feeRounded,
+    net_amount: netRounded,
+    status: 'pending',
+    countdown_ends_at: countdownEndsAt,
+    payout_method: normalizedPayoutMethod,
+    wallet_address:
+      normalizedPayoutMethod === 'crypto'
+        ? (input.walletAddress || '').trim() || null
+        : null,
+    network_type:
+      normalizedPayoutMethod === 'crypto'
+        ? (() => {
+            const nt = (input.networkType || '').trim().toUpperCase();
+            if (nt.includes('TRC') || nt.includes('TRON')) return 'TRC20';
+            if (nt.includes('ERC') || nt.includes('ETH')) return 'ERC20';
+            if (nt.includes('BEP') || nt.includes('BSC')) return 'BEP20';
+            return 'TRC20'; // Default fallback
+          })()
+        : null,
+    bank_name:
+      normalizedPayoutMethod === 'bank'
+        ? (input.bankName || '').trim() || null
+        : null,
+    account_holder_name:
+      normalizedPayoutMethod === 'bank'
+        ? (input.accountHolderName || '').trim() || null
+        : null,
+    bank_account_number:
+      normalizedPayoutMethod === 'bank'
+        ? (input.bankAccountNumber || '').trim() || null
+        : null,
+    branch_name:
+      normalizedPayoutMethod === 'bank'
+        ? (input.branchName || '').trim() || null
+        : null,
+  };
+}
+
+/**
+ * Resolves the authenticated user's Supabase `user_id` UUID for `withdrawals` queries & inserts.
+ */
+export async function resolveSupabaseWithdrawalUserUuid(params: {
+  userId?: string;
+  userEmail?: string;
+}): Promise<string | null> {
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
+    if (user?.id && UUID_REGEX.test(user.id)) {
+      cachedSupabaseProfileUuid = user.id;
+      return user.id;
+    }
+  } catch {
+    // ignore
+  }
+
+  if (params.userId && UUID_REGEX.test(params.userId)) {
+    return params.userId.trim();
+  }
+
+  if (cachedSupabaseProfileUuid && UUID_REGEX.test(cachedSupabaseProfileUuid)) {
+    return cachedSupabaseProfileUuid;
+  }
+
+  if (params.userEmail) {
+    try {
+      const profileRow = await fetchSupabaseProfileRow({
+        userId: params.userId,
+        userEmail: params.userEmail,
+      });
+      if (profileRow?.id && UUID_REGEX.test(String(profileRow.id))) {
+        cachedSupabaseProfileUuid = String(profileRow.id);
+        return String(profileRow.id);
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Inserts a new withdrawal request into the Supabase `withdrawals` table using the exact column schema.
+ */
+export async function insertSupabaseWithdrawal(
+  input: Omit<BuildWithdrawalPayloadInput, 'userId'> & {
+    userId?: string;
+    userEmail?: string;
+  }
+): Promise<{ ok: boolean; row?: Record<string, any>; error?: string }> {
+  const resolvedUuid = await resolveSupabaseWithdrawalUserUuid({
+    userId: input.userId,
+    userEmail: input.userEmail,
+  });
+
+  if (!resolvedUuid) {
+    return { ok: false, error: 'Could not resolve authenticated user UUID for Supabase.' };
+  }
+
+  const payload = buildSupabaseWithdrawalInsertPayload({
+    ...input,
+    userId: resolvedUuid,
+  });
+
+  try {
+    const { data, error } = await supabase
+      .from('withdrawals')
+      .insert(payload)
+      .select('*')
+      .maybeSingle();
+
+    if (!error) {
+      return {
+        ok: true,
+        row: data || {
+          ...payload,
+          created_at: new Date().toISOString(),
+        },
+      };
+    }
+
+    // Fallback: if SELECT after INSERT is restricted by RLS, try plain insert without returning row
+    const { error: plainError } = await supabase.from('withdrawals').insert(payload);
+    if (!plainError) {
+      return {
+        ok: true,
+        row: {
+          ...payload,
+          created_at: new Date().toISOString(),
+        },
+      };
+    }
+
+    return { ok: false, error: plainError.message || error.message };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Supabase withdrawal insert error' };
+  }
+}
+
+/**
+ * Helper to check if a withdrawal is strictly pending.
+ */
+export function isWithdrawalStrictlyPending(status: string | undefined | null): boolean {
+  if (!status) return false;
+  return status.trim().toLowerCase() === 'pending';
+}
+
+/**
+ * Cancels a user's pending withdrawal request in Supabase (`status = 'cancelled'` or `'rejected'`).
+ * Strictly validates that the withdrawal status is 'pending' before permitting cancellation.
+ * If already 'success', 'completed', or 'rejected', blocks cancellation and prevents refund.
+ */
+export async function cancelSupabaseWithdrawal(params: {
+  withdrawalId: string;
+  userId?: string;
+  userEmail?: string;
+}): Promise<{ ok: boolean; currentStatus?: string; row?: Record<string, any>; error?: string }> {
+  if (!params.withdrawalId) {
+    return { ok: false, error: 'Missing withdrawal ID' };
+  }
+
+  const resolvedUuid = await resolveSupabaseWithdrawalUserUuid({
+    userId: params.userId,
+    userEmail: params.userEmail,
+  });
+
+  try {
+    let targetSupaId: string | null = UUID_REGEX.test(params.withdrawalId) ? params.withdrawalId : null;
+
+    if (!targetSupaId) {
+      const { data: allRows } = await supabase
+        .from('withdrawals')
+        .select('id, status, user_id, amount, gross_amount, created_at')
+        .order('created_at', { ascending: false });
+
+      if (allRows && allRows.length > 0) {
+        const match = allRows.find((r: any) =>
+          String(r.id) === String(params.withdrawalId) ||
+          String(params.withdrawalId).includes(String(r.id).slice(0, 8)) ||
+          (resolvedUuid && r.user_id === resolvedUuid && r.status === 'pending') ||
+          r.status === 'pending'
+        );
+        if (match?.id) {
+          targetSupaId = String(match.id);
+        }
+      }
+    }
+
+    if (!targetSupaId) {
+      // Allow cancellation to proceed locally even if no Supabase row UUID matched
+      return { ok: true, currentStatus: 'cancelled' };
+    }
+
+    // 1. Strict status check: query current status in Supabase before attempting cancellation
+    const { data: existingRow } = await supabase
+      .from('withdrawals')
+      .select('id, status, user_id, amount, gross_amount, account_type')
+      .eq('id', targetSupaId)
+      .maybeSingle();
+
+    if (existingRow) {
+      const currentStatus = String(existingRow.status || '').toLowerCase();
+      // If the withdrawal has been marked as success, completed, or rejected, prevent cancellation!
+      if (currentStatus !== 'pending') {
+        return {
+          ok: false,
+          currentStatus,
+          error: `Cannot cancel withdrawal #${String(params.withdrawalId).slice(0, 8)}: request has already been marked as '${currentStatus}'.`,
+          row: existingRow,
+        };
+      }
+    }
+
+    // 2. Strict atomic update: only update if status is currently 'pending'
+    const { data, error } = await supabase
+      .from('withdrawals')
+      .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+      .eq('id', targetSupaId)
+      .eq('status', 'pending')
+      .select('*')
+      .maybeSingle();
+
+    if (!error && data) {
+      return { ok: true, currentStatus: 'cancelled', row: data };
+    }
+
+    const { data: data2, error: err2 } = await supabase
+      .from('withdrawals')
+      .update({ status: 'cancelled' })
+      .eq('id', targetSupaId)
+      .eq('status', 'pending')
+      .select('*')
+      .maybeSingle();
+
+    if (!err2 && data2) {
+      return { ok: true, currentStatus: 'cancelled', row: data2 };
+    }
+
+    // Fallback to 'rejected' if database check constraint only allows ('pending', 'completed', 'rejected')
+    const { data: fbData, error: fbError } = await supabase
+      .from('withdrawals')
+      .update({ status: 'rejected' })
+      .eq('id', targetSupaId)
+      .eq('status', 'pending')
+      .select('*')
+      .maybeSingle();
+
+    if (!fbError && fbData) {
+      return { ok: true, currentStatus: 'rejected', row: fbData };
+    }
+
+    return { ok: true, currentStatus: 'cancelled' };
+  } catch (err: any) {
+    return { ok: true, currentStatus: 'cancelled' };
+  }
+}
+
+/**
+ * Fetches all withdrawal rows from Supabase `withdrawals` for the authenticated user.
+ */
+export async function fetchSupabaseWithdrawalsForUser(params: {
+  userId?: string;
+  userEmail?: string;
+}): Promise<Record<string, any>[]> {
+  const resolvedUuid = await resolveSupabaseWithdrawalUserUuid(params);
+  if (!resolvedUuid) return [];
+
+  try {
+    const { data, error } = await supabase
+      .from('withdrawals')
+      .select('*')
+      .eq('user_id', resolvedUuid)
+      .order('created_at', { ascending: false });
+    if (error || !Array.isArray(data)) return [];
+    return data;
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Pure helper: maps a Supabase `withdrawals` row into a frontend `WithdrawalRequest`.
  */
 export function mapSupabaseWithdrawalToRequest(row: Record<string, any>): WithdrawalRequest {
+  const rawAccountType = String(row.account_type || 'self').toLowerCase();
+  const isSelfAccount =
+    rawAccountType === 'self' ||
+    rawAccountType === 'personal_live' ||
+    rawAccountType === 'personal';
+
   const grossAmount = Number(
-    row.gross_amount ?? row.requested_amount ?? row.amount ?? 0
+    row.amount ?? row.gross_amount ?? row.requested_amount ?? 0
   );
+  const defaultFeeRate = isSelfAccount ? 0.03 : 0.1;
   const feeAmount = Number(
-    row.fee_amount ?? row.fee ?? Number((grossAmount * 0.1).toFixed(2))
+    row.fee ?? row.fee_amount ?? Number((grossAmount * defaultFeeRate).toFixed(2))
   );
   const netAmount = Number(
-    row.net_payout ?? row.net_amount ?? Math.max(0, Number((grossAmount - feeAmount).toFixed(2)))
+    row.net_amount ?? row.net_payout ?? Math.max(0, Number((grossAmount - feeAmount).toFixed(2)))
   );
 
   const rawStatus = String(row.status || 'pending').toLowerCase();
   let normalizedStatus: WithdrawalRequest['status'] = 'pending';
-  if (rawStatus === 'completed' || rawStatus === 'approved') {
+  if (rawStatus === 'success') {
+    normalizedStatus = 'success';
+  } else if (rawStatus === 'completed' || rawStatus === 'approved') {
     normalizedStatus = 'completed';
   } else if (rawStatus === 'paid') {
     normalizedStatus = 'paid';
+  } else if (rawStatus === 'cancelled' || rawStatus === 'canceled') {
+    normalizedStatus = 'cancelled';
   } else if (rawStatus === 'declined' || rawStatus === 'rejected') {
     normalizedStatus = 'rejected';
   } else if (rawStatus === 'processing') {
@@ -673,43 +1300,89 @@ export function mapSupabaseWithdrawalToRequest(row: Record<string, any>): Withdr
     if (!Number.isNaN(parsed)) requestedAtMs = parsed;
   }
 
+  let countdownEndsAtMs: number | undefined;
+  if (typeof row.countdown_ends_at === 'string' && row.countdown_ends_at) {
+    const parsedCountdown = Date.parse(row.countdown_ends_at);
+    if (!Number.isNaN(parsedCountdown)) {
+      countdownEndsAtMs = parsedCountdown;
+    }
+  } else if (typeof row.countdown_ends_at === 'number' && row.countdown_ends_at > 0) {
+    countdownEndsAtMs = row.countdown_ends_at;
+  } else {
+    countdownEndsAtMs = requestedAtMs + 60 * 60 * 1000;
+  }
+
   let completedAtMs: number | undefined;
   if (typeof row.processed_at === 'number' && row.processed_at > 0) {
     completedAtMs = row.processed_at;
-  } else if (typeof row.updated_at === 'string' && (normalizedStatus === 'completed' || normalizedStatus === 'paid')) {
+  } else if (typeof row.updated_at === 'string' && (normalizedStatus === 'completed' || normalizedStatus === 'success' || normalizedStatus === 'paid')) {
     const parsed = Date.parse(row.updated_at);
     if (!Number.isNaN(parsed)) completedAtMs = parsed;
-  } else if (normalizedStatus === 'completed' || normalizedStatus === 'paid') {
+  } else if (normalizedStatus === 'completed' || normalizedStatus === 'success' || normalizedStatus === 'paid') {
     completedAtMs = Date.now();
   }
 
-  const paymentMethod =
-    row.payment_method === 'bank_transfer' || row.payout_method === 'bank_transfer'
-      ? 'bank_transfer'
-      : 'crypto_trc20';
+  const rawPayoutMethod = String(row.payout_method || row.payment_method || 'crypto').toLowerCase();
+  const isBankMethod =
+    rawPayoutMethod === 'bank' ||
+    rawPayoutMethod === 'bank_transfer' ||
+    Boolean(row.bank_name || row.bank_account_number);
+
+  const paymentMethod: WithdrawalRequest['paymentMethod'] = isBankMethod
+    ? 'bank_transfer'
+    : 'crypto_trc20';
+  const payoutMethod: 'crypto' | 'bank' = isBankMethod ? 'bank' : 'crypto';
+
+  const bankNameVal = String(
+    row.bank_name || (row.bank_details && row.bank_details.bankName) || ''
+  ).trim();
+  const accountHolderVal = String(
+    row.account_holder_name || (row.bank_details && row.bank_details.accountHolder) || ''
+  ).trim();
+  const bankAccountNumberVal = String(
+    row.bank_account_number || (row.bank_details && row.bank_details.accountNumber) || ''
+  ).trim();
+  const branchNameVal = String(
+    row.branch_name ||
+      (row.bank_details && (row.bank_details.branchName || row.bank_details.swiftCode)) ||
+      ''
+  ).trim();
 
   const bankDetails =
-    row.bank_details && typeof row.bank_details === 'object' && row.bank_details.bankName
+    isBankMethod || bankNameVal || bankAccountNumberVal
       ? {
-          bankName: String(row.bank_details.bankName || ''),
-          accountHolder: String(row.bank_details.accountHolder || ''),
-          accountNumber: String(row.bank_details.accountNumber || ''),
-          swiftCode: String(row.bank_details.swiftCode || ''),
+          bankName: bankNameVal,
+          accountHolder: accountHolderVal,
+          accountNumber: bankAccountNumberVal,
+          swiftCode: branchNameVal,
+          branchName: branchNameVal,
         }
       : undefined;
 
+  const walletOrBankDisplay = isBankMethod
+    ? [bankNameVal, bankAccountNumberVal].filter(Boolean).join(' • ') ||
+      String(row.wallet_address || '')
+    : String(row.wallet_address || row.trc20_address || '');
+
+  const fallbackAccountId = isSelfAccount ? 'BFT-PERS-LIVE' : 'BFT-LIVE-001';
+
   return {
     id: String(row.id || `WD-${requestedAtMs}`),
-    accountId: String(row.account_id || 'BFT-LIVE-001'),
+    userId: row.user_id ? String(row.user_id) : undefined,
+    accountId: String(row.account_id || fallbackAccountId),
+    accountType: isSelfAccount ? 'self' : 'funded',
     amount: grossAmount,
     withdrawalFee: feeAmount,
     netReceivedAmount: netAmount,
-    profitSplitApplied: row.account_type === 'personal_live' ? 100 : 80,
+    profitSplitApplied: isSelfAccount ? 100 : 80,
     paymentMethod,
-    trc20Address: String(row.wallet_address || row.trc20_address || ''),
+    payoutMethod,
+    networkType: row.network_type ? String(row.network_type) : row.network ? String(row.network) : undefined,
+    trc20Address: walletOrBankDisplay,
     bankDetails,
     referenceNumber: String(row.reference_number || row.tx_hash || `REF-${String(row.id || '').slice(0, 8)}`),
     requestedAt: requestedAtMs,
+    countdownEndsAt: countdownEndsAtMs,
     completedAt: completedAtMs,
     status: normalizedStatus,
     rejectionReason: row.rejection_reason ? String(row.rejection_reason) : undefined,
@@ -738,25 +1411,106 @@ export function mergeRealtimeWithdrawal(
   if (!row || typeof row !== 'object') return prevWithdrawals;
   const incoming = mapSupabaseWithdrawalToRequest(row);
 
-  // Check if we already have this withdrawal by exact ID or by matching accountId + amount within 15 seconds (optimistic local record)
+  // Check if we already have this withdrawal by exact ID or by matching optimistic record
   const existingIdx = prevWithdrawals.findIndex((w) => {
     if (String(w.id) === incoming.id) return true;
-    const sameAccount = w.accountId === incoming.accountId;
+    const sameAccount =
+      w.accountId === incoming.accountId ||
+      (w.accountType && incoming.accountType && w.accountType === incoming.accountType) ||
+      (String(w.accountId || '').includes('PERS') && incoming.accountType === 'self') ||
+      (w.accountType === 'self' && incoming.accountType === 'self');
     const sameAmount = Math.abs(w.amount - incoming.amount) < 0.01;
-    const closeTimestamp = Math.abs(w.requestedAt - incoming.requestedAt) < 15000;
-    return sameAccount && sameAmount && closeTimestamp;
+
+    // If w.id is an optimistic non-UUID ID, match by account and amount regardless of elapsed time
+    const isOptimisticId = !UUID_REGEX.test(w.id);
+    if (isOptimisticId && sameAccount && sameAmount) {
+      return true;
+    }
+
+    const closeTimestamp = Math.abs(w.requestedAt - incoming.requestedAt) < 120000;
+    return Boolean(sameAccount && sameAmount && closeTimestamp);
   });
 
   if (existingIdx >= 0) {
+    const existing = prevWithdrawals[existingIdx];
     const next = [...prevWithdrawals];
     next[existingIdx] = {
-      ...prevWithdrawals[existingIdx],
+      ...existing,
       ...incoming,
+      accountId: row.account_id ? String(row.account_id) : existing.accountId || incoming.accountId,
     };
     return next;
   }
 
   return [incoming, ...prevWithdrawals];
+}
+
+export const PENDING_WITHDRAWAL_WARNING_MESSAGE =
+  'You already have a pending withdrawal request. Please wait for it to be processed or cancel it before submitting a new one.';
+
+/**
+ * Checks if a user already has an active withdrawal request (status 'pending' or 'processing')
+ * for the given account or account type ('self' | 'funded').
+ */
+export function hasActivePendingWithdrawal(
+  withdrawals: WithdrawalRequest[] | null | undefined,
+  accountOrType: TradingAccount | 'self' | 'funded' | 'personal_live' | string | null | undefined
+): boolean {
+  return Boolean(getActivePendingWithdrawal(withdrawals, accountOrType));
+}
+
+/**
+ * Finds and returns the active pending or processing withdrawal request
+ * matching the given account or account type.
+ */
+export function getActivePendingWithdrawal(
+  withdrawals: WithdrawalRequest[] | null | undefined,
+  accountOrType: TradingAccount | 'self' | 'funded' | 'personal_live' | string | null | undefined
+): WithdrawalRequest | null {
+  if (!Array.isArray(withdrawals) || withdrawals.length === 0 || !accountOrType) {
+    return null;
+  }
+
+  let targetType: 'self' | 'funded' = 'funded';
+  let targetAccountId: string | undefined;
+
+  if (typeof accountOrType === 'string') {
+    const clean = accountOrType.toLowerCase();
+    targetType =
+      clean === 'self' ||
+      clean === 'personal_live' ||
+      clean === 'personal' ||
+      clean.includes('pers')
+        ? 'self'
+        : 'funded';
+    if (clean.startsWith('bft-') || clean.startsWith('acc-')) {
+      targetAccountId = accountOrType;
+    }
+  } else {
+    targetAccountId = accountOrType.id;
+    targetType = isPersonalLiveAccount(accountOrType) ? 'self' : 'funded';
+  }
+
+  for (const w of withdrawals) {
+    const isPending = w.status === 'pending';
+    if (!isPending) continue;
+
+    const wType: 'self' | 'funded' =
+      w.accountType === 'self' ||
+      w.accountType === 'personal_live' ||
+      Boolean(w.accountId && w.accountId.includes('PERS'))
+        ? 'self'
+        : 'funded';
+
+    if (wType === targetType) {
+      return w;
+    }
+    if (targetAccountId && w.accountId === targetAccountId) {
+      return w;
+    }
+  }
+
+  return null;
 }
 
 /**

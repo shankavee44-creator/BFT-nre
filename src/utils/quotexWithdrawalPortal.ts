@@ -263,22 +263,29 @@ export function formatQuotexDateAndTime(timestampMs: number): {
 export function mapWithdrawalRequestToQuotexTransaction(req: WithdrawalRequest): QuotexTransactionItem {
   const dt = formatQuotexDateAndTime(req.requestedAt);
   const netOrGross = req.netReceivedAmount ?? req.amount;
-  const computedFee = req.withdrawalFee ?? Number((req.amount * 0.1).toFixed(2));
+  const isSelf = req.accountType === 'self' || req.accountType === 'personal_live' || req.profitSplitApplied === 100;
+  const feePct = isSelf ? 3 : 10;
+  const computedFee = req.withdrawalFee ?? Number((req.amount * (feePct / 100)).toFixed(2));
   const statusMap: Record<WithdrawalRequest['status'], QuotexTransactionItem['status']> = {
     paid: 'Succeeded',
     completed: 'Succeeded',
+    success: 'Succeeded',
     doubled: 'Succeeded',
     processing: 'Waiting confirmation',
     pending: 'Pending',
     rejected: 'Canceled',
+    cancelled: 'Canceled',
   };
 
-  const isBank = req.paymentMethod === 'bank_transfer';
+  const isBank = req.paymentMethod === 'bank_transfer' || req.payoutMethod === 'bank';
   const isBep20 = req.trc20Address?.startsWith('0x');
+  const resolvedNetwork = isBank
+    ? req.bankDetails?.branchName || req.bankDetails?.swiftCode || 'BANK TRANSFER'
+    : req.networkType || (isBep20 ? 'BSC (BEP20)' : 'TRON (TRC-20)');
 
   return {
     id: req.id,
-    orderNumber: req.id.replace(/^WD-/, '5194099'),
+    orderNumber: req.id.replace(/^WD-/, '5194099').slice(0, 12),
     timestamp: req.requestedAt,
     dateFormatted: dt.dateFormatted,
     timeFormatted: dt.timeFormatted,
@@ -286,13 +293,13 @@ export function mapWithdrawalRequestToQuotexTransaction(req: WithdrawalRequest):
     rawStatus: req.status,
     type: 'Payout',
     paymentSystem: isBank ? 'Bank Transfer' : 'USDT',
-    network: isBank ? 'SWIFT / IBAN' : isBep20 ? 'BSC (BEP20)' : 'TRON (TRC-20)',
+    network: resolvedNetwork,
     purse: req.trc20Address,
     txHash: req.txHash || req.referenceNumber,
     amount: netOrGross,
     signedAmountFormatted: `-${netOrGross.toFixed(2)} $`,
     feeAmount: computedFee,
-    feeFormatted: `10% fee ($${computedFee.toFixed(2)})`,
+    feeFormatted: `${feePct}% fee ($${computedFee.toFixed(2)})`,
     accountId: req.accountId,
   };
 }

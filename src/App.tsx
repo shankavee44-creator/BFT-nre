@@ -37,6 +37,8 @@ import {
   saveActiveAccountId,
   loadWithdrawals,
   saveWithdrawals,
+  loadTrades,
+  saveTrades,
   clearAuthSession,
   loadOrCreateUserProfileByEmail,
 } from './utils/storage';
@@ -81,6 +83,7 @@ import {
   recordDirectBalanceCommit,
   commitProfileBalanceToSupabase,
   hasActiveTradesForColumn,
+  rehydrateActiveTradesInLedger,
   ProfileSyncSource,
   mergeRealtimeWithdrawal,
   mapSupabaseWithdrawalToRequest,
@@ -135,7 +138,14 @@ export default function App() {
     return p;
   });
   const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>([]);
-  const [trades, setTrades] = useState<BinaryTrade[]>([]);
+  const [trades, setTrades] = useState<BinaryTrade[]>(() => {
+    const loaded = loadTrades();
+    // Strictly filter out 'active' trades from localStorage on reload to prevent ghost/phantom execution.
+    // Genuine active trades will be re-fetched from the authoritative Supabase user_trades table.
+    const historicalOnly = loaded.filter((t) => t.status !== 'active');
+    rehydrateActiveTradesInLedger(historicalOnly);
+    return historicalOnly;
+  });
   const [protectedRouteNotice, setProtectedRouteNotice] = useState<string | null>(null);
 
   const userProfileRef = React.useRef<UserProfile>(userProfile);
@@ -347,7 +357,7 @@ export default function App() {
 
         apiGetWithdrawals()
           .then((wRes) => {
-            if (wRes && wRes.ok && Array.isArray(wRes.withdrawals)) {
+            if (wRes && wRes.ok && Array.isArray(wRes.withdrawals) && wRes.withdrawals.length > 0) {
               const mappedW: WithdrawalRequest[] = wRes.withdrawals.map((row: any) => ({
                 id: row.id,
                 accountId: row.account_id,
@@ -365,8 +375,17 @@ export default function App() {
                 isDoublePayoutEligible: false,
                 timeElapsedSeconds: 92,
               }));
-              setWithdrawals(mappedW);
-              saveWithdrawals(mappedW);
+              setWithdrawals((prev) => {
+                const existingIds = new Set(prev.map((w) => String(w.id)));
+                const merged = [...prev];
+                for (const item of mappedW) {
+                  if (!existingIds.has(String(item.id))) {
+                    merged.push(item);
+                  }
+                }
+                saveWithdrawals(merged);
+                return merged;
+              });
             }
           })
           .catch(() => {});
@@ -389,23 +408,58 @@ export default function App() {
 
     // Initial fetch of trades from SQLite backend (with Supabase fallback) if logged in
     if (userProfile.id && userProfile.isLoggedIn) {
-      apiGetUserTrades().then((tRes) => {
-        if (tRes && tRes.ok && Array.isArray(tRes.trades) && tRes.trades.length > 0) {
-          setTrades(tRes.trades);
-        } else {
+      const mergeIncomingTrades = (fetched: BinaryTrade[]) => {
+        if (!Array.isArray(fetched)) return;
+        setTrades((prev) => {
+          const byId = new Map<string, BinaryTrade>();
+          
+          // 1. Add all fetched trades (authoritative from DB)
+          for (const t of fetched) {
+            byId.set(t.id, t);
+          }
+
+          // 2. Only retain local trades if they are already settled (won/lost) 
+          // or if they were placed in the last 15 seconds (account for replication lag).
+          const now = Date.now();
+          for (const local of prev) {
+            if (!byId.has(local.id)) {
+              const isVeryRecent = (now - local.startTime) < 15000;
+              const isSettled = local.status === 'won' || local.status === 'lost' || local.status === 'tie';
+              
+              if (isSettled || (local.status === 'active' && isVeryRecent)) {
+                byId.set(local.id, local);
+              }
+            }
+          }
+
+          const merged = Array.from(byId.values()).sort((a, b) => b.startTime - a.startTime);
+          saveTrades(merged);
+          try {
+            localStorage.setItem('bft_trades', JSON.stringify(merged));
+          } catch {}
+          rehydrateActiveTradesInLedger(merged);
+          return merged;
+        });
+      };
+
+      apiGetUserTrades()
+        .then((tRes) => {
+          if (tRes && tRes.ok && Array.isArray(tRes.trades) && tRes.trades.length > 0) {
+            mergeIncomingTrades(tRes.trades);
+          }
           fetchUserTrades(userProfile.id).then((fetchedTrades) => {
             if (fetchedTrades.length > 0) {
-              setTrades(fetchedTrades);
+              mergeIncomingTrades(fetchedTrades);
             }
           });
-        }
-      }).catch(() => {
-        fetchUserTrades(userProfile.id).then((fetchedTrades) => {
-          if (fetchedTrades.length > 0) {
-            setTrades(fetchedTrades);
-          }
+        })
+        .catch(() => {
+          fetchUserTrades(userProfile.id).then((fetchedTrades) => {
+            if (fetchedTrades.length > 0) {
+              mergeIncomingTrades(fetchedTrades);
+            }
+          });
         });
-      });
     }
 
     // Global OTC Asset Discovery & Sync
@@ -426,14 +480,26 @@ export default function App() {
       
       if (eventType === 'INSERT') {
         const trade = mapFromSupabaseRow(newRecord);
-        setTrades((prev) => (prev.some((t) => t.id === trade.id) ? prev : [trade, ...prev]));
+        setTrades((prev) => {
+          const next = prev.some((t) => t.id === trade.id) ? prev : [trade, ...prev];
+          saveTrades(next);
+          rehydrateActiveTradesInLedger(next);
+          return next;
+        });
       } else if (eventType === 'UPDATE') {
         const trade = mapFromSupabaseRow(newRecord);
-        setTrades((prev) => 
-          prev.map((t) => (t.id === trade.id ? trade : t))
-        );
+        setTrades((prev) => {
+          const next = prev.map((t) => (t.id === trade.id ? trade : t));
+          saveTrades(next);
+          rehydrateActiveTradesInLedger(next);
+          return next;
+        });
       } else if (eventType === 'DELETE') {
-        setTrades((prev) => prev.filter((t) => t.id === oldRecord.id));
+        setTrades((prev) => {
+          const next = prev.filter((t) => t.id !== oldRecord.id);
+          saveTrades(next);
+          return next;
+        });
       }
     });
 
@@ -878,15 +944,40 @@ export default function App() {
   };
 
   const handleUpdateWithdrawal = (req: WithdrawalRequest) => {
-    const updated = withdrawals.map((w) => (w.id === req.id ? req : w));
-    setWithdrawals(updated);
-    saveWithdrawals(updated);
-    broadcastSyncEvent('WITHDRAWALS_UPDATED', updated);
+    setWithdrawals((prev) => {
+      const existingIdx = prev.findIndex((w) => {
+        if (String(w.id) === String(req.id)) return true;
+        const sameAmount = Math.abs(Number(w.amount || 0) - Number(req.amount || 0)) < 0.01;
+        const sameAccount =
+          w.accountType === req.accountType ||
+          (String(w.accountId || '').includes('PERS') && req.accountType === 'self');
+        const isOptimisticId = !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(w.id));
+        return Boolean(isOptimisticId && sameAmount && sameAccount);
+      });
+
+      if (existingIdx >= 0) {
+        const updated = [...prev];
+        updated[existingIdx] = req;
+        saveWithdrawals(updated);
+        broadcastSyncEvent('WITHDRAWALS_UPDATED', updated);
+        return updated;
+      }
+
+      const updated = prev.map((w) => (String(w.id) === String(req.id) ? req : w));
+      saveWithdrawals(updated);
+      broadcastSyncEvent('WITHDRAWALS_UPDATED', updated);
+      return updated;
+    });
   };
 
   const handleAddTrade = (trade: BinaryTrade) => {
     setTrades((prev) => {
-      const updated = [trade, ...prev];
+      const updated = [trade, ...prev.filter((t) => t.id !== trade.id)];
+      saveTrades(updated);
+      try {
+        localStorage.setItem('bft_trades', JSON.stringify(updated));
+      } catch {}
+      rehydrateActiveTradesInLedger(updated);
       return updated;
     });
     broadcastSyncEvent('TRADE_ADDED', trade);
@@ -914,8 +1005,11 @@ export default function App() {
   const handleUpdateTrade = (trade: BinaryTrade) => {
     setTrades((prev) => {
       const updated = prev.map((t) => (t.id === trade.id ? trade : t));
-      // LocalStorage fallback
-      localStorage.setItem('bft_trades', JSON.stringify(updated));
+      saveTrades(updated);
+      try {
+        localStorage.setItem('bft_trades', JSON.stringify(updated));
+      } catch {}
+      rehydrateActiveTradesInLedger(updated);
       return updated;
     });
     broadcastSyncEvent('TRADE_UPDATED', trade);
@@ -1212,10 +1306,29 @@ export default function App() {
     [userAccounts, activeAccountId, userProfile]
   );
 
-  const activeTerminalTrades = React.useMemo(
-    () => (activeAccount ? trades.filter((t) => t.accountId === activeAccount.id) : []),
-    [trades, activeAccount?.id]
-  );
+  const activeTerminalTrades = React.useMemo(() => {
+    if (!activeAccount) return [];
+    return trades.filter((t) => {
+      if (t.accountId === activeAccount.id) return true;
+      if (isPersonalLiveAccount(activeAccount)) {
+        return (
+          t.accountTier === 'personal' ||
+          t.accountId === 'BFT-LIVE-DB' ||
+          t.accountId.startsWith('BFT-PERS') ||
+          t.accountId === 'personal_live'
+        );
+      }
+      if (isDemoAccount(activeAccount)) {
+        return (
+          t.accountTier === 'demo' ||
+          t.accountId === 'BFT-DEMO-001' ||
+          t.accountId.startsWith('BFT-DEMO') ||
+          t.accountId === 'BFT-10000'
+        );
+      }
+      return false;
+    });
+  }, [trades, activeAccount]);
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-slate-100 flex flex-col selection:bg-[#ff8800] selection:text-slate-950 w-full max-w-[100vw] overflow-x-hidden relative">
@@ -1368,6 +1481,7 @@ export default function App() {
               onWithdrawalCommissionTriggered={handleWithdrawalCommission}
               inlineMode={true}
               userProfile={userProfile}
+              onUpdateProfile={handleUpdateProfile}
               onNavigateToKyc={() => setCurrentTab('dashboard')}
               onOpenChallengeModal={() => setSelectedPackageToBuy(PACKAGES[2])}
               onOpenDepositModal={() => setIsDepositModalOpen(true)}
@@ -1383,6 +1497,7 @@ export default function App() {
             onUpdateProfile={handleUpdateProfile}
             accounts={userAccounts}
             activeAccountId={activeAccountId}
+            onUpdateAccount={handleUpdateSingleAccount}
             trades={trades}
             referrals={affiliateReferrals}
             payouts={affiliatePayouts}
@@ -1441,6 +1556,7 @@ export default function App() {
           onUpdateWithdrawal={handleUpdateWithdrawal}
           onWithdrawalCommissionTriggered={handleWithdrawalCommission}
           userProfile={userProfile}
+          onUpdateProfile={handleUpdateProfile}
           onNavigateToKyc={() => {
             setIsWithdrawalModalOpen(false);
             setCurrentTab('dashboard');

@@ -60,6 +60,7 @@ import {
   recordTradeInDb,
   settleTradeInDb,
   getUserTradesFromDb,
+  cancelWithdrawalRequest,
   db,
 } from './src/server/db.ts';
 import { BackendMarketEngine } from './src/server/marketEngine.ts';
@@ -785,6 +786,22 @@ async function startServer() {
       return res.json(result);
     } catch (err: any) {
       return res.status(400).json({ ok: false, error: err?.message || 'Withdrawal failed.' });
+    }
+  });
+
+  // POST /api/withdrawals/cancel - Atomically cancel pending withdrawal & refund balance
+  app.post('/api/withdrawals/cancel', (req, res) => {
+    try {
+      const user = getAuthenticatedUser(req);
+      if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
+
+      const withdrawalId = String(req.body?.withdrawalId || '').trim();
+      if (!withdrawalId) return res.status(400).json({ ok: false, error: 'Missing withdrawal ID.' });
+
+      const result = cancelWithdrawalRequest(user.id, withdrawalId);
+      return res.json(result);
+    } catch (err: any) {
+      return res.status(400).json({ ok: false, error: err?.message || 'Cancellation failed.' });
     }
   });
 

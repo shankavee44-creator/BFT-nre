@@ -51,8 +51,18 @@ import {
   validateQuotexPurseAddress,
 } from '../utils/quotexWithdrawalPortal';
 import { soundEngine } from '../utils/soundEffects';
-import { apiSubmitWithdrawal } from '../utils/apiClient';
+import { apiSubmitWithdrawal, apiCancelWithdrawal } from '../utils/apiClient';
 import { supabase } from '../utils/supabase';
+import {
+  insertSupabaseWithdrawal,
+  fetchSupabaseWithdrawalsForUser,
+  mapSupabaseWithdrawalToRequest,
+  computeWithdrawalDeduction,
+  hasActivePendingWithdrawal,
+  getActivePendingWithdrawal,
+  PENDING_WITHDRAWAL_WARNING_MESSAGE,
+  commitProfileBalanceToSupabase,
+} from '../utils/supabaseRealtimeSync';
 
 interface WithdrawalModalProps {
   account?: TradingAccount | null;
@@ -66,6 +76,7 @@ interface WithdrawalModalProps {
   onWithdrawalCommissionTriggered?: (payoutAmount: number) => void;
   inlineMode?: boolean;
   userProfile?: UserProfile;
+  onUpdateProfile?: (updated: UserProfile) => void;
   onNavigateToKyc?: () => void;
   onOpenChallengeModal?: () => void;
   onOpenDepositModal?: () => void;
@@ -86,6 +97,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
   onWithdrawalCommissionTriggered,
   inlineMode = false,
   userProfile,
+  onUpdateProfile,
   onNavigateToKyc,
   onOpenChallengeModal,
   onOpenDepositModal,
@@ -137,6 +149,99 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
 
   const [error, setError] = useState<string | null>(null);
   const [successBanner, setSuccessBanner] = useState<string | null>(null);
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [nowTick, setNowTick] = useState<number>(() => Date.now());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNowTick(Date.now());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Sync user's latest withdrawals from Supabase on mount
+  useEffect(() => {
+    let isMounted = true;
+    fetchSupabaseWithdrawalsForUser({
+      userId: userProfile?.id || account?.ownerId,
+      userEmail: userProfile?.email,
+    })
+      .then((rows) => {
+        if (!isMounted || !Array.isArray(rows) || rows.length === 0) return;
+        for (const row of rows) {
+          const mapped = mapSupabaseWithdrawalToRequest(row);
+          const exists = withdrawals.some((w) => String(w.id) === String(mapped.id));
+          if (exists) {
+            onUpdateWithdrawal(mapped);
+          } else {
+            onAddWithdrawal(mapped);
+          }
+        }
+      })
+      .catch(() => {});
+    return () => {
+      isMounted = false;
+    };
+  }, [userProfile?.id, userProfile?.email]);
+
+  const formatCountdownRemaining = (countdownEndsAtMs?: number): string => {
+    if (!countdownEndsAtMs || !Number.isFinite(countdownEndsAtMs)) return '59:59';
+    const diffSec = Math.max(0, Math.floor((countdownEndsAtMs - nowTick) / 1000));
+    const mins = Math.floor(diffSec / 60);
+    const secs = diffSec % 60;
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  };
+
+  const handleCancelWithdrawalRequest = async (withdrawalId: string) => {
+    if (!withdrawalId || cancellingId) return;
+    setCancellingId(withdrawalId);
+    setError(null);
+    soundEngine.playUiClick();
+
+    try {
+      const targetReq = withdrawals.find((w) => String(w.id) === String(withdrawalId));
+
+      // Always perform backend cancellation to be safe
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await apiCancelWithdrawal({ withdrawalId, token: session?.access_token });
+
+      // Refresh withdrawals from source regardless, to ensure UI is in sync
+      const rows = await fetchSupabaseWithdrawalsForUser({
+        userId: userProfile?.id || account?.ownerId,
+        userEmail: userProfile?.email,
+      });
+      if (Array.isArray(rows)) {
+        for (const row of rows) {
+          onUpdateWithdrawal(mapSupabaseWithdrawalToRequest(row));
+        }
+      }
+
+      if (!res.ok) {
+        setError(res.error || 'Failed to cancel withdrawal request.');
+        return;
+      }
+
+      // If we found it locally, update it. If not found, the refresh will handle it.
+      if (targetReq) {
+        onUpdateWithdrawal({
+          ...targetReq,
+          status: 'cancelled',
+        });
+        setSuccessBanner(
+          `Withdrawal request #${String(withdrawalId).slice(0, 8)} cancelled! Successfully refunded $${targetReq.amount.toFixed(2)} USD back to your active balance.`
+        );
+      } else {
+        setSuccessBanner(
+          `Withdrawal #${String(withdrawalId).slice(0, 8)} cancellation processed. Balance updated.`
+        );
+      }
+      setForceCleared(true);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to cancel withdrawal request.');
+    } finally {
+      setCancellingId(null);
+    }
+  };
 
   useEffect(() => {
     if (!account) return;
@@ -151,6 +256,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
       setAmount(minVal);
     }
     setError(null);
+    setSuccessBanner(null);
   }, [account?.id]);
 
   // Synchronize paymentMethod when quotexMethod changes
@@ -181,10 +287,22 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
     [amount, monthsActive, account]
   );
 
-  // Manual Admin Verification Mode: Withdrawals remain pending until approved by admin in Supabase
-  const activeRequest = withdrawals.find(
-    (w) => (w.status === 'processing' || w.status === 'pending') && account && w.accountId === account.id
+  // Single Active Withdrawal Constraint: Check for pending/processing request matching this account type
+  const [forceCleared, setForceCleared] = useState(false);
+  useEffect(() => {
+    setForceCleared(false);
+  }, [withdrawals]);
+  const activePendingRequest = useMemo(
+    () => {
+        if (forceCleared) return null;
+        const req = getActivePendingWithdrawal(withdrawals, account);
+        return req && req.status === 'pending' ? req : null;
+    },
+    [withdrawals, account, forceCleared]
   );
+  
+  const hasActivePending = Boolean(activePendingRequest);
+  const activeRequest = activePendingRequest;
 
   // Merged Transaction Ledger & Pagination (strictly real user withdrawals, no fake demo rows)
   const allTransactions = useMemo(() => buildMergedTransactionLedger(withdrawals, false), [withdrawals]);
@@ -247,6 +365,13 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
       return;
     }
 
+    // Single Active Withdrawal Constraint Guard (Per User / Account Type)
+    if (hasActivePending) {
+      setError(PENDING_WITHDRAWAL_WARNING_MESSAGE);
+      soundEngine.playErrorAlert();
+      return;
+    }
+
     const validation = validateWithdrawalRequest(account, amount, { enforceFirstWithdrawalLock: true });
     if (!validation.valid) {
       setError(validation.reason || 'Withdrawal validation failed.');
@@ -288,68 +413,59 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
         : `${bankName.trim()} • ${accountNumber.trim()}`;
 
     try {
-      // Supabase persistent insertion into withdrawals table
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        const candidateId = user?.id || userProfile?.id || account.ownerId || 'usr_bft_001';
-        const bankDetailsPayload =
-          paymentMethod === 'bank_transfer'
-            ? {
-                bankName: bankName.trim(),
-                accountHolder: accountHolder.trim(),
-                accountNumber: accountNumber.trim(),
-                swiftCode: swiftCode.trim().toUpperCase(),
-              }
-            : { trc20Address: purseAddress.trim(), network, quotexMethod };
+      const isPersonalAcc = isPersonalLiveAccount(account);
+      const accountTypeCol: 'self' | 'funded' = isPersonalAcc ? 'self' : 'funded';
+      const payoutMethodCol: 'crypto' | 'bank' = paymentMethod === 'bank_transfer' ? 'bank' : 'crypto';
+      const feeVal = breakdown.withdrawalFeeAmount;
+      const netVal = breakdown.netPayoutToReceive;
+      const grossVal = breakdown.requestedAmount;
+      const nowMs = Date.now();
+      const countdownEndsAtMs = nowMs + 60 * 60 * 1000;
+      const countdownEndsAtIso = new Date(countdownEndsAtMs).toISOString();
 
-        const isPersonalAcc = isPersonalLiveAccount(account);
-        const feeVal = breakdown.withdrawalFeeAmount;
-        const netVal = breakdown.netPayoutToReceive;
-        const grossVal = breakdown.requestedAmount;
-
-        await supabase.from('withdrawals').insert({
-          user_id: candidateId,
-          user_email: userProfile?.email || user?.email || 'trader@binaryfunded.com',
-          account_id: account.id,
-          account_type: isPersonalAcc ? 'personal_live' : 'funded',
-          amount: grossVal,
-          gross_amount: grossVal,
-          requested_amount: grossVal,
-          fee: feeVal,
-          fee_amount: feeVal,
-          fee_percent: isPersonalAcc ? 3 : 10,
-          net_amount: netVal,
-          net_payout: netVal,
-          payout_method: paymentMethod,
-          payment_method: paymentMethod,
-          network_type: paymentMethod === 'crypto_trc20' ? network : 'SWIFT/SEPA',
-          network: paymentMethod === 'crypto_trc20' ? network : 'SWIFT/SEPA',
-          wallet_address: walletAddr,
-          bank_details: bankDetailsPayload,
-          status: 'pending',
-          created_at: new Date().toISOString(),
-          requested_at: Date.now(),
-        });
-      } catch (e) {
-        console.warn('Supabase withdrawal insert notice:', e);
-      }
-
-      const apiRes = await apiSubmitWithdrawal({
-        accountId: account.id,
-        amount,
-        walletAddress: walletAddr,
-        network: paymentMethod === 'crypto_trc20' ? network : 'SWIFT/SEPA',
-        paymentMethod,
+      // 1. Insert into Supabase `withdrawals` table using the exact column schema
+      const supaInsertRes = await insertSupabaseWithdrawal({
+        userId: userProfile?.id || account.ownerId,
+        userEmail: userProfile?.email,
+        accountType: accountTypeCol,
+        amount: grossVal,
+        fee: feeVal,
+        netAmount: netVal,
+        status: 'pending',
+        countdownEndsAtIso,
+        nowMs,
+        payoutMethod: payoutMethodCol,
+        walletAddress: payoutMethodCol === 'crypto' ? purseAddress.trim() : null,
+        networkType: payoutMethodCol === 'crypto' ? network : null,
+        bankName: payoutMethodCol === 'bank' ? bankName.trim() : null,
+        accountHolderName: payoutMethodCol === 'bank' ? accountHolder.trim() : null,
+        bankAccountNumber: payoutMethodCol === 'bank' ? accountNumber.trim() : null,
+        branchName: payoutMethodCol === 'bank' ? swiftCode.trim() : null,
       });
 
-      if (!apiRes.ok) {
-        setError(apiRes.error || 'Withdrawal validation failed.');
+      if (!supaInsertRes.ok) {
+        console.error('Supabase withdrawal insert failed:', supaInsertRes.error, supaInsertRes);
+        setError(`Failed to save withdrawal request: ${supaInsertRes.error || 'Unknown database error'}`);
         soundEngine.playErrorAlert();
         return;
       }
 
-      // Do NOT deduct balance automatically; keep status: 'pending' until admin marks it as 'completed' in Supabase.
-      const reqId = `WD-${Math.floor(1000000 + Math.random() * 8999999)}`;
+      // 2. Non-blocking sync to local backend API (never block valid Supabase withdrawal if local SQLite balance differs)
+      try {
+        await apiSubmitWithdrawal({
+          accountId: account.id,
+          amount,
+          walletAddress: walletAddr,
+          network: paymentMethod === 'crypto_trc20' ? network : 'SWIFT/SEPA',
+          paymentMethod,
+        });
+      } catch {
+        // Non-blocking fallback
+      }
+
+      // Keep status: 'pending' until admin marks it as 'completed' in Supabase.
+      const insertedRowId = supaInsertRes.row?.id ? String(supaInsertRes.row.id) : null;
+      const reqId = insertedRowId || `WD-${Math.floor(1000000 + Math.random() * 8999999)}`;
       const refNum =
         paymentMethod === 'crypto_trc20'
           ? `0x${Math.random().toString(16).substring(2, 14)}${Math.random().toString(16).substring(2, 14)}`
@@ -357,12 +473,16 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
 
       const newRequest: WithdrawalRequest = {
         id: reqId,
+        userId: supaInsertRes.row?.user_id ? String(supaInsertRes.row.user_id) : userProfile?.id,
         accountId: account.id,
-        amount: breakdown.requestedAmount,
-        withdrawalFee: breakdown.withdrawalFeeAmount,
-        netReceivedAmount: breakdown.netPayoutToReceive,
+        accountType: accountTypeCol,
+        amount: grossVal,
+        withdrawalFee: feeVal,
+        netReceivedAmount: netVal,
         profitSplitApplied: breakdown.profitSplitPercent,
         paymentMethod,
+        payoutMethod: payoutMethodCol,
+        networkType: payoutMethodCol === 'crypto' ? network : undefined,
         trc20Address: walletAddr,
         bankDetails:
           paymentMethod === 'bank_transfer'
@@ -370,20 +490,51 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                 bankName: bankName.trim(),
                 accountHolder: accountHolder.trim(),
                 accountNumber: accountNumber.trim(),
-                swiftCode: swiftCode.trim().toUpperCase(),
+                swiftCode: swiftCode.trim(),
+                branchName: swiftCode.trim(),
               }
             : undefined,
         referenceNumber: refNum,
-        requestedAt: Date.now(),
+        requestedAt: nowMs,
+        countdownEndsAt: countdownEndsAtMs,
         status: 'pending',
         isDoublePayoutEligible: false,
         timeElapsedSeconds: 0,
       };
 
+      // 3. Immediately deduct requested amount from active account balance in local UI and database
+      if (userProfile) {
+        const deductionRes = computeWithdrawalDeduction({
+          account,
+          userProfile,
+          amount: grossVal,
+          nowMs,
+        });
+
+        onUpdateAccount(deductionRes.updatedAccount);
+        if (onUpdateProfile) {
+          onUpdateProfile(deductionRes.updatedProfile);
+        }
+
+        commitProfileBalanceToSupabase({
+          userId: userProfile?.id || account.ownerId,
+          userEmail: userProfile?.email,
+          column: deductionRes.column,
+          newBalance: deductionRes.newBalance,
+        }).catch((e: any) => console.warn('Supabase profile balance deduction error:', e));
+      } else {
+        const newBal = Math.max(0, Number((account.currentBalance - grossVal).toFixed(2)));
+        onUpdateAccount({
+          ...account,
+          currentBalance: newBal,
+          equity: newBal,
+        });
+      }
+
       onAddWithdrawal(newRequest);
       soundEngine.playWithdrawalSuccess();
       setSuccessBanner(
-        `Withdrawal Request Submitted! Status: Pending Approval. Your payout request of $${amount.toFixed(2)} USD is recorded in Supabase and awaiting manual admin review.`
+        `Withdrawal Request Submitted! Status: Pending Approval. $${grossVal.toFixed(2)} USD deducted from your balance. Your payout of $${netVal.toFixed(2)} USD is recorded with a 1-hour settlement timer.`
       );
     } catch (err: any) {
       setError(err?.message || 'Failed to submit withdrawal request.');
@@ -878,10 +1029,20 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                   {successBanner && (
                     <div
                       data-testid="withdrawal-success-banner"
-                      className="p-3 rounded-lg bg-emerald-950/80 border border-emerald-500/40 text-xs text-emerald-200 flex items-start gap-2"
+                      className="p-3 rounded-lg bg-emerald-950/80 border border-emerald-500/40 text-xs text-emerald-200 flex items-start justify-between gap-2"
                     >
-                      <CheckCircle2 className="w-4 h-4 text-[#00c853] shrink-0 mt-0.5" />
-                      <span>{successBanner}</span>
+                      <div className="flex items-start gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-[#00c853] shrink-0 mt-0.5" />
+                        <span>{successBanner}</span>
+                      </div>
+                      <button
+                        type="button"
+                        aria-label="Dismiss banner"
+                        onClick={() => setSuccessBanner(null)}
+                        className="text-emerald-400 hover:text-white cursor-pointer p-0.5 shrink-0"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
                     </div>
                   )}
 
@@ -902,7 +1063,10 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                           min={0}
                           step="1"
                           value={amount}
-                          onChange={(e) => setAmount(Math.max(0, Number(e.target.value)))}
+                          onChange={(e) => {
+                            setAmount(Math.max(0, Number(e.target.value)));
+                            if (!hasActivePending) setSuccessBanner(null);
+                          }}
                           className="w-full px-3.5 py-2.5 bg-[#0e1017] border border-[#262c3a] focus:border-[#2b70ff] rounded-lg text-sm font-mono tabular-nums font-bold text-white focus:outline-none transition-colors"
                         />
                         <span className="absolute right-3.5 top-2.5 text-xs font-mono text-[#8c96a6]">USD</span>
@@ -983,6 +1147,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                       <div>
                         <label className="block text-xs text-[#8c96a6] mb-1">Bank Name</label>
                         <input
+                          name="bank_name"
                           data-testid="bank-name-input"
                           type="text"
                           value={bankName}
@@ -991,8 +1156,9 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                         />
                       </div>
                       <div>
-                        <label className="block text-xs text-[#8c96a6] mb-1">Account Holder</label>
+                        <label className="block text-xs text-[#8c96a6] mb-1">Account Holder Name</label>
                         <input
+                          name="account_holder_name"
                           data-testid="bank-holder-input"
                           type="text"
                           value={accountHolder}
@@ -1001,8 +1167,9 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                         />
                       </div>
                       <div>
-                        <label className="block text-xs text-[#8c96a6] mb-1">IBAN / Account Number</label>
+                        <label className="block text-xs text-[#8c96a6] mb-1">Bank Account Number / IBAN</label>
                         <input
+                          name="bank_account_number"
                           data-testid="bank-iban-input"
                           type="text"
                           value={accountNumber}
@@ -1011,8 +1178,9 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                         />
                       </div>
                       <div>
-                        <label className="block text-xs text-[#8c96a6] mb-1">SWIFT / BIC Code</label>
+                        <label className="block text-xs text-[#8c96a6] mb-1">Branch Name / SWIFT Code</label>
                         <input
+                          name="branch_name"
                           data-testid="bank-swift-input"
                           type="text"
                           value={swiftCode}
@@ -1042,14 +1210,100 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                     </div>
                   </div>
 
-                  {/* Prominent Blue "Confirm" Submission Button */}
+                  {/* Single Active Withdrawal Warning Banner (per account type) */}
+                  {hasActivePending && (
+                    <div
+                      data-testid="active-pending-withdrawal-warning"
+                      className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/50 space-y-3"
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-500/40 flex items-center justify-center shrink-0 text-amber-400">
+                          <AlertTriangle className="w-4 h-4" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[11px] font-mono font-bold uppercase tracking-wider text-amber-400">
+                            Single Active Withdrawal Constraint
+                          </div>
+                          <p
+                            data-testid="pending-withdrawal-warning-text"
+                            className="text-xs sm:text-sm font-bold text-white mt-0.5"
+                          >
+                            {PENDING_WITHDRAWAL_WARNING_MESSAGE}
+                          </p>
+                        </div>
+                      </div>
+
+                      {activePendingRequest && (
+                        <div className="bg-[#0e1017] p-3 rounded-lg border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono font-bold text-white">
+                                #{String(activePendingRequest.id).slice(0, 8)}
+                              </span>
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 uppercase">
+                                {activePendingRequest.status}
+                              </span>
+                              <span className="text-[10px] text-slate-400 uppercase font-mono">
+                                {activePendingRequest.accountType === 'self'
+                                  ? 'Personal Live (Self)'
+                                  : 'Prop Funded'}
+                              </span>
+                            </div>
+                            <div className="text-[11px] text-slate-400 mt-1 flex flex-wrap items-center gap-2">
+                              <span>
+                                Amount: <strong className="text-white">${activePendingRequest.amount.toFixed(2)}</strong>
+                              </span>
+                              <span>•</span>
+                              <span>
+                                Net Payout: <strong className="text-emerald-400">${(activePendingRequest.netReceivedAmount ?? (activePendingRequest.amount - (activePendingRequest.withdrawalFee ?? 0))).toFixed(2)}</strong>
+                              </span>
+                              {activePendingRequest.countdownEndsAt && (
+                                <>
+                                  <span>•</span>
+                                  <span className="text-amber-300 font-mono flex items-center gap-1">
+                                    <Clock className="w-3 h-3" />
+                                    {formatCountdownRemaining(activePendingRequest.countdownEndsAt)} remaining
+                                  </span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+
+                          {activePendingRequest.status === 'pending' && (
+                            <button
+                              type="button"
+                              data-testid="cancel-pending-withdrawal-banner-btn"
+                              disabled={cancellingId === activePendingRequest.id}
+                              onClick={() => handleCancelWithdrawalRequest(activePendingRequest.id)}
+                              className="px-3.5 py-1.5 rounded-lg bg-rose-950/80 hover:bg-rose-900 border border-rose-500/50 text-rose-300 text-xs font-bold transition-colors cursor-pointer shrink-0 disabled:opacity-50 flex items-center gap-1.5"
+                            >
+                              <XCircle className="w-3.5 h-3.5" />
+                              <span>
+                                {cancellingId === activePendingRequest.id
+                                  ? 'Cancelling...'
+                                  : 'Cancel Request & Refund'}
+                              </span>
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Submission Button (Disabled when a pending request exists) */}
                   <div className="pt-2">
                     <button
                       type="submit"
                       data-testid="submit-withdrawal-btn"
-                      className="w-full sm:w-auto min-w-[200px] px-7 py-3 rounded-lg bg-[#2b70ff] hover:bg-[#3b82f6] text-white font-bold text-sm flex items-center justify-center gap-2.5 transition-colors cursor-pointer"
+                      disabled={hasActivePending}
+                      title={hasActivePending ? PENDING_WITHDRAWAL_WARNING_MESSAGE : undefined}
+                      className={`w-full sm:w-auto min-w-[200px] px-7 py-3 rounded-lg font-bold text-sm flex items-center justify-center gap-2.5 transition-colors ${
+                        hasActivePending
+                          ? 'bg-slate-800 text-slate-400 border border-slate-700 cursor-not-allowed opacity-60'
+                          : 'bg-[#2b70ff] hover:bg-[#3b82f6] text-white cursor-pointer'
+                      }`}
                     >
-                      <span>Confirm</span>
+                      <span>{hasActivePending ? 'Pending Withdrawal Active' : 'Confirm'}</span>
                       <ArrowRight className="w-4 h-4" />
                     </button>
                   </div>
@@ -1138,48 +1392,82 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                         allTransactions
                           .filter((t) => t.type === 'Payout')
                           .slice(0, 4)
-                          .map((req) => (
-                            <div
-                              key={req.id}
-                              className="p-3 rounded-lg bg-[#0e1017] border border-[#1e2330] flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
-                            >
-                              <div className="flex items-start sm:items-center gap-3">
-                                <div className="flex items-center gap-1.5 font-mono font-bold text-white">
-                                  {req.status === 'Succeeded' ? (
-                                    <CheckCircle2 className="w-4 h-4 text-[#00c853] shrink-0" />
-                                  ) : req.status === 'Canceled' ? (
-                                    <XCircle className="w-4 h-4 text-rose-500 shrink-0" />
-                                  ) : (
-                                    <Clock className="w-4 h-4 text-[#ff8800] shrink-0" />
+                          .map((req) => {
+                            const rawReq = withdrawals.find((w) => String(w.id) === String(req.id));
+                            const isStrictlyPending =
+                              (rawReq ? rawReq.status === 'pending' : req.rawStatus === 'pending') &&
+                              req.status !== 'Succeeded' &&
+                              req.status !== 'Canceled';
+                            const isTerminal =
+                              rawReq?.status === 'success' ||
+                              rawReq?.status === 'completed' ||
+                              rawReq?.status === 'rejected' ||
+                              rawReq?.status === 'cancelled' ||
+                              req.status === 'Succeeded' ||
+                              req.status === 'Canceled';
+                            return (
+                              <div
+                                key={req.id}
+                                data-testid={`latest-withdrawal-item-${req.id}`}
+                                className="p-3 rounded-lg bg-[#0e1017] border border-[#1e2330] flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
+                              >
+                                <div className="flex flex-wrap items-center gap-3">
+                                  <div className="flex items-center gap-1.5 font-mono font-bold text-white">
+                                    {req.status === 'Succeeded' ? (
+                                      <CheckCircle2 className="w-4 h-4 text-[#00c853] shrink-0" />
+                                    ) : req.status === 'Canceled' ? (
+                                      <XCircle className="w-4 h-4 text-rose-500 shrink-0" />
+                                    ) : (
+                                      <Clock className="w-4 h-4 text-[#ff8800] shrink-0" />
+                                    )}
+                                    <span>#{req.orderNumber}</span>
+                                  </div>
+                                  <span className="text-[#8c96a6] font-mono tabular-nums">
+                                    {req.dateFormatted} {req.timeFormatted}
+                                  </span>
+                                  <span className="text-[#cbd5e1] font-medium">
+                                    {req.paymentSystem} ({req.network})
+                                  </span>
+                                  {isStrictlyPending && rawReq?.countdownEndsAt && (
+                                    <span
+                                      data-testid={`withdrawal-countdown-${req.id}`}
+                                      className="px-2 py-0.5 rounded bg-[#ff8800]/15 border border-[#ff8800]/30 text-[#ff8800] font-mono text-[10px] font-bold"
+                                    >
+                                      SLA Timer: {formatCountdownRemaining(rawReq.countdownEndsAt)}
+                                    </span>
                                   )}
-                                  <span>#{req.orderNumber}</span>
                                 </div>
-                                <span className="text-[#8c96a6] font-mono tabular-nums">
-                                  {req.dateFormatted} {req.timeFormatted}
-                                </span>
-                                <span className="text-[#cbd5e1] font-medium">
-                                  {req.paymentSystem} ({req.network})
-                                </span>
-                              </div>
 
-                              <div className="flex items-center justify-between sm:justify-end gap-3">
-                                <span
-                                  className={`font-semibold ${
-                                    req.status === 'Succeeded'
-                                      ? 'text-[#00c853]'
-                                      : req.status === 'Canceled'
-                                      ? 'text-rose-400'
-                                      : 'text-[#ff8800]'
-                                  }`}
-                                >
-                                  {req.status}
-                                </span>
-                                <span className="font-mono tabular-nums font-bold text-rose-400">
-                                  {req.signedAmountFormatted}
-                                </span>
+                                <div className="flex items-center justify-between sm:justify-end gap-3">
+                                  <span
+                                    className={`font-semibold ${
+                                      req.status === 'Succeeded'
+                                        ? 'text-[#00c853]'
+                                        : req.status === 'Canceled'
+                                        ? 'text-rose-400'
+                                        : 'text-[#ff8800]'
+                                    }`}
+                                  >
+                                    {req.status}
+                                  </span>
+                                  <span className="font-mono tabular-nums font-bold text-rose-400">
+                                    {req.signedAmountFormatted}
+                                  </span>
+                                  {isStrictlyPending && !isTerminal && (
+                                    <button
+                                      type="button"
+                                      data-testid={`cancel-withdrawal-btn-${req.id}`}
+                                      disabled={cancellingId === req.id}
+                                      onClick={() => handleCancelWithdrawalRequest(req.id)}
+                                      className="px-2.5 py-1 rounded bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-rose-300 font-mono text-[10px] font-bold cursor-pointer transition-colors"
+                                    >
+                                      {cancellingId === req.id ? 'Cancelling...' : 'Cancel'}
+                                    </button>
+                                  )}
+                                </div>
                               </div>
-                            </div>
-                          ))
+                            );
+                          })
                       )}
 
                       <div className="pt-1 flex justify-end">

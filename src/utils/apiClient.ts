@@ -210,6 +210,23 @@ export async function apiSubmitWithdrawal(params: {
   }
 }
 
+export async function apiCancelWithdrawal(params: { withdrawalId: string; token?: string }) {
+  try {
+    const headers = getAuthHeaders() as Record<string, string>;
+    if (params.token) {
+        headers['Authorization'] = `Bearer ${params.token}`;
+    }
+    const res = await fetch('/api/withdrawals/cancel', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ withdrawalId: params.withdrawalId }),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Withdrawal cancellation failed' };
+  }
+}
+
 export async function apiGetWithdrawals() {
   if (!hasJwtSession()) return { ok: false, withdrawals: [] };
   try {

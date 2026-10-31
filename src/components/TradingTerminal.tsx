@@ -242,6 +242,104 @@ function getClockExpiry(seconds: number): string {
   return d.toTimeString().split(' ')[0];
 }
 
+interface ActiveTradeItemProps {
+  trade: BinaryTrade;
+  currentPrice: number;
+  selectedSymbol: string;
+  onDoubleUp: (trade: BinaryTrade) => void;
+}
+
+const ActiveTradeItem: React.FC<ActiveTradeItemProps> = React.memo(({
+  trade,
+  currentPrice,
+  selectedSymbol,
+  onDoubleUp,
+}) => {
+  const [secondsLeft, setSecondsLeft] = useState(() =>
+    Math.max(0, Math.ceil((trade.endTime - Date.now()) / 1000))
+  );
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const remaining = Math.max(0, Math.ceil((trade.endTime - Date.now()) / 1000));
+      setSecondsLeft(remaining);
+      if (remaining <= 0) {
+        clearInterval(timer);
+      }
+    }, 250);
+    return () => clearInterval(timer);
+  }, [trade.endTime]);
+
+  const isCall = trade.direction === 'CALL';
+  const tradeMarket = getAssetMarketState(trade.asset);
+  const livePrice = trade.asset === selectedSymbol ? currentPrice : (tradeMarket?.lastPrice ?? trade.strikePrice);
+  const isInTheMoney = isCall ? livePrice > trade.strikePrice : livePrice < trade.strikePrice;
+  const percentRemaining = Math.max(0, Math.min(100, (secondsLeft / (trade.durationSeconds || 60)) * 100));
+  const assetObj = findAssetBySymbol(trade.asset);
+  const potentialPayout = trade.potentialPayout || (trade.investment * (trade.payoutPercentage || 85)) / 100;
+
+  return (
+    <div
+      key={trade.id}
+      data-testid={`active-trade-card-${trade.id}`}
+      className={`p-1.5 px-2 rounded-lg border text-xs transition-all ${
+        isInTheMoney
+          ? 'bg-[#081a14] border-[#00e676]/40'
+          : 'bg-[#1a0a0e] border-[#ff334b]/40'
+      }`}
+    >
+      <div className="flex items-center justify-between mb-0.5">
+        <div className="flex items-center gap-1 font-bold text-white text-[10.5px] truncate">
+          <AssetFlagIcon symbol={trade.asset} category={assetObj?.category} flagEmoji={assetObj?.flag} size="xs" />
+          <span className="truncate">{trade.asset}</span>
+        </div>
+        <span className="text-[9.5px] font-bold text-cyan-300 font-mono">
+          {formatTimerDisplay(secondsLeft)}
+        </span>
+      </div>
+
+      {/* Live Countdown Progress Line */}
+      <div className="w-full h-0.5 bg-[#131722] rounded-full overflow-hidden my-0.5 border border-[#2a2e39]">
+        <div
+          className={`h-full transition-all duration-500 ${
+            isInTheMoney ? 'bg-[#00e676]' : 'bg-[#ff334b]'
+          }`}
+          style={{ width: `${percentRemaining}%` }}
+        />
+      </div>
+
+      <div className="flex items-center justify-between text-[9.5px] font-mono">
+        <span className={`font-bold ${isCall ? 'text-[#00e676]' : 'text-[#ff334b]'}`}>
+          {isCall ? '↑' : '↓'} ${trade.investment}
+        </span>
+
+        <div className="flex items-center gap-1">
+          <span
+            data-testid={`right-panel-trade-locked-${trade.id}`}
+            className="px-1.5 py-0.2 rounded bg-slate-800/90 text-slate-300 border border-white/10 text-[8px] font-bold uppercase tracking-wider flex items-center gap-0.5"
+            title="Trade is strictly locked until full expiration duration is met"
+          >
+            <Lock className="w-2.5 h-2.5 text-[#ff8800]" />
+            <span>LOCKED</span>
+          </span>
+          <button
+            type="button"
+            onClick={() => onDoubleUp(trade)}
+            className="px-1 py-0.2 rounded bg-cyan-500/25 hover:bg-cyan-500/40 text-cyan-300 border border-cyan-500/40 text-[8.5px] font-bold cursor-pointer"
+            title="Double up position (x2)"
+          >
+            x2
+          </button>
+          <span className={`font-black tabular-nums ${isInTheMoney ? 'text-[#00e676]' : 'text-rose-400'}`}>
+            {isInTheMoney ? `+$${potentialPayout.toFixed(2)}` : `-$${trade.investment.toFixed(2)}`}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+
 function drawRoundedRect(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -5121,74 +5219,15 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                     <div>Click Buy or Sell above to open an order.</div>
                   </div>
                 ) : (
-                  activeTrades.map((t) => {
-                    const secondsLeft = Math.max(0, Math.ceil((t.endTime - Date.now()) / 1000));
-                    const isCall = t.direction === 'CALL';
-                    const tradeMarket = getAssetMarketState(t.asset);
-                    const livePrice = t.asset === selectedAsset.symbol ? currentPrice : (tradeMarket?.lastPrice ?? t.strikePrice);
-                    const isInTheMoney = isCall ? livePrice > t.strikePrice : livePrice < t.strikePrice;
-                    const percentRemaining = Math.max(0, Math.min(100, (secondsLeft / t.durationSeconds) * 100));
-                    const assetObj = findAssetBySymbol(t.asset);
-
-                    return (
-                      <div
-                        key={t.id}
-                        className={`p-1.5 px-2 rounded-lg border text-xs transition-all ${
-                          isInTheMoney
-                            ? 'bg-[#081a14] border-[#00e676]/40'
-                            : 'bg-[#1a0a0e] border-[#ff334b]/40'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between mb-0.5">
-                          <div className="flex items-center gap-1 font-bold text-white text-[10.5px] truncate">
-                            <AssetFlagIcon symbol={t.asset} category={assetObj?.category} flagEmoji={assetObj?.flag} size="xs" />
-                            <span className="truncate">{t.asset}</span>
-                          </div>
-                          <span className="text-[9.5px] font-bold text-cyan-300 font-mono">
-                            {formatTimerDisplay(secondsLeft)}
-                          </span>
-                        </div>
-
-                        {/* Live Countdown Progress Line */}
-                        <div className="w-full h-0.5 bg-[#131722] rounded-full overflow-hidden my-0.5 border border-[#2a2e39]">
-                          <div
-                            className={`h-full transition-all duration-500 ${
-                              isInTheMoney ? 'bg-[#00e676]' : 'bg-[#ff334b]'
-                            }`}
-                            style={{ width: `${percentRemaining}%` }}
-                          />
-                        </div>
-
-                        <div className="flex items-center justify-between text-[9.5px] font-mono">
-                          <span className={`font-bold ${isCall ? 'text-[#00e676]' : 'text-[#ff334b]'}`}>
-                            {isCall ? '↑' : '↓'} ${t.investment}
-                          </span>
-
-                          <div className="flex items-center gap-1">
-                            <span
-                              data-testid={`right-panel-trade-locked-${t.id}`}
-                              className="px-1.5 py-0.2 rounded bg-slate-800/90 text-slate-300 border border-white/10 text-[8px] font-bold uppercase tracking-wider flex items-center gap-0.5"
-                              title="Trade is strictly locked until full expiration duration is met"
-                            >
-                              <Lock className="w-2.5 h-2.5 text-[#ff8800]" />
-                              <span>LOCKED</span>
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => handleDoubleUp(t)}
-                              className="px-1 py-0.2 rounded bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 text-[8.5px] font-bold cursor-pointer"
-                              title="Double up position (x2)"
-                            >
-                              x2
-                            </button>
-                            <span className={`font-black tabular-nums ${isInTheMoney ? 'text-[#00e676]' : 'text-rose-400'}`}>
-                              {isInTheMoney ? `+$${t.potentialPayout.toFixed(2)}` : `-$${t.investment.toFixed(2)}`}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })
+                  activeTrades.map((t) => (
+                    <ActiveTradeItem
+                      key={t.id}
+                      trade={t}
+                      currentPrice={currentPrice}
+                      selectedSymbol={selectedAsset.symbol}
+                      onDoubleUp={handleDoubleUp}
+                    />
+                  ))
                 )
               ) : closedTrades.length === 0 ? (
                 <div className="p-2.5 rounded-lg bg-[#141722] border border-[#2a2e39] text-center text-[9.5px] text-slate-400">

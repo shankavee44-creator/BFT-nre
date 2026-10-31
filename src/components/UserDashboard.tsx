@@ -79,13 +79,20 @@ import {
   apiGetAdminUsers,
 } from '../utils/apiClient';
 import { supabase } from '../utils/supabase';
-import { applyRealtimeProfileUpdate } from '../utils/supabaseRealtimeSync';
+import {
+  applyRealtimeProfileUpdate,
+  fetchSupabaseProfileRow,
+  cancelSupabaseWithdrawal,
+  computeWithdrawalRefund,
+  commitProfileBalanceToSupabase,
+} from '../utils/supabaseRealtimeSync';
 
 interface UserDashboardProps {
   userProfile: UserProfile;
   onUpdateProfile: (updated: UserProfile) => void;
   accounts: TradingAccount[];
   activeAccountId?: string;
+  onUpdateAccount?: (updated: TradingAccount) => void;
   trades?: BinaryTrade[];
   referrals?: ReferralRecord[];
   payouts?: AffiliatePayout[];
@@ -106,6 +113,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   onUpdateProfile,
   accounts,
   activeAccountId,
+  onUpdateAccount,
   trades = [],
   referrals = [],
   payouts = [],
@@ -192,6 +200,75 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   const [supabaseDeposits, setSupabaseDeposits] = useState<any[]>([]);
   const [supabaseWithdrawals, setSupabaseWithdrawals] = useState<any[]>([]);
   const [adminUsersList, setAdminUsersList] = useState<any[]>([]);
+  const [nowTick, setNowTick] = useState<number>(() => Date.now());
+  const [cancellingWdId, setCancellingWdId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const t = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  const formatCountdownRemaining = (countdownEndsAt?: string | number): string => {
+    let endsAtMs = 0;
+    if (typeof countdownEndsAt === 'number') endsAtMs = countdownEndsAt;
+    else if (typeof countdownEndsAt === 'string') endsAtMs = Date.parse(countdownEndsAt);
+    if (!endsAtMs || Number.isNaN(endsAtMs)) return '59:59';
+    const diffSec = Math.max(0, Math.floor((endsAtMs - nowTick) / 1000));
+    const mins = Math.floor(diffSec / 60);
+    const secs = diffSec % 60;
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  };
+
+  const handleCancelUserWithdrawal = async (wd: any) => {
+    if (!wd?.id || cancellingWdId) return;
+    setCancellingWdId(String(wd.id));
+    soundEngine.playUiClick();
+
+    try {
+      await cancelSupabaseWithdrawal({
+        withdrawalId: String(wd.id),
+        userId: userProfile.id,
+        userEmail: userProfile.email,
+      });
+
+      setSupabaseWithdrawals((prev) =>
+        prev.map((item) => (item.id === wd.id ? { ...item, status: 'cancelled' } : item))
+      );
+
+      // Automatic refund of withdrawn amount back to user's account balance
+      const refundAmount = Number(wd.amount || 0);
+      const isSelfWd = wd.account_type === 'self' || wd.account_type === 'personal_live' || String(wd.account_id || '').includes('PERS');
+      const targetAcc = accounts.find((a) =>
+        isSelfWd ? isPersonalLiveAccount(a) || String(a.id).includes('PERS') : a.phase === 'funded'
+      );
+
+      if (refundAmount > 0) {
+        const refundRes = computeWithdrawalRefund({
+          amount: refundAmount,
+          accountType: wd.account_type,
+          account: targetAcc,
+          userProfile,
+          nowMs: Date.now(),
+        });
+
+        onUpdateProfile(refundRes.updatedProfile);
+        if (refundRes.updatedAccount && onUpdateAccount) {
+          onUpdateAccount(refundRes.updatedAccount);
+        }
+
+        commitProfileBalanceToSupabase({
+          userId: userProfile.id,
+          userEmail: userProfile.email,
+          column: refundRes.column,
+          newBalance: refundRes.newBalance,
+        }).catch((e) => console.warn('Supabase balance refund error:', e));
+      }
+    } catch (err) {
+      console.warn('Cancel withdrawal error:', err);
+    } finally {
+      setCancellingWdId(null);
+    }
+  };
 
   // Live query Supabase profiles, backend KYC state, deposits, and withdrawals
   useEffect(() => {
@@ -219,16 +296,12 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           // ignore offline
         }
 
-        // 2. Query Supabase profiles (only when we have a valid UUID)
-        let supaProfile: any = null;
-        if (targetUuid) {
-          const { data: p } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', targetUuid)
-            .maybeSingle();
-          if (p) supaProfile = p;
-        }
+        // 2. Query Supabase profiles (by UUID or email fallback)
+        let supaProfile: any = await fetchSupabaseProfileRow({
+          userId: targetUserId,
+          userEmail: targetEmail,
+          authUid: targetUuid,
+        });
 
         if (isMounted && (supaProfile || backendKyc?.user || backendKyc?.kycSubmission || user?.user_metadata)) {
           const latest = userProfileRef.current;
@@ -371,19 +444,22 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           }
         }
 
-        if (targetUuid) {
+        const effectiveUserUuid =
+          targetUuid || (supaProfile?.id && isUuid(String(supaProfile.id)) ? String(supaProfile.id) : undefined);
+
+        if (effectiveUserUuid) {
           // Query deposits table
           const depsRes = await supabase
             .from('deposits')
             .select('*')
-            .eq('user_id', targetUuid)
+            .eq('user_id', effectiveUserUuid)
             .order('created_at', { ascending: false });
 
           // Query withdrawals table
           const wdsRes = await supabase
             .from('withdrawals')
             .select('*')
-            .eq('user_id', targetUuid)
+            .eq('user_id', effectiveUserUuid)
             .order('created_at', { ascending: false });
 
           if (isMounted) {
@@ -1509,37 +1585,71 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                   </div>
                 ) : (
                   <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-                    {supabaseWithdrawals.map((wd) => (
-                      <div
-                        key={wd.id}
-                        data-testid={`supabase-withdrawal-row-${wd.id}`}
-                        className="p-3 rounded-xl bg-[#16161c] border border-white/10 flex items-center justify-between text-xs"
-                      >
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-black text-rose-400">-${Number(wd.amount).toFixed(2)} USD</span>
-                            <span
-                              data-testid={`withdrawal-status-badge-${wd.id}`}
-                              className={`px-2 py-0.5 rounded text-[9px] font-black uppercase border ${
-                                wd.status === 'completed' || wd.status === 'paid'
-                                  ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
-                                  : wd.status === 'rejected'
-                                  ? 'bg-rose-500/20 text-rose-400 border-rose-500/40'
-                                  : 'bg-[#ff8800] text-slate-950 border-amber-300 font-extrabold'
-                              }`}
-                            >
-                              {wd.status === 'pending' || wd.status === 'processing' ? 'Pending Approval' : wd.status}
-                            </span>
+                    {supabaseWithdrawals.map((wd) => {
+                      const isPendingWd = wd.status === 'pending' || wd.status === 'processing';
+                      const netVal = Number(wd.net_amount ?? wd.amount ?? 0);
+                      const feeVal = Number(wd.fee ?? 0);
+                      const payoutLabel =
+                        wd.payout_method === 'bank'
+                          ? `Bank (${wd.bank_name || 'Wire'})`
+                          : `Crypto (${wd.network_type || 'USDT'})`;
+                      return (
+                        <div
+                          key={wd.id}
+                          data-testid={`supabase-withdrawal-row-${wd.id}`}
+                          className="p-3 rounded-xl bg-[#16161c] border border-white/10 flex items-center justify-between gap-2 text-xs"
+                        >
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="font-black text-rose-400">-${Number(wd.amount).toFixed(2)} USD</span>
+                              <span className="text-[10px] font-mono text-emerald-400">
+                                Net: ${netVal.toFixed(2)} (Fee: ${feeVal.toFixed(2)})
+                              </span>
+                              <span
+                                data-testid={`withdrawal-status-badge-${wd.id}`}
+                                className={`px-2 py-0.5 rounded text-[9px] font-black uppercase border ${
+                                  wd.status === 'completed' || wd.status === 'paid'
+                                    ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                                    : wd.status === 'rejected' || wd.status === 'cancelled'
+                                    ? 'bg-rose-500/20 text-rose-400 border-rose-500/40'
+                                    : 'bg-[#ff8800] text-slate-950 border-amber-300 font-extrabold'
+                                }`}
+                              >
+                                {isPendingWd ? 'Pending Approval' : wd.status}
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-slate-400 mt-1">
+                              ID: {String(wd.id).slice(0, 8)}... • {String(wd.account_type || 'self').toUpperCase()} • {payoutLabel}
+                            </div>
+                            {isPendingWd && (wd.account_type === 'self' || wd.account_type === 'personal_live') && (
+                              <div
+                                data-testid={`user-withdrawal-countdown-${wd.id}`}
+                                className="mt-1.5 inline-flex items-center gap-1.5 text-[10px] font-mono font-bold text-[#ff8800] bg-[#ff8800]/10 border border-[#ff8800]/30 px-2 py-0.5 rounded"
+                              >
+                                <Clock className="w-3 h-3 animate-pulse text-[#ff8800]" />
+                                <span>1h SLA Timer: {formatCountdownRemaining(wd.countdown_ends_at)}</span>
+                              </div>
+                            )}
                           </div>
-                          <div className="text-[10px] text-slate-400 mt-1">
-                            ID: {wd.id.slice(0, 8)}... • Awaiting Admin Processing
+                          <div className="flex items-center gap-2 shrink-0">
+                            {isPendingWd && (
+                              <button
+                                type="button"
+                                data-testid={`dashboard-cancel-withdrawal-btn-${wd.id}`}
+                                disabled={cancellingWdId === String(wd.id)}
+                                onClick={() => handleCancelUserWithdrawal(wd)}
+                                className="px-2.5 py-1 rounded bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-rose-300 text-[10px] font-mono font-bold cursor-pointer transition-colors"
+                              >
+                                {cancellingWdId === String(wd.id) ? 'Cancelling...' : 'Cancel'}
+                              </button>
+                            )}
+                            <div className="text-[10px] text-slate-500">
+                              {wd.created_at ? new Date(wd.created_at).toLocaleDateString() : 'Today'}
+                            </div>
                           </div>
                         </div>
-                        <div className="text-[10px] text-slate-500">
-                          {wd.created_at ? new Date(wd.created_at).toLocaleDateString() : 'Today'}
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>

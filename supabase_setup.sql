@@ -99,15 +99,41 @@ CREATE TABLE IF NOT EXISTS public.deposits (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- WITHDRAWALS TABLE
+-- WITHDRAWALS TABLE (Exact Schema for Crypto & Bank Withdrawals + 1-Hour SLA Timer)
 CREATE TABLE IF NOT EXISTS public.withdrawals (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  account_type TEXT NOT NULL DEFAULT 'self', -- 'self' | 'funded'
   amount NUMERIC(15, 2) NOT NULL CHECK (amount > 0),
-  bank_details JSONB NOT NULL DEFAULT '{}'::jsonb,
-  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'rejected')),
+  fee NUMERIC(15, 2) NOT NULL DEFAULT 0.00 CHECK (fee >= 0),
+  net_amount NUMERIC(15, 2) NOT NULL DEFAULT 0.00 CHECK (net_amount >= 0),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'rejected', 'cancelled')),
+  countdown_ends_at TIMESTAMPTZ DEFAULT (NOW() + INTERVAL '1 hour'),
+  payout_method TEXT NOT NULL DEFAULT 'crypto', -- 'crypto' | 'bank'
+  wallet_address TEXT,
+  network_type TEXT,
+  bank_name TEXT,
+  account_holder_name TEXT,
+  bank_account_number TEXT,
+  branch_name TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Ensure exact columns exist on already-provisioned withdrawals table
+ALTER TABLE public.withdrawals ADD COLUMN IF NOT EXISTS account_type TEXT NOT NULL DEFAULT 'self';
+ALTER TABLE public.withdrawals ADD COLUMN IF NOT EXISTS fee NUMERIC(15, 2) NOT NULL DEFAULT 0.00;
+ALTER TABLE public.withdrawals ADD COLUMN IF NOT EXISTS net_amount NUMERIC(15, 2) NOT NULL DEFAULT 0.00;
+ALTER TABLE public.withdrawals ADD COLUMN IF NOT EXISTS countdown_ends_at TIMESTAMPTZ DEFAULT (NOW() + INTERVAL '1 hour');
+ALTER TABLE public.withdrawals ADD COLUMN IF NOT EXISTS payout_method TEXT NOT NULL DEFAULT 'crypto';
+ALTER TABLE public.withdrawals ADD COLUMN IF NOT EXISTS wallet_address TEXT;
+ALTER TABLE public.withdrawals ADD COLUMN IF NOT EXISTS network_type TEXT;
+ALTER TABLE public.withdrawals ADD COLUMN IF NOT EXISTS bank_name TEXT;
+ALTER TABLE public.withdrawals ADD COLUMN IF NOT EXISTS account_holder_name TEXT;
+ALTER TABLE public.withdrawals ADD COLUMN IF NOT EXISTS bank_account_number TEXT;
+ALTER TABLE public.withdrawals ADD COLUMN IF NOT EXISTS branch_name TEXT;
+ALTER TABLE public.withdrawals ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE public.withdrawals DROP CONSTRAINT IF EXISTS withdrawals_status_check;
+ALTER TABLE public.withdrawals ADD CONSTRAINT withdrawals_status_check CHECK (status IN ('pending', 'completed', 'success', 'approved', 'rejected', 'declined', 'cancelled'));
 
 -- REFERRAL COMMISSIONS TABLE
 CREATE TABLE IF NOT EXISTS public.referral_commissions (
@@ -338,7 +364,7 @@ DECLARE
   l1_id UUID := NULL;
   comm_amount NUMERIC(15, 2);
 BEGIN
-  IF OLD.status = 'pending' AND NEW.status = 'completed' THEN
+  IF OLD.status = 'pending' AND (NEW.status = 'completed' OR NEW.status = 'success') THEN
 
     UPDATE public.profiles
     SET balance = balance - NEW.amount,
@@ -422,12 +448,47 @@ CREATE POLICY "Users can view own deposits" ON public.deposits FOR SELECT USING 
 DROP POLICY IF EXISTS "Users can submit deposits" ON public.deposits;
 CREATE POLICY "Users can submit deposits" ON public.deposits FOR INSERT WITH CHECK (auth.uid() = user_id);
 
--- Withdrawals: Users view & create own withdrawals
+-- Withdrawals: Authenticated users can INSERT, SELECT, and UPDATE (for cancellation) their own requests; Admins can view & manage all withdrawal rows
+CREATE OR REPLACE FUNCTION public.is_bft_admin()
+RETURNS BOOLEAN AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.profiles
+    WHERE id = auth.uid()
+      AND (
+        LOWER(COALESCE(email, '')) IN ('shankavee44@gmail.com', 'admin@bft.io', 'viktor.v@quant-prop.io')
+      )
+  );
+$$ LANGUAGE sql SECURITY DEFINER STABLE SET search_path = public;
+
 DROP POLICY IF EXISTS "Users can view own withdrawals" ON public.withdrawals;
-CREATE POLICY "Users can view own withdrawals" ON public.withdrawals FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "Users can view own withdrawals"
+  ON public.withdrawals
+  FOR SELECT
+  TO authenticated
+  USING (auth.uid() = user_id OR public.is_bft_admin());
 
 DROP POLICY IF EXISTS "Users can submit withdrawals" ON public.withdrawals;
-CREATE POLICY "Users can submit withdrawals" ON public.withdrawals FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can submit withdrawals"
+  ON public.withdrawals
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can update own pending withdrawals" ON public.withdrawals;
+CREATE POLICY "Users can update own pending withdrawals"
+  ON public.withdrawals
+  FOR UPDATE
+  TO authenticated
+  USING (auth.uid() = user_id OR public.is_bft_admin())
+  WITH CHECK (auth.uid() = user_id OR public.is_bft_admin());
+
+DROP POLICY IF EXISTS "Admins can manage all withdrawals" ON public.withdrawals;
+CREATE POLICY "Admins can manage all withdrawals"
+  ON public.withdrawals
+  FOR ALL
+  TO authenticated
+  USING (public.is_bft_admin())
+  WITH CHECK (public.is_bft_admin());
 
 -- Referral Commissions: Users view commissions they earned
 DROP POLICY IF EXISTS "Users can view earned commissions" ON public.referral_commissions;

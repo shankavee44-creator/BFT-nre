@@ -161,22 +161,28 @@ export interface BankTransferDetails {
   accountHolder: string;
   accountNumber: string;
   swiftCode: string;
+  branchName?: string;
 }
 
 export interface WithdrawalRequest {
   id: string;
+  userId?: string;
   accountId: string;
+  accountType?: 'self' | 'funded' | string;
   amount: number; // gross requested amount
-  withdrawalFee?: number; // 10% withdrawal fee
-  netReceivedAmount?: number; // 90% net after 10% fee
-  profitSplitApplied?: number; // 80 or 90
+  withdrawalFee?: number; // 3% (self) or 10% (funded) withdrawal fee
+  netReceivedAmount?: number; // net after fee
+  profitSplitApplied?: number; // 100 (self) or 80/90 (funded)
   paymentMethod?: WithdrawalPaymentMethod;
+  payoutMethod?: 'crypto' | 'bank';
+  networkType?: string;
   trc20Address: string;
   bankDetails?: BankTransferDetails;
   referenceNumber?: string;
   requestedAt: number;
+  countdownEndsAt?: number;
   completedAt?: number;
-  status: 'pending' | 'processing' | 'completed' | 'paid' | 'rejected' | 'doubled';
+  status: 'pending' | 'processing' | 'completed' | 'success' | 'paid' | 'rejected' | 'cancelled' | 'doubled';
   rejectionReason?: string;
   txHash?: string;
   isDoublePayoutEligible: boolean;

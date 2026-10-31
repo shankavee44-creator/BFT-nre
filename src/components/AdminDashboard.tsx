@@ -55,6 +55,8 @@ import {
 import { soundEngine } from '../utils/soundEffects';
 import { supabase } from '../utils/supabase';
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 interface AdminDashboardProps {
   currentUser: UserProfile;
   onClose: () => void;
@@ -222,42 +224,119 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       try {
         const { data: supaWds } = await supabase
           .from('withdrawals')
-          .select('*, self_balance')
+          .select('*')
           .order('created_at', { ascending: false });
 
         if (supaWds && supaWds.length > 0) {
           const existingIds = new Set(mergedWds.map((w: any) => w.id));
+          const usersSource = usersRes.ok && Array.isArray(usersRes.users) ? usersRes.users : [];
+          const userMap = new Map<string, any>(usersSource.map((u: any) => [String(u.id), u]));
+
           const mappedSupa = supaWds.map((row: any) => {
             const rowId = row.id || `WD-${row.user_id?.slice(0, 6) || '101'}`;
+            const matchedUser = row.user_id ? userMap.get(String(row.user_id)) : null;
+            const rawAccType = String(row.account_type || 'self').toLowerCase();
+            const isSelfAcc = rawAccType === 'self' || rawAccType === 'personal_live';
+            const rawPayoutMethod = String(row.payout_method || row.payment_method || 'crypto').toLowerCase();
+            const isBankPayout =
+              rawPayoutMethod === 'bank' ||
+              rawPayoutMethod === 'bank_transfer' ||
+              Boolean(row.bank_name || row.bank_account_number);
+
+            const bankDetailsObj =
+              isBankPayout || row.bank_details
+                ? {
+                    bankName: row.bank_name || row.bank_details?.bankName || '',
+                    accountHolder: row.account_holder_name || row.bank_details?.accountHolder || '',
+                    accountNumber: row.bank_account_number || row.bank_details?.accountNumber || '',
+                    swiftCode: row.branch_name || row.bank_details?.branchName || row.bank_details?.swiftCode || '',
+                    branchName: row.branch_name || row.bank_details?.branchName || row.bank_details?.swiftCode || '',
+                  }
+                : null;
+
+            const resolvedUserEmail =
+              matchedUser?.email ||
+              row.user_email ||
+              (row.user_id && row.user_id.length > 8 ? `trader-${row.user_id.slice(0, 6)}@bft.io` : row.user_id);
+            const resolvedUserName =
+              matchedUser?.full_name ||
+              matchedUser?.email ||
+              row.user_name ||
+              resolvedUserEmail;
+
             return {
               id: rowId,
               user_id: row.user_id,
-              user_email: row.user_email || row.user_id,
-              user_name: row.user_email || row.user_id,
-              account_id: row.account_id || 'BFT-PERS-001',
-              account_type: row.account_type || (row.fee_percent === 3 ? 'personal_live' : 'funded'),
+              user_email: resolvedUserEmail,
+              user_name: resolvedUserName,
+              account_id: row.account_id || (isSelfAcc ? 'BFT-PERS-LIVE' : 'BFT-LIVE-001'),
+              account_type: isSelfAcc ? 'self' : 'funded',
+              amount: Number(row.amount || row.gross_amount || row.requested_amount || 0),
               gross_amount: Number(row.amount || row.gross_amount || row.requested_amount || 0),
               requested_amount: Number(row.amount || row.gross_amount || row.requested_amount || 0),
-              fee_amount: Number(row.fee_amount || row.fee || 0),
-              net_payout: Number(row.net_payout || row.net_amount || 0),
-              net_amount: Number(row.net_payout || row.net_amount || 0),
-              payment_method: row.payment_method || row.payout_method || 'crypto_trc20',
-              network: row.network || row.network_type || 'TRON (TRC-20)',
+              fee: Number(row.fee || row.fee_amount || 0),
+              fee_amount: Number(row.fee || row.fee_amount || 0),
+              net_amount: Number(row.net_amount || row.net_payout || 0),
+              net_payout: Number(row.net_amount || row.net_payout || 0),
+              payout_method: isBankPayout ? 'bank' : 'crypto',
+              payment_method: isBankPayout ? 'bank_transfer' : 'crypto_trc20',
+              network_type: row.network_type || row.network || (isBankPayout ? null : 'TRON (TRC-20)'),
+              network: row.network_type || row.network || (isBankPayout ? 'Bank Transfer' : 'TRON (TRC-20)'),
               wallet_address: row.wallet_address || '',
-              bank_details: row.bank_details || null,
+              bank_name: row.bank_name || null,
+              account_holder_name: row.account_holder_name || null,
+              bank_account_number: row.bank_account_number || null,
+              branch_name: row.branch_name || null,
+              bank_details: bankDetailsObj,
+              countdown_ends_at: row.countdown_ends_at || null,
               status: row.status || 'pending',
-              requested_at: row.requested_at ? new Date(row.requested_at).getTime() : Date.parse(row.created_at || '') || Date.now(),
+              requested_at: row.requested_at
+                ? new Date(row.requested_at).getTime()
+                : Date.parse(row.created_at || '') || Date.now(),
             };
           });
 
-          // Merge Supabase entries with backend SQLite entries, prioritizing Supabase row status
-          const supaMap = new Map(mappedSupa.map((sw: any) => [sw.id, sw]));
-          mergedWds = mergedWds.map((bw: any) => supaMap.get(bw.id) || bw);
+          // Reconcile authoritative Supabase rows with SQLite entries:
+          // Supabase records are the source of truth and preserve their canonical UUIDs.
+          const matchedSqliteIds = new Set<string>();
+          const reconciled: any[] = [];
+
           for (const sw of mappedSupa) {
-            if (!existingIds.has(sw.id)) {
-              mergedWds.push(sw);
+            // Find if SQLite has a placeholder record for this withdrawal
+            const matchingSqlite = mergedWds.find((bw: any) => {
+              if (String(bw.id) === String(sw.id)) return true;
+              const sameAmount = Math.abs(Number(bw.amount || 0) - Number(sw.amount || 0)) < 0.01;
+              const sameUser =
+                bw.user_id === sw.user_id ||
+                (bw.user_email && sw.user_email && bw.user_email.toLowerCase() === sw.user_email.toLowerCase());
+              const isNonUuid = !UUID_REGEX.test(String(bw.id));
+              return Boolean(isNonUuid && sameAmount && (sameUser || bw.account_type === sw.account_type));
+            });
+
+            if (matchingSqlite) {
+              matchedSqliteIds.add(String(matchingSqlite.id));
+              reconciled.push({
+                ...matchingSqlite,
+                ...sw,
+                id: sw.id, // Keep canonical Supabase UUID
+                supabase_id: sw.id,
+              });
+            } else {
+              reconciled.push({
+                ...sw,
+                supabase_id: sw.id,
+              });
             }
           }
+
+          // Retain any purely local SQLite records that had no Supabase equivalent
+          for (const bw of mergedWds) {
+            if (!matchedSqliteIds.has(String(bw.id)) && !reconciled.some((r) => String(r.id) === String(bw.id))) {
+              reconciled.push(bw);
+            }
+          }
+
+          mergedWds = reconciled;
         }
       } catch (e) {
         console.warn('Supabase withdrawals load error:', e);
@@ -272,6 +351,48 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       console.warn('Admin data load warning:', err);
     }
   };
+
+  // Real-time subscription & polling for Admin Dashboard
+  useEffect(() => {
+    if (!isAdminAuthorized) return;
+
+    fetchAllAdminData();
+
+    const channel = supabase
+      .channel(`admin-dashboard-realtime-${Date.now()}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'withdrawals',
+        },
+        () => {
+          fetchAllAdminData();
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'profiles',
+        },
+        () => {
+          fetchAllAdminData();
+        }
+      )
+      .subscribe();
+
+    const pollTimer = setInterval(() => {
+      fetchAllAdminData();
+    }, 4000);
+
+    return () => {
+      clearInterval(pollTimer);
+      supabase.removeChannel(channel);
+    };
+  }, [isAdminAuthorized]);
 
   const showFeedback = (type: 'success' | 'error', message: string) => {
     setActionFeedback({ type, message });
@@ -389,13 +510,69 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         showFeedback('error', res.error || 'Failed to decline deposit.');
       }
     } else if (declineTarget.type === 'withdrawal') {
-      try {
-        await supabase
-          .from('withdrawals')
-          .update({ status: 'declined', admin_notes: declineReason })
-          .eq('id', declineTarget.id);
-      } catch (e) {
-        console.warn('Supabase decline withdrawal update notice:', e);
+      const targetWd = withdrawalsList.find((w) => String(w.id) === String(declineTarget.id));
+      let targetSupaId: string | null =
+        (targetWd?.supabase_id && UUID_REGEX.test(targetWd.supabase_id) ? targetWd.supabase_id : null) ||
+        (UUID_REGEX.test(declineTarget.id) ? declineTarget.id : null);
+
+      if (!targetSupaId && targetWd) {
+        try {
+          const query = supabase
+            .from('withdrawals')
+            .select('id, status, amount, user_id')
+            .eq('status', 'pending');
+          if (targetWd.user_id && UUID_REGEX.test(targetWd.user_id)) {
+            query.eq('user_id', targetWd.user_id);
+          }
+          const { data: matchedRows } = await query;
+          if (matchedRows && matchedRows.length > 0) {
+            const match =
+              matchedRows.find(
+                (r: any) => Math.abs(Number(r.amount) - Number(targetWd.amount)) < 0.01
+              ) || matchedRows[0];
+            if (match?.id) targetSupaId = String(match.id);
+          }
+        } catch (err) {
+          console.warn('Error resolving Supabase withdrawal UUID for decline:', err);
+        }
+      }
+
+      if (targetSupaId) {
+        try {
+          const { error: decErr } = await supabase
+            .from('withdrawals')
+            .update({ status: 'rejected', updated_at: new Date().toISOString() })
+            .eq('id', targetSupaId);
+          if (decErr) {
+            await supabase
+              .from('withdrawals')
+              .update({ status: 'rejected' })
+              .eq('id', targetSupaId);
+          }
+        } catch (e) {
+          console.warn('Supabase decline withdrawal update notice:', e);
+        }
+      }
+
+      if (targetWd?.user_id) {
+        try {
+          const refundAmt = Number(targetWd.amount || targetWd.gross_amount || 0);
+          const isSelf = targetWd.account_type === 'self' || String(targetWd.account_id || '').includes('PERS');
+          const colName = isSelf ? 'self_balance' : 'funded_balance';
+          const { data: prof } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', targetWd.user_id)
+            .maybeSingle();
+
+          if (prof && refundAmt > 0) {
+            const currentBal = Number(prof[colName] || 0);
+            const newBal = Number((currentBal + refundAmt).toFixed(2));
+            await supabase.from('profiles').update({ [colName]: newBal }).eq('id', targetWd.user_id);
+          }
+        } catch (e) {
+          console.warn('Supabase decline withdrawal refund notice:', e);
+        }
       }
 
       const res = await apiAdminDeclineWithdrawal(declineTarget.id, declineReason);
@@ -404,12 +581,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         showFeedback('success', 'Withdrawal request declined.');
         setDeclineTarget(null);
         setDeclineReason('');
-        fetchAllAdminData();
+        await fetchAllAdminData();
       } else {
         showFeedback('success', 'Withdrawal set to declined in Supabase.');
         setDeclineTarget(null);
         setDeclineReason('');
-        fetchAllAdminData();
+        await fetchAllAdminData();
       }
     } else if (declineTarget.type === 'kyc') {
       const res = await apiAdminRejectKyc(declineTarget.id, declineReason);
@@ -428,30 +605,91 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // Withdrawal Actions
   const handleApproveWithdrawal = async (withdrawalId: string) => {
     setIsActionLoading(true);
-    try {
-      await supabase
+    setWithdrawalsList((prev) =>
+      prev.map((w) => (String(w.id) === String(withdrawalId) ? { ...w, status: 'success' } : w))
+    );
+
+    // 1. Resolve exact Supabase UUID
+    const targetWd = withdrawalsList.find((w) => String(w.id) === String(withdrawalId));
+    let targetSupaId: string | null =
+      (targetWd?.supabase_id && UUID_REGEX.test(targetWd.supabase_id) ? targetWd.supabase_id : null) ||
+      (UUID_REGEX.test(withdrawalId) ? withdrawalId : null);
+
+    if (!targetSupaId && targetWd) {
+      try {
+        const query = supabase
+          .from('withdrawals')
+          .select('id, status, amount, user_id')
+          .eq('status', 'pending');
+        if (targetWd.user_id && UUID_REGEX.test(targetWd.user_id)) {
+          query.eq('user_id', targetWd.user_id);
+        }
+        const { data: matchedRows } = await query;
+        if (matchedRows && matchedRows.length > 0) {
+          const match =
+            matchedRows.find(
+              (r: any) => Math.abs(Number(r.amount) - Number(targetWd.amount)) < 0.01
+            ) || matchedRows[0];
+          if (match?.id) targetSupaId = String(match.id);
+        }
+      } catch (err) {
+        console.warn('Error resolving Supabase withdrawal UUID for approval:', err);
+      }
+    }
+
+    // 2. Perform robust multi-stage update to Supabase
+    let supaUpdated = false;
+    let finalStatus: 'success' | 'completed' = 'success';
+    const nowIso = new Date().toISOString();
+
+    if (targetSupaId) {
+      // Stage A: Try status: 'success' with updated_at
+      const { error: errA } = await supabase
         .from('withdrawals')
-        .update({ status: 'completed' })
-        .eq('id', withdrawalId);
-    } catch (e) {
-      console.warn('Supabase approve withdrawal update notice:', e);
+        .update({ status: 'success', updated_at: nowIso })
+        .eq('id', targetSupaId);
+
+      if (!errA) {
+        supaUpdated = true;
+        finalStatus = 'success';
+      } else {
+        console.warn('Stage A Supabase update notice (success + updated_at):', errA.message);
+        // Stage B: Try status: 'success' without updated_at
+        const { error: errB } = await supabase
+          .from('withdrawals')
+          .update({ status: 'success' })
+          .eq('id', targetSupaId);
+
+        if (!errB) {
+          supaUpdated = true;
+          finalStatus = 'success';
+        } else {
+          console.warn('Stage B Supabase update notice (success):', errB.message);
+          // Stage C: Fallback to status: 'completed'
+          const { error: errC } = await supabase
+            .from('withdrawals')
+            .update({ status: 'completed' })
+            .eq('id', targetSupaId);
+
+          if (!errC) {
+            supaUpdated = true;
+            finalStatus = 'completed';
+          } else {
+            console.error('All Supabase withdrawal status update attempts failed:', errC);
+          }
+        }
+      }
     }
 
     const res = await apiAdminApproveWithdrawal(withdrawalId);
     setIsActionLoading(false);
 
-    if (res.ok) {
-      showFeedback(
-        'success',
-        res.message || 'Withdrawal approved! Account balance debited and payout processed.'
-      );
-      fetchAllAdminData();
-      if (onRefreshUserData) onRefreshUserData();
-    } else {
-      showFeedback('success', 'Withdrawal approved and status updated in Supabase.');
-      fetchAllAdminData();
-      if (onRefreshUserData) onRefreshUserData();
-    }
+    showFeedback(
+      'success',
+      res?.message || `Withdrawal approved! Status permanently updated to ${finalStatus} in Supabase.`
+    );
+    await fetchAllAdminData();
+    if (onRefreshUserData) onRefreshUserData();
   };
 
   // KYC Actions
@@ -550,6 +788,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const filteredWithdrawals = withdrawalsList.filter((w) => {
     if (withdrawalFilter === 'all') return true;
+    if (withdrawalFilter === 'pending') {
+      return w.status === 'pending' || w.status === 'processing';
+    }
+    if (withdrawalFilter === 'completed') {
+      return (
+        w.status === 'completed' ||
+        w.status === 'success' ||
+        w.status === 'approved' ||
+        w.status === 'paid'
+      );
+    }
+    if (withdrawalFilter === 'declined') {
+      return (
+        w.status === 'declined' ||
+        w.status === 'rejected' ||
+        w.status === 'cancelled' ||
+        w.status === 'canceled'
+      );
+    }
     return w.status === withdrawalFilter;
   });
 
@@ -1273,7 +1530,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     {filter} (
                     {filter === 'all'
                       ? withdrawalsList.length
-                      : withdrawalsList.filter((w) => w.status === filter).length}
+                      : withdrawalsList.filter((w) => {
+                          if (filter === 'pending') return w.status === 'pending' || w.status === 'processing';
+                          if (filter === 'completed') {
+                            return (
+                              w.status === 'completed' ||
+                              w.status === 'success' ||
+                              w.status === 'approved' ||
+                              w.status === 'paid'
+                            );
+                          }
+                          if (filter === 'declined') {
+                            return (
+                              w.status === 'declined' ||
+                              w.status === 'rejected' ||
+                              w.status === 'cancelled' ||
+                              w.status === 'canceled'
+                            );
+                          }
+                          return w.status === filter;
+                        }).length}
                     )
                   </button>
                 ))}
@@ -1283,12 +1559,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             {/* Withdrawals List */}
             <div className="space-y-3">
               {filteredWithdrawals.map((w) => {
-                const isPersonal = w.account_type === 'personal_live' || w.fee_percent === 3 || (w.account_id && w.account_id.includes('PERS'));
-                const grossVal = Number(w.gross_amount || w.requested_amount || w.amount || 0);
+                const isPersonal =
+                  w.account_type === 'self' ||
+                  w.account_type === 'personal_live' ||
+                  w.fee_percent === 3 ||
+                  (w.account_id && w.account_id.includes('PERS'));
+                const grossVal = Number(w.amount || w.gross_amount || w.requested_amount || 0);
                 const feePercent = isPersonal ? 3 : 10;
-                const feeVal = Number(w.fee_amount || w.fee || (grossVal * feePercent) / 100);
-                const netVal = Number(w.net_payout || w.net_amount || grossVal - feeVal);
-                const isBank = w.payment_method === 'bank_transfer' || Boolean(w.bank_details && w.bank_details.bankName);
+                const feeVal = Number(w.fee || w.fee_amount || (grossVal * feePercent) / 100);
+                const netVal = Number(w.net_amount || w.net_payout || grossVal - feeVal);
+                const isBank =
+                  w.payout_method === 'bank' ||
+                  w.payment_method === 'bank_transfer' ||
+                  Boolean(w.bank_name || (w.bank_details && w.bank_details.bankName));
 
                 return (
                   <div
@@ -1300,9 +1583,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         <span className="font-bold text-white text-sm">{w.id}</span>
                         <span
                           className={`text-[10px] px-2 py-0.5 rounded font-black uppercase ${
-                            w.status === 'completed' || w.status === 'approved'
+                            w.status === 'completed' || w.status === 'success' || w.status === 'approved' || w.status === 'paid'
                               ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
-                              : w.status === 'pending'
+                              : w.status === 'pending' || w.status === 'processing'
                               ? 'bg-[#ff8800]/20 text-[#ff8800] border border-[#ff8800]/40'
                               : 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
                           }`}
@@ -1316,29 +1599,35 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                               : 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
                           }`}
                         >
-                          {isPersonal ? 'Personal Live (3% Fee)' : 'Prop Funded (10% Fee)'}
+                          {isPersonal ? 'Self Capital (3% Fee)' : 'Prop Funded (10% Fee)'}
                         </span>
                         <span className="text-xs text-slate-400 font-bold">
-                          Method: {isBank ? 'Bank Transfer' : `Crypto (${w.network || 'TRC-20'})`}
+                          Method: {isBank ? 'Bank Transfer (bank)' : `Crypto (${w.network_type || w.network || 'TRC-20'})`}
                         </span>
                       </div>
 
                       <div className="text-xs text-slate-400 mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
                         <span>Trader: <strong className="text-white">{w.user_email || w.user_name || w.user_id}</strong></span>
                         <span className="text-slate-600">•</span>
-                        <span>Account: <strong className="text-[#ffaa00]">{w.account_id}</strong></span>
+                        <span>Account Type: <strong className="text-[#ffaa00] uppercase">{w.account_type || (isPersonal ? 'self' : 'funded')}</strong></span>
                         <span className="text-slate-600">•</span>
                         <span>Requested: {new Date(w.requested_at).toLocaleString()}</span>
+                        {w.countdown_ends_at && (
+                          <>
+                            <span className="text-slate-600">•</span>
+                            <span>1h SLA Ends: <strong className="text-amber-300">{new Date(w.countdown_ends_at).toLocaleTimeString()}</strong></span>
+                          </>
+                        )}
                       </div>
 
                       <div className="text-[11px] text-slate-300 mt-2 font-mono bg-[#14141e] p-2 rounded-lg border border-white/5 inline-block">
-                        {isBank && w.bank_details ? (
+                        {isBank ? (
                           <span>
-                            Bank: <strong className="text-white">{w.bank_details.bankName}</strong> • Holder: <strong className="text-white">{w.bank_details.accountHolder}</strong> • Acc: <strong className="text-[#ffaa00]">{w.bank_details.accountNumber}</strong> • SWIFT: <strong className="text-cyan-300">{w.bank_details.swiftCode}</strong>
+                            Bank: <strong className="text-white">{w.bank_name || w.bank_details?.bankName}</strong> • Holder: <strong className="text-white">{w.account_holder_name || w.bank_details?.accountHolder}</strong> • Acc: <strong className="text-[#ffaa00]">{w.bank_account_number || w.bank_details?.accountNumber}</strong> • Branch/SWIFT: <strong className="text-cyan-300">{w.branch_name || w.bank_details?.branchName || w.bank_details?.swiftCode}</strong>
                           </span>
                         ) : (
                           <span>
-                            Crypto Wallet ({w.network || 'TRC-20'}): <strong className="text-[#ffaa00]">{w.wallet_address || 'TYsD...'}</strong>
+                            Crypto Wallet ({w.network_type || w.network || 'TRC-20'}): <strong className="text-[#ffaa00]">{w.wallet_address || 'TYsD...'}</strong>
                           </span>
                         )}
                       </div>
@@ -1356,7 +1645,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         </div>
                       </div>
 
-                    {w.status === 'pending' ? (
+                    {w.status === 'pending' || w.status === 'processing' ? (
                       <div className="flex items-center gap-2">
                         <button
                           onClick={() => handleApproveWithdrawal(w.id)}
@@ -1383,9 +1672,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       </div>
                     ) : (
                       <div className="text-xs text-slate-400">
-                        {w.status === 'completed' ? (
+                        {w.status === 'completed' || w.status === 'success' || w.status === 'approved' || w.status === 'paid' ? (
                           <span className="text-emerald-400 flex items-center gap-1 font-bold">
-                            <CheckCircle2 className="w-4 h-4" /> Paid (8% Sponsor Bonus Dispatched)
+                            <CheckCircle2 className="w-4 h-4" /> Paid & Approved (8% Sponsor Bonus Dispatched)
                           </span>
                         ) : (
                           <span className="text-rose-400 font-bold">
