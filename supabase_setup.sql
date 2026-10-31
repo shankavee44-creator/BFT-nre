@@ -141,10 +141,16 @@ CREATE TABLE IF NOT EXISTS public.referral_commissions (
   earner_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   source_user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   level INT NOT NULL CHECK (level IN (1, 2, 3)),
-  commission_type TEXT NOT NULL CHECK (commission_type IN ('deposit', 'withdrawal')),
-  amount NUMERIC(15, 2) NOT NULL CHECK (amount > 0),
+  source_type TEXT NOT NULL CHECK (source_type IN ('purchase', 'withdrawal')),
+  amount NUMERIC(15, 2) NOT NULL CHECK (amount >= 0),
+  package_amount NUMERIC(15, 2) DEFAULT 0,
+  description TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Enable Realtime
+ALTER PUBLICATION supabase_realtime ADD TABLE public.referral_commissions;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.profiles;
 
 -- AFFILIATE COMMISSIONS TABLE (User requested)
 CREATE TABLE IF NOT EXISTS public.affiliate_commissions (
@@ -329,33 +335,35 @@ DECLARE
   l2_id UUID;
   l3_id UUID;
   comm_amount NUMERIC(15, 2);
+  v_pkg_amount NUMERIC(15, 2) := NEW.amount;
 BEGIN
   IF OLD.status = 'pending' AND NEW.status = 'approved' THEN
-    UPDATE public.profiles SET balance = balance + NEW.amount, updated_at = NOW() WHERE id = NEW.user_id;
+    -- Update source profile balance
+    UPDATE public.profiles SET balance = balance + v_pkg_amount, updated_at = NOW() WHERE id = NEW.user_id;
 
     SELECT referred_by INTO l1_id FROM public.profiles WHERE id = NEW.user_id;
     
     IF l1_id IS NOT NULL THEN
       -- Tier 1 (10%)
-      comm_amount := ROUND(NEW.amount * 0.10, 2);
-      INSERT INTO public.affiliate_commissions (user_id, source_user_id, amount, commission_type, tier_percentage)
-      VALUES (l1_id, NEW.user_id, comm_amount, 'purchase', 10);
+      comm_amount := ROUND(v_pkg_amount * 0.10, 2);
+      INSERT INTO public.referral_commissions (earner_id, source_user_id, level, source_type, amount, package_amount, description)
+      VALUES (l1_id, NEW.user_id, 1, 'purchase', comm_amount, v_pkg_amount, 'Direct Referral Purchase Commission (10%)');
       UPDATE public.profiles SET balance = balance + comm_amount, total_referral_earnings = total_referral_earnings + comm_amount WHERE id = l1_id;
       
       -- Tier 2 (5%)
       SELECT referred_by INTO l2_id FROM public.profiles WHERE id = l1_id;
       IF l2_id IS NOT NULL THEN
-        comm_amount := ROUND(NEW.amount * 0.05, 2);
-        INSERT INTO public.affiliate_commissions (user_id, source_user_id, amount, commission_type, tier_percentage)
-        VALUES (l2_id, NEW.user_id, comm_amount, 'purchase', 5);
+        comm_amount := ROUND(v_pkg_amount * 0.05, 2);
+        INSERT INTO public.referral_commissions (earner_id, source_user_id, level, source_type, amount, package_amount, description)
+        VALUES (l2_id, NEW.user_id, 2, 'purchase', comm_amount, v_pkg_amount, 'Sub-Upline Referral Purchase Commission (5%)');
         UPDATE public.profiles SET balance = balance + comm_amount, total_referral_earnings = total_referral_earnings + comm_amount WHERE id = l2_id;
         
         -- Tier 3 (2%)
         SELECT referred_by INTO l3_id FROM public.profiles WHERE id = l2_id;
         IF l3_id IS NOT NULL THEN
-          comm_amount := ROUND(NEW.amount * 0.02, 2);
-          INSERT INTO public.affiliate_commissions (user_id, source_user_id, amount, commission_type, tier_percentage)
-          VALUES (l3_id, NEW.user_id, comm_amount, 'purchase', 2);
+          comm_amount := ROUND(v_pkg_amount * 0.02, 2);
+          INSERT INTO public.referral_commissions (earner_id, source_user_id, level, source_type, amount, package_amount, description)
+          VALUES (l3_id, NEW.user_id, 3, 'purchase', comm_amount, v_pkg_amount, 'Network Upline Referral Purchase Commission (2%)');
           UPDATE public.profiles SET balance = balance + comm_amount, total_referral_earnings = total_referral_earnings + comm_amount WHERE id = l3_id;
         END IF;
       END IF;
@@ -377,14 +385,15 @@ RETURNS TRIGGER AS $$
 DECLARE
   l1_id UUID;
   comm_amount NUMERIC(15, 2);
+  v_w_amount NUMERIC(15, 2) := NEW.amount;
 BEGIN
   IF OLD.status = 'pending' AND (NEW.status = 'completed' OR NEW.status = 'success') THEN
     SELECT referred_by INTO l1_id FROM public.profiles WHERE id = NEW.user_id;
     
     IF l1_id IS NOT NULL THEN
-      comm_amount := ROUND(NEW.amount * 0.08, 2);
-      INSERT INTO public.affiliate_commissions (user_id, source_user_id, amount, commission_type, tier_percentage)
-      VALUES (l1_id, NEW.user_id, comm_amount, 'withdrawal', 8);
+      comm_amount := ROUND(v_w_amount * 0.08, 2);
+      INSERT INTO public.referral_commissions (earner_id, source_user_id, level, source_type, amount, package_amount, description)
+      VALUES (l1_id, NEW.user_id, 1, 'withdrawal', comm_amount, v_w_amount, 'Direct Referral Withdrawal Commission (8%)');
       UPDATE public.profiles SET balance = balance + comm_amount, total_referral_earnings = total_referral_earnings + comm_amount WHERE id = l1_id;
     END IF;
   END IF;
