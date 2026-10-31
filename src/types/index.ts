@@ -258,6 +258,13 @@ export interface ReferralRecord {
   createdAt: string;
 }
 
+export interface ReferredUser {
+  id: string;
+  fullName: string;
+  level: ReferralLevel;
+  latestPurchase?: { name: string; amount: number };
+}
+
 export interface AffiliatePayout {
   id: string; // e.g. "AFF-PAY-801"
   userId: string;

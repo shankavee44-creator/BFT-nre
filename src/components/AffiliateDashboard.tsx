@@ -33,6 +33,7 @@ import {
 import { soundEngine } from '../utils/soundEffects';
 import { apiGetAffiliateDashboard } from '../utils/apiClient';
 import { supabase } from '../utils/supabase';
+import { ReferralNetworkList } from './ReferralNetworkList';
 
 interface AffiliateDashboardProps {
   userProfile: UserProfile;
@@ -131,13 +132,28 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
     };
   }, [userProfile.id]);
 
+  const totalPaid = payouts
+    .filter((p) => p.status === 'completed' || p.status === 'processing')
+    .reduce((sum, p) => sum + p.amount, 0);
+
   const stats = {
-    availableBalance: supabaseCommissions.reduce((sum, c) => sum + c.commissionAmount, 0),
+    availableBalance: Math.max(
+      0,
+      supabaseCommissions.reduce((sum, c) => sum + c.commissionAmount, 0) - totalPaid
+    ),
     lifetimeEarnings: supabaseCommissions.reduce((sum, c) => sum + c.commissionAmount, 0),
-    level1Earnings: supabaseCommissions.filter(c => c.level === 1 && c.commissionType === 'purchase').reduce((sum, c) => sum + c.commissionAmount, 0),
-    level2Earnings: supabaseCommissions.filter(c => c.level === 2).reduce((sum, c) => sum + c.commissionAmount, 0),
-    level3Earnings: supabaseCommissions.filter(c => c.level === 3).reduce((sum, c) => sum + c.commissionAmount, 0),
-    withdrawalEarnings: supabaseCommissions.filter(c => c.commissionType === 'withdrawal').reduce((sum, c) => sum + c.commissionAmount, 0),
+    level1Earnings: supabaseCommissions
+      .filter((c) => c.level === 1 && c.commissionType === 'purchase')
+      .reduce((sum, c) => sum + c.commissionAmount, 0),
+    level2Earnings: supabaseCommissions
+      .filter((c) => c.level === 2)
+      .reduce((sum, c) => sum + c.commissionAmount, 0),
+    level3Earnings: supabaseCommissions
+      .filter((c) => c.level === 3)
+      .reduce((sum, c) => sum + c.commissionAmount, 0),
+    withdrawalEarnings: supabaseCommissions
+      .filter((c) => c.commissionType === 'withdrawal')
+      .reduce((sum, c) => sum + c.commissionAmount, 0),
     totalReferralsCount: referredNetworkCount,
   };
 
@@ -160,13 +176,21 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
     setPayoutError(null);
     setPayoutSuccess(null);
 
+    const today = new Date();
+    if (today.getDay() !== 5) {
+      setPayoutError('Withdrawals are only allowed on Fridays.');
+      return;
+    }
+
     if (payoutAmount < 50) {
       setPayoutError('Minimum withdrawal threshold is $50.00 USDT');
       return;
     }
 
     if (payoutAmount > stats.availableBalance) {
-      setPayoutError(`Amount exceeds your available balance ($${stats.availableBalance.toFixed(2)})`);
+      setPayoutError(
+        `Amount exceeds your available balance ($${stats.availableBalance.toFixed(2)})`
+      );
       return;
     }
 
@@ -522,16 +546,17 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
             <table className="w-full text-left font-mono text-xs">
               <thead>
                 <tr className="border-b border-white/10 text-[10px] uppercase text-slate-400">
-                  <th className="py-2.5">Trader</th>
-                  <th className="py-2.5">Type</th>
-                  <th className="py-2.5">Source</th>
-                  <th className="py-2.5 text-right">Earned</th>
+                  <th className="py-3 pl-2">Trader</th>
+                  <th className="py-3">Type</th>
+                  <th className="py-3">Source / Package</th>
+                  <th className="py-3 text-right">Earned</th>
+                  <th className="py-3 text-right pr-2">Date</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
                 {filteredReferrals.map((ref) => (
-                  <tr key={ref.id}>
-                    <td className="py-3">
+                  <tr key={ref.id} className="hover:bg-white/5">
+                    <td className="py-3 pl-2">
                       <div className="font-bold text-white">{ref.referredUserName}</div>
                       <div className="text-[10px] text-slate-500">{ref.referredUserEmail}</div>
                     </td>
@@ -548,9 +573,15 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
                           : `L${ref.level} (${(ref.commissionRate * 100).toFixed(0)}%)`}
                       </span>
                     </td>
-                    <td className="py-3 text-slate-300 font-sans">{ref.packageName}</td>
+                    <td className="py-3 text-slate-300 font-sans">
+                      <div className="font-bold text-white">{ref.packageName}</div>
+                      <div className="text-[10px] text-slate-500">${Number(ref.packagePrice).toFixed(2)}</div>
+                    </td>
                     <td className="py-3 text-right font-black text-emerald-400">
                       +${ref.commissionAmount.toFixed(2)}
+                    </td>
+                    <td className="py-3 text-right pr-2 text-slate-400 font-mono">
+                      {new Date(ref.createdAt).toLocaleDateString()}
                     </td>
                   </tr>
                 ))}
@@ -559,6 +590,8 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
           </div>
         </div>
       </div>
+
+      <ReferralNetworkList userId={userProfile.id} />
 
       {/* Pure Inline SVG QR Modal (Zero External URL Dependencies) */}
       <AnimatePresence>

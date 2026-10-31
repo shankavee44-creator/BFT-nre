@@ -1495,6 +1495,43 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             </div>
           )}
 
+          {/* Active Challenge Purchases Section */}
+          <div className="mt-8 p-6 rounded-3xl bg-[#0a0a0a] border border-[#ff8800]/40 font-mono">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-6 pb-4 border-b border-white/10">
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded bg-[#ff8800]/15 text-[#ff8800] border border-[#ff8800]/40">
+                  CHALLENGE PURCHASES
+                </span>
+                <h3 className="text-lg font-black text-white mt-1">
+                  Active Challenge Accounts
+                </h3>
+              </div>
+            </div>
+
+            {purchases.length === 0 ? (
+              <div className="p-4 rounded-xl bg-[#16161b] text-center text-xs text-slate-500">
+                No active challenge purchases found.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {purchases.map((purchase) => (
+                  <div
+                    key={purchase.id}
+                    className="p-4 rounded-xl bg-[#111115] border border-white/10 flex items-center justify-between gap-4"
+                  >
+                    <div>
+                      <div className="text-sm font-bold text-white">{purchase.package_name || 'Challenge Account'}</div>
+                      <div className="text-xs text-slate-400">Amount: ${Number(purchase.package_amount).toFixed(2)}</div>
+                    </div>
+                    <div className="text-xs text-slate-400">
+                      {new Date(purchase.created_at).toLocaleDateString()}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* Supabase Financials & Manual Approvals Ledger */}
           <div className="mt-8 p-6 rounded-3xl bg-[#0a0a0a] border border-[#ff8800]/40 font-mono">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-6 pb-4 border-b border-white/10">
