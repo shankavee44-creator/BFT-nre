@@ -63,152 +63,83 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
   const [payoutError, setPayoutError] = useState<string | null>(null);
   const [payoutSuccess, setPayoutSuccess] = useState<string | null>(null);
   const [isSubmittingPayout, setIsSubmittingPayout] = useState(false);
-  const [copiedPromo, setCopiedPromo] = useState<string | null>(null);
-  const [backendStats, setBackendStats] = useState<any>(null);
-
   const [supabaseCommissions, setSupabaseCommissions] = useState<ReferralRecord[]>([]);
+  const [referredNetworkCount, setReferredNetworkCount] = useState(0);
 
-  // Query Supabase referral_commissions & subscribe to real-time postgres_changes
+  // Query Supabase referral_commissions & network count + subscribe to real-time changes
   useEffect(() => {
     let isMounted = true;
+    const targetUserId = userProfile.id;
+    if (!targetUserId) return;
+
     const mapCommissionRow = (c: any): ReferralRecord => {
-      const sourceId = String(c.source_user_id || c.referred_user_id || 'trader');
-      const level = (c.level === 2 ? 2 : c.level === 3 ? 3 : 1) as 1 | 2 | 3;
-      const isWithdrawal = String(c.commission_type || '').toLowerCase().includes('withdrawal');
-      const amount = Number(c.amount ?? c.commission_amount ?? 0);
       return {
-        id: String(c.id || `COM-${Date.now()}`),
-        referrerId: String(c.earner_id || userProfile.id),
-        referredUserId: sourceId,
-        referredUserName: c.source_name || `Trader ${sourceId.slice(0, 6)}`,
-        referredUserEmail: c.source_email || `trader.${sourceId.slice(0, 4)}@client-bft.com`,
-        level,
+        id: String(c.id),
+        referrerId: String(c.earner_id),
+        referredUserId: String(c.source_user_id),
+        referredUserName: `Trader ${String(c.source_user_id).slice(0, 6)}`,
+        referredUserEmail: `trader@bft.io`,
+        level: c.level as 1 | 2 | 3,
         packageTier: 'one-step',
-        packageName: isWithdrawal ? '8% Withdrawal Bonus' : `Level ${level} Deposit Commission`,
-        packagePrice: amount * (isWithdrawal ? 12.5 : level === 1 ? 10 : level === 2 ? 20 : 50),
-        commissionRate: isWithdrawal ? 0.08 : level === 1 ? 0.10 : level === 2 ? 0.05 : 0.02,
-        commissionAmount: amount,
-        commissionType: isWithdrawal ? 'withdrawal' : 'package',
+        packageName: c.description || 'Commission',
+        packagePrice: Number(c.package_amount || 0),
+        commissionRate: c.level === 1 ? 0.10 : c.level === 2 ? 0.05 : 0.02,
+        commissionAmount: Number(c.amount || 0),
+        commissionType: c.source_type,
         status: 'paid',
-        createdAt: c.created_at || new Date().toISOString(),
+        createdAt: c.created_at,
       };
     };
 
-    async function fetchSupabaseAffiliateData() {
-      const { data: { user } } = await supabase.auth.getUser();
-      const targetUserId = user?.id || userProfile.id;
-      if (!targetUserId) return;
-
+    async function fetchAffiliateData() {
+      // 1. Fetch Commissions
       const { data: comms } = await supabase
         .from('referral_commissions')
         .select('*')
         .eq('earner_id', targetUserId)
         .order('created_at', { ascending: false });
 
-      if (comms && isMounted) {
-        setSupabaseCommissions(comms.map(mapCommissionRow));
+      // 2. Fetch Referred Network Count (Direct + Indirect)
+      const { count } = await supabase
+        .from('profiles')
+        .select('*', { count: 'exact', head: true })
+        .eq('referred_by', targetUserId);
+
+      if (isMounted) {
+        if (comms) setSupabaseCommissions(comms.map(mapCommissionRow));
+        if (count !== null) setReferredNetworkCount(count);
       }
     }
 
-    fetchSupabaseAffiliateData();
+    fetchAffiliateData();
 
-    const channel = supabase
-      .channel(`realtime:referral_commissions:${userProfile.id || 'anon'}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'referral_commissions',
-        },
-        (payload) => {
-          if (!isMounted) return;
-          const newRow = payload.new as any;
-          const oldRow = payload.old as any;
-          if (payload.eventType === 'DELETE' && oldRow?.id) {
-            setSupabaseCommissions((prev) => prev.filter((r) => r.id !== String(oldRow.id)));
-            return;
-          }
-          if (newRow && (!userProfile.id || !newRow.earner_id || String(newRow.earner_id) === userProfile.id)) {
-            const mapped = mapCommissionRow(newRow);
-            setSupabaseCommissions((prev) => {
-              const exists = prev.some((r) => r.id === mapped.id);
-              return exists ? prev.map((r) => (r.id === mapped.id ? mapped : r)) : [mapped, ...prev];
-            });
-          } else {
-            fetchSupabaseAffiliateData();
-          }
-        }
-      )
+    // Subscribe to Realtime
+    const commChannel = supabase
+      .channel('realtime:referral_commissions')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'referral_commissions' }, fetchAffiliateData)
       .subscribe();
 
-    const interval = setInterval(fetchSupabaseAffiliateData, 4000);
+    const profileChannel = supabase
+      .channel('realtime:profiles')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'profiles' }, fetchAffiliateData)
+      .subscribe();
+
     return () => {
       isMounted = false;
-      clearInterval(interval);
-      supabase.removeChannel(channel);
+      supabase.removeChannel(commChannel);
+      supabase.removeChannel(profileChannel);
     };
   }, [userProfile.id]);
 
-  useEffect(() => {
-    let active = true;
-    const fetchStats = () => {
-      apiGetAffiliateDashboard()
-        .then((res) => {
-          if (active && res && res.ok && res.stats) {
-            setBackendStats(res.stats);
-          }
-        })
-        .catch(() => {});
-    };
-    fetchStats();
-    const timer = setInterval(fetchStats, 3000);
-    return () => {
-      active = false;
-      clearInterval(timer);
-    };
-  }, [userProfile.id]);
-
-  // Merge real-time Supabase referral_commissions and SQLite recentCommissions into ReferralRecord format
-  const backendReferralRecords: ReferralRecord[] = Array.isArray(backendStats?.recentCommissions)
-    ? backendStats.recentCommissions.map((c: any) => ({
-        id: c.id,
-        referrerId: userProfile.id,
-        referredUserId: c.from_user_id,
-        referredUserName: c.from_name || 'Referred Trader',
-        referredUserEmail: c.from_email || '',
-        level: (c.tier_level === 2 ? 2 : c.tier_level === 3 ? 3 : 1) as 1 | 2 | 3,
-        packageTier: 'one-step',
-        packageName: c.description || 'Challenge Purchase',
-        packagePrice: Number(c.base_amount || 0),
-        commissionRate: Number(c.percentage || 10) / 100,
-        commissionAmount: Number(c.commission_amount || 0),
-        commissionType: c.commission_type === 'withdrawal_bonus' ? 'withdrawal' : 'package',
-        status: 'paid',
-        createdAt: c.created_at || new Date().toISOString(),
-      }))
-    : [];
-
-  const mergedReferrals: ReferralRecord[] = [
-    ...supabaseCommissions,
-    ...backendReferralRecords.filter((b) => !supabaseCommissions.some((s) => s.id === b.id)),
-    ...referrals.filter(
-      (r) => !supabaseCommissions.some((s) => s.id === r.id) && !backendReferralRecords.some((b) => b.id === r.id)
-    ),
-  ];
-
-  const rawStats: AffiliateStats = calculateAffiliateStats(userProfile.id, mergedReferrals, payouts);
-  const stats: AffiliateStats = backendStats
-    ? {
-        ...rawStats,
-        availableBalance: backendStats.paidEarnings ?? rawStats.availableBalance,
-        lifetimeEarnings: backendStats.totalEarnings ?? rawStats.lifetimeEarnings,
-        level1Earnings: backendStats.levelCommissions?.level1 ?? rawStats.level1Earnings,
-        level2Earnings: backendStats.levelCommissions?.level2 ?? rawStats.level2Earnings,
-        level3Earnings: backendStats.levelCommissions?.level3 ?? rawStats.level3Earnings,
-        totalReferralsCount: backendStats.totalReferrals ?? rawStats.totalReferralsCount,
-      }
-    : rawStats;
+  const stats = {
+    availableBalance: supabaseCommissions.reduce((sum, c) => sum + c.commissionAmount, 0),
+    lifetimeEarnings: supabaseCommissions.reduce((sum, c) => sum + c.commissionAmount, 0),
+    level1Earnings: supabaseCommissions.filter(c => c.level === 1 && c.commissionType === 'purchase').reduce((sum, c) => sum + c.commissionAmount, 0),
+    level2Earnings: supabaseCommissions.filter(c => c.level === 2).reduce((sum, c) => sum + c.commissionAmount, 0),
+    level3Earnings: supabaseCommissions.filter(c => c.level === 3).reduce((sum, c) => sum + c.commissionAmount, 0),
+    withdrawalEarnings: supabaseCommissions.filter(c => c.commissionType === 'withdrawal').reduce((sum, c) => sum + c.commissionAmount, 0),
+    totalReferralsCount: referredNetworkCount,
+  };
 
   const handleCopyLink = () => {
     navigator.clipboard.writeText(referralLink);
@@ -222,13 +153,6 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
     setCopiedCode(true);
     soundEngine.playUiClick();
     setTimeout(() => setCopiedCode(false), 2000);
-  };
-
-  const handleCopyPromo = (key: string, text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedPromo(key);
-    soundEngine.playUiClick();
-    setTimeout(() => setCopiedPromo(null), 2000);
   };
 
   const handleSubmitPayout = (e: React.FormEvent) => {
@@ -260,7 +184,7 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
         amount: payoutAmount,
         method: payoutMethod,
         details: payoutDetails,
-        referrals,
+        referrals: supabaseCommissions,
         payouts,
       });
 
@@ -279,7 +203,7 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
     }, 1000);
   };
 
-  const filteredReferrals = mergedReferrals
+  const filteredReferrals = supabaseCommissions
     .filter((r) => r.referrerId === userProfile.id)
     .filter((r) => {
       if (filterLevel === 'all') return true;
