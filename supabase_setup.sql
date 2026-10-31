@@ -235,6 +235,9 @@ DECLARE
   referrer_uuid UUID := NULL;
   new_ref_code TEXT;
 BEGIN
+  -- Log for debugging (will appear in Supabase logs)
+  RAISE LOG 'Processing signup for user: %, meta: %', NEW.id, NEW.raw_user_meta_data;
+
   ref_code_param := UPPER(TRIM(COALESCE(
     NEW.raw_user_meta_data->>'referral_code',
     NEW.raw_user_meta_data->>'ref',
@@ -243,6 +246,7 @@ BEGIN
 
   IF ref_code_param <> '' THEN
     SELECT id INTO referrer_uuid FROM public.profiles WHERE referral_code = ref_code_param LIMIT 1;
+    RAISE LOG 'Referral lookup: code=%, referrer_uuid=%', ref_code_param, referrer_uuid;
   END IF;
 
   new_ref_code := public.generate_unique_referral_code();
@@ -266,11 +270,12 @@ BEGIN
     'unverified',
     0.00
   )
-  ON CONFLICT (id) DO NOTHING;
+  ON CONFLICT (id) DO UPDATE SET
+    referred_by = COALESCE(public.profiles.referred_by, EXCLUDED.referred_by);
 
   RETURN NEW;
 EXCEPTION WHEN OTHERS THEN
-  -- Never block auth.users signup if profile trigger encounters any constraint warning
+  RAISE LOG 'Error in signup trigger: %', SQLERRM;
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
