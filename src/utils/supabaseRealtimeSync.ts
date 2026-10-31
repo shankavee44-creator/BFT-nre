@@ -1616,6 +1616,12 @@ export interface UserRealtimeSubscriptionCallbacks {
     newRow: Record<string, any> | null,
     oldRow: Record<string, any> | null
   ) => void;
+  onPurchasesInitial?: (rows: Record<string, any>[]) => void;
+  onPurchaseEvent?: (
+    eventType: 'INSERT' | 'UPDATE' | 'DELETE' | string,
+    newRow: Record<string, any> | null,
+    oldRow: Record<string, any> | null
+  ) => void;
 }
 
 /**
@@ -1777,6 +1783,8 @@ export function subscribeUserRealtimeChannels(callbacks: UserRealtimeSubscriptio
     onWithdrawalEvent,
     onCommissionsInitial,
     onCommissionEvent,
+    onPurchasesInitial,
+    onPurchaseEvent,
   } = callbacks;
 
   let isDisposed = false;
@@ -1819,6 +1827,12 @@ export function subscribeUserRealtimeChannels(callbacks: UserRealtimeSubscriptio
     if (!row || typeof row !== 'object') return false;
     const earnerId = String(row.earner_id || row.referrer_id || '');
     return Boolean(earnerId && candidateIds.has(earnerId));
+  };
+
+  const matchesUserPurchase = (row: Record<string, any> | null | undefined): boolean => {
+    if (!row || typeof row !== 'object') return false;
+    const uid = String(row.user_id || '');
+    return Boolean(uid && candidateIds.has(uid));
   };
 
   const attachFilteredProfileChannel = (uid: string) => {
@@ -1934,6 +1948,21 @@ export function subscribeUserRealtimeChannels(callbacks: UserRealtimeSubscriptio
           }
         }
       }
+
+      // 4. Fetch initial purchases from Supabase (only query with valid UUIDs)
+      if (onPurchasesInitial) {
+        const uuidIds = Array.from(candidateIds).filter((id) => UUID_REGEX.test(id));
+        if (uuidIds.length > 0) {
+          const { data: pRows } = await supabase
+            .from('user_purchases')
+            .select('*')
+            .in('user_id', uuidIds)
+            .order('created_at', { ascending: false });
+          if (!isDisposed && Array.isArray(pRows) && pRows.length > 0) {
+            onPurchasesInitial(pRows);
+          }
+        }
+      }
     } catch {
       // Ignore network/offline errors on initial sync
     }
@@ -2010,6 +2039,22 @@ export function subscribeUserRealtimeChannels(callbacks: UserRealtimeSubscriptio
         const oldRow = (payload.old as Record<string, any>) || null;
         if (matchesUserCommission(newRow) || matchesUserCommission(oldRow)) {
           onCommissionEvent(payload.eventType, newRow, oldRow);
+        }
+      }
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'user_purchases',
+      },
+      (payload) => {
+        if (isDisposed || !onPurchaseEvent) return;
+        const newRow = (payload.new as Record<string, any>) || null;
+        const oldRow = (payload.old as Record<string, any>) || null;
+        if (matchesUserPurchase(newRow) || matchesUserPurchase(oldRow)) {
+          onPurchaseEvent(payload.eventType, newRow, oldRow);
         }
       }
     )

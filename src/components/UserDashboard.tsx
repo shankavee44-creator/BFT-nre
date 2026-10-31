@@ -96,6 +96,7 @@ interface UserDashboardProps {
   trades?: BinaryTrade[];
   referrals?: ReferralRecord[];
   payouts?: AffiliatePayout[];
+  purchases?: any[];
   onAddPayout?: (payout: AffiliatePayout) => void;
   onSelectAccount: (accountId: string) => void;
   onOpenTerminal: () => void;
@@ -117,6 +118,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   trades = [],
   referrals = [],
   payouts = [],
+  purchases = [],
   onAddPayout = () => {},
   onSelectAccount,
   onOpenTerminal,

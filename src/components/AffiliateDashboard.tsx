@@ -316,13 +316,7 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
             <Percent className="w-4 h-4 text-emerald-400" />
           </div>
           <div className="text-3xl font-black text-emerald-400 font-mono">
-            $
-            {(
-              backendStats?.levelCommissions?.withdrawalBonus ??
-              mergedReferrals
-                .filter((r) => r.referrerId === userProfile.id && r.commissionType === 'withdrawal')
-                .reduce((s, r) => s + r.commissionAmount, 0)
-            ).toFixed(2)}
+            ${stats.withdrawalEarnings.toFixed(2)}
           </div>
           <div className="text-[11px] text-slate-400 mt-2">8% earned from direct referrals' withdrawals</div>
         </div>

@@ -138,6 +138,7 @@ export default function App() {
     return p;
   });
   const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>([]);
+  const [purchases, setPurchases] = useState<any[]>([]);
   const [trades, setTrades] = useState<BinaryTrade[]>(() => {
     const loaded = loadTrades();
     // Strictly filter out 'active' trades from localStorage on reload to prevent ghost/phantom execution.
@@ -552,6 +553,18 @@ export default function App() {
           const next = mergeRealtimeCommission(prev, newRow, eventType, oldRow);
           saveAffiliateReferrals(next);
           return next;
+        });
+      },
+      onPurchasesInitial: (rows) => {
+        setPurchases(rows);
+      },
+      onPurchaseEvent: (eventType, newRow, oldRow) => {
+        setPurchases((prev) => {
+          if (eventType === 'DELETE') return prev.filter((p) => String(p.id) !== String(oldRow.id));
+          if (eventType === 'INSERT') return [newRow, ...prev];
+          if (eventType === 'UPDATE')
+            return prev.map((p) => (String(p.id) === String(newRow.id) ? newRow : p));
+          return prev;
         });
       },
     });
@@ -1501,6 +1514,7 @@ export default function App() {
             trades={trades}
             referrals={affiliateReferrals}
             payouts={affiliatePayouts}
+            purchases={purchases}
             onAddPayout={handleAddAffiliatePayout}
             onSelectAccount={handleSelectAccount}
             onOpenTerminal={() => handleNavigateTab('terminal')}
