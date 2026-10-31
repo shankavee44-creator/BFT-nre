@@ -369,7 +369,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         options: {
           data: {
             full_name: cleanFullName,
-            referral_code: myReferralCode,
+            referral_code: sponsorCode,
           },
         },
       });

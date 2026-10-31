@@ -146,6 +146,17 @@ CREATE TABLE IF NOT EXISTS public.referral_commissions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- AFFILIATE COMMISSIONS TABLE (User requested)
+CREATE TABLE IF NOT EXISTS public.affiliate_commissions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  source_user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  amount NUMERIC(15, 2) NOT NULL CHECK (amount > 0),
+  commission_type TEXT NOT NULL CHECK (commission_type IN ('purchase', 'withdrawal')),
+  tier_percentage NUMERIC(5, 2) NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- INDEXES FOR PERFORMANCE
 CREATE INDEX IF NOT EXISTS idx_profiles_referred_by ON public.profiles(referred_by);
 CREATE INDEX IF NOT EXISTS idx_profiles_referral_code ON public.profiles(referral_code);
@@ -272,132 +283,115 @@ CREATE TRIGGER on_auth_user_created
   EXECUTE FUNCTION public.handle_new_user_signup();
 
 
--- ============================================================================
--- 4. AUTOMATIC TRIGGER 1: ON DEPOSIT APPROVAL (3-Tier Referral Commissions)
--- ============================================================================
+-- RPC: Get 3-tier network tree
+CREATE OR REPLACE FUNCTION public.get_affiliate_network_tree(p_user_id UUID)
+RETURNS JSONB AS $$
+DECLARE
+  v_tree JSONB;
+BEGIN
+  WITH RECURSIVE network AS (
+    SELECT id, referred_by, 0 as level
+    FROM public.profiles
+    WHERE id = p_user_id
+    UNION ALL
+    SELECT p.id, p.referred_by, n.level + 1
+    FROM public.profiles p
+    JOIN network n ON p.referred_by = n.id
+    WHERE n.level < 3
+  )
+  SELECT json_agg(row_to_json(n)) INTO v_tree FROM network n WHERE n.level > 0;
+  RETURN COALESCE(v_tree, '[]'::jsonb);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
-CREATE OR REPLACE FUNCTION public.handle_deposit_approval()
+-- RPC: Get total earnings per tier
+CREATE OR REPLACE FUNCTION public.get_affiliate_earnings(p_user_id UUID)
+RETURNS TABLE(tier_percentage NUMERIC, total_earnings NUMERIC) AS $$
+BEGIN
+  RETURN QUERY
+  SELECT ac.tier_percentage, SUM(ac.amount)
+  FROM public.affiliate_commissions ac
+  WHERE ac.user_id = p_user_id
+  GROUP BY ac.tier_percentage;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Purchase Trigger (Funded Accounts Only)
+CREATE OR REPLACE FUNCTION public.handle_funded_account_purchase()
 RETURNS TRIGGER AS $$
 DECLARE
-  l1_id UUID := NULL;
-  l2_id UUID := NULL;
-  l3_id UUID := NULL;
-  comm1 NUMERIC(15, 2);
-  comm2 NUMERIC(15, 2);
-  comm3 NUMERIC(15, 2);
+  l1_id UUID;
+  l2_id UUID;
+  l3_id UUID;
+  comm_amount NUMERIC(15, 2);
 BEGIN
   IF OLD.status = 'pending' AND NEW.status = 'approved' THEN
-
-    UPDATE public.profiles
-    SET balance = balance + NEW.amount,
-        updated_at = NOW()
-    WHERE id = NEW.user_id;
+    UPDATE public.profiles SET balance = balance + NEW.amount, updated_at = NOW() WHERE id = NEW.user_id;
 
     SELECT referred_by INTO l1_id FROM public.profiles WHERE id = NEW.user_id;
-
+    
     IF l1_id IS NOT NULL THEN
-      comm1 := ROUND(NEW.amount * 0.10, 2);
-      IF comm1 > 0 THEN
-        UPDATE public.profiles
-        SET balance = balance + comm1,
-            total_referral_earnings = total_referral_earnings + comm1,
-            updated_at = NOW()
-        WHERE id = l1_id;
-
-        INSERT INTO public.referral_commissions (earner_id, source_user_id, level, commission_type, amount)
-        VALUES (l1_id, NEW.user_id, 1, 'deposit', comm1);
-      END IF;
-
+      -- Tier 1 (10%)
+      comm_amount := ROUND(NEW.amount * 0.10, 2);
+      INSERT INTO public.affiliate_commissions (user_id, source_user_id, amount, commission_type, tier_percentage)
+      VALUES (l1_id, NEW.user_id, comm_amount, 'purchase', 10);
+      UPDATE public.profiles SET balance = balance + comm_amount, total_referral_earnings = total_referral_earnings + comm_amount WHERE id = l1_id;
+      
+      -- Tier 2 (5%)
       SELECT referred_by INTO l2_id FROM public.profiles WHERE id = l1_id;
-
       IF l2_id IS NOT NULL THEN
-        comm2 := ROUND(NEW.amount * 0.05, 2);
-        IF comm2 > 0 THEN
-          UPDATE public.profiles
-          SET balance = balance + comm2,
-              total_referral_earnings = total_referral_earnings + comm2,
-              updated_at = NOW()
-          WHERE id = l2_id;
-
-          INSERT INTO public.referral_commissions (earner_id, source_user_id, level, commission_type, amount)
-          VALUES (l2_id, NEW.user_id, 2, 'deposit', comm2);
-        END IF;
-
+        comm_amount := ROUND(NEW.amount * 0.05, 2);
+        INSERT INTO public.affiliate_commissions (user_id, source_user_id, amount, commission_type, tier_percentage)
+        VALUES (l2_id, NEW.user_id, comm_amount, 'purchase', 5);
+        UPDATE public.profiles SET balance = balance + comm_amount, total_referral_earnings = total_referral_earnings + comm_amount WHERE id = l2_id;
+        
+        -- Tier 3 (2%)
         SELECT referred_by INTO l3_id FROM public.profiles WHERE id = l2_id;
-
         IF l3_id IS NOT NULL THEN
-          comm3 := ROUND(NEW.amount * 0.02, 2);
-          IF comm3 > 0 THEN
-            UPDATE public.profiles
-            SET balance = balance + comm3,
-                total_referral_earnings = total_referral_earnings + comm3,
-                updated_at = NOW()
-            WHERE id = l3_id;
-
-            INSERT INTO public.referral_commissions (earner_id, source_user_id, level, commission_type, amount)
-            VALUES (l3_id, NEW.user_id, 3, 'deposit', comm3);
-          END IF;
+          comm_amount := ROUND(NEW.amount * 0.02, 2);
+          INSERT INTO public.affiliate_commissions (user_id, source_user_id, amount, commission_type, tier_percentage)
+          VALUES (l3_id, NEW.user_id, comm_amount, 'purchase', 2);
+          UPDATE public.profiles SET balance = balance + comm_amount, total_referral_earnings = total_referral_earnings + comm_amount WHERE id = l3_id;
         END IF;
       END IF;
     END IF;
-
   END IF;
-
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
-DROP TRIGGER IF EXISTS on_deposit_status_updated ON public.deposits;
-CREATE TRIGGER on_deposit_status_updated
+DROP TRIGGER IF EXISTS trg_funded_purchase ON public.deposits;
+CREATE TRIGGER trg_funded_purchase
   AFTER UPDATE ON public.deposits
   FOR EACH ROW
-  EXECUTE FUNCTION public.handle_deposit_approval();
+  EXECUTE FUNCTION public.handle_funded_account_purchase();
 
-
--- ============================================================================
--- 5. AUTOMATIC TRIGGER 2: ON WITHDRAWAL COMPLETION (8% Direct Commission)
--- ============================================================================
-
-CREATE OR REPLACE FUNCTION public.handle_withdrawal_completion()
+-- Withdrawal Trigger (8% Direct)
+CREATE OR REPLACE FUNCTION public.handle_referral_withdrawal()
 RETURNS TRIGGER AS $$
 DECLARE
-  l1_id UUID := NULL;
+  l1_id UUID;
   comm_amount NUMERIC(15, 2);
 BEGIN
   IF OLD.status = 'pending' AND (NEW.status = 'completed' OR NEW.status = 'success') THEN
-
-    UPDATE public.profiles
-    SET balance = balance - NEW.amount,
-        updated_at = NOW()
-    WHERE id = NEW.user_id;
-
     SELECT referred_by INTO l1_id FROM public.profiles WHERE id = NEW.user_id;
-
+    
     IF l1_id IS NOT NULL THEN
       comm_amount := ROUND(NEW.amount * 0.08, 2);
-      IF comm_amount > 0 THEN
-        UPDATE public.profiles
-        SET balance = balance + comm_amount,
-            total_referral_earnings = total_referral_earnings + comm_amount,
-            updated_at = NOW()
-        WHERE id = l1_id;
-
-        INSERT INTO public.referral_commissions (earner_id, source_user_id, level, commission_type, amount)
-        VALUES (l1_id, NEW.user_id, 1, 'withdrawal', comm_amount);
-      END IF;
+      INSERT INTO public.affiliate_commissions (user_id, source_user_id, amount, commission_type, tier_percentage)
+      VALUES (l1_id, NEW.user_id, comm_amount, 'withdrawal', 8);
+      UPDATE public.profiles SET balance = balance + comm_amount, total_referral_earnings = total_referral_earnings + comm_amount WHERE id = l1_id;
     END IF;
-
   END IF;
-
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
-DROP TRIGGER IF EXISTS on_withdrawal_status_updated ON public.withdrawals;
-CREATE TRIGGER on_withdrawal_status_updated
+DROP TRIGGER IF EXISTS trg_referral_withdrawal ON public.withdrawals;
+CREATE TRIGGER trg_referral_withdrawal
   AFTER UPDATE ON public.withdrawals
   FOR EACH ROW
-  EXECUTE FUNCTION public.handle_withdrawal_completion();
+  EXECUTE FUNCTION public.handle_referral_withdrawal();
 
 
 -- ============================================================================

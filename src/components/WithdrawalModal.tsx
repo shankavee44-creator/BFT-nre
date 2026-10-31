@@ -162,12 +162,20 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
   // Sync user's latest withdrawals from Supabase on mount
   useEffect(() => {
     let isMounted = true;
+    
+    // 1. Force clear stale local cache on mount
+    try {
+      localStorage.removeItem('bft_withdrawals_v1');
+    } catch {}
+
     fetchSupabaseWithdrawalsForUser({
       userId: userProfile?.id || account?.ownerId,
       userEmail: userProfile?.email,
     })
       .then((rows) => {
-        if (!isMounted || !Array.isArray(rows) || rows.length === 0) return;
+        if (!isMounted) return;
+        // Even if rows is empty, we have cleared the cache above.
+        if (!Array.isArray(rows) || rows.length === 0) return;
         for (const row of rows) {
           const mapped = mapSupabaseWithdrawalToRequest(row);
           const exists = withdrawals.some((w) => String(w.id) === String(mapped.id));
@@ -238,6 +246,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
       setForceCleared(true);
     } catch (err: any) {
       setError(err?.message || 'Failed to cancel withdrawal request.');
+      setForceCleared(true);
     } finally {
       setCancellingId(null);
     }
