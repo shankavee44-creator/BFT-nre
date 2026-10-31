@@ -77,6 +77,11 @@ import {
   fetchSupabaseProfileRow,
   getAuthoritativeAccountBalance,
   resolveActiveTradingAccount,
+  resolveAccountBalanceColumn,
+  recordDirectBalanceCommit,
+  commitProfileBalanceToSupabase,
+  hasActiveTradesForColumn,
+  ProfileSyncSource,
   mergeRealtimeWithdrawal,
   mapSupabaseWithdrawalToRequest,
   mergeRealtimeCommission,
@@ -137,13 +142,18 @@ export default function App() {
   userProfileRef.current = userProfile;
 
   const applyProfileRowToState = React.useCallback(
-    (profileRow: Record<string, any> | null | undefined) => {
+    (profileRow: Record<string, any> | null | undefined, source: ProfileSyncSource = 'realtime') => {
       if (!profileRow || typeof profileRow !== 'object') return;
       setUserProfile((prevProfile) => {
         const { updatedProfile, changed } = applyRealtimeProfileUpdate(
           prevProfile,
           [],
-          profileRow
+          profileRow,
+          {
+            source,
+            userId: prevProfile.id,
+            userEmail: prevProfile.email,
+          }
         );
         if (!changed) return prevProfile;
         userProfileRef.current = updatedProfile;
@@ -155,7 +165,12 @@ export default function App() {
         const { updatedAccounts, changed } = applyRealtimeProfileUpdate(
           userProfileRef.current,
           prevAccounts,
-          profileRow
+          profileRow,
+          {
+            source,
+            userId: userProfileRef.current.id,
+            userEmail: userProfileRef.current.email,
+          }
         );
         if (!changed) return prevAccounts;
         saveAccounts(updatedAccounts);
@@ -325,7 +340,7 @@ export default function App() {
         })
           .then((pRow) => {
             if (pRow) {
-              applyProfileRowToState(pRow);
+              applyProfileRowToState(pRow, 'poll');
             }
           })
           .catch(() => {});
@@ -435,8 +450,8 @@ export default function App() {
       userId: userProfile.id,
       userEmail: userProfile.email,
       accountIds: accounts.map((a) => a.id),
-      onProfileRow: (profileRow) => {
-        applyProfileRowToState(profileRow);
+      onProfileRow: (profileRow, source) => {
+        applyProfileRowToState(profileRow, source || 'realtime');
       },
       onWithdrawalsInitial: (rows) => {
         setWithdrawals((prev) => {
@@ -665,6 +680,11 @@ export default function App() {
       return newAccounts;
     });
 
+    const balanceColumn = resolveAccountBalanceColumn(updated);
+    if (balanceColumn && !hasActiveTradesForColumn(balanceColumn)) {
+      recordDirectBalanceCommit(balanceColumn, updated.currentBalance);
+    }
+
     // Keep userProfile balance fields synchronized with the updated account mode
     setUserProfile((prev) => {
       let nextProfile = prev;
@@ -676,6 +696,7 @@ export default function App() {
         nextProfile = { ...prev, fundedBalance: updated.currentBalance };
       }
       if (nextProfile !== prev) {
+        userProfileRef.current = nextProfile;
         saveProfile(nextProfile);
       }
       return nextProfile;
@@ -697,31 +718,17 @@ export default function App() {
     }
 
     // Synchronize account balances with Supabase profiles table for persistence
-    if (userProfile.id && userProfile.isLoggedIn) {
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userProfile.id);
-      const columnPayload = isPersonalLiveAccount(updated)
-        ? { self_balance: updated.currentBalance }
-        : isDemoAccount(updated)
-        ? { demo_balance: updated.currentBalance }
-        : updated.phase === 'funded'
-        ? { funded_balance: updated.currentBalance }
-        : null;
-
-      if (columnPayload) {
-        if (isUuid) {
-          supabase
-            .from('profiles')
-            .update(columnPayload)
-            .eq('id', userProfile.id)
-            .then(() => {});
-        } else if (userProfile.email) {
-          supabase
-            .from('profiles')
-            .update(columnPayload)
-            .eq('email', userProfile.email)
-            .then(() => {});
-        }
-      }
+    if (
+      balanceColumn &&
+      (userProfileRef.current.id || userProfileRef.current.email) &&
+      userProfileRef.current.isLoggedIn
+    ) {
+      commitProfileBalanceToSupabase({
+        userId: userProfileRef.current.id,
+        userEmail: userProfileRef.current.email,
+        column: balanceColumn,
+        newBalance: updated.currentBalance,
+      }).catch(() => {});
     }
   };
 
@@ -848,7 +855,7 @@ export default function App() {
           userEmail: userProfileRef.current.email,
         });
         if (p && isMounted) {
-          applyProfileRowToState(p);
+          applyProfileRowToState(p, 'poll');
         }
       } catch {
         // Fallback

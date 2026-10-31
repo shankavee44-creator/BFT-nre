@@ -148,6 +148,7 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
   const lastLoadedTimeframeRef = useRef<string>('');
   const lastLoadedChartTypeRef = useRef<string>('');
   const barsCountRef = useRef<number>(0);
+  const firstFormattedBarRef = useRef<FormattedBar | null>(null);
   const lastFormattedBarRef = useRef<FormattedBar | null>(null);
   const lastPriceYRef = useRef<number>(0);
 
@@ -340,6 +341,7 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
     const bars = prepareLightweightBars(candles, chartType, asset.pipDecimals, asset);
     barsCountRef.current = bars.length;
     if (bars.length > 0) {
+      firstFormattedBarRef.current = bars[0];
       lastFormattedBarRef.current = bars[bars.length - 1];
       if (chartType === 'line') {
         series.setData(bars.map((b: FormattedBar) => ({ time: b.time, value: b.close })));
@@ -349,7 +351,12 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
       lastLoadedSymbolRef.current = asset.symbol;
       lastLoadedTimeframeRef.current = timeframe;
       lastLoadedChartTypeRef.current = chartType;
-      chart.priceScale('right').applyOptions({ autoScale: true });
+      chart.priceScale('right').applyOptions({
+        autoScale: true,
+        mode: PriceScaleMode.Normal,
+        scaleMargins: { top: 0.1, bottom: 0.1 },
+      });
+      chart.timeScale().resetTimeScale();
       chart.timeScale().fitContent();
     }
 
@@ -422,6 +429,7 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
         }
       }
       priceLinesRef.current.clear();
+      firstFormattedBarRef.current = null;
       lastFormattedBarRef.current = null;
       barsCountRef.current = 0;
       lastPriceYRef.current = 0;
@@ -435,11 +443,26 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
       return;
     }
 
-    // Full series rebuild when symbol, chartType, or timeframe changes
-    if (isChartTypeChanged || isSymbolChanged || isTimeframeChanged || barsCountRef.current === 0) {
+    const windowStartCandle = candles.length > 120 ? candles[candles.length - 120] : candles[0];
+    const formattedFirstCandle = formatSingleCandle(windowStartCandle, asset.pipDecimals);
+    const isSeriesAnchorShifted =
+      !firstFormattedBarRef.current ||
+      !formattedFirstCandle ||
+      firstFormattedBarRef.current.time !== formattedFirstCandle.time ||
+      firstFormattedBarRef.current.open !== formattedFirstCandle.open;
+
+    // Full series rebuild when symbol, chartType, timeframe, or series anchor changes
+    if (
+      isChartTypeChanged ||
+      isSymbolChanged ||
+      isTimeframeChanged ||
+      barsCountRef.current === 0 ||
+      isSeriesAnchorShifted
+    ) {
       const bars = prepareLightweightBars(candles, chartType, asset.pipDecimals, asset);
       barsCountRef.current = bars.length;
       if (bars.length === 0) return;
+      firstFormattedBarRef.current = bars[0];
       lastFormattedBarRef.current = bars[bars.length - 1];
 
       if (isChartTypeChanged || isSymbolChanged || !seriesRef.current) {
@@ -456,6 +479,9 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
         seriesRef.current = newSeries;
       }
 
+      const shouldResetTimeScale =
+        isSymbolChanged || isTimeframeChanged || isChartTypeChanged || barsCountRef.current === 0;
+
       lastLoadedSymbolRef.current = asset.symbol;
       lastLoadedTimeframeRef.current = timeframe;
       lastLoadedChartTypeRef.current = chartType;
@@ -467,17 +493,38 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
         } else {
           seriesRef.current.setData(bars);
         }
+        seriesRef.current.priceScale().applyOptions({
+          autoScale: true,
+          mode: PriceScaleMode.Normal,
+          scaleMargins: { top: 0.1, bottom: 0.1 },
+        });
         chart.priceScale('right').applyOptions({
           autoScale: true,
           mode: PriceScaleMode.Normal,
           scaleMargins: { top: 0.1, bottom: 0.1 },
         });
-        chart.timeScale().resetTimeScale();
-        chart.timeScale().fitContent();
+        if (shouldResetTimeScale) {
+          chart.timeScale().resetTimeScale();
+          chart.timeScale().fitContent();
+          setIsScrolledFromLive(false);
+          requestAnimationFrame(() => {
+            if (chartRef.current && lastLoadedSymbolRef.current === asset.symbol) {
+              try {
+                chartRef.current.priceScale('right').applyOptions({
+                  autoScale: true,
+                  mode: PriceScaleMode.Normal,
+                  scaleMargins: { top: 0.1, bottom: 0.1 },
+                });
+                chartRef.current.timeScale().fitContent();
+              } catch {
+                // ignore
+              }
+            }
+          });
+        }
       } catch {
         // ignore
       }
-      setIsScrolledFromLive(false);
       updateCoordinates();
       return;
     }
@@ -519,6 +566,7 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
       const bars = prepareLightweightBars(candles, chartType, asset.pipDecimals, asset);
       barsCountRef.current = bars.length;
       if (bars.length > 0) {
+        firstFormattedBarRef.current = bars[0];
         lastFormattedBarRef.current = bars[bars.length - 1];
         try {
           if (chartType === 'line') {

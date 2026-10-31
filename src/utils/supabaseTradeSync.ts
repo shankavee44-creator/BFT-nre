@@ -42,14 +42,11 @@ export function ensureTradeUuid(tradeId: string): string {
  * Supabase Auth session with a valid UUID. If no valid UUID can be resolved, returns null.
  */
 export async function getEffectiveSupabaseUserId(userId?: string | null): Promise<string | null> {
-  if (userId && isValidUuid(userId)) {
-    return userId.trim();
-  }
-
   try {
-    const { data } = await supabase.auth.getUser();
-    if (data?.user?.id && isValidUuid(data.user.id)) {
-      return data.user.id;
+    const { data } = await supabase.auth.getSession();
+    const sessionUserId = data?.session?.user?.id;
+    if (sessionUserId && isValidUuid(sessionUserId)) {
+      return sessionUserId.trim();
     }
   } catch {
     // Supabase auth lookup failed or unauthenticated
@@ -61,7 +58,7 @@ export async function getEffectiveSupabaseUserId(userId?: string | null): Promis
 /**
  * Maps a BinaryTrade object to a Supabase user_trades row.
  */
-function mapToSupabaseRow(trade: BinaryTrade, userId: string): any {
+function mapToSupabaseRow(trade: BinaryTrade, userId: string): Record<string, any> {
   // Map tier to database enum strings
   let accountType = 'DEMO';
   const tier = (trade as any).accountTier || 'demo';
@@ -77,13 +74,11 @@ function mapToSupabaseRow(trade: BinaryTrade, userId: string): any {
     trade_type: trade.direction,
     amount: trade.investment,
     entry_price: trade.strikePrice,
-    exit_price: trade.closePrice,
+    exit_price: trade.closePrice ?? trade.strikePrice,
     payout_multiplier: 1 + (trade.payoutPercentage / 100),
     status: trade.status === 'active' ? 'OPEN' : trade.status.toUpperCase(),
     created_at: new Date(trade.startTime).toISOString(),
-    expires_at: new Date(trade.endTime).toISOString(),
     account_type: accountType,
-    account_id: trade.accountId,
   };
 }
 
@@ -91,7 +86,11 @@ function mapToSupabaseRow(trade: BinaryTrade, userId: string): any {
  * Maps a Supabase user_trades row back to a BinaryTrade object.
  */
 export function mapFromSupabaseRow(row: any): BinaryTrade {
-  const payoutPercentage = Math.round((Number(row.payout_multiplier) - 1) * 100);
+  const payoutPercentage = row.payout_multiplier
+    ? Math.round((Number(row.payout_multiplier) - 1) * 100)
+    : 85;
+  const createdMs = row.created_at ? new Date(row.created_at).getTime() : Date.now();
+  const expiresMs = row.expires_at ? new Date(row.expires_at).getTime() : createdMs + 60000;
   
   return {
     id: row.id,
@@ -104,9 +103,9 @@ export function mapFromSupabaseRow(row: any): BinaryTrade {
     investment: Number(row.amount),
     payoutPercentage,
     potentialPayout: Number(row.amount) * (payoutPercentage / 100),
-    startTime: new Date(row.created_at).getTime(),
-    durationSeconds: Math.round((new Date(row.expires_at).getTime() - new Date(row.created_at).getTime()) / 1000),
-    endTime: new Date(row.expires_at).getTime(),
+    startTime: createdMs,
+    durationSeconds: Math.max(5, Math.round((expiresMs - createdMs) / 1000)),
+    endTime: expiresMs,
     status: row.status === 'OPEN' ? 'active' : row.status.toLowerCase() as 'won' | 'lost',
     pnl: row.status === 'WON' 
       ? Number(row.amount) * (payoutPercentage / 100) 
@@ -124,7 +123,6 @@ export async function fetchUserTrades(userId: string): Promise<BinaryTrade[]> {
   if (!userId) return [];
   const effectiveUserId = await getEffectiveSupabaseUserId(userId);
   if (!effectiveUserId) {
-    // Non-Supabase / local SQLite user session (e.g. 'usr_mvulnwy8_ej1z')
     return [];
   }
 
@@ -135,18 +133,17 @@ export async function fetchUserTrades(userId: string): Promise<BinaryTrade[]> {
       .eq('user_id', effectiveUserId)
       .order('created_at', { ascending: false });
 
-    if (error) throw error;
+    if (error) return [];
     if (!data) return [];
 
     return data.map(mapFromSupabaseRow);
-  } catch (err) {
-    console.error('Error fetching user trades from Supabase:', err);
+  } catch {
     return [];
   }
 }
 
 /**
- * Persists a new trade to Supabase if the user has a valid Supabase UUID.
+ * Persists a new trade to Supabase if the user has a valid authenticated Supabase session.
  */
 export async function createSupabaseTrade(trade: BinaryTrade, userId: string): Promise<void> {
   if (!userId) return;
@@ -154,13 +151,19 @@ export async function createSupabaseTrade(trade: BinaryTrade, userId: string): P
   if (!effectiveUserId) return;
 
   try {
-    const row = mapToSupabaseRow(trade, effectiveUserId);
-    const { error } = await supabase.from('user_trades').insert(row);
-    if (error) {
-      console.warn('Could not persist trade to Supabase:', error.message);
+    const payload: Record<string, any> = { ...mapToSupabaseRow(trade, effectiveUserId) };
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const { error } = await supabase.from('user_trades').insert(payload);
+      if (!error) break;
+      const missingColMatch = error.message?.match(/Could not find the '([^']+)' column/i);
+      if (missingColMatch && missingColMatch[1] in payload) {
+        delete payload[missingColMatch[1]];
+        continue;
+      }
+      break;
     }
-  } catch (err) {
-    console.warn('Error creating trade in Supabase:', err);
+  } catch {
+    // Non-fatal background sync
   }
 }
 
@@ -174,20 +177,16 @@ export async function updateSupabaseTrade(trade: BinaryTrade, userId: string): P
 
   try {
     const row = mapToSupabaseRow(trade, effectiveUserId);
-    const { error } = await supabase
+    await supabase
       .from('user_trades')
       .update({
         exit_price: row.exit_price,
         status: row.status,
-        settled_at: new Date().toISOString()
       })
       .eq('id', row.id)
       .eq('user_id', effectiveUserId);
-    if (error) {
-      console.warn('Could not update trade in Supabase:', error.message);
-    }
-  } catch (err) {
-    console.warn('Error updating trade in Supabase:', err);
+  } catch {
+    // Non-fatal background sync
   }
 }
 

@@ -9,25 +9,448 @@ import {
 } from '../types';
 import { isPersonalLiveAccount, isDemoAccount } from './propRules';
 
+export type ProfileBalanceColumn = 'self_balance' | 'demo_balance' | 'funded_balance';
+
+export type ProfileSyncSource = 'realtime' | 'poll' | 'initial' | 'direct';
+
+export interface ApplyRealtimeProfileOptions {
+  source?: ProfileSyncSource;
+  nowMs?: number;
+  userId?: string;
+  userEmail?: string;
+}
+
 export interface RealtimeProfileSyncResult {
   updatedProfile: UserProfile;
   updatedAccounts: TradingAccount[];
   changed: boolean;
 }
 
+export interface ActiveTradeLedgerEntry {
+  tradeId: string;
+  accountId: string;
+  column: ProfileBalanceColumn | null;
+  stake: number;
+  preTradeBalance: number;
+  deductedBalance: number;
+  placedAt: number;
+  endTime: number;
+}
+
+export interface LocalBalanceMutationRecord {
+  column: ProfileBalanceColumn;
+  committedBalance: number;
+  lockedPreTradeRemoteBalance?: number;
+  updatedAt: number;
+  confirmedBySupabase: boolean;
+}
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const PROFILE_SELECT_COLUMNS = '*';
+
+// Authoritative in-memory & localStorage-backed ledger for active trades and post-trade balance guards
+const activeTradesLedger = new Map<string, ActiveTradeLedgerEntry>();
+const settledTradeIdsSet = new Set<string>();
+const lastObservedRemoteBalances: Partial<Record<ProfileBalanceColumn, number>> = {};
+const localBalanceMutations: Partial<Record<ProfileBalanceColumn, LocalBalanceMutationRecord>> = {};
+let cachedSupabaseProfileUuid: string | null = null;
+
+/**
+ * Resolves which Supabase `profiles` balance column corresponds to a given TradingAccount.
+ */
+export function resolveAccountBalanceColumn(
+  account: TradingAccount | null | undefined
+): ProfileBalanceColumn | null {
+  if (!account || isDemoAccount(account)) return 'demo_balance';
+  if (isPersonalLiveAccount(account)) return 'self_balance';
+  if (account.phase === 'funded') return 'funded_balance';
+  return null;
+}
+
+/**
+ * Resets the in-memory balance sync ledger (used by unit tests for clean isolation).
+ */
+export function resetBalanceSyncLedgerForTests(): void {
+  activeTradesLedger.clear();
+  settledTradeIdsSet.clear();
+  delete lastObservedRemoteBalances.self_balance;
+  delete lastObservedRemoteBalances.demo_balance;
+  delete lastObservedRemoteBalances.funded_balance;
+  delete localBalanceMutations.self_balance;
+  delete localBalanceMutations.demo_balance;
+  delete localBalanceMutations.funded_balance;
+  cachedSupabaseProfileUuid = null;
+}
+
+/**
+ * Returns true if there is currently any active (unsettled) trade for the specified balance column.
+ */
+export function hasActiveTradesForColumn(
+  column: ProfileBalanceColumn,
+  nowMs: number = Date.now()
+): boolean {
+  for (const [id, entry] of activeTradesLedger.entries()) {
+    // Auto-expire orphaned entries 15 seconds past their scheduled endTime
+    if (entry.endTime > 0 && nowMs > entry.endTime + 15000) {
+      activeTradesLedger.delete(id);
+      continue;
+    }
+    if (entry.column === column) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Checks whether a trade has already been settled to prevent duplicate settlement credits.
+ */
+export function isTradeAlreadySettled(tradeId: string): boolean {
+  return settledTradeIdsSet.has(tradeId);
+}
+
+/**
+ * Records an atomic balance deduction when a user places a trade:
+ * - Immediately registers the active trade so real-time/polling listeners cannot overwrite the balance while active.
+ * - Captures the pre-trade remote baseline so post-trade polls never jump back to pre-trade manual values.
+ */
+export function recordAtomicTradePlacement(params: {
+  tradeId: string;
+  accountId: string;
+  column: ProfileBalanceColumn | null;
+  stake: number;
+  preTradeBalance: number;
+  deductedBalance?: number;
+  durationSeconds?: number;
+  endTime?: number;
+  nowMs?: number;
+}): { deductedBalance: number } {
+  const nowMs = params.nowMs ?? Date.now();
+  const stake = Number(Math.max(0, params.stake).toFixed(2));
+  const preTradeBalance = Number(params.preTradeBalance.toFixed(2));
+  const deductedBalance =
+    params.deductedBalance !== undefined
+      ? Number(params.deductedBalance.toFixed(2))
+      : Number(Math.max(0, preTradeBalance - stake).toFixed(2));
+  const endTime =
+    params.endTime ?? (params.durationSeconds ? nowMs + params.durationSeconds * 1000 : nowMs + 60000);
+
+  activeTradesLedger.set(params.tradeId, {
+    tradeId: params.tradeId,
+    accountId: params.accountId,
+    column: params.column,
+    stake,
+    preTradeBalance,
+    deductedBalance,
+    placedAt: nowMs,
+    endTime,
+  });
+
+  if (params.column) {
+    const existingMutation = localBalanceMutations[params.column];
+    const baselineRemote =
+      existingMutation?.lockedPreTradeRemoteBalance !== undefined
+        ? existingMutation.lockedPreTradeRemoteBalance
+        : lastObservedRemoteBalances[params.column] !== undefined
+        ? lastObservedRemoteBalances[params.column]
+        : preTradeBalance;
+
+    localBalanceMutations[params.column] = {
+      column: params.column,
+      committedBalance: deductedBalance,
+      lockedPreTradeRemoteBalance: baselineRemote,
+      updatedAt: nowMs,
+      confirmedBySupabase: false,
+    };
+  }
+
+  return { deductedBalance };
+}
+
+/**
+ * Accurately calculates the final post-trade balance when a trade closes (win, loss, or tie),
+ * guaranteeing the stake was deducted once and adding the payout on win (or returning stake on tie).
+ */
+export function computeAuthoritativeSettledBalance(params: {
+  tradeId: string;
+  currentAccountBalance: number;
+  stake: number;
+  payoutPercentage: number;
+  direction: 'CALL' | 'PUT';
+  strikePrice: number;
+  closePrice: number;
+}): {
+  status: 'won' | 'lost' | 'tie';
+  pnl: number;
+  creditedAmount: number;
+  finalBalance: number;
+} {
+  const stake = Number(params.stake.toFixed(2));
+  const priceDiff = params.closePrice - params.strikePrice;
+  const isTie = Math.abs(priceDiff) < 1e-7;
+  const isWin =
+    !isTie &&
+    ((params.direction === 'CALL' && priceDiff > 0) ||
+      (params.direction === 'PUT' && priceDiff < 0));
+
+  let status: 'won' | 'lost' | 'tie' = 'lost';
+  let pnl = -stake;
+  let creditedAmount = 0;
+
+  if (isTie) {
+    status = 'tie';
+    pnl = 0;
+    creditedAmount = stake;
+  } else if (isWin) {
+    status = 'won';
+    const profit = Number(((stake * params.payoutPercentage) / 100).toFixed(2));
+    pnl = profit;
+    creditedAmount = Number((stake + profit).toFixed(2));
+  }
+
+  const placementEntry = activeTradesLedger.get(params.tradeId);
+  let baseBalanceAfterStakeDeduction = Number(params.currentAccountBalance.toFixed(2));
+
+  if (placementEntry) {
+    // If currentAccountBalance was somehow reverted to preTradeBalance instead of deductedBalance,
+    // enforce the deducted balance so the stake is always accounted for accurately.
+    const revertedToPreTrade =
+      Math.abs(baseBalanceAfterStakeDeduction - placementEntry.preTradeBalance) < 0.005 &&
+      Math.abs(placementEntry.preTradeBalance - placementEntry.deductedBalance) > 0.005;
+    if (revertedToPreTrade) {
+      baseBalanceAfterStakeDeduction = placementEntry.deductedBalance;
+    }
+  }
+
+  const finalBalance = Number(
+    Math.max(0, baseBalanceAfterStakeDeduction + creditedAmount).toFixed(2)
+  );
+
+  return {
+    status,
+    pnl,
+    creditedAmount,
+    finalBalance,
+  };
+}
+
+/**
+ * Records atomic trade settlement and locks the post-trade balance so real-time/polling listeners
+ * reflect the true post-trade balance without jumping back to pre-trade manual values.
+ */
+export function recordAtomicTradeSettlement(params: {
+  tradeId: string;
+  accountId: string;
+  column: ProfileBalanceColumn | null;
+  finalBalance: number;
+  nowMs?: number;
+}): void {
+  const nowMs = params.nowMs ?? Date.now();
+  const placementEntry = activeTradesLedger.get(params.tradeId);
+  activeTradesLedger.delete(params.tradeId);
+  settledTradeIdsSet.add(params.tradeId);
+
+  const column = params.column ?? placementEntry?.column ?? null;
+  if (column) {
+    const existingMutation = localBalanceMutations[column];
+    const baselineRemote =
+      existingMutation?.lockedPreTradeRemoteBalance !== undefined
+        ? existingMutation.lockedPreTradeRemoteBalance
+        : placementEntry?.preTradeBalance ?? lastObservedRemoteBalances[column];
+
+    localBalanceMutations[column] = {
+      column,
+      committedBalance: Number(params.finalBalance.toFixed(2)),
+      lockedPreTradeRemoteBalance: baselineRemote,
+      updatedAt: nowMs,
+      confirmedBySupabase: false,
+    };
+  }
+}
+
+/**
+ * Records a direct local balance change (e.g. deposit, withdrawal, or demo balance reset)
+ * so polling does not revert it while the Supabase write is in flight.
+ */
+export function recordDirectBalanceCommit(
+  column: ProfileBalanceColumn,
+  newBalance: number,
+  nowMs: number = Date.now()
+): void {
+  const rounded = Number(newBalance.toFixed(2));
+  const baselineRemote = lastObservedRemoteBalances[column];
+  localBalanceMutations[column] = {
+    column,
+    committedBalance: rounded,
+    lockedPreTradeRemoteBalance: baselineRemote,
+    updatedAt: nowMs,
+    confirmedBySupabase: false,
+  };
+}
+
+/**
+ * Determines whether an incoming balance value from Supabase (realtime or polling)
+ * should be accepted or rejected (e.g. while a trade is active or if it's a stale pre-trade value).
+ */
+export function shouldAcceptRemoteBalance(
+  column: ProfileBalanceColumn,
+  incomingValue: number | undefined,
+  currentLocalValue: number | undefined,
+  source: ProfileSyncSource = 'realtime',
+  nowMs: number = Date.now()
+): boolean {
+  if (incomingValue === undefined || !Number.isFinite(incomingValue)) {
+    return false;
+  }
+
+  // 1. Strict Active Trade Lock: never override local balance while a trade is active on this mode
+  if (hasActiveTradesForColumn(column, nowMs)) {
+    return false;
+  }
+
+  const mutation = localBalanceMutations[column];
+  if (mutation) {
+    // If incoming remote value matches our locally committed post-trade balance, confirm & accept!
+    if (Math.abs(incomingValue - mutation.committedBalance) < 0.005) {
+      mutation.confirmedBySupabase = true;
+      lastObservedRemoteBalances[column] = incomingValue;
+      return true;
+    }
+
+    // If incoming value is the exact stale pre-trade manual balance from before the trade:
+    const isStalePreTradeValue =
+      mutation.lockedPreTradeRemoteBalance !== undefined &&
+      Math.abs(incomingValue - mutation.lockedPreTradeRemoteBalance) < 0.005 &&
+      Math.abs(mutation.committedBalance - mutation.lockedPreTradeRemoteBalance) > 0.005;
+
+    if (isStalePreTradeValue) {
+      // Background polls or initial fetches must NEVER revert a post-trade balance back to the pre-trade value.
+      if (source === 'poll' || source === 'initial') {
+        return false;
+      }
+      // Even on a realtime event, ignore stale echo events that arrive within 4.5s of our trade commit.
+      if (nowMs - mutation.updatedAt < 4500) {
+        return false;
+      }
+    }
+
+    // Within 3.5s of a local trade placement/settlement commit, block stale poll responses
+    if ((source === 'poll' || source === 'initial') && nowMs - mutation.updatedAt < 3500) {
+      return false;
+    }
+
+    // Otherwise, this is a genuine new external/admin update in Supabase!
+    delete localBalanceMutations[column];
+    lastObservedRemoteBalances[column] = incomingValue;
+    return true;
+  }
+
+  lastObservedRemoteBalances[column] = incomingValue;
+  return true;
+}
+
+/**
+ * Atomically commits an updated account balance (`self_balance`, `demo_balance`, or `funded_balance`)
+ * directly to the authenticated user's row in the Supabase `profiles` table.
+ */
+export async function commitProfileBalanceToSupabase(params: {
+  userId?: string;
+  userEmail?: string;
+  column: ProfileBalanceColumn;
+  newBalance: number;
+}): Promise<boolean> {
+  const rounded = Number(params.newBalance.toFixed(2));
+  const payload: Record<string, number> = { [params.column]: rounded };
+
+  const candidateUuids = new Set<string>();
+  if (cachedSupabaseProfileUuid && UUID_REGEX.test(cachedSupabaseProfileUuid)) {
+    candidateUuids.add(cachedSupabaseProfileUuid);
+  }
+  if (params.userId && UUID_REGEX.test(params.userId)) {
+    candidateUuids.add(params.userId);
+  }
+
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
+    if (user?.id && UUID_REGEX.test(user.id)) {
+      candidateUuids.add(user.id);
+    }
+  } catch {
+    // ignore
+  }
+
+  for (const uid of Array.from(candidateUuids)) {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .update(payload)
+        .eq('id', uid)
+        .select('id, self_balance, demo_balance, funded_balance');
+      if (!error && Array.isArray(data) && data.length > 0) {
+        if (data[0]?.id && UUID_REGEX.test(String(data[0].id))) {
+          cachedSupabaseProfileUuid = String(data[0].id);
+        }
+        lastObservedRemoteBalances[params.column] = rounded;
+        if (localBalanceMutations[params.column]?.committedBalance === rounded) {
+          localBalanceMutations[params.column]!.confirmedBySupabase = true;
+        }
+        return true;
+      }
+    } catch {
+      // try next identifier
+    }
+  }
+
+  const normalizedEmail = params.userEmail ? params.userEmail.trim().toLowerCase() : '';
+  if (normalizedEmail) {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .update(payload)
+        .ilike('email', normalizedEmail)
+        .select('id, self_balance, demo_balance, funded_balance');
+      if (!error && Array.isArray(data) && data.length > 0) {
+        if (data[0]?.id && UUID_REGEX.test(String(data[0].id))) {
+          cachedSupabaseProfileUuid = String(data[0].id);
+        }
+        lastObservedRemoteBalances[params.column] = rounded;
+        if (localBalanceMutations[params.column]?.committedBalance === rounded) {
+          localBalanceMutations[params.column]!.confirmedBySupabase = true;
+        }
+        return true;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return false;
+}
+
 /**
  * Pure helper: applies a Supabase `profiles` row (from initial fetch or real-time UPDATE/INSERT)
  * to the current UserProfile and TradingAccount[] state, maintaining strict separation between
- * Personal Live (`self_balance`), Demo (`demo_balance`), and Funded (`funded_balance`) modes.
+ * Personal Live (`self_balance`), Demo (`demo_balance`), and Funded (`funded_balance`) modes
+ * while protecting active trades and post-trade balances from stale overrides.
  */
 export function applyRealtimeProfileUpdate(
   prevProfile: UserProfile,
   prevAccounts: TradingAccount[],
-  row: Record<string, any> | null | undefined
+  row: Record<string, any> | null | undefined,
+  options?: ApplyRealtimeProfileOptions
 ): RealtimeProfileSyncResult {
   if (!row || typeof row !== 'object') {
     return { updatedProfile: prevProfile, updatedAccounts: prevAccounts, changed: false };
   }
+
+  if (typeof row.id === 'string' && UUID_REGEX.test(row.id)) {
+    cachedSupabaseProfileUuid = row.id;
+  }
+
+  const source: ProfileSyncSource = options?.source ?? 'realtime';
+  const nowMs = options?.nowMs ?? Date.now();
 
   const parseNumeric = (val: any): number | undefined => {
     if (val === undefined || val === null || val === '') return undefined;
@@ -35,9 +458,72 @@ export function applyRealtimeProfileUpdate(
     return Number.isFinite(num) ? num : undefined;
   };
 
-  const newSelf = parseNumeric(row.self_balance);
-  const newDemo = parseNumeric(row.demo_balance);
-  const newFunded = parseNumeric(row.funded_balance);
+  const rawSelf = parseNumeric(row.self_balance);
+  const rawDemo = parseNumeric(row.demo_balance);
+  const rawFunded = parseNumeric(row.funded_balance);
+
+  const acceptSelf = shouldAcceptRemoteBalance(
+    'self_balance',
+    rawSelf,
+    prevProfile.selfBalance,
+    source,
+    nowMs
+  );
+  const acceptDemo = shouldAcceptRemoteBalance(
+    'demo_balance',
+    rawDemo,
+    prevProfile.demoBalance,
+    source,
+    nowMs
+  );
+  const acceptFunded = shouldAcceptRemoteBalance(
+    'funded_balance',
+    rawFunded,
+    prevProfile.fundedBalance,
+    source,
+    nowMs
+  );
+
+  const newSelf = acceptSelf
+    ? rawSelf
+    : localBalanceMutations.self_balance?.committedBalance ?? prevProfile.selfBalance;
+  const newDemo = acceptDemo
+    ? rawDemo
+    : localBalanceMutations.demo_balance?.committedBalance ?? prevProfile.demoBalance;
+  const newFunded = acceptFunded
+    ? rawFunded
+    : localBalanceMutations.funded_balance?.committedBalance ?? prevProfile.fundedBalance;
+
+  // If a poll returned a stale pre-trade balance while we have an unconfirmed local mutation,
+  // proactively re-commit the authoritative post-trade balance to Supabase.
+  if (source === 'poll') {
+    const uid = (typeof row.id === 'string' && row.id) || options?.userId || prevProfile.id;
+    const uemail = (typeof row.email === 'string' && row.email) || options?.userEmail || prevProfile.email;
+    if (!acceptSelf && rawSelf !== undefined && localBalanceMutations.self_balance) {
+      commitProfileBalanceToSupabase({
+        userId: uid,
+        userEmail: uemail,
+        column: 'self_balance',
+        newBalance: localBalanceMutations.self_balance.committedBalance,
+      }).catch(() => {});
+    }
+    if (!acceptDemo && rawDemo !== undefined && localBalanceMutations.demo_balance) {
+      commitProfileBalanceToSupabase({
+        userId: uid,
+        userEmail: uemail,
+        column: 'demo_balance',
+        newBalance: localBalanceMutations.demo_balance.committedBalance,
+      }).catch(() => {});
+    }
+    if (!acceptFunded && rawFunded !== undefined && localBalanceMutations.funded_balance) {
+      commitProfileBalanceToSupabase({
+        userId: uid,
+        userEmail: uemail,
+        column: 'funded_balance',
+        newBalance: localBalanceMutations.funded_balance.committedBalance,
+      }).catch(() => {});
+    }
+  }
 
   let resolvedKycStatus: KYCStatus = prevProfile.kycStatus;
   if (typeof row.kyc_status === 'string' && row.kyc_status.trim()) {
@@ -363,7 +849,7 @@ export interface UserRealtimeSubscriptionCallbacks {
   userId: string;
   userEmail?: string;
   accountIds?: string[];
-  onProfileRow: (row: Record<string, any>) => void;
+  onProfileRow: (row: Record<string, any>, source?: ProfileSyncSource) => void;
   onWithdrawalsInitial?: (rows: Record<string, any>[]) => void;
   onWithdrawalEvent?: (
     eventType: 'INSERT' | 'UPDATE' | 'DELETE' | string,
@@ -466,9 +952,6 @@ export function resolveActiveTradingAccount(
   }
   return matched;
 }
-
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const PROFILE_SELECT_COLUMNS = '*';
 
 /**
  * Fetches the user's row from the Supabase `profiles` table by `auth.uid()`, candidate UUIDs, or email fallback.
@@ -605,7 +1088,7 @@ export function subscribeUserRealtimeChannels(callbacks: UserRealtimeSubscriptio
           const newRow = (payload.new as Record<string, any>) || null;
           if (newRow) {
             if (newRow.id) candidateIds.add(String(newRow.id));
-            onProfileRow(newRow);
+            onProfileRow(newRow, 'realtime');
           }
         }
       )
@@ -630,7 +1113,7 @@ export function subscribeUserRealtimeChannels(callbacks: UserRealtimeSubscriptio
             attachFilteredProfileChannel(pid);
           }
         }
-        onProfileRow(profileRow);
+        onProfileRow(profileRow, 'poll');
       }
     } catch {
       // Ignore network/offline errors
@@ -740,7 +1223,7 @@ export function subscribeUserRealtimeChannels(callbacks: UserRealtimeSubscriptio
         if (isDisposed) return;
         const newRow = (payload.new as Record<string, any>) || null;
         if (newRow && matchesUserProfile(newRow)) {
-          onProfileRow(newRow);
+          onProfileRow(newRow, 'realtime');
         }
       }
     )

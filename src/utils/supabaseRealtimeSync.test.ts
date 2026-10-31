@@ -4,6 +4,12 @@ import {
   applyRealtimeProfileUpdate,
   getAuthoritativeAccountBalance,
   resolveActiveTradingAccount,
+  resolveAccountBalanceColumn,
+  recordAtomicTradePlacement,
+  computeAuthoritativeSettledBalance,
+  recordAtomicTradeSettlement,
+  resetBalanceSyncLedgerForTests,
+  isTradeAlreadySettled,
   mapSupabaseWithdrawalToRequest,
   mergeRealtimeWithdrawal,
   mapSupabaseCommissionToReferralRecord,
@@ -319,4 +325,156 @@ test('validateCandlesForAsset strictly rejects cross-asset contamination (includ
   assert.equal(isValidPriceForAsset(eurUsd, 1.2714), false);
   assert.equal(isValidPriceForAsset(gbpJpy, 3.03), false);
 });
+
+test('atomic trade balance deduction locks active trade against stale realtime/poll overrides and accurately settles WIN and LOSS without jumping back to pre-trade values', () => {
+  resetBalanceSyncLedgerForTests();
+
+  const baseProfile = createMockProfile();
+  const baseAccounts = createMockAccounts();
+  const t0 = 1700000000000;
+
+  // 1. Initial sync from Supabase sets self_balance = 100, demo_balance = 10000
+  const initSync = applyRealtimeProfileUpdate(
+    baseProfile,
+    baseAccounts,
+    { id: baseProfile.id, self_balance: 100, demo_balance: 10000 },
+    { source: 'initial', nowMs: t0 }
+  );
+  let profile = initSync.updatedProfile;
+  let accounts = initSync.updatedAccounts;
+  assert.equal(profile.selfBalance, 100);
+
+  // 2. User places a $20 trade on Personal Live (self_balance)
+  const liveAcc = accounts.find((a) => a.id === 'BFT-LIVE-001')!;
+  assert.equal(resolveAccountBalanceColumn(liveAcc), 'self_balance');
+
+  const { deductedBalance } = recordAtomicTradePlacement({
+    tradeId: 'TRD-LOSS-01',
+    accountId: liveAcc.id,
+    column: 'self_balance',
+    stake: 20,
+    preTradeBalance: 100,
+    durationSeconds: 30,
+    nowMs: t0 + 1000,
+  });
+  assert.equal(deductedBalance, 80);
+
+  profile = { ...profile, selfBalance: deductedBalance };
+  accounts = accounts.map((a) =>
+    a.id === liveAcc.id ? { ...a, currentBalance: deductedBalance, equity: deductedBalance } : a
+  );
+
+  // 3. While trade is active (t0 + 5000), a stale realtime or poll event arrives with pre-trade self_balance = 100
+  const duringActiveRealtime = applyRealtimeProfileUpdate(
+    profile,
+    accounts,
+    { id: baseProfile.id, self_balance: 100, demo_balance: 10000 },
+    { source: 'realtime', nowMs: t0 + 5000 }
+  );
+  assert.equal(duringActiveRealtime.updatedProfile.selfBalance, 80);
+  assert.equal(
+    duringActiveRealtime.updatedAccounts.find((a) => a.id === 'BFT-LIVE-001')!.currentBalance,
+    80
+  );
+
+  // 4. Trade closes as a LOSS (CALL @ 1.08500 -> close @ 1.08400)
+  const lossSettlement = computeAuthoritativeSettledBalance({
+    tradeId: 'TRD-LOSS-01',
+    currentAccountBalance: 80,
+    stake: 20,
+    payoutPercentage: 92,
+    direction: 'CALL',
+    strikePrice: 1.085,
+    closePrice: 1.084,
+  });
+  assert.equal(lossSettlement.status, 'lost');
+  assert.equal(lossSettlement.creditedAmount, 0);
+  assert.equal(lossSettlement.finalBalance, 80);
+
+  recordAtomicTradeSettlement({
+    tradeId: 'TRD-LOSS-01',
+    accountId: liveAcc.id,
+    column: 'self_balance',
+    finalBalance: lossSettlement.finalBalance,
+    nowMs: t0 + 31000,
+  });
+  assert.equal(isTradeAlreadySettled('TRD-LOSS-01'), true);
+
+  // 5. After trade closes, a stale poll returning the pre-trade manual value (100) must NOT jump balance back to 100
+  const postLossStalePoll = applyRealtimeProfileUpdate(
+    profile,
+    accounts,
+    { id: baseProfile.id, self_balance: 100, demo_balance: 10000 },
+    { source: 'poll', nowMs: t0 + 40000 }
+  );
+  assert.equal(postLossStalePoll.updatedProfile.selfBalance, 80);
+  assert.equal(
+    postLossStalePoll.updatedAccounts.find((a) => a.id === 'BFT-LIVE-001')!.currentBalance,
+    80
+  );
+
+  // 6. Now user places a $20 trade that WINS (92% payout -> $18.40 profit, $38.40 total credited -> 80 - 20 + 38.40 = 98.40)
+  const { deductedBalance: afterSecondOpen } = recordAtomicTradePlacement({
+    tradeId: 'TRD-WIN-02',
+    accountId: liveAcc.id,
+    column: 'self_balance',
+    stake: 20,
+    preTradeBalance: 80,
+    durationSeconds: 30,
+    nowMs: t0 + 45000,
+  });
+  assert.equal(afterSecondOpen, 60);
+
+  const winSettlement = computeAuthoritativeSettledBalance({
+    tradeId: 'TRD-WIN-02',
+    currentAccountBalance: afterSecondOpen,
+    stake: 20,
+    payoutPercentage: 92,
+    direction: 'CALL',
+    strikePrice: 1.085,
+    closePrice: 1.086,
+  });
+  assert.equal(winSettlement.status, 'won');
+  assert.equal(winSettlement.pnl, 18.4);
+  assert.equal(winSettlement.creditedAmount, 38.4);
+  assert.equal(winSettlement.finalBalance, 98.4);
+
+  recordAtomicTradeSettlement({
+    tradeId: 'TRD-WIN-02',
+    accountId: liveAcc.id,
+    column: 'self_balance',
+    finalBalance: winSettlement.finalBalance,
+    nowMs: t0 + 75000,
+  });
+
+  profile = { ...profile, selfBalance: winSettlement.finalBalance };
+  accounts = accounts.map((a) =>
+    a.id === liveAcc.id
+      ? { ...a, currentBalance: winSettlement.finalBalance, equity: winSettlement.finalBalance }
+      : a
+  );
+
+  // Stale poll returning 100 still must not revert 98.40 back to 100
+  const postWinStalePoll = applyRealtimeProfileUpdate(
+    profile,
+    accounts,
+    { id: baseProfile.id, self_balance: 100 },
+    { source: 'poll', nowMs: t0 + 85000 }
+  );
+  assert.equal(postWinStalePoll.updatedProfile.selfBalance, 98.4);
+
+  // Genuine new manual admin top-up in Supabase (e.g. self_balance = 500) reflects immediately
+  const adminManualUpdate = applyRealtimeProfileUpdate(
+    profile,
+    accounts,
+    { id: baseProfile.id, self_balance: 500 },
+    { source: 'realtime', nowMs: t0 + 90000 }
+  );
+  assert.equal(adminManualUpdate.updatedProfile.selfBalance, 500);
+  assert.equal(
+    adminManualUpdate.updatedAccounts.find((a) => a.id === 'BFT-LIVE-001')!.currentBalance,
+    500
+  );
+});
+
 

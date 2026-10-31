@@ -28,6 +28,7 @@ import {
 } from '../utils/propRules';
 import { getAuthoritativeAccountBalance } from '../utils/supabaseRealtimeSync';
 import { isRouteProtected } from '../utils/authRouting';
+import { BUILTIN_AVATARS } from '../utils/storage';
 
 interface HeaderProps {
   currentTab: string;
@@ -298,7 +299,7 @@ export const Header: React.FC<HeaderProps> = ({
               >
                 <div className="relative">
                   <img
-                    src={userProfile.avatarUrl}
+                    src={userProfile.avatarUrl || BUILTIN_AVATARS[0]}
                     alt={userProfile.fullName || userProfile.email}
                     className="w-6 h-6 rounded-lg object-cover ring-1 ring-[#ff8800]/50"
                   />
@@ -373,7 +374,7 @@ export const Header: React.FC<HeaderProps> = ({
             <div className="p-3 rounded-2xl bg-[#14141a] border border-white/10 flex items-center justify-between">
               <div className="flex items-center gap-2.5">
                 <img
-                  src={userProfile.avatarUrl}
+                  src={userProfile.avatarUrl || BUILTIN_AVATARS[0]}
                   alt={userProfile.fullName || 'Trader'}
                   className="w-9 h-9 rounded-xl object-cover ring-1 ring-[#ff8800]/50"
                 />

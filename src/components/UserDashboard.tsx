@@ -79,6 +79,7 @@ import {
   apiGetAdminUsers,
 } from '../utils/apiClient';
 import { supabase } from '../utils/supabase';
+import { applyRealtimeProfileUpdate } from '../utils/supabaseRealtimeSync';
 
 interface UserDashboardProps {
   userProfile: UserProfile;
@@ -322,6 +323,15 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             meta.back_file_name ||
             latest.kycBackDocumentFileName;
 
+          const guardedSync = applyRealtimeProfileUpdate(latest, [], supaProfile, {
+            source: 'poll',
+            userId: latest.id,
+            userEmail: latest.email,
+          });
+          const nextSelfBalance = guardedSync.updatedProfile.selfBalance;
+          const nextDemoBalance = guardedSync.updatedProfile.demoBalance;
+          const nextFundedBalance = guardedSync.updatedProfile.fundedBalance;
+
           const hasChanges =
             resolvedKycStatus !== latest.kycStatus ||
             resolvedLocked !== Boolean(latest.profileLocked) ||
@@ -331,9 +341,9 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             (resolvedFullName && resolvedFullName !== latest.fullName) ||
             (resolvedFrontUrl && resolvedFrontUrl !== latest.kycFrontDocumentUrl) ||
             (resolvedBackUrl && resolvedBackUrl !== latest.kycBackDocumentUrl) ||
-            (supaProfile?.self_balance !== undefined && Number(supaProfile.self_balance) !== latest.selfBalance) ||
-            (supaProfile?.demo_balance !== undefined && Number(supaProfile.demo_balance) !== latest.demoBalance) ||
-            (supaProfile?.funded_balance !== undefined && Number(supaProfile.funded_balance) !== latest.fundedBalance);
+            nextSelfBalance !== latest.selfBalance ||
+            nextDemoBalance !== latest.demoBalance ||
+            nextFundedBalance !== latest.fundedBalance;
 
           if (hasChanges) {
             onUpdateProfile({
@@ -354,9 +364,9 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               kycBackDocumentUrl: resolvedBackUrl || latest.kycBackDocumentUrl,
               kycDocumentFileName: resolvedFrontFile || latest.kycDocumentFileName,
               kycBackDocumentFileName: resolvedBackFile || latest.kycBackDocumentFileName,
-              selfBalance: supaProfile?.self_balance !== undefined ? Number(supaProfile.self_balance) : latest.selfBalance,
-              demoBalance: supaProfile?.demo_balance !== undefined ? Number(supaProfile.demo_balance) : latest.demoBalance,
-              fundedBalance: supaProfile?.funded_balance !== undefined ? Number(supaProfile.funded_balance) : latest.fundedBalance,
+              selfBalance: nextSelfBalance,
+              demoBalance: nextDemoBalance,
+              fundedBalance: nextFundedBalance,
             });
           }
         }

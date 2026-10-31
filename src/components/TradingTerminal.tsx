@@ -86,7 +86,15 @@ import {
   getAccountStatusBadgeLabel,
   getChallengeProfitTarget,
 } from '../utils/propRules';
-import { getAuthoritativeAccountBalance } from '../utils/supabaseRealtimeSync';
+import {
+  getAuthoritativeAccountBalance,
+  resolveAccountBalanceColumn,
+  recordAtomicTradePlacement,
+  computeAuthoritativeSettledBalance,
+  recordAtomicTradeSettlement,
+  isTradeAlreadySettled,
+  commitProfileBalanceToSupabase,
+} from '../utils/supabaseRealtimeSync';
 import {
   calculateHeikinAshi,
   calculateSMA,
@@ -1085,10 +1093,12 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       const now = Date.now();
       const currentPriceVal = currentPriceRef.current;
       const tradesList = activeTradesRef.current;
-      const curAccount = accountRef.current;
-      if (!curAccount) return;
+      let runningAccount = accountRef.current;
+      if (!runningAccount) return;
 
       tradesList.forEach((trade) => {
+        if (isTradeAlreadySettled(trade.id)) return;
+
         const livePriceFromFeed = liveMarketFeed.getLatestPrice(trade.asset);
         const tradeMarket = getAssetMarketState(trade.asset);
         const finalPrice =
@@ -1099,17 +1109,29 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         const lockedSettlement = evaluateLockedTradeSettlement(
           trade,
           finalPrice,
-          curAccount.currentBalance,
+          runningAccount.currentBalance,
           now
         );
 
         if (lockedSettlement.shouldSettleNow) {
-          const settlement = calculateTradeSettlement({
+          const settlement = computeAuthoritativeSettledBalance({
+            tradeId: trade.id,
+            currentAccountBalance: runningAccount.currentBalance,
+            stake: trade.investment,
+            payoutPercentage: trade.payoutPercentage,
             direction: trade.direction,
             strikePrice: trade.strikePrice,
             closePrice: finalPrice,
-            investment: trade.investment,
-            payoutPercentage: trade.payoutPercentage,
+          });
+
+          const newBalance = settlement.finalBalance;
+          const balanceColumn = resolveAccountBalanceColumn(runningAccount);
+          recordAtomicTradeSettlement({
+            tradeId: trade.id,
+            accountId: runningAccount.id,
+            column: balanceColumn,
+            finalBalance: newBalance,
+            nowMs: now,
           });
 
           if (settlement.status === 'won') {
@@ -1150,52 +1172,49 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
           };
           onUpdateTrade(updatedTrade);
 
-          // Settle in persistent SQLite backend
-          apiSettleTrade({
-            tradeId: trade.id,
-            closePrice: finalPrice,
-            status: settlement.status,
-          }).catch(() => {});
-
-          const newBalance = Number((curAccount.currentBalance + settlement.creditedAmount).toFixed(2));
           const allTradesList = [...trades.filter((t) => t.id !== trade.id), updatedTrade];
           const newWinRate = computeAccountWinRate(allTradesList);
 
           const updatedAccount: TradingAccount = {
-            ...curAccount,
+            ...runningAccount,
             currentBalance: newBalance,
-            tradesCount: curAccount.tradesCount + 1,
+            tradesCount: runningAccount.tradesCount + 1,
             winRate: newWinRate,
             equity: newBalance,
           };
 
-          if (account) {
-            onUpdateAccount(updatedAccount);
-            apiUpdateAccountState(curAccount.id, {
-              currentBalance: newBalance,
-              equity: newBalance,
-              tradesCount: updatedAccount.tradesCount,
-              winRate: newWinRate,
-            }).catch(() => {});
+          runningAccount = updatedAccount;
+          accountRef.current = updatedAccount;
 
-            // Check if a One-Step or Two-Step Challenge account just hit its profit target!
-            if (settlement.status === 'won' && !isLiveFundedAccount(updatedAccount)) {
-              const targetStatus = getChallengeProfitTarget(updatedAccount);
-              if (targetStatus.isTargetMet) {
-                setTimeout(() => {
-                  onPassChallengePhase?.(updatedAccount);
-                }, 900);
-              }
-            }
-          } else {
+          onUpdateAccount(updatedAccount);
+          if (!account) {
             setDemoPracticeAccount(updatedAccount);
+          }
+
+          if (balanceColumn && (userProfile?.id || userProfile?.email)) {
+            commitProfileBalanceToSupabase({
+              userId: userProfile.id,
+              userEmail: userProfile.email,
+              column: balanceColumn,
+              newBalance,
+            }).catch(() => {});
+          }
+
+          // Check if a One-Step or Two-Step Challenge account just hit its profit target!
+          if (account && settlement.status === 'won' && !isLiveFundedAccount(updatedAccount)) {
+            const targetStatus = getChallengeProfitTarget(updatedAccount);
+            if (targetStatus.isTargetMet) {
+              setTimeout(() => {
+                onPassChallengePhase?.(updatedAccount);
+              }, 900);
+            }
           }
         }
       });
     }, 250);
 
     return () => clearInterval(timer);
-  }, [account, onUpdateTrade, onUpdateAccount, onPassChallengePhase, trades, selectedAsset.symbol]);
+  }, [account, onUpdateTrade, onUpdateAccount, onPassChallengePhase, trades, selectedAsset.symbol, userProfile?.id, userProfile?.email]);
 
   // Asset Tab Switching with Persistent Cross-View Synchronization
   const handleSelectTabAsset = (asset: AssetInfo) => {
@@ -1363,22 +1382,44 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       }
     }
 
-    // Deduct stake optimistically
+    // Atomic balance deduction on trade placement (local state + Supabase profiles table)
     soundEngine.playTradePlacement(direction);
-    const newBalance = Number((activeAcc.currentBalance - stakeToUse).toFixed(2));
+    const startTimeMs = Date.now();
+    const endTimeMs = startTimeMs + durationToUse * 1000;
+    const tradeId = `TRD-${startTimeMs.toString().slice(-6)}`;
+    const currentAuthoritativeBal = accountRef.current?.currentBalance ?? activeAcc.currentBalance;
+    const balanceColumn = resolveAccountBalanceColumn(activeAcc);
+
+    const { deductedBalance: newBalance } = recordAtomicTradePlacement({
+      tradeId,
+      accountId: activeAcc.id,
+      column: balanceColumn,
+      stake: stakeToUse,
+      preTradeBalance: currentAuthoritativeBal,
+      durationSeconds: durationToUse,
+      endTime: endTimeMs,
+      nowMs: startTimeMs,
+    });
+
     const deductedAcc: TradingAccount = {
       ...activeAcc,
       currentBalance: newBalance,
       equity: newBalance,
     };
-    if (account) {
-      onUpdateAccount(deductedAcc);
-      apiUpdateAccountState(activeAcc.id, {
-        currentBalance: newBalance,
-        equity: newBalance,
-      }).catch(() => {});
-    } else {
+    accountRef.current = deductedAcc;
+
+    onUpdateAccount(deductedAcc);
+    if (!account) {
       setDemoPracticeAccount(deductedAcc);
+    }
+
+    if (balanceColumn && (userProfile?.id || userProfile?.email)) {
+      commitProfileBalanceToSupabase({
+        userId: userProfile.id,
+        userEmail: userProfile.email,
+        column: balanceColumn,
+        newBalance,
+      }).catch(() => {});
     }
 
     // Accurately determine trade strike price from synchronized live feed or isolated market state
@@ -1390,7 +1431,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         : (liveFeedPrice ?? tradeMarket?.lastPrice ?? assetToTrade.basePrice);
 
     const newTrade: BinaryTrade = {
-      id: `TRD-${Date.now().toString().slice(-6)}`,
+      id: tradeId,
       accountId: activeAcc.id,
       asset: assetToTrade.symbol,
       direction,
@@ -1399,31 +1440,14 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       investment: stakeToUse,
       payoutPercentage: assetToTrade.payout,
       potentialPayout: Number((stakeToUse + (stakeToUse * assetToTrade.payout) / 100).toFixed(2)),
-      startTime: Date.now(),
+      startTime: startTimeMs,
       durationSeconds: durationToUse,
-      endTime: Date.now() + durationToUse * 1000,
+      endTime: endTimeMs,
       status: 'active',
       accountTier: activeAcc.tier,
     };
 
     onAddTrade(newTrade);
-
-    if (account) {
-      apiPlaceTrade({
-        id: newTrade.id,
-        accountId: activeAcc.id,
-        asset: newTrade.asset,
-        direction: newTrade.direction,
-        strikePrice: newTrade.strikePrice,
-        investment: newTrade.investment,
-        payoutPercentage: newTrade.payoutPercentage,
-        durationSeconds: newTrade.durationSeconds,
-        startTime: newTrade.startTime,
-        endTime: newTrade.endTime,
-        accountTier: newTrade.accountTier,
-      }).catch(() => {});
-    }
-
 
     setTradeSuccess(`Trade opened with price: ${assetLivePrice.toFixed(assetToTrade.pipDecimals)} ${assetToTrade.symbol}`);
     setTimeout(() => setTradeSuccess(null), 4000);
