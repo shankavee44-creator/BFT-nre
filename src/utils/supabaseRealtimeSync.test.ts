@@ -2,12 +2,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   applyRealtimeProfileUpdate,
+  getAuthoritativeAccountBalance,
+  resolveActiveTradingAccount,
   mapSupabaseWithdrawalToRequest,
   mergeRealtimeWithdrawal,
   mapSupabaseCommissionToReferralRecord,
   mergeRealtimeCommission,
 } from './supabaseRealtimeSync';
-import { TradingAccount, UserProfile, WithdrawalRequest, ReferralRecord } from '../types';
+import {
+  isValidPriceForAsset,
+  validateCandlesForAsset,
+  aggregateCandlesForTimeframe,
+} from './priceFeedEngine';
+import { TradingAccount, UserProfile, WithdrawalRequest, ReferralRecord, AssetInfo } from '../types';
 
 const createMockProfile = (): UserProfile => ({
   id: '00000000-0000-4000-8000-000000000001',
@@ -136,6 +143,35 @@ test('applyRealtimeProfileUpdate updates self_balance, demo_balance, and funded_
   assert.equal(liveAcc2.currentBalance, 1450.75);
 });
 
+test('getAuthoritativeAccountBalance and resolveActiveTradingAccount strictly map Demo Mode to demo_balance and Personal Live Mode to self_balance', () => {
+  const profile = createMockProfile();
+  const accounts = createMockAccounts();
+
+  const { updatedProfile, updatedAccounts } = applyRealtimeProfileUpdate(profile, accounts, {
+    id: profile.id,
+    self_balance: 3750.25,
+    demo_balance: 14200.0,
+  });
+
+  // Toggling to Demo Mode ('demo' or 'BFT-DEMO-001') reads demo_balance
+  const resolvedDemo = resolveActiveTradingAccount(updatedAccounts, 'demo', updatedProfile);
+  assert.ok(resolvedDemo);
+  assert.equal(resolvedDemo.id, 'BFT-DEMO-001');
+  assert.equal(resolvedDemo.currentBalance, 14200.0);
+  assert.equal(getAuthoritativeAccountBalance(resolvedDemo, updatedProfile), 14200.0);
+
+  // Toggling to Self-Capital / Personal Live Mode ('personal_live' or 'BFT-PERS-...') reads self_balance
+  const resolvedPersonal = resolveActiveTradingAccount(
+    updatedAccounts,
+    'personal_live',
+    updatedProfile
+  );
+  assert.ok(resolvedPersonal);
+  assert.equal(resolvedPersonal.id, 'BFT-LIVE-001');
+  assert.equal(resolvedPersonal.currentBalance, 3750.25);
+  assert.equal(getAuthoritativeAccountBalance(resolvedPersonal, updatedProfile), 3750.25);
+});
+
 test('mergeRealtimeWithdrawal handles INSERT and admin status UPDATE without duplicates', () => {
   const initial: WithdrawalRequest[] = [];
   const now = Date.now();
@@ -233,3 +269,54 @@ test('mergeRealtimeCommission maps L1/L2/L3 and 8% withdrawal royalty commission
   assert.equal(afterRoyalty[0].commissionRate, 0.08);
   assert.equal(afterRoyalty[0].commissionAmount, 40);
 });
+
+test('validateCandlesForAsset strictly rejects cross-asset contamination (including EUR/USD vs GBP/USD and GBP/JPY)', () => {
+  const eurUsd: AssetInfo = {
+    symbol: 'EUR/USD (OTC)',
+    name: 'Euro / US Dollar (OTC)',
+    category: 'Forex (OTC)',
+    basePrice: 1.08425,
+    volatility: 0.00018,
+    payout: 92,
+    pipDecimals: 5,
+  };
+  const gbpUsd: AssetInfo = {
+    symbol: 'GBP/USD (OTC)',
+    name: 'British Pound / US Dollar (OTC)',
+    category: 'Forex (OTC)',
+    basePrice: 1.2714,
+    volatility: 0.00022,
+    payout: 92,
+    pipDecimals: 5,
+  };
+  const gbpJpy: AssetInfo = {
+    symbol: 'GBP/JPY (OTC)',
+    name: 'British Pound / Japanese Yen (OTC)',
+    category: 'Forex (OTC)',
+    basePrice: 199.18,
+    volatility: 0.042,
+    payout: 91,
+    pipDecimals: 3,
+  };
+
+  const eurCandles = aggregateCandlesForTimeframe(eurUsd, 60);
+  const gbpUsdCandles = aggregateCandlesForTimeframe(gbpUsd, 60);
+  const gbpJpyCandles = aggregateCandlesForTimeframe(gbpJpy, 60);
+
+  // Each asset's own candles must pass validation
+  assert.equal(validateCandlesForAsset(eurUsd, eurCandles), true);
+  assert.equal(validateCandlesForAsset(gbpUsd, gbpUsdCandles), true);
+  assert.equal(validateCandlesForAsset(gbpJpy, gbpJpyCandles), true);
+
+  // Cross-asset candles must strictly fail validation (even between EUR/USD ~1.084 and GBP/USD ~1.271)
+  assert.equal(validateCandlesForAsset(gbpUsd, eurCandles), false);
+  assert.equal(validateCandlesForAsset(eurUsd, gbpUsdCandles), false);
+  assert.equal(validateCandlesForAsset(gbpJpy, eurCandles), false);
+  assert.equal(validateCandlesForAsset(eurUsd, gbpJpyCandles), false);
+
+  // Price validation rejects cross-asset ticks
+  assert.equal(isValidPriceForAsset(gbpUsd, 1.08425), false);
+  assert.equal(isValidPriceForAsset(eurUsd, 1.2714), false);
+  assert.equal(isValidPriceForAsset(gbpJpy, 3.03), false);
+});
+

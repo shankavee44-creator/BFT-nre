@@ -86,6 +86,7 @@ import {
   getAccountStatusBadgeLabel,
   getChallengeProfitTarget,
 } from '../utils/propRules';
+import { getAuthoritativeAccountBalance } from '../utils/supabaseRealtimeSync';
 import {
   calculateHeikinAshi,
   calculateSMA,
@@ -302,6 +303,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     return store?.lastPrice ?? selectedAsset?.basePrice ?? 1.08425;
   });
   const [candles, setCandles] = useState<Candle[]>([]);
+  const [candlesAssetSymbol, setCandlesAssetSymbol] = useState<string>(selectedAsset.symbol);
   const [isLoadingChart, setIsLoadingChart] = useState<boolean>(true);
   const isLoadingChartRef = useRef<boolean>(false);
   isLoadingChartRef.current = isLoadingChart;
@@ -386,7 +388,33 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     }
   }, [userProfile?.demoBalance]);
 
-  const effectiveAccount = account || demoPracticeAccount;
+  const rawEffectiveAccount = account || demoPracticeAccount;
+  const authoritativeEffectiveBalance = getAuthoritativeAccountBalance(
+    rawEffectiveAccount,
+    userProfile
+  );
+  const effectiveAccount: TradingAccount = React.useMemo(
+    () =>
+      rawEffectiveAccount.currentBalance === authoritativeEffectiveBalance &&
+      rawEffectiveAccount.equity === authoritativeEffectiveBalance
+        ? rawEffectiveAccount
+        : {
+            ...rawEffectiveAccount,
+            currentBalance: authoritativeEffectiveBalance,
+            equity: authoritativeEffectiveBalance,
+          },
+    [rawEffectiveAccount, authoritativeEffectiveBalance]
+  );
+  const personalLiveAccount = accounts.find((a) => isPersonalLiveAccount(a));
+  const demoModeAccount = accounts.find((a) => isDemoAccount(a));
+  const personalLiveBalance =
+    userProfile?.selfBalance !== undefined && userProfile?.selfBalance !== null
+      ? Number(userProfile.selfBalance)
+      : Number(personalLiveAccount?.currentBalance ?? 0);
+  const demoModeBalance =
+    userProfile?.demoBalance !== undefined && userProfile?.demoBalance !== null
+      ? Number(userProfile.demoBalance)
+      : Number(demoModeAccount?.currentBalance ?? 10000);
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const touchStartDistRef = useRef<number | null>(null);
   const initialTouchZoomRef = useRef<number>(1);
@@ -692,6 +720,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
     // Safety: only set candles if it matches the current asset symbol
     if (selectedAssetRef.current.symbol === selectedAsset.symbol) {
+      setCandlesAssetSymbol(selectedAsset.symbol);
       setCandles(aggregated);
       setCurrentPrice(store.lastPrice);
       setSmoothPrice(store.lastPrice);
@@ -755,6 +784,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
       const sec = TIMEFRAME_SECONDS[timeframe];
       const liveCandlesSeries = aggregateCandlesForTimeframe(selectedAssetRef.current, sec);
+      setCandlesAssetSymbol(selectedAssetRef.current.symbol);
       setCandles(liveCandlesSeries);
 
       const symbolOffsetSec = Math.floor(
@@ -824,6 +854,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
         const sec = TIMEFRAME_SECONDS[timeframe];
         const liveCandlesSeries = aggregateCandlesForTimeframe(selectedAssetRef.current, sec);
+        setCandlesAssetSymbol(selectedAssetRef.current.symbol);
         setCandles(liveCandlesSeries);
         isLoadingChartRef.current = false;
         setIsLoadingChart(false);
@@ -836,6 +867,8 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       unsubLiveTicks();
       unsubscribe();
       unsubDeriv();
+      derivClient.unsubscribeAll();
+      liveMarketFeed.unsubscribeActiveSymbol();
     };
   }, [selectedAsset, timeframe]);
 
@@ -965,6 +998,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       targetPriceRef.current = newPrice;
 
       const liveCandlesSeries = aggregateCandlesForTimeframe(activeAsset, sec);
+      setCandlesAssetSymbol(activeAsset.symbol);
       setCandles(liveCandlesSeries);
 
       const symbolOffsetSec = Math.floor(getAssetTimeOffsetMs(activeAsset.symbol, sec) / 1000);
@@ -1167,9 +1201,15 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   const handleSelectTabAsset = (asset: AssetInfo) => {
     if (asset.symbol === selectedAsset.symbol) return;
     soundEngine.playUiClick();
+    // Strictly unsubscribe previous asset WebSocket and polling feeds before switching
+    derivClient.unsubscribeAll();
+    liveMarketFeed.unsubscribeActiveSymbol();
     selectedAssetRef.current = asset;
     isLoadingChartRef.current = true;
     setIsLoadingChart(true);
+    setCandles([]);
+    setCandlesAssetSymbol(asset.symbol);
+    setHoveredCandle(null);
     setSelectedAsset(asset);
     saveSelectedAssetSymbol(asset.symbol);
     broadcastSyncEvent('ASSET_SELECTED', asset.symbol);
@@ -1190,9 +1230,14 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     saveOpenAssetTabSymbols(remaining.map((t) => t.symbol));
     broadcastSyncEvent('TABS_UPDATED', remaining.map((t) => t.symbol));
     if (selectedAsset.symbol === symbol) {
+      derivClient.unsubscribeAll();
+      liveMarketFeed.unsubscribeActiveSymbol();
       selectedAssetRef.current = remaining[0];
       isLoadingChartRef.current = true;
       setIsLoadingChart(true);
+      setCandles([]);
+      setCandlesAssetSymbol(remaining[0].symbol);
+      setHoveredCandle(null);
       setSelectedAsset(remaining[0]);
       saveSelectedAssetSymbol(remaining[0].symbol);
       broadcastSyncEvent('ASSET_SELECTED', remaining[0].symbol);
@@ -2848,7 +2893,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       {/* 0. COMPACT MOBILE TOP NAVIGATION HEADER (Quotex Mobile View) */}
       <div
         data-testid="quotex-mobile-top-header"
-        className="flex md:hidden h-10 bg-[#0a0a0a] border-b border-white/10 items-center justify-between px-2.5 shrink-0 z-30"
+        className="flex md:hidden h-10 bg-[#0a0a0a] border-b border-white/10 items-center justify-between px-2.5 shrink-0 relative z-50"
       >
         <div className="flex items-center gap-1.5">
           <button
@@ -2896,40 +2941,97 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
             {/* Account Switcher Dropdown Modal */}
             {accountDropdownOpen && (
-              <div className="absolute top-full left-0 mt-1.5 w-64 bg-[#141824] border border-[#2a2e39] rounded-xl shadow-2xl p-2 z-50 font-mono">
-                <div className="text-[10px] text-slate-400 font-bold px-2 py-1 uppercase tracking-wider">
-                  Select Trading Account
+              <div className="absolute top-full left-0 mt-1.5 w-68 bg-[#141824] border border-[#2a2e39] rounded-xl shadow-2xl p-2 z-50 font-mono">
+                <div className="text-[10px] text-slate-400 font-bold px-1 py-1 uppercase tracking-wider">
+                  Account Mode Toggle
                 </div>
-                {accounts && accounts.map((acc) => (
+                <div className="grid grid-cols-2 gap-1.5 mb-2">
                   <button
-                    key={acc.id}
+                    type="button"
+                    data-testid="mobile-switch-mode-personal-btn"
                     onClick={() => {
-                      onSelectAccount?.(acc.id);
+                      soundEngine.playUiClick();
+                      onSelectAccount?.(personalLiveAccount?.id || 'personal_live');
                       setAccountDropdownOpen(false);
                     }}
-                    className={`w-full flex items-center justify-between p-2 rounded-lg text-left transition-colors mb-1 ${
-                      acc.id === account?.id
-                        ? 'bg-[#252b3b] border border-[#ff8800]/50 text-white'
-                        : 'hover:bg-[#1b1f2b] text-slate-300'
+                    className={`p-2 rounded-lg border text-left transition-colors ${
+                      isPersonalLiveAccount(effectiveAccount)
+                        ? 'bg-[#00e676]/15 border-[#00e676] text-white'
+                        : 'bg-[#1b1f2b] border-white/10 text-slate-300'
                     }`}
                   >
-                    <div>
-                      <div className="font-bold text-xs">{acc.id}</div>
-                      <div className="text-[10px] text-[#00e676] font-mono">
-                        ${(acc?.currentBalance ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                      </div>
+                    <div className="text-[9px] font-black uppercase text-[#00e676]">
+                      Self-Capital
                     </div>
-                    <span
-                      className={`text-[9px] px-1.5 py-0.5 rounded font-black uppercase ${
-                        isLiveFundedAccount(acc)
-                          ? 'bg-[#00c853]/25 text-[#00e676]'
-                          : 'bg-[#ff8800]/20 text-[#ff8800]'
-                      }`}
-                    >
-                      {getAccountStatusBadgeLabel(acc)}
-                    </span>
+                    <div className="text-[11px] font-black text-white mt-0.5">
+                      ${personalLiveBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    </div>
                   </button>
-                ))}
+                  <button
+                    type="button"
+                    data-testid="mobile-switch-mode-demo-btn"
+                    onClick={() => {
+                      soundEngine.playUiClick();
+                      onSelectAccount?.(demoModeAccount?.id || 'BFT-DEMO-001');
+                      setAccountDropdownOpen(false);
+                    }}
+                    className={`p-2 rounded-lg border text-left transition-colors ${
+                      isDemoAccount(effectiveAccount)
+                        ? 'bg-[#ff8800]/20 border-[#ff8800] text-white'
+                        : 'bg-[#1b1f2b] border-white/10 text-slate-300'
+                    }`}
+                  >
+                    <div className="text-[9px] font-black uppercase text-[#ff8800]">
+                      Demo Mode
+                    </div>
+                    <div className="text-[11px] font-black text-white mt-0.5">
+                      ${demoModeBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    </div>
+                  </button>
+                </div>
+                <div className="text-[10px] text-slate-400 font-bold px-2 py-1 uppercase tracking-wider border-t border-[#2a2e39]">
+                  Select Trading Account
+                </div>
+                {accounts &&
+                  accounts.map((acc) => {
+                    const accBal = getAuthoritativeAccountBalance(acc, userProfile);
+                    return (
+                      <button
+                        key={acc.id}
+                        onClick={() => {
+                          onSelectAccount?.(acc.id);
+                          setAccountDropdownOpen(false);
+                        }}
+                        className={`w-full flex items-center justify-between p-2 rounded-lg text-left transition-colors mb-1 ${
+                          acc.id === effectiveAccount?.id
+                            ? 'bg-[#252b3b] border border-[#ff8800]/50 text-white'
+                            : 'hover:bg-[#1b1f2b] text-slate-300'
+                        }`}
+                      >
+                        <div>
+                          <div className="font-bold text-xs">
+                            {isPersonalLiveAccount(acc)
+                              ? 'Personal Live (Self-Capital)'
+                              : isDemoAccount(acc)
+                              ? 'Demo Practice Account'
+                              : acc.id}
+                          </div>
+                          <div className="text-[10px] text-[#00e676] font-mono">
+                            ${accBal.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </div>
+                        </div>
+                        <span
+                          className={`text-[9px] px-1.5 py-0.5 rounded font-black uppercase ${
+                            isLiveFundedAccount(acc)
+                              ? 'bg-[#00c853]/25 text-[#00e676]'
+                              : 'bg-[#ff8800]/20 text-[#ff8800]'
+                          }`}
+                        >
+                          {getAccountStatusBadgeLabel(acc)}
+                        </span>
+                      </button>
+                    );
+                  })}
                 {onOpenChallengeModal && (
                   <div className="border-t border-[#2a2e39] mt-2 pt-2">
                     <button
@@ -2999,7 +3101,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       </div>
 
       {/* 1. MAIN NAVIGATION HEADER */}
-      <div className="hidden md:flex h-12 bg-[#1e222d] border-b border-[#2a2e39] flex items-center justify-between px-3 shrink-0 z-20">
+      <div className="hidden md:flex h-12 bg-[#1e222d] border-b border-[#2a2e39] flex items-center justify-between px-3 shrink-0 relative z-50">
         {/* Left: Brand / Portal Button */}
         <div className="flex items-center gap-1.5">
           <button
@@ -3044,35 +3146,33 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             >
               <div
                 className={`w-2 h-2 rounded-full ${
-                  !account
-                    ? 'bg-[#ff8800]'
-                    : isBreached
+                  isBreached
                     ? 'bg-rose-500 animate-pulse'
-                    : isPersonalLiveAccount(account)
-                    ? 'bg-[#ff8800]'
-                    : isDemoAccount(account)
-                    ? 'bg-slate-400'
-                    : isLiveFundedAccount(account)
+                    : isPersonalLiveAccount(effectiveAccount) || isLiveFundedAccount(effectiveAccount)
                     ? 'bg-[#00e676]'
+                    : isDemoAccount(effectiveAccount)
+                    ? 'bg-[#ff8800]'
                     : 'bg-[#ff8800]'
                 }`}
               />
               <div className="text-left">
                 <div className="flex items-center gap-1.5">
                   <span className="font-bold text-white text-[11px]">
-                    {!account
-                      ? 'No Active Account'
-                      : isPersonalLiveAccount(account)
+                    {isPersonalLiveAccount(effectiveAccount)
                       ? 'Personal Live Balance'
-                      : isDemoAccount(account)
-                      ? 'Demo'
-                      : account.id}
+                      : isDemoAccount(effectiveAccount)
+                      ? 'Demo Mode'
+                      : effectiveAccount.id}
                   </span>
-                  </div>
-                <div className={`text-xs font-black ${!account ? 'text-[#ff8800]' : isBreached ? 'text-rose-400' : 'text-[#00e676]'}`}>
-                  {account
-                    ? `$${account.currentBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
-                    : 'Choose a Plan'}
+                </div>
+                <div
+                  data-testid="terminal-active-balance"
+                  className={`text-xs font-black ${isBreached ? 'text-rose-400' : 'text-[#00e676]'}`}
+                >
+                  ${effectiveAccount.currentBalance.toLocaleString('en-US', {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}
                 </div>
               </div>
               <ChevronDown className="w-3.5 h-3.5 text-slate-400 ml-1" />
@@ -3080,12 +3180,67 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
             {/* Account Switcher Dropdown Menu */}
             {accountDropdownOpen && (
-              <div className="absolute right-0 mt-2 w-72 rounded-xl bg-[#1e222d] border border-[#2a2e39] shadow-2xl p-2 z-50 font-mono text-xs animate-in fade-in">
-                <div className="text-[10px] uppercase font-bold text-slate-400 px-2 py-1">
+              <div className="absolute right-0 mt-2 w-76 rounded-xl bg-[#1e222d] border border-[#2a2e39] shadow-2xl p-2.5 z-50 font-mono text-xs animate-in fade-in">
+                <div className="text-[10px] uppercase font-bold text-slate-400 px-1 pb-1.5">
+                  Account Mode Toggle
+                </div>
+                <div className="grid grid-cols-2 gap-1.5 mb-2">
+                  <button
+                    type="button"
+                    data-testid="switch-mode-personal-btn"
+                    onClick={() => {
+                      soundEngine.playUiClick();
+                      onSelectAccount?.(personalLiveAccount?.id || 'personal_live');
+                      setAccountDropdownOpen(false);
+                    }}
+                    className={`p-2 rounded-lg border text-left transition-all cursor-pointer ${
+                      isPersonalLiveAccount(effectiveAccount)
+                        ? 'bg-[#00e676]/15 border-[#00e676] text-white'
+                        : 'bg-[#161923] border-[#2a2e39] text-slate-300 hover:border-white/25'
+                    }`}
+                  >
+                    <div className="text-[9px] font-black uppercase text-[#00e676]">
+                      Self-Capital (Live)
+                    </div>
+                    <div className="text-[11px] font-black text-white mt-0.5">
+                      ${personalLiveBalance.toLocaleString('en-US', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="switch-mode-demo-btn"
+                    onClick={() => {
+                      soundEngine.playUiClick();
+                      onSelectAccount?.(demoModeAccount?.id || 'BFT-DEMO-001');
+                      setAccountDropdownOpen(false);
+                    }}
+                    className={`p-2 rounded-lg border text-left transition-all cursor-pointer ${
+                      isDemoAccount(effectiveAccount)
+                        ? 'bg-[#ff8800]/20 border-[#ff8800] text-white'
+                        : 'bg-[#161923] border-[#2a2e39] text-slate-300 hover:border-white/25'
+                    }`}
+                  >
+                    <div className="text-[9px] font-black uppercase text-[#ff8800]">
+                      Demo Mode
+                    </div>
+                    <div className="text-[11px] font-black text-white mt-0.5">
+                      ${demoModeBalance.toLocaleString('en-US', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </div>
+                  </button>
+                </div>
+
+                <div className="text-[10px] uppercase font-bold text-slate-400 px-2 py-1 border-t border-[#2a2e39]">
                   Switch Prop Account
                 </div>
                 {accounts.map((acc) => {
                   const isLive = isLiveFundedAccount(acc);
+                  const accBal = getAuthoritativeAccountBalance(acc, userProfile);
                   return (
                     <button
                       key={acc.id}
@@ -3095,12 +3250,18 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                         setAccountDropdownOpen(false);
                       }}
                       className={`w-full flex items-center justify-between p-2 rounded-lg text-left transition-colors cursor-pointer ${
-                        acc.id === account?.id ? 'bg-cyan-500/15 border border-cyan-500/30' : 'hover:bg-[#262b3a]'
+                        acc.id === effectiveAccount?.id ? 'bg-cyan-500/15 border border-cyan-500/30' : 'hover:bg-[#262b3a]'
                       }`}
                     >
                       <div>
                         <div className="font-bold text-white flex items-center gap-1.5">
-                          <span>{acc.id}</span>
+                          <span>
+                            {isPersonalLiveAccount(acc)
+                              ? 'Personal Live (Self-Capital)'
+                              : isDemoAccount(acc)
+                              ? 'Demo Practice Account'
+                              : acc.id}
+                          </span>
                           <span
                             className={`text-[9px] px-1.5 py-0.5 rounded font-black uppercase tracking-wider border ${
                               isLive
@@ -3117,10 +3278,13 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                           )}
                         </div>
                         <div className="text-[#00e676] font-black mt-0.5">
-                          ${acc.currentBalance.toFixed(2)} • {acc.tierName}
+                          ${accBal.toLocaleString('en-US', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })} • {acc.tierName}
                         </div>
                       </div>
-                      {acc.id === account?.id && <CheckCircle2 className="w-4 h-4 text-cyan-400" />}
+                      {acc.id === effectiveAccount?.id && <CheckCircle2 className="w-4 h-4 text-cyan-400" />}
                     </button>
                   );
                 })}
@@ -4121,7 +4285,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
           >
             <LightweightTradingChart
               asset={selectedAsset}
-              candles={candles}
+              candles={candlesAssetSymbol === selectedAsset.symbol ? candles : []}
               currentPrice={currentPrice}
               timeframe={timeframe}
               chartType={chartType}

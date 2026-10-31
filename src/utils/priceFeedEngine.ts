@@ -271,7 +271,11 @@ export function computeSynchronizedTickAtTime(
     else if (currentRegime === 'volatile_breakout')
       trendDrift = (nextRandom(prng) < 0.5 ? 1 : -1) * 0.5 * regimeIntensity;
 
-    const dirProb = Math.max(0.1, Math.min(0.9, 0.5 + trendDrift));
+    // Gentle mean-reverting anchor so prices always stay within ±4% of asset.basePrice
+    const relDev = (open - asset.basePrice) / Math.max(minPip, asset.basePrice);
+    const meanRevertPull = Math.max(-0.42, Math.min(0.42, -relDev * 14));
+
+    const dirProb = Math.max(0.08, Math.min(0.92, 0.5 + trendDrift + meanRevertPull));
     const sign = nextRandom(prng) < dirProb ? 1 : -1;
     const u3 = Math.max(1e-7, nextRandom(prng));
     const u4 = Math.max(1e-7, nextRandom(prng));
@@ -401,7 +405,9 @@ function generateDeterministicTimeframeCandles(
           else if (currentRegime === 'bearish_trend') trendDrift = -0.28 * regimeIntensity;
           else if (currentRegime === 'volatile_breakout') trendDrift = (nextRandom(prng) < 0.5 ? 1 : -1) * 0.5 * regimeIntensity;
 
-          const dirProb = Math.max(0.1, Math.min(0.9, 0.5 + trendDrift));
+          const relDev = (currentPrice - asset.basePrice) / Math.max(minPip, asset.basePrice);
+          const meanRevertPull = Math.max(-0.42, Math.min(0.42, -relDev * 14));
+          const dirProb = Math.max(0.08, Math.min(0.92, 0.5 + trendDrift + meanRevertPull));
           const sign = nextRandom(prng) < dirProb ? 1 : -1;
           const u3 = Math.max(1e-7, nextRandom(prng));
           const u4 = Math.max(1e-7, nextRandom(prng));
@@ -433,7 +439,9 @@ function generateDeterministicTimeframeCandles(
     else if (currentRegime === 'bearish_trend') trendDrift = -0.28 * regimeIntensity;
     else if (currentRegime === 'volatile_breakout') trendDrift = (nextRandom(prng) < 0.5 ? 1 : -1) * 0.5 * regimeIntensity;
 
-    const dirProb = Math.max(0.1, Math.min(0.9, 0.5 + trendDrift));
+    const relDev = (open - asset.basePrice) / Math.max(minPip, asset.basePrice);
+    const meanRevertPull = Math.max(-0.42, Math.min(0.42, -relDev * 14));
+    const dirProb = Math.max(0.08, Math.min(0.92, 0.5 + trendDrift + meanRevertPull));
     const sign = nextRandom(prng) < dirProb ? 1 : -1;
     const u3 = Math.max(1e-7, nextRandom(prng));
     const u4 = Math.max(1e-7, nextRandom(prng));
@@ -557,13 +565,14 @@ export function getOrCreateMasterHistory(asset: AssetInfo): AssetMarketState {
 }
 
 /**
- * Validates that a price belongs to the expected scale of the given asset (prevents cross-asset tick contamination).
+ * Validates that a price belongs strictly to the expected price scale of the given asset
+ * (prevents cross-asset tick contamination between pairs like EUR/USD 1.08, GBP/USD 1.29, GBP/JPY 199.32, or 3.03).
  */
 export function isValidPriceForAsset(asset: AssetInfo, price: number): boolean {
   if (!asset || typeof price !== 'number' || !Number.isFinite(price) || price <= 0) return false;
   const base = Number(asset.basePrice) || 0;
   if (base <= 0) return price > 0;
-  return price >= base * 0.2 && price <= base * 5.0;
+  return price >= base * 0.88 && price <= base * 1.12;
 }
 
 /**
@@ -574,12 +583,29 @@ export function validateCandlesForAsset(asset: AssetInfo, candles: Candle[]): bo
   const first = candles[0];
   const mid = candles[Math.floor(candles.length / 2)];
   const last = candles[candles.length - 1];
-  return (
-    isValidPriceForAsset(asset, first.close) &&
-    isValidPriceForAsset(asset, mid.close) &&
-    isValidPriceForAsset(asset, last.close) &&
-    isValidPriceForAsset(asset, last.open)
-  );
+  if (
+    !isValidPriceForAsset(asset, first.close) ||
+    !isValidPriceForAsset(asset, mid.close) ||
+    !isValidPriceForAsset(asset, last.close) ||
+    !isValidPriceForAsset(asset, last.open)
+  ) {
+    return false;
+  }
+
+  // Also check recent window to ensure no mixed-asset outlier bars exist
+  const checkStart = Math.max(0, candles.length - 150);
+  let minLow = Infinity;
+  let maxHigh = -Infinity;
+  for (let i = checkStart; i < candles.length; i++) {
+    const c = candles[i];
+    if (!c || !isValidPriceForAsset(asset, c.close)) return false;
+    if (c.low < minLow) minLow = c.low;
+    if (c.high > maxHigh) maxHigh = c.high;
+  }
+  if (minLow <= 0 || maxHigh / minLow > 1.18) {
+    return false;
+  }
+  return true;
 }
 
 /**

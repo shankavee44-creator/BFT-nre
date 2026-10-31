@@ -131,10 +131,18 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     try {
       const { data: profileData } = await supabase
         .from('profiles')
-        .select('id, email, full_name, kyc_status, self_balance, address, date_of_birth, country, referral_code, referred_by, profile_locked')
+        .select('*')
         .eq('id', user.id)
         .maybeSingle();
       existingProfile = profileData;
+      if (!existingProfile && user.email) {
+        const { data: byEmail } = await supabase
+          .from('profiles')
+          .select('*')
+          .ilike('email', String(user.email).trim().toLowerCase())
+          .maybeSingle();
+        existingProfile = byEmail;
+      }
     } catch {
       // ignore read error
     }
@@ -183,22 +191,34 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       // ignore
     }
 
-    const serverUser = backendSync?.user || {
-      id: user.id,
+    const serverUser = {
+      ...(backendSync?.user || {}),
+      id: existingProfile?.id || user.id,
       email: resolvedProfile.email,
-      fullName: resolvedProfile.fullName,
-      referralCode: resolvedProfile.referralCode,
-      kycStatus: resolvedProfile.kycStatus,
-      profileLocked: resolvedProfile.profileLocked,
-      address: resolvedProfile.address,
-      dateOfBirth: resolvedProfile.dateOfBirth,
-      country: resolvedProfile.country,
+      fullName: resolvedProfile.fullName || backendSync?.user?.fullName,
+      referralCode: resolvedProfile.referralCode || backendSync?.user?.referralCode,
+      kycStatus: resolvedProfile.kycStatus || backendSync?.user?.kycStatus,
+      profileLocked: resolvedProfile.profileLocked ?? backendSync?.user?.profileLocked,
+      address: resolvedProfile.address || backendSync?.user?.address,
+      dateOfBirth: resolvedProfile.dateOfBirth || backendSync?.user?.dateOfBirth,
+      country: resolvedProfile.country || backendSync?.user?.country,
       balance: resolvedProfile.balance,
-      selfBalance: resolvedProfile.selfBalance,
+      selfBalance:
+        resolvedProfile.selfBalance !== undefined
+          ? resolvedProfile.selfBalance
+          : backendSync?.user?.selfBalance,
+      demoBalance:
+        resolvedProfile.demoBalance !== undefined
+          ? resolvedProfile.demoBalance
+          : backendSync?.user?.demoBalance,
+      fundedBalance:
+        resolvedProfile.fundedBalance !== undefined
+          ? resolvedProfile.fundedBalance
+          : backendSync?.user?.fundedBalance,
     };
 
     onAuthSuccess({
-      userId: user.id,
+      userId: existingProfile?.id || user.id,
       email: resolvedProfile.email,
       fullName: serverUser.fullName || resolvedProfile.fullName,
       referralCode: resolvedProfile.referralCode,
@@ -246,12 +266,24 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           rememberMe,
         });
         if (backendRes?.ok && backendRes.user) {
+          let supaProfileByEmail: any = null;
+          try {
+            const { data: pByEmail } = await supabase
+              .from('profiles')
+              .select('*')
+              .ilike('email', cleanEmail)
+              .maybeSingle();
+            supaProfileByEmail = pByEmail;
+          } catch {
+            // ignore
+          }
+          const resolvedId = supaProfileByEmail?.id || backendRes.user.id;
           const jwtToken =
             backendRes.token ||
             createSessionJwtToken({
-              userId: backendRes.user.id,
+              userId: resolvedId,
               email: cleanEmail,
-              referralCode: backendRes.user.referralCode || 'BFT-PRO',
+              referralCode: supaProfileByEmail?.referral_code || backendRes.user.referralCode || 'BFT-PRO',
               rememberMe,
             });
           try {
@@ -263,16 +295,32 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           } catch {
             // ignore
           }
+          const mergedServerUser = {
+            ...backendRes.user,
+            id: resolvedId,
+            selfBalance:
+              supaProfileByEmail?.self_balance !== undefined && supaProfileByEmail?.self_balance !== null
+                ? Number(supaProfileByEmail.self_balance)
+                : backendRes.user.selfBalance,
+            demoBalance:
+              supaProfileByEmail?.demo_balance !== undefined && supaProfileByEmail?.demo_balance !== null
+                ? Number(supaProfileByEmail.demo_balance)
+                : backendRes.user.demoBalance,
+            fundedBalance:
+              supaProfileByEmail?.funded_balance !== undefined && supaProfileByEmail?.funded_balance !== null
+                ? Number(supaProfileByEmail.funded_balance)
+                : backendRes.user.fundedBalance,
+          };
           onAuthSuccess({
-            userId: backendRes.user.id,
+            userId: resolvedId,
             email: backendRes.user.email,
-            fullName: backendRes.user.fullName,
-            referralCode: backendRes.user.referralCode,
-            referredBy: backendRes.user.referredBy || null,
+            fullName: supaProfileByEmail?.full_name || backendRes.user.fullName,
+            referralCode: supaProfileByEmail?.referral_code || backendRes.user.referralCode,
+            referredBy: supaProfileByEmail?.referred_by || backendRes.user.referredBy || null,
             rememberMe,
             jwtToken,
             isNewRegistration: false,
-            serverUser: backendRes.user,
+            serverUser: mergedServerUser,
             serverAccounts: Array.isArray(backendRes.accounts) ? backendRes.accounts : [],
           });
           onClose();

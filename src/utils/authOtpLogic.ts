@@ -28,6 +28,8 @@ export interface ProfileRecordLike {
   country?: string;
   balance?: number;
   self_balance?: number;
+  demo_balance?: number;
+  funded_balance?: number;
 }
 
 export function sanitizeOtpEmail(rawEmail: string): string {
@@ -89,6 +91,8 @@ export function resolveOrBuildUserProfile(
     country: string;
     balance: number;
     selfBalance?: number;
+    demoBalance?: number;
+    fundedBalance?: number;
   };
 } {
   const cleanEmail = sanitizeOtpEmail(user.email || existingProfile?.email || '');
@@ -151,7 +155,18 @@ export function resolveOrBuildUserProfile(
       dateOfBirth: existingProfile?.date_of_birth || user.user_metadata?.date_of_birth || '',
       country: existingProfile?.country || user.user_metadata?.country || 'United States',
       balance: Number(existingProfile?.balance || 0),
-      selfBalance: existingProfile?.self_balance !== undefined ? Number(existingProfile.self_balance) : undefined,
+      selfBalance:
+        existingProfile?.self_balance !== undefined && existingProfile?.self_balance !== null
+          ? Number(existingProfile.self_balance)
+          : undefined,
+      demoBalance:
+        existingProfile?.demo_balance !== undefined && existingProfile?.demo_balance !== null
+          ? Number(existingProfile.demo_balance)
+          : undefined,
+      fundedBalance:
+        existingProfile?.funded_balance !== undefined && existingProfile?.funded_balance !== null
+          ? Number(existingProfile.funded_balance)
+          : undefined,
     },
   };
 }

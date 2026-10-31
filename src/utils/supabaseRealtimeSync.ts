@@ -379,6 +379,152 @@ export interface UserRealtimeSubscriptionCallbacks {
 }
 
 /**
+ * Resolves the authoritative balance for a given account mode directly from the synchronized
+ * UserProfile state (`selfBalance` for Personal Live / Self-Capital mode, `demoBalance` for Demo mode,
+ * `fundedBalance` for Funded mode), falling back to the account's own `currentBalance`.
+ */
+export function getAuthoritativeAccountBalance(
+  account: TradingAccount | null | undefined,
+  userProfile?: UserProfile | null
+): number {
+  if (!account || isDemoAccount(account)) {
+    if (
+      userProfile?.demoBalance !== undefined &&
+      userProfile?.demoBalance !== null &&
+      Number.isFinite(Number(userProfile.demoBalance))
+    ) {
+      return Number(userProfile.demoBalance);
+    }
+    return Number(account?.currentBalance ?? 10000);
+  }
+
+  if (isPersonalLiveAccount(account)) {
+    if (
+      userProfile?.selfBalance !== undefined &&
+      userProfile?.selfBalance !== null &&
+      Number.isFinite(Number(userProfile.selfBalance))
+    ) {
+      return Number(userProfile.selfBalance);
+    }
+    return Number(account.currentBalance ?? 0);
+  }
+
+  if (
+    account.phase === 'funded' &&
+    userProfile?.fundedBalance !== undefined &&
+    userProfile?.fundedBalance !== null &&
+    Number.isFinite(Number(userProfile.fundedBalance))
+  ) {
+    return Number(userProfile.fundedBalance);
+  }
+
+  return Number(account.currentBalance ?? 0);
+}
+
+/**
+ * Resolves the active trading account when toggling between Demo Mode (`demo_balance`),
+ * Self-Capital / Personal Live Mode (`self_balance`), and Prop Evaluation/Funded accounts,
+ * guaranteeing that the returned account carries the latest synchronized balance.
+ */
+export function resolveActiveTradingAccount(
+  accounts: TradingAccount[],
+  activeAccountId: string,
+  userProfile?: UserProfile | null
+): TradingAccount | undefined {
+  if (!Array.isArray(accounts) || accounts.length === 0) return undefined;
+
+  const cleanId = (activeAccountId || '').trim();
+  let matched: TradingAccount | undefined;
+
+  if (cleanId) {
+    matched = accounts.find((acc) => acc.id === cleanId);
+  }
+
+  if (!matched && (cleanId === 'personal_live' || cleanId.startsWith('BFT-PERS'))) {
+    matched = accounts.find((acc) => isPersonalLiveAccount(acc));
+  }
+
+  if (!matched && (cleanId === 'demo' || cleanId.startsWith('BFT-DEMO'))) {
+    matched = accounts.find((acc) => isDemoAccount(acc));
+  }
+
+  if (!matched) {
+    matched =
+      accounts.find((acc) => isPersonalLiveAccount(acc) && getAuthoritativeAccountBalance(acc, userProfile) > 0) ||
+      accounts[0];
+  }
+
+  if (!matched) return undefined;
+
+  const authoritativeBal = getAuthoritativeAccountBalance(matched, userProfile);
+  if (matched.currentBalance !== authoritativeBal || matched.equity !== authoritativeBal) {
+    return {
+      ...matched,
+      currentBalance: authoritativeBal,
+      equity: authoritativeBal,
+    };
+  }
+  return matched;
+}
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const PROFILE_SELECT_COLUMNS = '*';
+
+/**
+ * Fetches the user's row from the Supabase `profiles` table by `auth.uid()`, candidate UUIDs, or email fallback.
+ */
+export async function fetchSupabaseProfileRow(params: {
+  userId?: string;
+  userEmail?: string;
+  authUid?: string;
+  candidateIds?: Iterable<string>;
+}): Promise<Record<string, any> | null> {
+  const uuidsToTry = new Set<string>();
+  if (params.authUid && UUID_REGEX.test(params.authUid)) {
+    uuidsToTry.add(params.authUid);
+  }
+  if (params.userId && UUID_REGEX.test(params.userId)) {
+    uuidsToTry.add(params.userId);
+  }
+  if (params.candidateIds) {
+    for (const cid of params.candidateIds) {
+      if (cid && UUID_REGEX.test(cid)) {
+        uuidsToTry.add(cid);
+      }
+    }
+  }
+
+  for (const uid of Array.from(uuidsToTry)) {
+    try {
+      const { data } = await supabase
+        .from('profiles')
+        .select(PROFILE_SELECT_COLUMNS)
+        .eq('id', uid)
+        .maybeSingle();
+      if (data) return data;
+    } catch {
+      // ignore and try next
+    }
+  }
+
+  const normalizedEmail = params.userEmail ? params.userEmail.trim().toLowerCase() : '';
+  if (normalizedEmail) {
+    try {
+      const { data } = await supabase
+        .from('profiles')
+        .select(PROFILE_SELECT_COLUMNS)
+        .ilike('email', normalizedEmail)
+        .maybeSingle();
+      if (data) return data;
+    } catch {
+      // ignore
+    }
+  }
+
+  return null;
+}
+
+/**
  * Sets up comprehensive Supabase real-time subscriptions (`postgres_changes`) for:
  * 1. `profiles` table (instant `self_balance`, `demo_balance`, `funded_balance`, and `kyc_status` sync)
  * 2. `withdrawals` table (instant pending -> completed/approved/declined status sync)
@@ -399,8 +545,10 @@ export function subscribeUserRealtimeChannels(callbacks: UserRealtimeSubscriptio
   let isDisposed = false;
   const candidateIds = new Set<string>();
   if (userId) candidateIds.add(userId);
-  const normalizedEmail = userEmail ? userEmail.trim().toLowerCase() : '';
+  let normalizedEmail = userEmail ? userEmail.trim().toLowerCase() : '';
   const accountIdSet = new Set<string>(accountIds.filter(Boolean));
+  let resolvedAuthUid: string | undefined;
+  let authUidChannel: ReturnType<typeof supabase.channel> | null = null;
 
   const matchesUserProfile = (row: Record<string, any> | null | undefined): boolean => {
     if (!row || typeof row !== 'object') return false;
@@ -436,82 +584,113 @@ export function subscribeUserRealtimeChannels(callbacks: UserRealtimeSubscriptio
     return Boolean(earnerId && candidateIds.has(earnerId));
   };
 
+  const attachFilteredProfileChannel = (uid: string) => {
+    if (isDisposed || !UUID_REGEX.test(uid)) return;
+    if (authUidChannel) {
+      supabase.removeChannel(authUidChannel);
+      authUidChannel = null;
+    }
+    authUidChannel = supabase
+      .channel(`realtime:profile_uid:${uid}:${Date.now()}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'profiles',
+          filter: `id=eq.${uid}`,
+        },
+        (payload) => {
+          if (isDisposed) return;
+          const newRow = (payload.new as Record<string, any>) || null;
+          if (newRow) {
+            if (newRow.id) candidateIds.add(String(newRow.id));
+            onProfileRow(newRow);
+          }
+        }
+      )
+      .subscribe();
+  };
+
+  const syncLatestProfileNow = async () => {
+    if (isDisposed) return;
+    try {
+      const profileRow = await fetchSupabaseProfileRow({
+        userId,
+        userEmail: normalizedEmail,
+        authUid: resolvedAuthUid,
+        candidateIds,
+      });
+      if (!isDisposed && profileRow) {
+        if (profileRow.id) {
+          const pid = String(profileRow.id);
+          const wasKnown = candidateIds.has(pid);
+          candidateIds.add(pid);
+          if (!wasKnown && UUID_REGEX.test(pid) && !authUidChannel) {
+            attachFilteredProfileChannel(pid);
+          }
+        }
+        onProfileRow(profileRow);
+      }
+    } catch {
+      // Ignore network/offline errors
+    }
+  };
+
   // Initial resolution of Supabase Auth user + initial data fetch
   const initAsync = async () => {
     try {
       const {
+        data: { session },
+      } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
+      if (session?.access_token) {
+        try {
+          supabase.realtime.setAuth(session.access_token);
+        } catch {
+          // ignore
+        }
+      }
+
+      const {
         data: { user },
-      } = await supabase.auth.getUser();
+      } = await supabase.auth.getUser().catch(() => ({ data: { user: session?.user ?? null } }));
       if (isDisposed) return;
       if (user?.id) {
+        resolvedAuthUid = user.id;
         candidateIds.add(user.id);
+        attachFilteredProfileChannel(user.id);
+      }
+      if (user?.email && !normalizedEmail) {
+        normalizedEmail = user.email.trim().toLowerCase();
       }
 
-      // 1. Fetch profile row by ID or Email
-      let profileRow: Record<string, any> | null = null;
-      for (const cid of Array.from(candidateIds)) {
-        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cid);
-        if (isUuid) {
-          const { data } = await supabase
-            .from('profiles')
-            .select('id, email, full_name, kyc_status, self_balance, demo_balance, funded_balance, address, date_of_birth, country, referral_code, referred_by, profile_locked')
-            .eq('id', cid)
-            .maybeSingle();
-          if (data) {
-            profileRow = data;
-            break;
-          }
-        }
-      }
+      // 1. Fetch profile row by auth.uid(), ID, or Email
+      await syncLatestProfileNow();
+      if (isDisposed) return;
 
-      if (!profileRow && normalizedEmail) {
-        const { data } = await supabase
-          .from('profiles')
-          .select('id, email, full_name, kyc_status, self_balance, demo_balance, funded_balance, address, date_of_birth, country, referral_code, referred_by, profile_locked')
-          .ilike('email', normalizedEmail)
-          .maybeSingle();
-        if (data) {
-          profileRow = data;
-          if (data.id) candidateIds.add(String(data.id));
-        }
-      }
-
-      if (!isDisposed && profileRow) {
-        onProfileRow(profileRow);
-      }
-
-      // 2. Fetch initial withdrawals from Supabase
+      // 2. Fetch initial withdrawals from Supabase (only query with valid UUIDs)
       if (onWithdrawalsInitial) {
-        const idsArray = Array.from(candidateIds);
-        if (idsArray.length > 0) {
+        const uuidIds = Array.from(candidateIds).filter((id) => UUID_REGEX.test(id));
+        if (uuidIds.length > 0) {
           const { data: wRows } = await supabase
             .from('withdrawals')
             .select('*')
-            .in('user_id', idsArray)
+            .in('user_id', uuidIds)
             .order('created_at', { ascending: false });
           if (!isDisposed && Array.isArray(wRows) && wRows.length > 0) {
             onWithdrawalsInitial(wRows);
-          } else if (!isDisposed && normalizedEmail) {
-            const { data: wByEmail } = await supabase
-              .from('withdrawals')
-              .select('*')
-              .ilike('user_email', normalizedEmail)
-              .order('created_at', { ascending: false });
-            if (!isDisposed && Array.isArray(wByEmail) && wByEmail.length > 0) {
-              onWithdrawalsInitial(wByEmail);
-            }
           }
         }
       }
 
-      // 3. Fetch initial referral commissions from Supabase
+      // 3. Fetch initial referral commissions from Supabase (only query with valid UUIDs)
       if (onCommissionsInitial) {
-        const idsArray = Array.from(candidateIds);
-        if (idsArray.length > 0) {
+        const uuidIds = Array.from(candidateIds).filter((id) => UUID_REGEX.test(id));
+        if (uuidIds.length > 0) {
           const { data: cRows } = await supabase
             .from('referral_commissions')
             .select('*')
-            .in('earner_id', idsArray)
+            .in('earner_id', uuidIds)
             .order('created_at', { ascending: false });
           if (!isDisposed && Array.isArray(cRows) && cRows.length > 0) {
             onCommissionsInitial(cRows);
@@ -525,7 +704,29 @@ export function subscribeUserRealtimeChannels(callbacks: UserRealtimeSubscriptio
 
   initAsync();
 
-  const channelKey = `realtime:user_sync:${userId}:${Date.now()}`;
+  const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+    if (isDisposed) return;
+    if (session?.access_token) {
+      try {
+        supabase.realtime.setAuth(session.access_token);
+      } catch {
+        // ignore
+      }
+    }
+    if (session?.user?.id) {
+      resolvedAuthUid = session.user.id;
+      candidateIds.add(session.user.id);
+      attachFilteredProfileChannel(session.user.id);
+    }
+    if (session?.user?.email && !normalizedEmail) {
+      normalizedEmail = session.user.email.trim().toLowerCase();
+    }
+    if (session?.user) {
+      syncLatestProfileNow();
+    }
+  });
+
+  const channelKey = `realtime:user_sync:${userId || 'anon'}:${Date.now()}`;
   const channel = supabase
     .channel(channelKey)
     .on(
@@ -577,8 +778,34 @@ export function subscribeUserRealtimeChannels(callbacks: UserRealtimeSubscriptio
     )
     .subscribe();
 
+  const pollInterval = setInterval(() => {
+    if (!isDisposed) {
+      syncLatestProfileNow();
+    }
+  }, 3000);
+
+  const handleVisibilityOrFocus = () => {
+    if (!isDisposed && (typeof document === 'undefined' || document.visibilityState === 'visible')) {
+      syncLatestProfileNow();
+    }
+  };
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('focus', handleVisibilityOrFocus);
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+  }
+
   return () => {
     isDisposed = true;
+    clearInterval(pollInterval);
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+    }
+    authListener?.subscription?.unsubscribe();
+    if (authUidChannel) {
+      supabase.removeChannel(authUidChannel);
+    }
     supabase.removeChannel(channel);
   };
 }

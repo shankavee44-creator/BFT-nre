@@ -55,6 +55,7 @@ export class LiveMarketFeedEngine {
   private isDestroyed = false;
   private restPollInterval: any = null;
   private activeSymbolPollInterval: any = null;
+  private activeSymbolAbortController: AbortController | null = null;
   private microTickInterval: any = null;
 
   private latestPrices: Map<string, number> = new Map();
@@ -121,21 +122,37 @@ export class LiveMarketFeedEngine {
   }
 
   /**
-   * Sets the currently active symbol to prioritize 1-second REST polling
+   * Completely unsubscribes and disconnects the active asset polling interval and aborts any in-flight request
    */
-  public setActiveSymbol(symbol: string) {
-    this.currentActiveSymbol = normalizeAssetSymbol(symbol);
-
+  public unsubscribeActiveSymbol() {
     if (this.activeSymbolPollInterval) {
       clearInterval(this.activeSymbolPollInterval);
       this.activeSymbolPollInterval = null;
     }
+    if (this.activeSymbolAbortController) {
+      try {
+        this.activeSymbolAbortController.abort();
+      } catch {
+        // ignore abort error
+      }
+      this.activeSymbolAbortController = null;
+    }
+    this.currentActiveSymbol = null;
+  }
+
+  /**
+   * Sets the currently active symbol after strictly unsubscribing any previous symbol stream
+   */
+  public setActiveSymbol(symbol: string) {
+    this.unsubscribeActiveSymbol();
+    this.currentActiveSymbol = normalizeAssetSymbol(symbol);
 
     if (this.currentActiveSymbol && typeof window !== 'undefined') {
-      this.pollActiveSymbolFromServerProxy(this.currentActiveSymbol);
+      const targetSym = this.currentActiveSymbol;
+      this.pollActiveSymbolFromServerProxy(targetSym);
       this.activeSymbolPollInterval = setInterval(() => {
-        if (!this.isDestroyed && this.currentActiveSymbol) {
-          this.pollActiveSymbolFromServerProxy(this.currentActiveSymbol);
+        if (!this.isDestroyed && this.currentActiveSymbol === targetSym) {
+          this.pollActiveSymbolFromServerProxy(targetSym);
         }
       }, 1000);
     }
@@ -176,16 +193,32 @@ export class LiveMarketFeedEngine {
   }
 
   private async pollActiveSymbolFromServerProxy(symbol: string) {
+    const canonical = normalizeAssetSymbol(symbol);
+    if (this.currentActiveSymbol !== canonical) return;
+
+    if (this.activeSymbolAbortController) {
+      try {
+        this.activeSymbolAbortController.abort();
+      } catch {
+        // ignore
+      }
+    }
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    this.activeSymbolAbortController = controller;
+
     const startMs = performance.now();
     try {
-      const res = await fetch(`/api/market/ticker?symbol=${encodeURIComponent(symbol)}`);
+      const res = await fetch(
+        `/api/market/ticker?symbol=${encodeURIComponent(canonical)}`,
+        controller ? { signal: controller.signal } : undefined
+      );
       if (!res.ok) return;
       const data = await res.json();
+      if (this.currentActiveSymbol !== canonical) return;
       const rawPrice = Number(data?.price);
       if (!Number.isNaN(rawPrice) && rawPrice > 0) {
         const latency = Math.max(6, Math.round(performance.now() - startMs));
         const now = Date.now();
-        const canonical = normalizeAssetSymbol(symbol);
         this.dispatchTick({
           symbol: canonical,
           price: rawPrice,

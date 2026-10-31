@@ -26,6 +26,7 @@ import {
   isPersonalLiveAccount,
   isDemoAccount,
 } from '../utils/propRules';
+import { getAuthoritativeAccountBalance } from '../utils/supabaseRealtimeSync';
 import { isRouteProtected } from '../utils/authRouting';
 
 interface HeaderProps {
@@ -77,6 +78,20 @@ export const Header: React.FC<HeaderProps> = ({
       ADMIN_EMAILS.includes((userProfile.email || '').toLowerCase().trim())
     )
   );
+
+  const personalAccount = accounts.find((a) => isPersonalLiveAccount(a));
+  const demoAccount = accounts.find((a) => isDemoAccount(a));
+  const authoritativeActiveBalance = getAuthoritativeAccountBalance(activeAccount, userProfile);
+  const personalLiveBalance =
+    userProfile.selfBalance !== undefined && userProfile.selfBalance !== null
+      ? Number(userProfile.selfBalance)
+      : Number(personalAccount?.currentBalance ?? 0);
+  const demoModeBalance =
+    userProfile.demoBalance !== undefined && userProfile.demoBalance !== null
+      ? Number(userProfile.demoBalance)
+      : Number(demoAccount?.currentBalance ?? 10000);
+  const isPersonalModeActive = isPersonalLiveAccount(activeAccount);
+  const isDemoModeActive = !activeAccount || isDemoAccount(activeAccount);
 
   useEffect(() => {
     const handleToggle = (e: any) => {
@@ -221,8 +236,6 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Right Action Bar */}
         <div className="flex items-center gap-1.5 shrink-0">
-          {/* Account switcher removed per focus mode request */}
-
           {/* Audio Toggle */}
           <button
             onClick={handleToggleSound}
@@ -270,24 +283,6 @@ export const Header: React.FC<HeaderProps> = ({
             >
               <ShieldCheck className="w-3.5 h-3.5 fill-current" />
               <span className="hidden sm:inline">Admin</span>
-            </button>
-          )}
-
-          {/* GitHub Push / Sync Button */}
-          {onOpenGitHubSync && (
-            <button
-              type="button"
-              data-testid="header-github-sync-btn"
-              onClick={() => {
-                soundEngine.playUiClick();
-                onOpenGitHubSync();
-              }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#14141a] hover:bg-[#1e1e28] border border-[#ff8800]/40 text-[#ff8800] hover:text-[#ffaa00] text-xs font-mono font-bold transition-all cursor-pointer whitespace-nowrap shadow-sm shadow-[#ff8800]/10"
-              title="Open GitHub Sync & Push Repository Portal"
-            >
-              <GitBranch className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline font-black">GitHub Push</span>
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
             </button>
           )}
 
@@ -396,10 +391,14 @@ export const Header: React.FC<HeaderProps> = ({
                     </span>
                   </div>
                   <div className="text-[10px] text-slate-400 font-mono">
-                    Account:{' '}
-                    <span className={activeAccount ? 'text-[#00e676] font-bold' : 'text-amber-400 font-bold'}>
-                      {activeAccount?.id || 'No Active Account'}
-                    </span>
+                    Balance:{' '}
+                    <span className="text-[#00e676] font-bold">
+                      ${authoritativeActiveBalance.toLocaleString('en-US', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </span>{' '}
+                    ({isPersonalModeActive ? 'Personal Live' : isDemoModeActive ? 'Demo' : activeAccount?.id})
                   </div>
                 </div>
               </div>

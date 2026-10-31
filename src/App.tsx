@@ -74,6 +74,9 @@ import {
 import {
   subscribeUserRealtimeChannels,
   applyRealtimeProfileUpdate,
+  fetchSupabaseProfileRow,
+  getAuthoritativeAccountBalance,
+  resolveActiveTradingAccount,
   mergeRealtimeWithdrawal,
   mapSupabaseWithdrawalToRequest,
   mergeRealtimeCommission,
@@ -129,6 +132,38 @@ export default function App() {
   const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>([]);
   const [trades, setTrades] = useState<BinaryTrade[]>([]);
   const [protectedRouteNotice, setProtectedRouteNotice] = useState<string | null>(null);
+
+  const userProfileRef = React.useRef<UserProfile>(userProfile);
+  userProfileRef.current = userProfile;
+
+  const applyProfileRowToState = React.useCallback(
+    (profileRow: Record<string, any> | null | undefined) => {
+      if (!profileRow || typeof profileRow !== 'object') return;
+      setUserProfile((prevProfile) => {
+        const { updatedProfile, changed } = applyRealtimeProfileUpdate(
+          prevProfile,
+          [],
+          profileRow
+        );
+        if (!changed) return prevProfile;
+        userProfileRef.current = updatedProfile;
+        saveProfile(updatedProfile);
+        broadcastSyncEvent('PROFILE_UPDATED', updatedProfile);
+        return updatedProfile;
+      });
+      setAccounts((prevAccounts) => {
+        const { updatedAccounts, changed } = applyRealtimeProfileUpdate(
+          userProfileRef.current,
+          prevAccounts,
+          profileRow
+        );
+        if (!changed) return prevAccounts;
+        saveAccounts(updatedAccounts);
+        return updatedAccounts;
+      });
+    },
+    []
+  );
 
   // Active BFT Promo Code ('SPOOKY40' = 40% OFF New Users, 'SPOOKY20' = 20% OFF Existing Users)
   const [activePromoCode, setActivePromoCode] = useState<PromoCodeType>('SPOOKY40');
@@ -231,10 +266,14 @@ export default function App() {
             }).catch(() => {});
           }
 
+          const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+          const preserveUuid =
+            isSameUser && uuidRegex.test(prev.id || '') && !uuidRegex.test(res.user.id || '');
+
           const synced: UserProfile = {
             ...prev,
-            id: res.user.id,
-            email: res.user.email,
+            id: preserveUuid ? prev.id : res.user.id || prev.id,
+            email: res.user.email || prev.email,
             fullName: res.user.fullName || (isSameUser ? prev.fullName : ''),
             referralCode: res.user.referralCode || (isSameUser ? prev.referralCode : ''),
             referredBy: res.user.referredBy || (isSameUser ? prev.referredBy : undefined),
@@ -251,7 +290,12 @@ export default function App() {
             dateOfBirth: res.user.dateOfBirth || (isSameUser ? prev.dateOfBirth : ''),
             country: res.user.country || (isSameUser ? prev.country : 'United States'),
             telegramHandle: res.user.telegramHandle || (isSameUser ? prev.telegramHandle : ''),
-            selfBalance: res.user.selfBalance !== undefined ? res.user.selfBalance : prev.selfBalance,
+            selfBalance:
+              prev.selfBalance !== undefined
+                ? prev.selfBalance
+                : res.user.selfBalance !== undefined
+                ? res.user.selfBalance
+                : prev.selfBalance,
             isLoggedIn: true,
           };
           saveProfile(synced);
@@ -266,59 +310,25 @@ export default function App() {
           }));
           setAccounts(mappedAccounts);
           saveAccounts(mappedAccounts);
-          const fundedAcc = mappedAccounts.find((a: TradingAccount) => a.currentBalance > 0);
-          const nextActiveId = fundedAcc?.id || 'BFT-DEMO-001';
-          setActiveAccountId(nextActiveId);
-          saveActiveAccountId(nextActiveId);
+          const storedActiveId = loadActiveAccountId();
+          if (!storedActiveId) {
+            const fundedAcc = mappedAccounts.find((a: TradingAccount) => a.currentBalance > 0);
+            const nextActiveId = fundedAcc?.id || 'BFT-DEMO-001';
+            setActiveAccountId(nextActiveId);
+            saveActiveAccountId(nextActiveId);
+          }
         }
 
-        const userIdForProfile = res.user.id;
-        if (userIdForProfile) {
-          Promise.resolve(
-            supabase
-              .from('profiles')
-              .select('id, email, full_name, self_balance, demo_balance, funded_balance')
-              .eq('id', userIdForProfile)
-              .maybeSingle()
-          )
-            .then(({ data: pRow }) => {
-              if (pRow) {
-                const sBal = pRow.self_balance !== undefined && pRow.self_balance !== null ? Number(pRow.self_balance) : undefined;
-                const dBal = pRow.demo_balance !== undefined && pRow.demo_balance !== null ? Number(pRow.demo_balance) : undefined;
-                const fBal = pRow.funded_balance !== undefined && pRow.funded_balance !== null ? Number(pRow.funded_balance) : undefined;
-                
-                setUserProfile((prev) => {
-                  const updated = { 
-                    ...prev, 
-                    selfBalance: sBal !== undefined ? sBal : prev.selfBalance,
-                    demoBalance: dBal !== undefined ? dBal : prev.demoBalance,
-                    fundedBalance: fBal !== undefined ? fBal : prev.fundedBalance
-                  };
-                  saveProfile(updated);
-                  return updated;
-                });
-                
-                setAccounts((prevAccounts) =>
-                  prevAccounts.map((acc) => {
-                    if (isPersonalLiveAccount(acc) && sBal !== undefined) {
-                      return { ...acc, currentBalance: sBal, equity: sBal };
-                    }
-                    if (isDemoAccount(acc) && dBal !== undefined) {
-                      return { ...acc, currentBalance: dBal, equity: dBal };
-                    }
-                    // For funded accounts, if userProfile.fundedBalance is set, we might want to sync it if it's a generic "funded" display
-                    // but prop accounts usually have their own balances in the accounts table.
-                    // The user requested Funded Mode (funded_balance), so we'll apply it to 'funded' phase accounts if provided.
-                    if (acc.phase === 'funded' && fBal !== undefined) {
-                       return { ...acc, currentBalance: fBal, equity: fBal };
-                    }
-                    return acc;
-                  })
-                );
-              }
-            })
-            .catch(() => {});
-        }
+        fetchSupabaseProfileRow({
+          userId: res.user.id,
+          userEmail: res.user.email,
+        })
+          .then((pRow) => {
+            if (pRow) {
+              applyProfileRowToState(pRow);
+            }
+          })
+          .catch(() => {});
 
         apiGetWithdrawals()
           .then((wRes) => {
@@ -419,32 +429,14 @@ export default function App() {
 
   // Real-time Supabase subscriptions: profiles (self_balance, demo_balance, funded_balance), withdrawals, and referral_commissions
   useEffect(() => {
-    if (!userProfile.id || !userProfile.isLoggedIn) return;
+    if (!userProfile.isLoggedIn && !userProfile.id && !userProfile.email) return;
 
     const unsubscribeRealtime = subscribeUserRealtimeChannels({
       userId: userProfile.id,
       userEmail: userProfile.email,
       accountIds: accounts.map((a) => a.id),
       onProfileRow: (profileRow) => {
-        setUserProfile((prevProfile) => {
-          let updatedProfileRef = prevProfile;
-          setAccounts((prevAccounts) => {
-            const { updatedProfile, updatedAccounts, changed } = applyRealtimeProfileUpdate(
-              prevProfile,
-              prevAccounts,
-              profileRow
-            );
-            updatedProfileRef = updatedProfile;
-            if (changed) {
-              saveAccounts(updatedAccounts);
-            }
-            return updatedAccounts;
-          });
-          if (updatedProfileRef !== prevProfile) {
-            saveProfile(updatedProfileRef);
-          }
-          return updatedProfileRef;
-        });
+        applyProfileRowToState(profileRow);
       },
       onWithdrawalsInitial: (rows) => {
         setWithdrawals((prev) => {
@@ -523,14 +515,40 @@ export default function App() {
       } else if (msg.type === 'PROFILE_UPDATED') {
         if (msg.payload) {
           setUserProfile(msg.payload);
+          applyProfileRowToState({
+            id: msg.payload.id,
+            email: msg.payload.email,
+            full_name: msg.payload.fullName,
+            kyc_status: msg.payload.kycStatus,
+            self_balance: msg.payload.selfBalance,
+            demo_balance: msg.payload.demoBalance,
+            funded_balance: msg.payload.fundedBalance,
+            referral_code: msg.payload.referralCode,
+            referred_by: msg.payload.referredBy,
+            profile_locked: msg.payload.profileLocked,
+          });
         }
       }
     });
 
+    const handleRealtimeProfileCustomEvent = (e: Event) => {
+      const custom = e as CustomEvent;
+      if (custom.detail && typeof custom.detail === 'object') {
+        applyProfileRowToState(custom.detail);
+      }
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('bft-realtime-profile-update', handleRealtimeProfileCustomEvent);
+    }
+
     return () => {
       unsubscribeSync();
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('bft-realtime-profile-update', handleRealtimeProfileCustomEvent);
+      }
     };
-  }, []);
+  }, [applyProfileRowToState]);
 
   // Listen for Supabase Auth state changes (Email & Password session persistence)
   useEffect(() => {
@@ -541,7 +559,7 @@ export default function App() {
       try {
         const { data: p } = await supabase
           .from('profiles')
-          .select('id, email, full_name, kyc_status, self_balance, demo_balance, funded_balance, address, date_of_birth, country, referral_code, referred_by, profile_locked')
+          .select('*')
           .eq('id', sessionUser.id)
           .maybeSingle();
         existingProfile = p;
@@ -582,13 +600,23 @@ export default function App() {
         }
       }
 
+      const resolvedSelfBalance =
+        existingProfile?.self_balance !== undefined && existingProfile?.self_balance !== null
+          ? Number(existingProfile.self_balance)
+          : resolvedProfile.selfBalance !== undefined
+          ? resolvedProfile.selfBalance
+          : backendSync?.user?.selfBalance;
       const resolvedDemoBalance =
         existingProfile?.demo_balance !== undefined && existingProfile?.demo_balance !== null
           ? Number(existingProfile.demo_balance)
+          : resolvedProfile.demoBalance !== undefined
+          ? resolvedProfile.demoBalance
           : backendSync?.user?.demoBalance;
       const resolvedFundedBalance =
         existingProfile?.funded_balance !== undefined && existingProfile?.funded_balance !== null
           ? Number(existingProfile.funded_balance)
+          : resolvedProfile.fundedBalance !== undefined
+          ? resolvedProfile.fundedBalance
           : backendSync?.user?.fundedBalance;
 
       const loaded = loadOrCreateUserProfileByEmail({
@@ -604,12 +632,15 @@ export default function App() {
         address: backendSync?.user?.address || resolvedProfile.address,
         dateOfBirth: backendSync?.user?.dateOfBirth || resolvedProfile.dateOfBirth,
         country: backendSync?.user?.country || resolvedProfile.country,
-        selfBalance: backendSync?.user?.selfBalance !== undefined ? backendSync.user.selfBalance : resolvedProfile.selfBalance,
+        selfBalance: resolvedSelfBalance,
         demoBalance: resolvedDemoBalance,
         fundedBalance: resolvedFundedBalance,
       });
 
       setUserProfile(loaded);
+      if (existingProfile) {
+        applyProfileRowToState(existingProfile);
+      }
       setIsAuthModalOpen(false);
     };
 
@@ -792,9 +823,11 @@ export default function App() {
   };
 
   const handleSelectAccount = (id: string) => {
-    setActiveAccountId(id);
-    saveActiveAccountId(id);
-    broadcastSyncEvent('ACCOUNT_SELECTED', id);
+    const resolved = resolveActiveTradingAccount(userAccounts, id, userProfile);
+    const nextId = resolved ? resolved.id : id;
+    setActiveAccountId(nextId);
+    saveActiveAccountId(nextId);
+    broadcastSyncEvent('ACCOUNT_SELECTED', nextId);
   };
 
   const handleUpdateProfile = (updated: UserProfile) => {
@@ -803,72 +836,19 @@ export default function App() {
     broadcastSyncEvent('PROFILE_UPDATED', updated);
   };
 
-  // Periodic Supabase profile sync for Manual Admin approvals (KYC, Balance)
+  // Periodic Supabase profile sync for Manual Admin approvals (KYC, self_balance, demo_balance, funded_balance)
   useEffect(() => {
-    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-      userProfile.id || ''
-    );
-    if (!userProfile.isLoggedIn || !isUuid) return;
+    if (!userProfile.isLoggedIn && !userProfile.id && !userProfile.email) return;
     let isMounted = true;
 
     async function syncSupabaseProfile() {
       try {
-        const { data: p } = await supabase
-          .from('profiles')
-          .select('id, email, full_name, kyc_status, self_balance, demo_balance, funded_balance, address, date_of_birth, country, referral_code, profile_locked')
-          .eq('id', userProfile.id)
-          .maybeSingle();
-
+        const p = await fetchSupabaseProfileRow({
+          userId: userProfileRef.current.id,
+          userEmail: userProfileRef.current.email,
+        });
         if (p && isMounted) {
-          setUserProfile((prev) => {
-            const remoteStatus = p.kyc_status;
-            const isRemoteVerified = remoteStatus === 'verified' || remoteStatus === 'approved';
-            const isRemotePending =
-              remoteStatus === 'pending' || remoteStatus === 'Pending Verification';
-            const nextKycStatus = isRemoteVerified
-              ? 'verified'
-              : prev.kycStatus === 'verified'
-              ? 'verified'
-              : isRemotePending || prev.kycStatus === 'pending'
-              ? 'pending'
-              : remoteStatus || prev.kycStatus;
-
-            const nextLocked = Boolean(
-              prev.profileLocked ||
-                p.profile_locked ||
-                nextKycStatus === 'verified' ||
-                nextKycStatus === 'pending'
-            );
-
-            const sBal = p.self_balance !== undefined && p.self_balance !== null ? Number(p.self_balance) : prev.selfBalance;
-            const dBal = p.demo_balance !== undefined && p.demo_balance !== null ? Number(p.demo_balance) : prev.demoBalance;
-            const fBal = p.funded_balance !== undefined && p.funded_balance !== null ? Number(p.funded_balance) : prev.fundedBalance;
-
-            if (
-              nextKycStatus === prev.kycStatus && 
-              nextLocked === Boolean(prev.profileLocked) &&
-              sBal === prev.selfBalance &&
-              dBal === prev.demoBalance &&
-              fBal === prev.fundedBalance
-            ) {
-              return prev;
-            }
-
-            const updated: UserProfile = {
-              ...prev,
-              kycStatus: nextKycStatus,
-              profileLocked: nextLocked,
-              fullName: p.full_name || prev.fullName,
-              address: p.address || prev.address,
-              dateOfBirth: p.date_of_birth || prev.dateOfBirth,
-              country: p.country || prev.country,
-              selfBalance: sBal,
-              demoBalance: dBal,
-              fundedBalance: fBal,
-            };
-            saveProfile(updated);
-            return updated;
-          });
+          applyProfileRowToState(p);
         }
       } catch {
         // Fallback
@@ -876,12 +856,12 @@ export default function App() {
     }
 
     syncSupabaseProfile();
-    const interval = setInterval(syncSupabaseProfile, 5000);
+    const interval = setInterval(syncSupabaseProfile, 4000);
     return () => {
       isMounted = false;
       clearInterval(interval);
     };
-  }, [userProfile.isLoggedIn, userProfile.id]);
+  }, [userProfile.isLoggedIn, userProfile.id, userProfile.email, applyProfileRowToState]);
 
   const handleAddWithdrawal = (req: WithdrawalRequest) => {
     const updated = [req, ...withdrawals];
@@ -1220,10 +1200,10 @@ export default function App() {
     return list;
   }, [baseOwnedAccounts, userProfile.isLoggedIn, userProfile.id, userProfile.email, userProfile.selfBalance, userProfile.demoBalance, userProfile.fundedBalance]);
 
-  const activeAccount =
-    userAccounts.find((acc) => acc.id === activeAccountId) ||
-    userAccounts[0] ||
-    undefined;
+  const activeAccount = React.useMemo(
+    () => resolveActiveTradingAccount(userAccounts, activeAccountId, userProfile),
+    [userAccounts, activeAccountId, userProfile]
+  );
 
   const activeTerminalTrades = React.useMemo(
     () => (activeAccount ? trades.filter((t) => t.accountId === activeAccount.id) : []),
@@ -1519,6 +1499,8 @@ export default function App() {
             telegramHandle: serverUser?.telegramHandle,
             avatarUrl: serverUser?.avatarUrl,
             selfBalance: serverUser?.selfBalance,
+            demoBalance: serverUser?.demoBalance,
+            fundedBalance: serverUser?.fundedBalance,
           });
           setUserProfile(loadedOrCreatedProfile);
 

@@ -153,7 +153,9 @@ export function getDynamicAssets(): AssetInfo[] {
  */
 export function findAssetBySymbol(symbol: string): AssetInfo {
   const allAssets = getDynamicAssets();
-  if (!symbol) return allAssets[0];
+  if (!symbol) {
+    return allAssets.find((a) => a.symbol === 'EUR/USD') || allAssets[0];
+  }
 
   const canonicalSymbol = normalizeAssetSymbol(symbol);
   
@@ -476,8 +478,7 @@ export function loadSelectedAssetSymbol(): string {
   } catch {
     // fallback
   }
-  const all = getDynamicAssets();
-  return all.length > 0 ? all[0].symbol : 'EUR/USD (OTC)';
+  return normalizeAssetSymbol('EUR/USD');
 }
 
 export function saveSelectedAssetSymbol(symbol: string): void {
@@ -500,19 +501,14 @@ export function loadOpenAssetTabSymbols(): string[] {
   } catch {
     // fallback
   }
-  
-  const all = getDynamicAssets();
-  if (all.length >= 6) {
-    return all.slice(0, 6).map(a => a.symbol);
-  }
-  
+
   return [
-    'EUR/USD (OTC)',
-    'GBP/JPY (OTC)',
-    'BTC/USD (OTC)',
-    'ETH/USD (OTC)',
-    'XAU/USD (OTC)',
-    'TSLA (OTC)',
+    normalizeAssetSymbol('EUR/USD'),
+    normalizeAssetSymbol('GBP/JPY'),
+    normalizeAssetSymbol('BTC/USD'),
+    normalizeAssetSymbol('XAU/USD'),
+    normalizeAssetSymbol('GBP/USD'),
+    normalizeAssetSymbol('USD/JPY'),
   ];
 }
 

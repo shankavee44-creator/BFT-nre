@@ -136,6 +136,16 @@ export function subscribeToSyncEvents(listener: (msg: SyncMessage) => void): () 
           sourceTabId: 'external_storage',
         });
       } catch {}
+    } else if (e.key === 'bft_profile_v1' && e.newValue) {
+      try {
+        const parsed = JSON.parse(e.newValue);
+        listener({
+          type: 'PROFILE_UPDATED',
+          payload: parsed,
+          timestamp: Date.now(),
+          sourceTabId: 'external_storage',
+        });
+      } catch {}
     } else if (e.key === 'bft_selected_asset_symbol_v1' && e.newValue) {
       listener({
         type: 'ASSET_SELECTED',

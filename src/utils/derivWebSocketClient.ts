@@ -32,13 +32,14 @@ class DerivWebSocketClient {
   private activeSubscriptions: Set<string> = new Set();
   private reqIdCounter = 1;
 
+  private failedAttempts = 0;
+
   constructor() {
-    if (typeof window !== 'undefined') {
-      this.connect();
-    }
+    // Lazy connect only when a Deriv synthetic symbol is explicitly subscribed
   }
 
   public connect() {
+    if (this.failedAttempts >= 1) return;
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
       return;
     }
@@ -48,6 +49,7 @@ class DerivWebSocketClient {
 
       this.ws.onopen = () => {
         this.isConnected = true;
+        this.failedAttempts = 0;
         if (this.reconnectTimer) {
           clearTimeout(this.reconnectTimer);
           this.reconnectTimer = null;
@@ -69,24 +71,26 @@ class DerivWebSocketClient {
 
       this.ws.onerror = () => {
         this.isConnected = false;
+        this.failedAttempts += 1;
       };
 
       this.ws.onclose = () => {
         this.isConnected = false;
+        this.failedAttempts += 1;
         this.scheduleReconnect();
       };
     } catch {
       this.isConnected = false;
-      this.scheduleReconnect();
+      this.failedAttempts += 1;
     }
   }
 
   private scheduleReconnect() {
-    if (this.reconnectTimer) return;
+    if (this.reconnectTimer || this.failedAttempts >= 1) return;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.connect();
-    }, 3000);
+    }, 5000);
   }
 
   public mapToDerivSymbol(symbol: string): string {
@@ -107,8 +111,27 @@ class DerivWebSocketClient {
     return 'R_100';
   }
 
+  private currentActiveDerivSymbol: string | null = null;
+
+  public unsubscribeAll(): void {
+    for (const sym of Array.from(this.activeSubscriptions)) {
+      this.sendUnsubscription(sym);
+    }
+    this.tickSubscribers.clear();
+    this.candleSubscribers.clear();
+    this.activeSubscriptions.clear();
+    this.currentActiveDerivSymbol = null;
+  }
+
   public subscribeTicks(symbol: string, callback: TickCallback): () => void {
     const derivSym = this.mapToDerivSymbol(symbol);
+
+    // Strictly unsubscribe any previous asset stream before subscribing to the new asset
+    if (this.currentActiveDerivSymbol && this.currentActiveDerivSymbol !== derivSym) {
+      this.unsubscribeAll();
+    }
+    this.currentActiveDerivSymbol = derivSym;
+
     if (!this.tickSubscribers.has(derivSym)) {
       this.tickSubscribers.set(derivSym, new Set());
     }
@@ -116,6 +139,7 @@ class DerivWebSocketClient {
     this.activeSubscriptions.add(derivSym);
 
     if (this.isConnected && this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.sendUnsubscription(derivSym);
       this.sendSubscription(derivSym);
     } else if (typeof window !== 'undefined') {
       this.connect();
@@ -128,6 +152,9 @@ class DerivWebSocketClient {
         if (set.size === 0) {
           this.tickSubscribers.delete(derivSym);
           this.activeSubscriptions.delete(derivSym);
+          if (this.currentActiveDerivSymbol === derivSym) {
+            this.currentActiveDerivSymbol = null;
+          }
           this.sendUnsubscription(derivSym);
         }
       }
@@ -137,7 +164,6 @@ class DerivWebSocketClient {
   private sendSubscription(derivSym: string) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     try {
-      // Exact subscribe request specified by user
       this.ws.send(
         JSON.stringify({
           ticks_history: derivSym,
@@ -155,12 +181,18 @@ class DerivWebSocketClient {
     }
   }
 
-  private sendUnsubscription(derivSym: string) {
+  private sendUnsubscription(_derivSym?: string) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     try {
       this.ws.send(
         JSON.stringify({
           forget_all: 'ticks',
+          req_id: this.reqIdCounter++,
+        })
+      );
+      this.ws.send(
+        JSON.stringify({
+          forget_all: 'candles',
           req_id: this.reqIdCounter++,
         })
       );
@@ -172,14 +204,19 @@ class DerivWebSocketClient {
   private handleMessage(data: any) {
     if (!data) return;
 
-    // Handle single tick update or history tick
+    // Handle single tick update or history tick strictly for the active subscribed symbol
     if ((data.msg_type === 'tick' || data.msg_type === 'history') && data.tick) {
       const t = data.tick;
       const derivSym = t.symbol;
       const price = Number(t.quote);
       const time = Number(t.epoch) * 1000 || Date.now();
 
-      if (!Number.isNaN(price) && derivSym && this.activeSubscriptions.has(derivSym)) {
+      if (
+        !Number.isNaN(price) &&
+        derivSym &&
+        derivSym === this.currentActiveDerivSymbol &&
+        this.activeSubscriptions.has(derivSym)
+      ) {
         const subs = this.tickSubscribers.get(derivSym);
         if (subs && subs.size > 0) {
           const tickObj: DerivTick = { symbol: derivSym, price, time };

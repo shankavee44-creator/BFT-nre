@@ -223,7 +223,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         if (targetUuid) {
           const { data: p } = await supabase
             .from('profiles')
-            .select('id, email, full_name, kyc_status, self_balance, demo_balance, funded_balance, address, date_of_birth, country, referral_code, referred_by')
+            .select('*')
             .eq('id', targetUuid)
             .maybeSingle();
           if (p) supaProfile = p;

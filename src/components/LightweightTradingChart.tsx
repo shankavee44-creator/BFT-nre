@@ -87,7 +87,8 @@ export function prepareLightweightBars(
 ): FormattedBar[] {
   if (!candles || candles.length === 0) return [];
   if (asset && !validateCandlesForAsset(asset, candles)) return [];
-  const source = chartType === 'heikin-ashi' ? calculateHeikinAshi(candles) : candles;
+  const windowed = candles.length > 120 ? candles.slice(-120) : candles;
+  const source = chartType === 'heikin-ashi' ? calculateHeikinAshi(windowed) : windowed;
   const bySec = new Map<number, FormattedBar>();
   for (const c of source) {
     const formatted = formatSingleCandle(c, decimals);
@@ -406,22 +407,31 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
     const isTimeframeChanged = lastLoadedTimeframeRef.current !== timeframe;
     const isChartTypeChanged = lastLoadedChartTypeRef.current !== chartType;
 
+    // Immediately clear previous series data array upon asset switch so old candles never mix with new asset
+    if (isSymbolChanged && seriesRef.current) {
+      try {
+        seriesRef.current.setData([]);
+      } catch {
+        // ignore
+      }
+      for (const [, line] of priceLinesRef.current.entries()) {
+        try {
+          seriesRef.current.removePriceLine(line);
+        } catch {
+          // ignore
+        }
+      }
+      priceLinesRef.current.clear();
+      lastFormattedBarRef.current = null;
+      barsCountRef.current = 0;
+      lastPriceYRef.current = 0;
+      setCurrentPriceY(0);
+    }
+
     // Validate incoming candles against active asset price scale to prevent cross-contamination
     const hasValidCandles = candles && candles.length > 0 && validateCandlesForAsset(asset, candles);
 
     if (!hasValidCandles) {
-      if (isSymbolChanged && seriesRef.current) {
-        try {
-          seriesRef.current.setData([]);
-        } catch {
-          // ignore
-        }
-        priceLinesRef.current.clear();
-        lastFormattedBarRef.current = null;
-        barsCountRef.current = 0;
-        lastPriceYRef.current = 0;
-        setCurrentPriceY(0);
-      }
       return;
     }
 
@@ -435,6 +445,7 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
       if (isChartTypeChanged || isSymbolChanged || !seriesRef.current) {
         if (seriesRef.current) {
           try {
+            seriesRef.current.setData([]);
             chart.removeSeries(seriesRef.current);
           } catch {
             // ignore
@@ -450,16 +461,23 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
       lastLoadedChartTypeRef.current = chartType;
 
       try {
+        seriesRef.current.setData([]);
         if (chartType === 'line') {
           seriesRef.current.setData(bars.map((b: FormattedBar) => ({ time: b.time, value: b.close })));
         } else {
           seriesRef.current.setData(bars);
         }
-        chart.priceScale('right').applyOptions({ autoScale: true });
+        chart.priceScale('right').applyOptions({
+          autoScale: true,
+          mode: PriceScaleMode.Normal,
+          scaleMargins: { top: 0.1, bottom: 0.1 },
+        });
+        chart.timeScale().resetTimeScale();
         chart.timeScale().fitContent();
       } catch {
         // ignore
       }
+      setIsScrolledFromLive(false);
       updateCoordinates();
       return;
     }
@@ -488,7 +506,7 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
     }
 
     lastFormattedBarRef.current = lastBar;
-    barsCountRef.current = candles.length;
+    barsCountRef.current = Math.min(120, candles.length);
 
     try {
       if (chartType === 'line') {
@@ -508,6 +526,8 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
           } else {
             series.setData(bars);
           }
+          chart.priceScale('right').applyOptions({ autoScale: true });
+          chart.timeScale().fitContent();
         } catch {
           // ignore
         }
