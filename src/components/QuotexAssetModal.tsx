@@ -10,6 +10,7 @@ import {
 import { getAssetMarketState } from '../utils/priceFeedEngine';
 import { soundEngine } from '../utils/soundEffects';
 import { resolveTradingViewSymbol } from '../utils/tradingViewOrderLineEngine';
+import { AssetFlagIcon } from './CountryFlagIcon';
 
 interface QuotexAssetModalProps {
   isOpen: boolean;
@@ -247,7 +248,7 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
                     </button>
 
                     <div className="w-9 h-9 rounded-xl bg-[#16161d] border border-white/10 flex items-center justify-center text-sm font-bold shrink-0">
-                      {asset.flag || '📈'}
+                      <AssetFlagIcon symbol={asset.symbol} category={asset.category} flagEmoji={asset.flag} size="md" />
                     </div>
 
                     <div>

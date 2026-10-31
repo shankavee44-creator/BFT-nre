@@ -23,6 +23,7 @@ import {
   type DrawingLineStyle,
   type ChartDrawingObject,
 } from '../utils/drawingToolsEngine';
+import { isValidPriceForAsset, validateCandlesForAsset } from '../utils/priceFeedEngine';
 import { TradeBadge } from './TradeBadge';
 
 export interface LightweightTradingChartProps {
@@ -64,31 +65,45 @@ function parseTimeframeSeconds(tf: string): number {
   return 60;
 }
 
-function prepareLightweightBars(
+function formatSingleCandle(c: Candle, decimals: number): FormattedBar | null {
+  if (!c || typeof c.time !== 'number' || Number.isNaN(c.open) || Number.isNaN(c.close)) return null;
+  const rawTime = Number(c.time);
+  if (!rawTime || Number.isNaN(rawTime)) return null;
+  const sec = rawTime > 1e11 ? Math.floor(rawTime / 1000) : Math.floor(rawTime);
+  return {
+    time: sec as UTCTimestamp,
+    open: Number(Number(c.open).toFixed(decimals)),
+    high: Number(Math.max(Number(c.open), Number(c.close), Number(c.high)).toFixed(decimals)),
+    low: Number(Math.min(Number(c.open), Number(c.close), Number(c.low)).toFixed(decimals)),
+    close: Number(Number(c.close).toFixed(decimals)),
+  };
+}
+
+export function prepareLightweightBars(
   candles: Candle[],
   chartType: 'candles' | 'heikin-ashi' | 'line' | 'bars',
-  decimals: number
+  decimals: number,
+  asset?: AssetInfo
 ): FormattedBar[] {
   if (!candles || candles.length === 0) return [];
+  if (asset && !validateCandlesForAsset(asset, candles)) return [];
   const source = chartType === 'heikin-ashi' ? calculateHeikinAshi(candles) : candles;
   const bySec = new Map<number, FormattedBar>();
   for (const c of source) {
-    if (!c || typeof c.time !== 'number' || Number.isNaN(c.open)) continue;
-    const rawTime = Number(c.time);
-    if (!rawTime || Number.isNaN(rawTime)) continue;
-    const sec = rawTime > 1e11 ? Math.floor(rawTime / 1000) : Math.floor(rawTime);
-    bySec.set(sec, {
-      time: sec as UTCTimestamp,
-      open: Number(Number(c.open).toFixed(decimals)),
-      high: Number(Math.max(Number(c.open), Number(c.close), Number(c.high)).toFixed(decimals)),
-      low: Number(Math.min(Number(c.open), Number(c.close), Number(c.low)).toFixed(decimals)),
-      close: Number(Number(c.close).toFixed(decimals)),
-    });
+    const formatted = formatSingleCandle(c, decimals);
+    if (!formatted) continue;
+    if (asset && !isValidPriceForAsset(asset, formatted.close)) continue;
+    bySec.set(formatted.time as number, formatted);
   }
   return Array.from(bySec.values()).sort((a, b) => (a.time as number) - (b.time as number));
 }
 
-function createSeriesForType(chart: IChartApi, type: 'candles' | 'heikin-ashi' | 'line' | 'bars'): ISeriesApi<any> {
+function createSeriesForType(
+  chart: IChartApi,
+  type: 'candles' | 'heikin-ashi' | 'line' | 'bars',
+  pipDecimals: number = 5
+): ISeriesApi<any> {
+  const minMove = Number(Math.pow(10, -Math.max(0, Math.min(8, pipDecimals))).toFixed(8));
   const seriesOptions = {
     upColor: '#00E676',
     downColor: '#FF1744',
@@ -100,6 +115,11 @@ function createSeriesForType(chart: IChartApi, type: 'candles' | 'heikin-ashi' |
     lastValueVisible: true,
     priceLineColor: '#00E676',
     priceLineStyle: LineStyle.Dotted,
+    priceFormat: {
+      type: 'price' as const,
+      precision: pipDecimals,
+      minMove,
+    },
   };
   if (type === 'line') {
     return chart.addSeries(AreaSeries, { ...seriesOptions, lineColor: '#00E676' });
@@ -127,12 +147,14 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
   const lastLoadedTimeframeRef = useRef<string>('');
   const lastLoadedChartTypeRef = useRef<string>('');
   const barsCountRef = useRef<number>(0);
+  const lastFormattedBarRef = useRef<FormattedBar | null>(null);
+  const lastPriceYRef = useRef<number>(0);
 
   const [badgeCoords, setBadgeCoords] = useState<Record<string, { y: number; x: number }>>({});
   const [resultBadgeCoords, setResultBadgeCoords] = useState<{ y: number; x: number } | null>(null);
   const [currentPriceY, setCurrentPriceY] = useState<number>(0);
   const [candleCountdown, setCandleCountdown] = useState<string>('00:30');
-  const [now, setNow] = useState<number>(Date.now());
+  const [now, setNow] = useState<number>(() => Date.now());
   const [isScrolledFromLive, setIsScrolledFromLive] = useState<boolean>(false);
 
   const assetActiveTrades = useMemo(() => {
@@ -142,11 +164,11 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
     );
   }, [activeTrades, asset.symbol]);
 
-  // Tick interval for live timers & PnL
+  // 1s tick interval for live timers (avoids 10x/sec full component re-render on mobile)
   useEffect(() => {
     const timer = setInterval(() => {
       setNow(Date.now());
-    }, 100);
+    }, 1000);
     return () => clearInterval(timer);
   }, []);
 
@@ -162,8 +184,105 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
     const remSec = Math.floor(remainingMs / 1000);
     const mm = String(Math.floor(remSec / 60)).padStart(2, '0');
     const ss = String(remSec % 60).padStart(2, '0');
-    setCandleCountdown(`${mm}:${ss}`);
+    const formatted = `${mm}:${ss}`;
+    setCandleCountdown((prev) => (prev === formatted ? prev : formatted));
   }, [candles, timeframe, now]);
+
+  // Coordinate sync for floating PnL badge pills & live moving price tag (O(1) without re-sorting 1500 bars)
+  const updateCoordinates = useCallback(() => {
+    if (!seriesRef.current || !chartRef.current) return;
+    if (lastLoadedSymbolRef.current !== asset.symbol) return;
+
+    const series = seriesRef.current;
+    const timeScale = chartRef.current.timeScale();
+    const lastBar = lastFormattedBarRef.current;
+
+    let defaultX = 180;
+    if (lastBar) {
+      try {
+        const cx = timeScale.timeToCoordinate(lastBar.time);
+        if (typeof cx === 'number' && !Number.isNaN(cx)) defaultX = Math.round(cx);
+      } catch {
+        // ignore
+      }
+    }
+
+    try {
+      const priceToUse =
+        isValidPriceForAsset(asset, Number(currentPrice))
+          ? Number(currentPrice)
+          : lastBar?.close || 0;
+      if (priceToUse > 0) {
+        const py = series.priceToCoordinate(priceToUse);
+        if (typeof py === 'number' && !Number.isNaN(py)) {
+          const roundedY = Math.round(py);
+          if (Math.abs(roundedY - lastPriceYRef.current) >= 1) {
+            lastPriceYRef.current = roundedY;
+            setCurrentPriceY(roundedY);
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    if (assetActiveTrades.length > 0) {
+      const nextCoords: Record<string, { y: number; x: number }> = {};
+      for (const t of assetActiveTrades) {
+        try {
+          const strikePriceNum = Number(t.strikePrice) || 0;
+          const y = series.priceToCoordinate(strikePriceNum);
+          if (typeof y === 'number' && !Number.isNaN(y)) {
+            nextCoords[t.id] = { y: Math.round(y), x: defaultX };
+          }
+        } catch {
+          // ignore
+        }
+      }
+      setBadgeCoords((prev) => {
+        const prevKeys = Object.keys(prev);
+        const nextKeys = Object.keys(nextCoords);
+        if (prevKeys.length !== nextKeys.length) return nextCoords;
+        for (const k of nextKeys) {
+          if (!prev[k] || prev[k].x !== nextCoords[k].x || prev[k].y !== nextCoords[k].y) {
+            return nextCoords;
+          }
+        }
+        return prev;
+      });
+    } else {
+      setBadgeCoords((prev) => (Object.keys(prev).length === 0 ? prev : {}));
+    }
+
+    // Calculate coordinate for trade settlement result overlay badge
+    if (tradeResultOverlay) {
+      try {
+        const closeP = Number(tradeResultOverlay.closePrice) || Number(tradeResultOverlay.strikePrice) || 0;
+        const ry = series.priceToCoordinate(closeP);
+        let rx = defaultX;
+        const endTimeSec = Math.floor((tradeResultOverlay.endTime || Date.now()) / 1000) as UTCTimestamp;
+        const cx = timeScale.timeToCoordinate(endTimeSec);
+        if (typeof cx === 'number' && !Number.isNaN(cx)) {
+          rx = Math.round(cx);
+        }
+        if (typeof ry === 'number' && !Number.isNaN(ry)) {
+          const nextRes = { y: Math.round(ry), x: rx };
+          setResultBadgeCoords((prev) =>
+            prev && prev.x === nextRes.x && prev.y === nextRes.y ? prev : nextRes
+          );
+        } else {
+          setResultBadgeCoords((prev) => (prev === null ? prev : null));
+        }
+      } catch {
+        setResultBadgeCoords((prev) => (prev === null ? prev : null));
+      }
+    } else {
+      setResultBadgeCoords((prev) => (prev === null ? prev : null));
+    }
+  }, [asset, assetActiveTrades, currentPrice, tradeResultOverlay]);
+
+  const updateCoordinatesRef = useRef(updateCoordinates);
+  updateCoordinatesRef.current = updateCoordinates;
 
   // 1. Initialize Chart ONCE with empty dependency array []
   useEffect(() => {
@@ -214,12 +333,13 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
     });
     chartRef.current = chart;
 
-    const series = createSeriesForType(chart, chartType);
+    const series = createSeriesForType(chart, chartType, asset.pipDecimals);
     seriesRef.current = series;
 
-    const bars = prepareLightweightBars(candles, chartType, asset.pipDecimals);
+    const bars = prepareLightweightBars(candles, chartType, asset.pipDecimals, asset);
     barsCountRef.current = bars.length;
     if (bars.length > 0) {
+      lastFormattedBarRef.current = bars[bars.length - 1];
       if (chartType === 'line') {
         series.setData(bars.map((b: FormattedBar) => ({ time: b.time, value: b.close })));
       } else {
@@ -228,38 +348,43 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
       lastLoadedSymbolRef.current = asset.symbol;
       lastLoadedTimeframeRef.current = timeframe;
       lastLoadedChartTypeRef.current = chartType;
+      chart.priceScale('right').applyOptions({ autoScale: true });
       chart.timeScale().fitContent();
     }
 
     const handleLogicalRangeChange = (logicalRange: { from: number; to: number } | null) => {
       if (!logicalRange || barsCountRef.current === 0) {
-        setIsScrolledFromLive(false);
+        setIsScrolledFromLive((prev) => (prev ? false : prev));
         return;
       }
       const lastBarIndex = barsCountRef.current - 1;
-      if (logicalRange.to < lastBarIndex - 2) {
-        setIsScrolledFromLive(true);
-      } else {
-        setIsScrolledFromLive(false);
-      }
+      const scrolled = logicalRange.to < lastBarIndex - 2;
+      setIsScrolledFromLive((prev) => (prev === scrolled ? prev : scrolled));
+      updateCoordinatesRef.current();
     };
     chart.timeScale().subscribeVisibleLogicalRangeChange(handleLogicalRangeChange);
 
+    let resizeRaf = 0;
     const resizeObserver = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const { width, height } = entry.contentRect;
-        if (width > 0 && height > 0 && chartRef.current) {
-          try {
-            chartRef.current.applyOptions({ width, height });
-          } catch {
-            // ignore
+      if (resizeRaf) cancelAnimationFrame(resizeRaf);
+      resizeRaf = requestAnimationFrame(() => {
+        for (const entry of entries) {
+          const { width, height } = entry.contentRect;
+          if (width > 0 && height > 0 && chartRef.current) {
+            try {
+              chartRef.current.applyOptions({ width, height });
+              updateCoordinatesRef.current();
+            } catch {
+              // ignore
+            }
           }
         }
-      }
+      });
     });
     resizeObserver.observe(container);
 
     return () => {
+      if (resizeRaf) cancelAnimationFrame(resizeRaf);
       resizeObserver.disconnect();
       try {
         chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleLogicalRangeChange);
@@ -272,73 +397,111 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 2. Stream Series Data using series.update on live ticks without touching timeScale
+  // 2. Strict Symbol Binding & Fast O(1) Live Tick Streaming
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
 
-    const bars = prepareLightweightBars(candles, chartType, asset.pipDecimals);
-    barsCountRef.current = bars.length;
-    if (bars.length === 0) return;
-
     const isSymbolChanged = lastLoadedSymbolRef.current !== asset.symbol;
     const isTimeframeChanged = lastLoadedTimeframeRef.current !== timeframe;
     const isChartTypeChanged = lastLoadedChartTypeRef.current !== chartType;
-    const lastBar = bars[bars.length - 1];
 
-    if (isChartTypeChanged || isSymbolChanged) {
-      if (seriesRef.current) {
+    // Validate incoming candles against active asset price scale to prevent cross-contamination
+    const hasValidCandles = candles && candles.length > 0 && validateCandlesForAsset(asset, candles);
+
+    if (!hasValidCandles) {
+      if (isSymbolChanged && seriesRef.current) {
         try {
-          chart.removeSeries(seriesRef.current);
+          seriesRef.current.setData([]);
         } catch {
           // ignore
         }
+        priceLinesRef.current.clear();
+        lastFormattedBarRef.current = null;
+        barsCountRef.current = 0;
+        lastPriceYRef.current = 0;
+        setCurrentPriceY(0);
       }
-      priceLinesRef.current.clear();
-      const newSeries = createSeriesForType(chart, chartType);
-      seriesRef.current = newSeries;
-      
+      return;
+    }
+
+    // Full series rebuild when symbol, chartType, or timeframe changes
+    if (isChartTypeChanged || isSymbolChanged || isTimeframeChanged || barsCountRef.current === 0) {
+      const bars = prepareLightweightBars(candles, chartType, asset.pipDecimals, asset);
+      barsCountRef.current = bars.length;
+      if (bars.length === 0) return;
+      lastFormattedBarRef.current = bars[bars.length - 1];
+
+      if (isChartTypeChanged || isSymbolChanged || !seriesRef.current) {
+        if (seriesRef.current) {
+          try {
+            chart.removeSeries(seriesRef.current);
+          } catch {
+            // ignore
+          }
+        }
+        priceLinesRef.current.clear();
+        const newSeries = createSeriesForType(chart, chartType, asset.pipDecimals);
+        seriesRef.current = newSeries;
+      }
+
       lastLoadedSymbolRef.current = asset.symbol;
       lastLoadedTimeframeRef.current = timeframe;
       lastLoadedChartTypeRef.current = chartType;
 
       try {
         if (chartType === 'line') {
-          newSeries.setData(bars.map((b: FormattedBar) => ({ time: b.time, value: b.close })));
+          seriesRef.current.setData(bars.map((b: FormattedBar) => ({ time: b.time, value: b.close })));
         } else {
-          newSeries.setData(bars);
+          seriesRef.current.setData(bars);
         }
+        chart.priceScale('right').applyOptions({ autoScale: true });
         chart.timeScale().fitContent();
       } catch {
         // ignore
       }
+      updateCoordinates();
       return;
     }
 
+    // Fast O(1) incremental live tick update for the active symbol & timeframe
     const series = seriesRef.current;
     if (!series) return;
 
-    if (isTimeframeChanged) {
-      lastLoadedTimeframeRef.current = timeframe;
-      try {
-        if (chartType === 'line') {
-          series.setData(bars.map((b: FormattedBar) => ({ time: b.time, value: b.close })));
-        } else {
-          series.setData(bars);
-        }
-        chart.timeScale().fitContent();
-      } catch {
-        // ignore
+    let lastBar: FormattedBar | null = null;
+    if (chartType === 'heikin-ashi') {
+      const recentSlice = candles.slice(-6);
+      const haSlice = calculateHeikinAshi(recentSlice);
+      if (haSlice.length > 0) {
+        lastBar = formatSingleCandle(haSlice[haSlice.length - 1], asset.pipDecimals);
       }
-    } else if (lastBar) {
-      try {
-        if (chartType === 'line') {
-          series.update({ time: lastBar.time, value: lastBar.close });
-        } else {
-          series.update(lastBar);
-        }
-      } catch {
-        // Mismatch fallback
+    } else {
+      lastBar = formatSingleCandle(candles[candles.length - 1], asset.pipDecimals);
+    }
+
+    if (!lastBar || !isValidPriceForAsset(asset, lastBar.close)) return;
+
+    const prevBar = lastFormattedBarRef.current;
+    // Prevent Lightweight Charts error if an older timestamp arrives
+    if (prevBar && (lastBar.time as number) < (prevBar.time as number)) {
+      return;
+    }
+
+    lastFormattedBarRef.current = lastBar;
+    barsCountRef.current = candles.length;
+
+    try {
+      if (chartType === 'line') {
+        series.update({ time: lastBar.time, value: lastBar.close });
+      } else {
+        series.update(lastBar);
+      }
+    } catch {
+      // Fallback full sync if time bucket jumped
+      const bars = prepareLightweightBars(candles, chartType, asset.pipDecimals, asset);
+      barsCountRef.current = bars.length;
+      if (bars.length > 0) {
+        lastFormattedBarRef.current = bars[bars.length - 1];
         try {
           if (chartType === 'line') {
             series.setData(bars.map((b: FormattedBar) => ({ time: b.time, value: b.close })));
@@ -350,15 +513,17 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
         }
       }
     }
-  }, [candles, chartType, timeframe, asset.pipDecimals, asset.symbol]);
+
+    updateCoordinates();
+  }, [candles, chartType, timeframe, asset, updateCoordinates]);
 
   // 3. Native Canvas Trade Execution Lines (series.createPriceLine)
   useEffect(() => {
     const series = seriesRef.current;
-    if (!series) return;
+    if (!series || lastLoadedSymbolRef.current !== asset.symbol) return;
 
     const currentLines = priceLinesRef.current;
-    const activeIds = new Set(assetActiveTrades.map(t => t.id));
+    const activeIds = new Set(assetActiveTrades.map((t) => t.id));
 
     for (const [id, line] of currentLines.entries()) {
       if (!activeIds.has(id)) {
@@ -379,6 +544,8 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
       const title = `${isCall ? 'CALL' : 'PUT'} $${investmentNum}`;
       const strikePriceNum = Number(t.strikePrice) || 0;
 
+      if (!isValidPriceForAsset(asset, strikePriceNum)) continue;
+
       if (!line) {
         line = series.createPriceLine({
           price: strikePriceNum,
@@ -397,86 +564,8 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
         });
       }
     }
-  }, [assetActiveTrades]);
-
-  // Coordinate sync for floating PnL badge pills & live moving price tag
-  const updateCoordinates = useCallback(() => {
-    if (!seriesRef.current || !chartRef.current) return;
-    const series = seriesRef.current;
-    const timeScale = chartRef.current.timeScale();
-    const bars = prepareLightweightBars(candles, chartType, asset.pipDecimals);
-    const lastBar = bars.length > 0 ? bars[bars.length - 1] : null;
-
-    let defaultX = 180;
-    if (lastBar) {
-      try {
-        const cx = timeScale.timeToCoordinate(lastBar.time);
-        if (typeof cx === 'number' && !Number.isNaN(cx)) defaultX = cx;
-      } catch {
-        // ignore
-      }
-    }
-
-    try {
-      const py = series.priceToCoordinate(Number(currentPrice) || lastBar?.close || 0);
-      if (typeof py === 'number' && !Number.isNaN(py)) {
-        setCurrentPriceY(py);
-      }
-    } catch {
-      // ignore
-    }
-
-    const nextCoords: Record<string, { y: number; x: number }> = {};
-    for (const t of assetActiveTrades) {
-      try {
-        const strikePriceNum = Number(t.strikePrice) || 0;
-        const y = series.priceToCoordinate(strikePriceNum);
-        if (typeof y === 'number' && !Number.isNaN(y)) {
-          nextCoords[t.id] = { y, x: defaultX };
-        }
-      } catch {
-        // ignore
-      }
-    }
-    setBadgeCoords(nextCoords);
-
-    // Calculate coordinate for trade settlement result overlay badge
-    if (tradeResultOverlay) {
-      try {
-        const closeP = Number(tradeResultOverlay.closePrice) || Number(tradeResultOverlay.strikePrice) || 0;
-        const ry = series.priceToCoordinate(closeP);
-        let rx = defaultX;
-        const endTimeSec = Math.floor((tradeResultOverlay.endTime || Date.now()) / 1000) as UTCTimestamp;
-        const cx = timeScale.timeToCoordinate(endTimeSec);
-        if (typeof cx === 'number' && !Number.isNaN(cx)) {
-          rx = cx;
-        }
-        if (typeof ry === 'number' && !Number.isNaN(ry)) {
-          setResultBadgeCoords({ y: ry, x: rx });
-        } else {
-          setResultBadgeCoords(null);
-        }
-      } catch {
-        setResultBadgeCoords(null);
-      }
-    } else {
-      setResultBadgeCoords(null);
-    }
-  }, [assetActiveTrades, candles, chartType, asset.pipDecimals, currentPrice, tradeResultOverlay]);
-
-  useEffect(() => {
-    let animId: number;
-    let lastTs = 0;
-    const loop = (ts: number) => {
-      if (ts - lastTs >= 30) {
-        lastTs = ts;
-        updateCoordinates();
-      }
-      animId = requestAnimationFrame(loop);
-    };
-    animId = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(animId);
-  }, [updateCoordinates]);
+    updateCoordinates();
+  }, [asset, assetActiveTrades, updateCoordinates]);
 
   const handleGoToLive = useCallback(() => {
     if (chartRef.current) {
@@ -484,6 +573,9 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
       setIsScrolledFromLive(false);
     }
   }, []);
+
+  const isDataValidAndReady =
+    candles && candles.length > 0 && validateCandlesForAsset(asset, candles);
 
   return (
     <div
@@ -495,26 +587,30 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
         touchAction: 'pan-y',
       }}
     >
-      {/* Loading state indicator when data is empty or fetching */}
-      {(!candles || candles.length === 0) && (
+      {/* Loading state indicator when data is empty, switching symbol, or validating */}
+      {!isDataValidAndReady && (
         <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-[#0b0e14]/80 backdrop-blur-sm pointer-events-none select-none">
           <div className="flex items-center gap-3 px-4 py-2.5 rounded-lg bg-[#111827]/90 border border-cyan-500/40 shadow-2xl">
             <div className="w-4 h-4 rounded-full border-2 border-cyan-400 border-t-transparent animate-spin" />
             <span className="text-xs font-mono font-medium text-cyan-200 tracking-wide">
-              Loading Chart Data...
+              Loading {asset.symbol} Chart Data...
             </span>
           </div>
         </div>
       )}
 
       {/* Live Moving Price Tag & Candle Countdown Timer pinned right below it on the price axis */}
-      {currentPriceY > 0 && (
+      {isDataValidAndReady && currentPriceY > 0 && (
         <div
           className="absolute right-[60px] z-35 px-2 py-1 rounded bg-[#0b0e14] border border-cyan-500/70 shadow-2xl flex flex-col items-end font-mono text-[10px] select-none transition-all duration-75 pointer-events-none"
           style={{ top: `${currentPriceY - 14}px` }}
         >
           <span className="font-bold text-cyan-300 tabular-nums">
-            {Number(currentPrice || 0).toFixed(asset.pipDecimals)}
+            {Number(
+              isValidPriceForAsset(asset, Number(currentPrice))
+                ? currentPrice
+                : candles[candles.length - 1]?.close || asset.basePrice
+            ).toFixed(asset.pipDecimals)}
           </span>
           <span className="text-[#00E676] font-bold text-[9.5px] tabular-nums flex items-center gap-1">
             <span className="w-1.5 h-1.5 rounded-full bg-[#00E676] animate-ping" />
@@ -540,7 +636,7 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
 
         const durationSec = Number(trade.durationSeconds) || 30;
         const startTimeMs = Number(trade.startTime) || Date.now();
-        const expiresAt = Number(trade.endTime) || (startTimeMs + durationSec * 1000);
+        const expiresAt = Number(trade.endTime) || startTimeMs + durationSec * 1000;
         const remainingMs = Math.max(0, expiresAt - now);
         const remainingSeconds = Math.ceil(remainingMs / 1000);
         const mm = String(Math.floor(remainingSeconds / 60)).padStart(2, '0');
@@ -623,4 +719,3 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
     </div>
   );
 });
-

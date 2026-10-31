@@ -387,10 +387,37 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     }
 
     syncLiveSupabaseData();
+
+    const realtimeChannel = supabase
+      .channel(`realtime:user_dashboard:${userProfileRef.current.id || 'session'}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'profiles' },
+        () => {
+          if (isMounted) syncLiveSupabaseData();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'withdrawals' },
+        () => {
+          if (isMounted) syncLiveSupabaseData();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'deposits' },
+        () => {
+          if (isMounted) syncLiveSupabaseData();
+        }
+      )
+      .subscribe();
+
     const interval = setInterval(syncLiveSupabaseData, 5000);
     return () => {
       isMounted = false;
       clearInterval(interval);
+      supabase.removeChannel(realtimeChannel);
     };
   }, []);
 

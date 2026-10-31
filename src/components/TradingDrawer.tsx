@@ -14,6 +14,7 @@ import { BinaryTrade, TradingAccount } from '../types';
 import { calculateDrawdownMetrics } from '../utils/propRules';
 import { DEFAULT_ASSETS, findAssetBySymbol } from '../utils/storage';
 import { getAssetMarketState } from '../utils/priceFeedEngine';
+import { AssetFlagIcon } from './CountryFlagIcon';
 
 interface TradingDrawerProps {
   account: TradingAccount;
@@ -186,7 +187,7 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
                       >
                         <div className="flex items-center justify-between mb-1">
                           <span className="font-bold text-[11px] text-white flex items-center gap-1.5 truncate">
-                            <span>{assetObj?.flag || '📈'}</span>
+                            <AssetFlagIcon symbol={t.asset} category={assetObj?.category} flagEmoji={assetObj?.flag} size="xs" />
                             <span className="truncate">{t.asset}</span>
                           </span>
                           <span
@@ -321,7 +322,7 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
                                         isWin ? 'bg-[#00e676]' : isTie ? 'bg-amber-400' : 'bg-[#ff334b]'
                                       }`}
                                     />
-                                    <span className="shrink-0">{assetObj?.flag || '📈'}</span>
+                                    <AssetFlagIcon symbol={t.asset} category={assetObj?.category} flagEmoji={assetObj?.flag} size="xs" />
                                     <span className="truncate">{t.asset}</span>
                                     <span className="text-[9.5px] text-[#ff8800] font-black shrink-0">
                                       {t.payoutPercentage}%

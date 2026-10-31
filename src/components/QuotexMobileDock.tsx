@@ -12,6 +12,7 @@ import {
 import { AssetInfo } from '../types';
 import { soundEngine } from '../utils/soundEffects';
 import { MobileTradesTab } from '../utils/quotexMobile';
+import { AssetFlagIcon } from './CountryFlagIcon';
 
 interface QuotexMobileDockProps {
   selectedAsset: AssetInfo;
@@ -88,7 +89,7 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = ({
           }}
           className="flex items-center gap-1 text-left py-0.5 px-2 rounded-lg bg-[#161922] border border-white/10 active:bg-[#1e222d] text-white cursor-pointer min-w-0"
         >
-          <span className="text-xs shrink-0">{selectedAsset.flag || '📈'}</span>
+          <AssetFlagIcon symbol={selectedAsset.symbol} category={selectedAsset.category} flagEmoji={selectedAsset.flag} size="xs" />
           <span className="font-black text-xs tracking-tight truncate">{selectedAsset.symbol}</span>
           <span className="text-xs font-black text-[#00e676] ml-0.5 shrink-0">
             {selectedAsset.payout}%

@@ -72,6 +72,14 @@ import {
   mapFromSupabaseRow,
 } from './utils/supabaseTradeSync';
 import {
+  subscribeUserRealtimeChannels,
+  applyRealtimeProfileUpdate,
+  mergeRealtimeWithdrawal,
+  mapSupabaseWithdrawalToRequest,
+  mergeRealtimeCommission,
+  mapSupabaseCommissionToReferralRecord,
+} from './utils/supabaseRealtimeSync';
+import {
   PACKAGES,
   advanceChallengeAccountPhase,
   createDefaultPersonalLiveAccount,
@@ -409,59 +417,76 @@ export default function App() {
     };
   }, [userProfile.id, userProfile.isLoggedIn]);
 
-  // Real-time Supabase profile balance synchronization
+  // Real-time Supabase subscriptions: profiles (self_balance, demo_balance, funded_balance), withdrawals, and referral_commissions
   useEffect(() => {
     if (!userProfile.id || !userProfile.isLoggedIn) return;
-    const channel = supabase
-      .channel(`public:profiles:balances:${userProfile.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'profiles',
-          filter: `id=eq.${userProfile.id}`,
-        },
-        (payload) => {
-          if (payload.new) {
-            const newSelf = payload.new.self_balance !== undefined && payload.new.self_balance !== null ? Number(payload.new.self_balance) : undefined;
-            const newDemo = payload.new.demo_balance !== undefined && payload.new.demo_balance !== null ? Number(payload.new.demo_balance) : undefined;
-            const newFunded = payload.new.funded_balance !== undefined && payload.new.funded_balance !== null ? Number(payload.new.funded_balance) : undefined;
 
-            setUserProfile((prev) => {
-              const updated = { 
-                ...prev, 
-                selfBalance: newSelf !== undefined ? newSelf : prev.selfBalance,
-                demoBalance: newDemo !== undefined ? newDemo : prev.demoBalance,
-                fundedBalance: newFunded !== undefined ? newFunded : prev.fundedBalance
-              };
-              saveProfile(updated);
-              return updated;
-            });
-
-            setAccounts((prevAccounts) =>
-              prevAccounts.map((acc) => {
-                if (isPersonalLiveAccount(acc) && newSelf !== undefined) {
-                  return { ...acc, currentBalance: newSelf, equity: newSelf };
-                }
-                if (isDemoAccount(acc) && newDemo !== undefined) {
-                  return { ...acc, currentBalance: newDemo, equity: newDemo };
-                }
-                if (acc.phase === 'funded' && newFunded !== undefined) {
-                  return { ...acc, currentBalance: newFunded, equity: newFunded };
-                }
-                return acc;
-              })
+    const unsubscribeRealtime = subscribeUserRealtimeChannels({
+      userId: userProfile.id,
+      userEmail: userProfile.email,
+      accountIds: accounts.map((a) => a.id),
+      onProfileRow: (profileRow) => {
+        setUserProfile((prevProfile) => {
+          let updatedProfileRef = prevProfile;
+          setAccounts((prevAccounts) => {
+            const { updatedProfile, updatedAccounts, changed } = applyRealtimeProfileUpdate(
+              prevProfile,
+              prevAccounts,
+              profileRow
             );
+            updatedProfileRef = updatedProfile;
+            if (changed) {
+              saveAccounts(updatedAccounts);
+            }
+            return updatedAccounts;
+          });
+          if (updatedProfileRef !== prevProfile) {
+            saveProfile(updatedProfileRef);
           }
-        }
-      )
-      .subscribe();
+          return updatedProfileRef;
+        });
+      },
+      onWithdrawalsInitial: (rows) => {
+        setWithdrawals((prev) => {
+          let next = [...prev];
+          for (const row of rows) {
+            next = mergeRealtimeWithdrawal(next, row, 'INSERT');
+          }
+          saveWithdrawals(next);
+          return next;
+        });
+      },
+      onWithdrawalEvent: (eventType, newRow, oldRow) => {
+        setWithdrawals((prev) => {
+          const next = mergeRealtimeWithdrawal(prev, newRow, eventType, oldRow);
+          saveWithdrawals(next);
+          broadcastSyncEvent('WITHDRAWALS_UPDATED', next);
+          return next;
+        });
+      },
+      onCommissionsInitial: (rows) => {
+        setAffiliateReferrals((prev) => {
+          let next = [...prev];
+          for (const row of rows) {
+            next = mergeRealtimeCommission(next, row, 'INSERT');
+          }
+          saveAffiliateReferrals(next);
+          return next;
+        });
+      },
+      onCommissionEvent: (eventType, newRow, oldRow) => {
+        setAffiliateReferrals((prev) => {
+          const next = mergeRealtimeCommission(prev, newRow, eventType, oldRow);
+          saveAffiliateReferrals(next);
+          return next;
+        });
+      },
+    });
 
     return () => {
-      supabase.removeChannel(channel);
+      unsubscribeRealtime();
     };
-  }, [userProfile.id, userProfile.isLoggedIn]);
+  }, [userProfile.id, userProfile.email, userProfile.isLoggedIn]);
 
   // Multi-Tab & Multi-View State Synchronization (BroadcastChannel & Storage Event bus)
   useEffect(() => {
@@ -516,7 +541,7 @@ export default function App() {
       try {
         const { data: p } = await supabase
           .from('profiles')
-          .select('id, email, full_name, kyc_status, self_balance, address, date_of_birth, country, referral_code, referred_by, profile_locked')
+          .select('id, email, full_name, kyc_status, self_balance, demo_balance, funded_balance, address, date_of_birth, country, referral_code, referred_by, profile_locked')
           .eq('id', sessionUser.id)
           .maybeSingle();
         existingProfile = p;
@@ -557,6 +582,15 @@ export default function App() {
         }
       }
 
+      const resolvedDemoBalance =
+        existingProfile?.demo_balance !== undefined && existingProfile?.demo_balance !== null
+          ? Number(existingProfile.demo_balance)
+          : backendSync?.user?.demoBalance;
+      const resolvedFundedBalance =
+        existingProfile?.funded_balance !== undefined && existingProfile?.funded_balance !== null
+          ? Number(existingProfile.funded_balance)
+          : backendSync?.user?.fundedBalance;
+
       const loaded = loadOrCreateUserProfileByEmail({
         userId: sessionUser.id,
         email: resolvedProfile.email,
@@ -571,6 +605,8 @@ export default function App() {
         dateOfBirth: backendSync?.user?.dateOfBirth || resolvedProfile.dateOfBirth,
         country: backendSync?.user?.country || resolvedProfile.country,
         selfBalance: backendSync?.user?.selfBalance !== undefined ? backendSync.user.selfBalance : resolvedProfile.selfBalance,
+        demoBalance: resolvedDemoBalance,
+        fundedBalance: resolvedFundedBalance,
       });
 
       setUserProfile(loaded);
@@ -597,6 +633,23 @@ export default function App() {
       saveAccounts(newAccounts);
       return newAccounts;
     });
+
+    // Keep userProfile balance fields synchronized with the updated account mode
+    setUserProfile((prev) => {
+      let nextProfile = prev;
+      if (isPersonalLiveAccount(updated)) {
+        nextProfile = { ...prev, selfBalance: updated.currentBalance };
+      } else if (isDemoAccount(updated)) {
+        nextProfile = { ...prev, demoBalance: updated.currentBalance };
+      } else if (updated.phase === 'funded') {
+        nextProfile = { ...prev, fundedBalance: updated.currentBalance };
+      }
+      if (nextProfile !== prev) {
+        saveProfile(nextProfile);
+      }
+      return nextProfile;
+    });
+
     broadcastSyncEvent('ACCOUNT_UPDATED', updated);
     if (!isDemoAccount(updated)) {
       apiUpdateAccountState(updated.id, {
@@ -615,24 +668,26 @@ export default function App() {
     // Synchronize account balances with Supabase profiles table for persistence
     if (userProfile.id && userProfile.isLoggedIn) {
       const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userProfile.id);
-      if (isUuid) {
-        if (isPersonalLiveAccount(updated)) {
+      const columnPayload = isPersonalLiveAccount(updated)
+        ? { self_balance: updated.currentBalance }
+        : isDemoAccount(updated)
+        ? { demo_balance: updated.currentBalance }
+        : updated.phase === 'funded'
+        ? { funded_balance: updated.currentBalance }
+        : null;
+
+      if (columnPayload) {
+        if (isUuid) {
           supabase
             .from('profiles')
-            .update({ self_balance: updated.currentBalance })
+            .update(columnPayload)
             .eq('id', userProfile.id)
             .then(() => {});
-        } else if (isDemoAccount(updated)) {
+        } else if (userProfile.email) {
           supabase
             .from('profiles')
-            .update({ demo_balance: updated.currentBalance })
-            .eq('id', userProfile.id)
-            .then(() => {});
-        } else if (updated.phase === 'funded') {
-          supabase
-            .from('profiles')
-            .update({ funded_balance: updated.currentBalance })
-            .eq('id', userProfile.id)
+            .update(columnPayload)
+            .eq('email', userProfile.email)
             .then(() => {});
         }
       }

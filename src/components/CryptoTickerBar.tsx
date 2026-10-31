@@ -53,7 +53,8 @@ export const CryptoTickerBar: React.FC<CryptoTickerBarProps> = ({ onSelectPair }
                     country={trader.country}
                     isoCode={trader.isoCode}
                     flagEmoji={row.flag}
-                    className="w-5 h-3.5 rounded-[2px] shadow-sm border border-white/10 shrink-0 inline-block align-middle object-cover"
+                    showIsoBadge={true}
+                    className="w-5 h-3.5 rounded-[2px] shadow-sm border border-white/15 shrink-0 inline-block align-middle object-cover"
                   />
                 </span>
                 <span className="font-sans font-bold text-white">{row.name}</span>

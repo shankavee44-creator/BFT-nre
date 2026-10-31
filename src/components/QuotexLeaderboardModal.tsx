@@ -238,14 +238,15 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
                   </span>
 
                   <span
-                    className="flex items-center justify-center shrink-0 w-6 h-4"
-                    title={trader.country}
+                    className="flex items-center justify-center shrink-0"
+                    title={`${trader.country} (${(trader.isoCode || '').toUpperCase()})`}
                   >
                     <CountryFlagIcon
                       country={trader.country}
                       isoCode={trader.isoCode}
                       flagEmoji={row.flag}
-                      className="w-5 h-3.5 rounded-[2px] shadow-sm border border-white/10 shrink-0 inline-block align-middle object-cover"
+                      showIsoBadge={true}
+                      className="w-5 h-3.5 rounded-[2px] shadow-sm border border-white/15 shrink-0 inline-block align-middle object-cover"
                     />
                   </span>
 

@@ -545,7 +545,41 @@ export function getOrCreateMasterHistory(asset: AssetInfo): AssetMarketState {
     }
   }
 
-  return masterStores.get(symbolKey)!;
+  const existingStore = masterStores.get(symbolKey)!;
+  if (!isValidPriceForAsset(asset, existingStore.lastPrice)) {
+    const snap = computeSynchronizedTickAtTime(asset, Date.now());
+    existingStore.lastPrice = snap.price;
+    existingStore.prevPrice = snap.price;
+    existingStore.timeframeSeries.clear();
+  }
+
+  return existingStore;
+}
+
+/**
+ * Validates that a price belongs to the expected scale of the given asset (prevents cross-asset tick contamination).
+ */
+export function isValidPriceForAsset(asset: AssetInfo, price: number): boolean {
+  if (!asset || typeof price !== 'number' || !Number.isFinite(price) || price <= 0) return false;
+  const base = Number(asset.basePrice) || 0;
+  if (base <= 0) return price > 0;
+  return price >= base * 0.2 && price <= base * 5.0;
+}
+
+/**
+ * Validates that a candle series matches the expected price scale of the active asset and contains no flat/corrupted scale jumps.
+ */
+export function validateCandlesForAsset(asset: AssetInfo, candles: Candle[]): boolean {
+  if (!candles || candles.length === 0) return false;
+  const first = candles[0];
+  const mid = candles[Math.floor(candles.length / 2)];
+  const last = candles[candles.length - 1];
+  return (
+    isValidPriceForAsset(asset, first.close) &&
+    isValidPriceForAsset(asset, mid.close) &&
+    isValidPriceForAsset(asset, last.close) &&
+    isValidPriceForAsset(asset, last.open)
+  );
 }
 
 /**
@@ -772,23 +806,34 @@ export function stepOrganicLiveTick(
   return snap.price;
 }
 
+const lastStorageSaveBySymbolTf: Map<string, number> = new Map();
+const STORAGE_SAVE_THROTTLE_MS = 10000;
+
 /**
  * Appends live tick to all active timeframe candle series.
  */
 export function appendLiveTick(asset: AssetInfo, newPrice: number, skipBroadcast = false): void {
+  if (!isValidPriceForAsset(asset, newPrice)) {
+    return;
+  }
   const store = getOrCreateMasterHistory(asset);
   const prevPrice = store.lastPrice;
   store.prevPrice = prevPrice;
   store.lastPrice = newPrice;
   const now = Date.now();
+  const activeSym = loadSelectedAssetSymbol();
 
   store.timeframeSeries.forEach((series, tfSeconds) => {
     updateCandleArrayWithTick(series, asset, tfSeconds, newPrice, now);
-    
-    // Performance optimization: only save history to localStorage for the active asset
-    const activeSym = loadSelectedAssetSymbol();
+
+    // Throttle expensive localStorage JSON serialization to once every 10s for the active asset
     if (asset.symbol === activeSym) {
-      saveAssetHistoryToStorage(asset.symbol, series, tfSeconds);
+      const storageKey = `${asset.symbol}:${tfSeconds}`;
+      const lastSaved = lastStorageSaveBySymbolTf.get(storageKey) || 0;
+      if (now - lastSaved >= STORAGE_SAVE_THROTTLE_MS) {
+        lastStorageSaveBySymbolTf.set(storageKey, now);
+        saveAssetHistoryToStorage(asset.symbol, series, tfSeconds);
+      }
     }
   });
 
@@ -898,7 +943,7 @@ export function aggregateCandlesForTimeframe(
 
   let series = store.timeframeSeries.get(tf);
 
-  if (!series || series.length === 0) {
+  if (!series || series.length === 0 || !validateCandlesForAsset(asset, series)) {
     series = generateDeterministicTimeframeCandles(asset, tf, 1500, store.lastPrice);
     store.timeframeSeries.set(tf, series);
   }

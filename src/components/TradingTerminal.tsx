@@ -104,6 +104,7 @@ import {
   prependHistoricalCandles,
   getAssetMarketState,
   getAssetTimeOffsetMs,
+  isValidPriceForAsset,
 } from '../utils/priceFeedEngine';
 import {
   calculateVisibleWindow,
@@ -148,6 +149,7 @@ import { QuotexMobileDock } from './QuotexMobileDock';
 import { QuotexMobileNav } from './QuotexMobileNav';
 import { PriceAlertModal, PriceAlert } from './PriceAlertModal';
 import { LightweightTradingChart } from './LightweightTradingChart';
+import { AssetFlagIcon } from './CountryFlagIcon';
 import { soundEngine } from '../utils/soundEffects';
 import { supabaseMarketSync } from '../utils/supabaseMarketSync';
 import { supabase } from '../utils/supabase';
@@ -301,6 +303,9 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   });
   const [candles, setCandles] = useState<Candle[]>([]);
   const [isLoadingChart, setIsLoadingChart] = useState<boolean>(true);
+  const isLoadingChartRef = useRef<boolean>(false);
+  isLoadingChartRef.current = isLoadingChart;
+  const lastUiTickUpdateMsRef = useRef<number>(0);
   const [payoutSeed, setPayoutSeed] = useState<number>(() => Math.floor(Date.now() / 3000));
 
   // Charting controls & Asset-Specific State Isolation for Indicators & Drawings
@@ -341,28 +346,46 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     width: 0,
     height: 0,
   });
-  const [demoPracticeAccount, setDemoPracticeAccount] = useState<TradingAccount>(() => ({
-    id: 'BFT-10000',
-    loginId: 'BFT-10000',
-    passwordHash: '',
-    tier: 'two-step',
-    tierName: 'Challenge Account',
-    size: 10000,
-    initialBalance: 10000.9,
-    currentBalance: 10000.9,
-    startingDayEquity: 10000.9,
-    equity: 10000.9,
-    dailyLossLimitPercent: 8,
-    maxOverallLossPercent: 20,
-    maxRiskPerTradePercent: 5,
-    status: 'active',
-    createdDate: '2026-10-27',
-    lastActiveDate: '2026-10-27',
-    phase: 'phase_1',
-    tradingDaysCompleted: 1,
-    tradesCount: 0,
-    winRate: 100,
-  }));
+  const [demoPracticeAccount, setDemoPracticeAccount] = useState<TradingAccount>(() => {
+    const initialDemoBal =
+      userProfile?.demoBalance !== undefined && userProfile?.demoBalance !== null
+        ? Number(userProfile.demoBalance)
+        : 10000.9;
+    return {
+      id: 'BFT-10000',
+      loginId: 'BFT-10000',
+      passwordHash: '',
+      tier: 'two-step',
+      tierName: 'Challenge Account',
+      size: 10000,
+      initialBalance: initialDemoBal,
+      currentBalance: initialDemoBal,
+      startingDayEquity: initialDemoBal,
+      equity: initialDemoBal,
+      dailyLossLimitPercent: 8,
+      maxOverallLossPercent: 20,
+      maxRiskPerTradePercent: 5,
+      status: 'active',
+      createdDate: '2026-10-27',
+      lastActiveDate: '2026-10-27',
+      phase: 'phase_1',
+      tradingDaysCompleted: 1,
+      tradesCount: 0,
+      winRate: 100,
+    };
+  });
+
+  useEffect(() => {
+    if (userProfile?.demoBalance !== undefined && userProfile?.demoBalance !== null) {
+      const nextBal = Number(userProfile.demoBalance);
+      if (Number.isFinite(nextBal)) {
+        setDemoPracticeAccount((prev) =>
+          prev.currentBalance === nextBal ? prev : { ...prev, currentBalance: nextBal, equity: nextBal }
+        );
+      }
+    }
+  }, [userProfile?.demoBalance]);
+
   const effectiveAccount = account || demoPracticeAccount;
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const touchStartDistRef = useRef<number | null>(null);
@@ -651,12 +674,13 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   const prevAssetSymbolRef = useRef<string>(selectedAsset.symbol);
 
   useEffect(() => {
+    selectedAssetRef.current = selectedAsset;
     const isNewAsset = prevAssetSymbolRef.current !== selectedAsset.symbol;
     prevAssetSymbolRef.current = selectedAsset.symbol;
 
     if (isNewAsset) {
+      isLoadingChartRef.current = true;
       setIsLoadingChart(true);
-      setCandles([]);
     }
 
     const store = getOrCreateMasterHistory(selectedAsset);
@@ -665,13 +689,14 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     prevTimeframeRef.current = timeframe;
 
     const aggregated = aggregateCandlesForTimeframe(selectedAsset, nextSec);
-    
+
     // Safety: only set candles if it matches the current asset symbol
     if (selectedAssetRef.current.symbol === selectedAsset.symbol) {
       setCandles(aggregated);
       setCurrentPrice(store.lastPrice);
       setSmoothPrice(store.lastPrice);
       targetPriceRef.current = store.lastPrice;
+      isLoadingChartRef.current = false;
       setIsLoadingChart(false);
     }
 
@@ -708,72 +733,70 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
   // 1a-2. Live External Market REST Feed Subscription (Binance REST + Interbank FX + Authoritative Backend)
   useEffect(() => {
+    const activeSymNormalized = normalizeAssetSymbol(selectedAsset.symbol);
     liveMarketFeed.setActiveSymbol(selectedAsset.symbol);
     const unsubStatus = liveMarketFeed.addStatusListener((status) => {
       setFeedStatus(status);
     });
 
+    const applyIncomingTickForSelectedAsset = (price: number) => {
+      if (isLoadingChartRef.current) return;
+      if (normalizeAssetSymbol(selectedAssetRef.current.symbol) !== activeSymNormalized) return;
+      if (!isValidPriceForAsset(selectedAssetRef.current, price)) return;
+
+      const nowMs = Date.now();
+      const minThrottleMs =
+        typeof window !== 'undefined' && window.innerWidth < 768 ? 380 : 220;
+      if (nowMs - lastUiTickUpdateMsRef.current < minThrottleMs) return;
+      lastUiTickUpdateMsRef.current = nowMs;
+
+      setCurrentPrice(price);
+      targetPriceRef.current = price;
+
+      const sec = TIMEFRAME_SECONDS[timeframe];
+      const liveCandlesSeries = aggregateCandlesForTimeframe(selectedAssetRef.current, sec);
+      setCandles(liveCandlesSeries);
+
+      const symbolOffsetSec = Math.floor(
+        getAssetTimeOffsetMs(selectedAssetRef.current.symbol, sec) / 1000
+      );
+      const nextCountdown = calculateCandleCountdown(nowMs, sec, symbolOffsetSec);
+      setCandleCountdown((prev) =>
+        prev.remainingSeconds === nextCountdown.remainingSeconds ? prev : nextCountdown
+      );
+    };
+
     const unsubLiveTicks = liveMarketFeed.addTickListener((tick) => {
-      if (isLoadingChart) return;
       const matchedAsset = findAssetBySymbol(tick.symbol);
-      if (matchedAsset) {
+      if (matchedAsset && isValidPriceForAsset(matchedAsset, tick.price)) {
         appendLiveTick(matchedAsset, tick.price, true);
       }
-      if (normalizeAssetSymbol(tick.symbol) === normalizeAssetSymbol(selectedAsset.symbol)) {
-        setCurrentPrice(tick.price);
-        targetPriceRef.current = tick.price;
-
-        const sec = TIMEFRAME_SECONDS[timeframe];
-        const liveCandlesSeries = aggregateCandlesForTimeframe(selectedAsset, sec);
-        setCandles(liveCandlesSeries);
-
-        const symbolOffsetSec = Math.floor(getAssetTimeOffsetMs(selectedAsset.symbol, sec) / 1000);
-        const nextCountdown = calculateCandleCountdown(Date.now(), sec, symbolOffsetSec);
-        setCandleCountdown((prev) =>
-          prev.remainingSeconds === nextCountdown.remainingSeconds ? prev : nextCountdown
-        );
+      if (normalizeAssetSymbol(tick.symbol) === activeSymNormalized) {
+        applyIncomingTickForSelectedAsset(tick.price);
       }
     });
 
     // Subscribe to synchronized market broadcast ticks from backend REST sync
     const unsubscribe = supabaseMarketSync.subscribeTicks((payload) => {
-      if (isLoadingChart) return;
-      if (normalizeAssetSymbol(payload.symbol) === normalizeAssetSymbol(selectedAsset.symbol)) {
-        setCurrentPrice(payload.price);
-        targetPriceRef.current = payload.price;
-
-        const sec = TIMEFRAME_SECONDS[timeframe];
-        const liveCandlesSeries = aggregateCandlesForTimeframe(selectedAsset, sec);
-        setCandles(liveCandlesSeries);
-
-        const symbolOffsetSec = Math.floor(getAssetTimeOffsetMs(selectedAsset.symbol, sec) / 1000);
-        const nextCountdown = calculateCandleCountdown(Date.now(), sec, symbolOffsetSec);
-        setCandleCountdown((prev) =>
-          prev.remainingSeconds === nextCountdown.remainingSeconds ? prev : nextCountdown
-        );
+      if (normalizeAssetSymbol(payload.symbol) === activeSymNormalized) {
+        applyIncomingTickForSelectedAsset(payload.price);
       }
     });
 
     // Subscribe to Deriv WebSocket feed if it's a Deriv asset; otherwise OTC assets use internal simulated generator / REST feed
-    const isDerivAsset = selectedAsset.symbol.includes('R_') || selectedAsset.category.includes('Deriv');
+    const isDerivAsset =
+      selectedAsset.symbol.includes('R_') || selectedAsset.category.includes('Deriv');
     let unsubDeriv = () => {};
     if (isDerivAsset) {
       unsubDeriv = derivClient.subscribeTicks(selectedAsset.symbol, (tick) => {
-        if (isLoadingChart) return;
-        if (tick && tick.price > 0) {
-          appendLiveTick(selectedAsset, tick.price, true);
-          setCurrentPrice(tick.price);
-          targetPriceRef.current = tick.price;
-
-          const sec = TIMEFRAME_SECONDS[timeframe];
-          const liveCandlesSeries = aggregateCandlesForTimeframe(selectedAsset, sec);
-          setCandles(liveCandlesSeries);
-
-          const symbolOffsetSec = Math.floor(getAssetTimeOffsetMs(selectedAsset.symbol, sec) / 1000);
-          const nextCountdown = calculateCandleCountdown(Date.now(), sec, symbolOffsetSec);
-          setCandleCountdown((prev) =>
-            prev.remainingSeconds === nextCountdown.remainingSeconds ? prev : nextCountdown
-          );
+        if (
+          tick &&
+          tick.price > 0 &&
+          normalizeAssetSymbol(selectedAssetRef.current.symbol) === activeSymNormalized &&
+          isValidPriceForAsset(selectedAssetRef.current, tick.price)
+        ) {
+          appendLiveTick(selectedAssetRef.current, tick.price, true);
+          applyIncomingTickForSelectedAsset(tick.price);
         }
       });
     }
@@ -782,17 +805,27 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
     // Fetch latest snapshot on mount / asset pair switch for instant state recovery
     supabaseMarketSync.fetchMarketSnapshot(selectedAsset.symbol).then((snapshot) => {
-      if (isCancelled || selectedAssetRef.current.symbol !== selectedAsset.symbol) return;
-      if (snapshot && snapshot.lastPrice) {
-        const store = getOrCreateMasterHistory(selectedAsset);
+      if (
+        isCancelled ||
+        normalizeAssetSymbol(selectedAssetRef.current.symbol) !== activeSymNormalized
+      ) {
+        return;
+      }
+      if (
+        snapshot &&
+        snapshot.lastPrice &&
+        isValidPriceForAsset(selectedAssetRef.current, snapshot.lastPrice)
+      ) {
+        const store = getOrCreateMasterHistory(selectedAssetRef.current);
         store.prevPrice = snapshot.prevPrice || snapshot.lastPrice;
         store.lastPrice = snapshot.lastPrice;
         setCurrentPrice(snapshot.lastPrice);
         targetPriceRef.current = snapshot.lastPrice;
 
         const sec = TIMEFRAME_SECONDS[timeframe];
-        const liveCandlesSeries = aggregateCandlesForTimeframe(selectedAsset, sec);
+        const liveCandlesSeries = aggregateCandlesForTimeframe(selectedAssetRef.current, sec);
         setCandles(liveCandlesSeries);
+        isLoadingChartRef.current = false;
         setIsLoadingChart(false);
       }
     });
@@ -806,7 +839,6 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     };
   }, [selectedAsset, timeframe]);
 
-
   // 1b. Synchronize smoothPrice with currentPrice without triggering 30fps full-component React re-renders
   useEffect(() => {
     targetPriceRef.current = currentPrice;
@@ -814,27 +846,29 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     setSmoothPrice(currentPrice);
   }, [currentPrice]);
 
-  // 1. Initial Market Bootstrap & Realtime Price Pulse
+  // 1c. Initial Global Market Bootstrap ONCE on mount
   const alertsRef = useRef(alerts);
   alertsRef.current = alerts;
   const openTabsRef = useRef(openTabs);
   openTabsRef.current = openTabs;
   const initialSyncDoneRef = useRef(false);
+  const timeframeRef = useRef(timeframe);
+  timeframeRef.current = timeframe;
 
   useEffect(() => {
-    // Bootstrap: Fetch all 250+ assets from Supabase and subscribe to global real-time price updates
+    let isMounted = true;
     const bootstrapGlobalMarket = async () => {
       const allAssets = await supabaseMarketSync.fetchAllOtcAssets();
+      if (!isMounted) return;
       if (allAssets.length > 0) {
         registerDynamicAssets(allAssets);
-        
-        // Update current tabs and selected asset with fresh DB data
-        setOpenTabs((prev) => {
-          return prev.map((tab) => {
+
+        setOpenTabs((prev) =>
+          prev.map((tab) => {
             const fresh = allAssets.find((a) => a.symbol === tab.symbol);
             return fresh ? { ...tab, payout: fresh.payout, basePrice: fresh.basePrice } : tab;
-          });
-        });
+          })
+        );
         setSelectedAsset((prev) => {
           if (!prev || !prev.symbol) {
             selectedAssetRef.current = allAssets[0];
@@ -847,35 +881,47 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         });
 
         if (openTabsRef.current.length === 0) {
-          const defaultSymbols = ['EUR/USD (OTC)', 'GBP/JPY (OTC)', 'BTC/USD (OTC)', 'XAU/USD (OTC)', 'TSLA (OTC)'];
-          const defaults = defaultSymbols.map(s => allAssets.find(a => a.symbol === s)).filter(Boolean) as AssetInfo[];
+          const defaultSymbols = [
+            'EUR/USD (OTC)',
+            'GBP/JPY (OTC)',
+            'BTC/USD (OTC)',
+            'XAU/USD (OTC)',
+            'TSLA (OTC)',
+          ];
+          const defaults = defaultSymbols
+            .map((s) => allAssets.find((a) => a.symbol === s))
+            .filter(Boolean) as AssetInfo[];
           setOpenTabs(defaults);
-          if (defaults.length > 0) setSelectedAsset(defaults[0]);
+          if (defaults.length > 0) {
+            selectedAssetRef.current = defaults[0];
+            setSelectedAsset(defaults[0]);
+          }
         }
       }
 
-      // Enable Supabase Realtime Subscription for 'otc_assets' table
       supabaseMarketSync.initGlobalMarketSync((updated) => {
-        if (selectedAssetRef.current && updated.symbol === selectedAssetRef.current.symbol) {
+        if (
+          selectedAssetRef.current &&
+          updated.symbol &&
+          normalizeAssetSymbol(updated.symbol) ===
+            normalizeAssetSymbol(selectedAssetRef.current.symbol)
+        ) {
           if (updated.payout !== undefined) {
-            setSelectedAsset(prev => ({ ...prev, payout: updated.payout! }));
+            setSelectedAsset((prev) => ({ ...prev, payout: updated.payout! }));
           }
-          if (updated.basePrice !== undefined) {
+          if (
+            updated.basePrice !== undefined &&
+            isValidPriceForAsset(selectedAssetRef.current, updated.basePrice)
+          ) {
             setCurrentPrice(updated.basePrice);
             targetPriceRef.current = updated.basePrice;
-            
-            // Immediately update candles on price change if not already done by interval
-            const sec = TIMEFRAME_SECONDS[timeframe];
+
+            const sec = TIMEFRAME_SECONDS[timeframeRef.current];
             const liveCandlesSeries = aggregateCandlesForTimeframe(selectedAssetRef.current, sec);
             setCandles(liveCandlesSeries);
           }
         }
       });
-
-      // Initial candle population for the selected asset
-      const initialSec = TIMEFRAME_SECONDS[timeframe];
-      const initialCandles = aggregateCandlesForTimeframe(selectedAssetRef.current, initialSec);
-      setCandles(initialCandles);
 
       setIsLoadingAssets(false);
       initialSyncDoneRef.current = true;
@@ -883,37 +929,55 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
     bootstrapGlobalMarket();
 
+    return () => {
+      isMounted = false;
+      supabaseMarketSync.cleanup();
+    };
+  }, []);
+
+  // 1d. Real-Time Price Pulse Interval (Throttled on Mobile Viewports to Prevent Lag)
+  useEffect(() => {
+    const isMobileViewport =
+      typeof window !== 'undefined' && window.innerWidth < 768;
+    const tickIntervalMs = isMobileViewport ? 400 : 250;
+
     const interval = setInterval(() => {
-      if (isLoadingChart) return;
+      if (isLoadingChartRef.current) return;
+      const activeAsset = selectedAssetRef.current;
+      if (!activeAsset || activeAsset.symbol !== selectedAsset.symbol) return;
+
       const sec = TIMEFRAME_SECONDS[timeframe];
       const nowMs = Date.now();
       const assetActiveTrades = activeTradesRef.current.filter(
-        (t) => t.asset === selectedAsset.symbol && t.status === 'active'
+        (t) => t.asset === activeAsset.symbol && t.status === 'active'
       );
 
-      // stepOrganicLiveTick now handles synchronization internally via master store updates from Supabase
-      const newPrice = stepOrganicLiveTick(selectedAsset, {
+      const newPrice = stepOrganicLiveTick(activeAsset, {
         timeframeSeconds: sec,
         activeTrades: assetActiveTrades,
         nowMs,
       });
+
+      if (!isValidPriceForAsset(activeAsset, newPrice)) return;
+
+      lastUiTickUpdateMsRef.current = nowMs;
       setCurrentPrice(newPrice);
       targetPriceRef.current = newPrice;
 
-      const liveCandlesSeries = aggregateCandlesForTimeframe(selectedAsset, sec);
+      const liveCandlesSeries = aggregateCandlesForTimeframe(activeAsset, sec);
       setCandles(liveCandlesSeries);
 
-      const symbolOffsetSec = Math.floor(getAssetTimeOffsetMs(selectedAsset.symbol, sec) / 1000);
+      const symbolOffsetSec = Math.floor(getAssetTimeOffsetMs(activeAsset.symbol, sec) / 1000);
       const nextCountdown = calculateCandleCountdown(nowMs, sec, symbolOffsetSec);
       setCandleCountdown((prev) =>
         prev.remainingSeconds === nextCountdown.remainingSeconds ? prev : nextCountdown
       );
 
-      // Stagger background tab updates to every 10 ticks (~1.5s) instead of 7x every second
-      bgTickCounterRef.current = (bgTickCounterRef.current + 1) % 10;
+      // Stagger background tab updates to every 12 ticks
+      bgTickCounterRef.current = (bgTickCounterRef.current + 1) % 12;
       if (bgTickCounterRef.current === 0) {
         openTabsRef.current.forEach((tab) => {
-          if (tab.symbol !== selectedAsset.symbol) {
+          if (tab.symbol !== activeAsset.symbol) {
             const tabTrades = activeTradesRef.current.filter(
               (t) => t.asset === tab.symbol && t.status === 'active'
             );
@@ -930,7 +994,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       const currentAlerts = alertsRef.current;
       let anyAlertTriggered = false;
       const updatedAlerts = currentAlerts.map((alt) => {
-        if (!alt.active || alt.triggered || alt.symbol !== selectedAsset.symbol) {
+        if (!alt.active || alt.triggered || alt.symbol !== activeAsset.symbol) {
           return alt;
         }
         let triggered = false;
@@ -943,7 +1007,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         if (triggered) {
           anyAlertTriggered = true;
           soundEngine.playTradeWin();
-          const msg = `🔔 Alert: ${alt.symbol} reached ${alt.targetPrice.toFixed(selectedAsset.pipDecimals)} (${alt.condition})`;
+          const msg = `🔔 Alert: ${alt.symbol} reached ${alt.targetPrice.toFixed(activeAsset.pipDecimals)} (${alt.condition})`;
           setActiveAlertToast(msg);
           setTimeout(() => setActiveAlertToast(null), 5000);
 
@@ -965,11 +1029,10 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
       const nextSeed = Math.floor(Date.now() / 3000);
       setPayoutSeed((prev) => (prev === nextSeed ? prev : nextSeed));
-    }, 250);
+    }, tickIntervalMs);
 
     return () => {
       clearInterval(interval);
-      supabaseMarketSync.cleanup();
     };
   }, [selectedAsset, timeframe]);
 
@@ -1104,8 +1167,9 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   const handleSelectTabAsset = (asset: AssetInfo) => {
     if (asset.symbol === selectedAsset.symbol) return;
     soundEngine.playUiClick();
+    selectedAssetRef.current = asset;
+    isLoadingChartRef.current = true;
     setIsLoadingChart(true);
-    setCandles([]);
     setSelectedAsset(asset);
     saveSelectedAssetSymbol(asset.symbol);
     broadcastSyncEvent('ASSET_SELECTED', asset.symbol);
@@ -1126,8 +1190,9 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     saveOpenAssetTabSymbols(remaining.map((t) => t.symbol));
     broadcastSyncEvent('TABS_UPDATED', remaining.map((t) => t.symbol));
     if (selectedAsset.symbol === symbol) {
+      selectedAssetRef.current = remaining[0];
+      isLoadingChartRef.current = true;
       setIsLoadingChart(true);
-      setCandles([]);
       setSelectedAsset(remaining[0]);
       saveSelectedAssetSymbol(remaining[0].symbol);
       broadcastSyncEvent('ASSET_SELECTED', remaining[0].symbol);
@@ -3325,7 +3390,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                       : 'bg-[#0e1016] hover:bg-[#141720] border-white/10 text-slate-300'
                   }`}
                 >
-                  <span className="text-sm shrink-0">{tabAsset.flag || '📈'}</span>
+                  <AssetFlagIcon symbol={tabAsset.symbol} category={tabAsset.category} flagEmoji={tabAsset.flag} size="sm" />
                   <div className="flex flex-col text-left">
                     <span className="font-bold text-xs whitespace-nowrap">{tabAsset.symbol}</span>
                     <span className="text-[10px] text-slate-400 font-mono">
@@ -4473,7 +4538,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                   }}
                   className="flex items-center gap-1 text-left hover:opacity-90 transition-opacity cursor-pointer shrink-0"
                 >
-                  <span className="text-xs shrink-0">{selectedAsset.flag || '📈'}</span>
+                  <AssetFlagIcon symbol={selectedAsset.symbol} category={selectedAsset.category} flagEmoji={selectedAsset.flag} size="xs" />
                   <span className="font-black text-white text-[11px] font-mono whitespace-nowrap">
                     {selectedAsset.symbol}
                   </span>
@@ -4888,7 +4953,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                       >
                         <div className="flex items-center justify-between mb-0.5">
                           <div className="flex items-center gap-1 font-bold text-white text-[10.5px] truncate">
-                            <span>{assetObj?.flag || '📈'}</span>
+                            <AssetFlagIcon symbol={t.asset} category={assetObj?.category} flagEmoji={assetObj?.flag} size="xs" />
                             <span className="truncate">{t.asset}</span>
                           </div>
                           <span className="text-[9.5px] font-bold text-cyan-300 font-mono">
@@ -4998,7 +5063,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                           >
                             <div className="flex items-center justify-between text-[10px] mb-0.5">
                               <div className="flex items-center gap-1 font-bold text-white truncate">
-                                <span>{assetObj?.flag || '📈'}</span>
+                                <AssetFlagIcon symbol={t.asset} category={assetObj?.category} flagEmoji={assetObj?.flag} size="xs" />
                                 <span className="truncate text-[10px]">{t.asset}</span>
                               </div>
                               <span className="text-[9px] text-slate-400 font-mono">

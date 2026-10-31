@@ -68,9 +68,32 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
 
   const [supabaseCommissions, setSupabaseCommissions] = useState<ReferralRecord[]>([]);
 
-  // Query Supabase referral_commissions & profiles live
+  // Query Supabase referral_commissions & subscribe to real-time postgres_changes
   useEffect(() => {
     let isMounted = true;
+    const mapCommissionRow = (c: any): ReferralRecord => {
+      const sourceId = String(c.source_user_id || c.referred_user_id || 'trader');
+      const level = (c.level === 2 ? 2 : c.level === 3 ? 3 : 1) as 1 | 2 | 3;
+      const isWithdrawal = String(c.commission_type || '').toLowerCase().includes('withdrawal');
+      const amount = Number(c.amount ?? c.commission_amount ?? 0);
+      return {
+        id: String(c.id || `COM-${Date.now()}`),
+        referrerId: String(c.earner_id || userProfile.id),
+        referredUserId: sourceId,
+        referredUserName: c.source_name || `Trader ${sourceId.slice(0, 6)}`,
+        referredUserEmail: c.source_email || `trader.${sourceId.slice(0, 4)}@client-bft.com`,
+        level,
+        packageTier: 'one-step',
+        packageName: isWithdrawal ? '8% Withdrawal Bonus' : `Level ${level} Deposit Commission`,
+        packagePrice: amount * (isWithdrawal ? 12.5 : level === 1 ? 10 : level === 2 ? 20 : 50),
+        commissionRate: isWithdrawal ? 0.08 : level === 1 ? 0.10 : level === 2 ? 0.05 : 0.02,
+        commissionAmount: amount,
+        commissionType: isWithdrawal ? 'withdrawal' : 'package',
+        status: 'paid',
+        createdAt: c.created_at || new Date().toISOString(),
+      };
+    };
+
     async function fetchSupabaseAffiliateData() {
       const { data: { user } } = await supabase.auth.getUser();
       const targetUserId = user?.id || userProfile.id;
@@ -83,31 +106,47 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
         .order('created_at', { ascending: false });
 
       if (comms && isMounted) {
-        const records: ReferralRecord[] = comms.map((c: any) => ({
-          id: c.id,
-          referrerId: c.earner_id,
-          referredUserId: c.source_user_id,
-          referredUserName: `Trader ${c.source_user_id.slice(0, 6)}`,
-          referredUserEmail: `trader.${c.source_user_id.slice(0, 4)}@client-bft.com`,
-          level: (c.level === 2 ? 2 : c.level === 3 ? 3 : 1) as 1 | 2 | 3,
-          packageTier: 'one-step',
-          packageName: c.commission_type === 'withdrawal' ? '8% Withdrawal Bonus' : `Level ${c.level} Deposit Commission`,
-          packagePrice: Number(c.amount || 0) * (c.level === 1 ? 10 : c.level === 2 ? 20 : 50),
-          commissionRate: c.commission_type === 'withdrawal' ? 0.08 : c.level === 1 ? 0.10 : c.level === 2 ? 0.05 : 0.02,
-          commissionAmount: Number(c.amount || 0),
-          commissionType: c.commission_type === 'withdrawal' ? 'withdrawal' : 'package',
-          status: 'paid',
-          createdAt: c.created_at || new Date().toISOString(),
-        }));
-        setSupabaseCommissions(records);
+        setSupabaseCommissions(comms.map(mapCommissionRow));
       }
     }
 
     fetchSupabaseAffiliateData();
+
+    const channel = supabase
+      .channel(`realtime:referral_commissions:${userProfile.id || 'anon'}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'referral_commissions',
+        },
+        (payload) => {
+          if (!isMounted) return;
+          const newRow = payload.new as any;
+          const oldRow = payload.old as any;
+          if (payload.eventType === 'DELETE' && oldRow?.id) {
+            setSupabaseCommissions((prev) => prev.filter((r) => r.id !== String(oldRow.id)));
+            return;
+          }
+          if (newRow && (!userProfile.id || !newRow.earner_id || String(newRow.earner_id) === userProfile.id)) {
+            const mapped = mapCommissionRow(newRow);
+            setSupabaseCommissions((prev) => {
+              const exists = prev.some((r) => r.id === mapped.id);
+              return exists ? prev.map((r) => (r.id === mapped.id ? mapped : r)) : [mapped, ...prev];
+            });
+          } else {
+            fetchSupabaseAffiliateData();
+          }
+        }
+      )
+      .subscribe();
+
     const interval = setInterval(fetchSupabaseAffiliateData, 4000);
     return () => {
       isMounted = false;
       clearInterval(interval);
+      supabase.removeChannel(channel);
     };
   }, [userProfile.id]);
 

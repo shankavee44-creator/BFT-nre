@@ -16,6 +16,7 @@ import {
 import { AssetInfo } from '../types';
 import { DEFAULT_ASSETS } from '../utils/storage';
 import { soundEngine } from '../utils/soundEffects';
+import { AssetFlagIcon } from './CountryFlagIcon';
 
 export interface BFTSignalItem {
   id: string;
@@ -227,6 +228,7 @@ export const QuotexSignalsDrawer: React.FC<QuotexSignalsDrawerProps> = ({
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1.5">
+                  <AssetFlagIcon symbol={asset.symbol} category={asset.category} flagEmoji={asset.flag} size="xs" />
                   <span className="font-black text-white text-sm">{sig.symbol}</span>
                   <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-950/80 text-[#00e676] font-bold border border-[#00e676]/30">
                     +{asset.payout}%

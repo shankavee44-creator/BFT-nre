@@ -117,6 +117,8 @@ class DerivWebSocketClient {
 
     if (this.isConnected && this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.sendSubscription(derivSym);
+    } else if (typeof window !== 'undefined') {
+      this.connect();
     }
 
     return () => {
@@ -177,17 +179,15 @@ class DerivWebSocketClient {
       const price = Number(t.quote);
       const time = Number(t.epoch) * 1000 || Date.now();
 
-      if (!Number.isNaN(price)) {
-        // Broadcast to matching subscribers
-        for (const [sym, subs] of this.tickSubscribers.entries()) {
-          if (!derivSym || sym === derivSym || derivSym.includes(sym) || sym.includes(derivSym)) {
-            const tickObj: DerivTick = { symbol: sym, price, time };
-            for (const cb of subs) {
-              try {
-                cb(tickObj);
-              } catch {
-                // ignore
-              }
+      if (!Number.isNaN(price) && derivSym && this.activeSubscriptions.has(derivSym)) {
+        const subs = this.tickSubscribers.get(derivSym);
+        if (subs && subs.size > 0) {
+          const tickObj: DerivTick = { symbol: derivSym, price, time };
+          for (const cb of subs) {
+            try {
+              cb(tickObj);
+            } catch {
+              // ignore
             }
           }
         }
