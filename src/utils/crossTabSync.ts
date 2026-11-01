@@ -6,7 +6,7 @@
  * iframes, and viewports without race conditions or conflicting state.
  */
 
-import { BinaryTrade, TradingAccount, UserProfile, WithdrawalRequest } from '../types/index.ts';
+import type { BinaryTrade, TradingAccount, UserProfile, WithdrawalRequest } from '../types/index.ts';
 
 export type SyncEventType =
   | 'ACCOUNT_UPDATED'

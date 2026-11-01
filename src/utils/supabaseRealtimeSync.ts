@@ -1,5 +1,5 @@
 import { supabase } from './supabase.ts';
-import {
+import type {
   TradingAccount,
   UserProfile,
   WithdrawalRequest,
@@ -10,8 +10,8 @@ import {
 import { isPersonalLiveAccount, isDemoAccount } from './propRules.ts';
 import {
   DIRECT_USDT_TRC20_CONFIG,
-  UserPurchaseRecordInput,
-  NormalizedPurchaseRecord,
+  type UserPurchaseRecordInput,
+  type NormalizedPurchaseRecord,
   buildSupabaseUserPurchasePayload,
   buildSupabaseCryptoDepositRow,
   mapPurchaseRecord,
@@ -1831,9 +1831,12 @@ export function mapSupabaseTradingAccountRow(row: Record<string, any>): TradingA
     }
   );
 
-  const startBal = Number(row.starting_balance ?? row.initial_balance ?? row.size ?? 10000);
-  const curBal = Number(row.current_balance ?? startBal);
-  const eq = Number(row.equity ?? curBal);
+  const rawStartBal = Number(row.starting_balance ?? row.initial_balance ?? row.size ?? 10000);
+  const startBal = Number.isFinite(rawStartBal) && rawStartBal > 0 ? rawStartBal : 10000;
+  const rawCurBal = Number(row.current_balance ?? startBal);
+  const curBal = Number.isFinite(rawCurBal) && rawCurBal > 0 ? rawCurBal : startBal;
+  const rawEq = Number(row.equity ?? curBal);
+  const eq = Number.isFinite(rawEq) && rawEq > 0 ? rawEq : curBal;
   const phase = (row.challenge_phase || row.phase || limits.initialPhase) as any;
   const status = row.status || 'active';
 
@@ -1876,6 +1879,63 @@ export function mapSupabaseTradingAccountRow(row: Record<string, any>): TradingA
   return sanitizeAccountForAntiBreach(rawAcc);
 }
 
+export async function insertSupabaseCryptoDeposit(params: {
+  userId?: string;
+  userEmail?: string;
+  walletAddress?: string;
+  amount: number;
+  packageName: string;
+  sku: string;
+  accountType?: 'challenge' | 'self_funded' | string;
+  status?: 'pending' | 'completed' | 'approved' | 'declined' | string;
+  txHash?: string | null;
+  accountId?: string | null;
+}): Promise<{ ok: boolean; row?: Record<string, any>; error?: string }> {
+  const resolvedUuid = await resolveSupabaseWithdrawalUserUuid({
+    userId: params.userId,
+    userEmail: params.userEmail,
+  });
+
+  const effectiveUserId = resolvedUuid || (params.userId && UUID_REGEX.test(params.userId) ? params.userId : null);
+
+  if (!effectiveUserId) {
+    return { ok: false, error: 'Could not resolve user UUID for crypto_deposits insert.' };
+  }
+
+  const payload = buildSupabaseCryptoDepositRow({
+    userId: effectiveUserId,
+    walletAddress: params.walletAddress || DIRECT_USDT_TRC20_CONFIG.walletAddress,
+    amount: params.amount,
+    packageName: params.packageName,
+    sku: params.sku,
+    accountType: params.accountType,
+    status: params.status || 'pending',
+    txHash: params.txHash || undefined,
+  });
+
+  try {
+    const { data, error } = await supabase
+      .from('crypto_deposits')
+      .insert([payload])
+      .select('*')
+      .maybeSingle();
+
+    if (!error && data) {
+      return { ok: true, row: data };
+    }
+
+    // Fallback if select after insert is restricted by RLS
+    const { error: plainErr } = await supabase.from('crypto_deposits').insert([payload]);
+    if (!plainErr) {
+      return { ok: true, row: { ...payload, created_at: new Date().toISOString() } };
+    }
+
+    return { ok: false, error: plainErr.message || error?.message };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'crypto_deposits insert failed' };
+  }
+}
+
 export async function insertSupabaseTradingAccount(params: {
   account: TradingAccount;
   userId?: string;
@@ -1886,23 +1946,32 @@ export async function insertSupabaseTradingAccount(params: {
     userEmail: params.userEmail,
   });
 
-  if (!resolvedUuid) {
-    return { ok: false, error: 'User UUID could not be resolved for Supabase.' };
+  const effectiveUserId = resolvedUuid || (params.userId && UUID_REGEX.test(params.userId) ? params.userId : null);
+
+  if (!effectiveUserId) {
+    return { ok: false, error: 'User UUID could not be resolved for Supabase trading_accounts.' };
   }
 
-  const payload = buildSupabaseTradingAccountPayload(params.account, resolvedUuid);
+  const payload = buildSupabaseTradingAccountPayload(params.account, effectiveUserId);
 
   try {
     const { data, error } = await supabase
       .from('trading_accounts')
-      .insert(payload)
+      .insert([payload])
       .select('*')
       .maybeSingle();
 
     if (!error && data) {
       return { ok: true, account: mapSupabaseTradingAccountRow(data) };
     }
-    return { ok: false, error: error?.message || 'Failed to insert trading account.' };
+
+    // Fallback if SELECT after INSERT is restricted by RLS
+    const { error: plainErr } = await supabase.from('trading_accounts').insert([payload]);
+    if (!plainErr) {
+      return { ok: true, account: params.account };
+    }
+
+    return { ok: false, error: plainErr.message || error?.message };
   } catch (err: any) {
     return { ok: false, error: err?.message || 'Error inserting trading account.' };
   }

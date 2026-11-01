@@ -1,5 +1,5 @@
 import { supabase } from './supabase.ts';
-import { Candle, AssetInfo, AssetCategory } from '../types/index.ts';
+import type { Candle, AssetInfo, AssetCategory } from '../types/index.ts';
 import { normalizeAssetSymbol, findAssetBySymbol, DEFAULT_ASSETS } from './storage.ts';
 import { getOrCreateMasterHistory, setMarketBroadcastListener, appendLiveTick } from './priceFeedEngine.ts';
 import { safeJsonResponse } from './apiClient.ts';

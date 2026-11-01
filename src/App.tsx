@@ -27,7 +27,7 @@ import {
   ReferralRecord,
   AffiliatePayout,
   PromoCodeType,
-} from './types';
+} from './types/index.ts';
 import {
   loadProfile,
   saveProfile,
@@ -91,6 +91,7 @@ import {
   mapSupabaseCommissionToReferralRecord,
   mergeRealtimePurchase,
   NormalizedPurchaseRecord,
+  insertSupabaseTradingAccount,
 } from './utils/supabaseRealtimeSync';
 import {
   PACKAGES,
@@ -1170,6 +1171,17 @@ export default function App() {
         setActiveAccountId(deployed.id);
         saveActiveAccountId(deployed.id);
 
+        insertSupabaseTradingAccount({
+          account: locked,
+          userId: userProfile.id,
+          userEmail: userProfile.email,
+        }).catch(() => {});
+        insertSupabaseTradingAccount({
+          account: deployed,
+          userId: userProfile.id,
+          userEmail: userProfile.email,
+        }).catch(() => {});
+
         setCertificateModalState({
           isOpen: true,
           certificateId: apiRes.certificateId || deployed.certificateId || `CERT-${accountToPass.id}`,
@@ -1201,6 +1213,17 @@ export default function App() {
     saveAccounts(updatedList);
     setActiveAccountId(deployedNext.id);
     saveActiveAccountId(deployedNext.id);
+
+    insertSupabaseTradingAccount({
+      account: lockedPrev,
+      userId: userProfile.id,
+      userEmail: userProfile.email,
+    }).catch(() => {});
+    insertSupabaseTradingAccount({
+      account: deployedNext,
+      userId: userProfile.id,
+      userEmail: userProfile.email,
+    }).catch(() => {});
 
     setCertificateModalState({
       isOpen: true,

@@ -1,4 +1,4 @@
-import { KYCDocumentType, TradingAccount, UserProfile } from '../types/index.ts';
+import type { KYCDocumentType, TradingAccount, UserProfile } from '../types/index.ts';
 
 export const KYC_VERIFICATION_DURATION_SECONDS = 120; // 2-minute automated verification timer
 export const KYC_VERIFICATION_DURATION_MS = KYC_VERIFICATION_DURATION_SECONDS * 1000;

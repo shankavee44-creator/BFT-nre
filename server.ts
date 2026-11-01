@@ -21,7 +21,7 @@ import {
   fetchTronGridTrc20Transfers,
   matchPendingDepositToTronGridTx,
   parseChallengePackageFromDeposit,
-  TronGridTrc20Transaction,
+  type TronGridTrc20Transaction,
 } from './src/config/directDeposit.ts';
 import {
   getDynamicAccountLimits,
@@ -111,6 +111,19 @@ const isValidUuid = (val: string) =>
 
 async function startServer() {
   const app = express();
+
+  // Permissive CORS & Options preflight handler to prevent 405 Method Not Allowed
+  app.use((req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-admin-key, apikey, prefer');
+    if (req.method === 'OPTIONS') {
+      return res.status(200).end();
+    }
+    next();
+  });
+  app.use(express.json({ limit: '10mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
   const marketEngine = new BackendMarketEngine();
   marketEngine.start();
@@ -1079,7 +1092,7 @@ async function startServer() {
   });
 
   // POST /api/accounts/pass-challenge - Complete challenge phase, issue certificate & provision Live Funded Account
-  app.post('/api/accounts/pass-challenge', (req, res) => {
+  app.post('/api/accounts/pass-challenge', async (req, res) => {
     try {
       const user = getAuthenticatedUser(req);
       if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
@@ -1091,6 +1104,78 @@ async function startServer() {
       }
 
       const result = passChallengePhaseInDb(user.id, accountId, provisionLiveDirectly);
+
+      if (supabaseUrl && supabaseAnonKey) {
+        let targetSupaUuid = isValidUuid(user.id) ? user.id : null;
+        if (!targetSupaUuid && user.email) {
+          try {
+            const pRes = await fetch(
+              `${supabaseUrl}/rest/v1/profiles?email=eq.${encodeURIComponent(user.email)}&select=id`,
+              {
+                headers: {
+                  apikey: supabaseAnonKey,
+                  Authorization: `Bearer ${supabaseAnonKey}`,
+                },
+              }
+            );
+            if (pRes.ok) {
+              const rows = await safeParseFetchJson(pRes, []);
+              if (Array.isArray(rows) && rows.length > 0 && rows[0].id) {
+                targetSupaUuid = String(rows[0].id);
+              }
+            }
+          } catch {}
+        }
+
+        if (targetSupaUuid) {
+          const lockedStatus = result.lockedAccount?.status || 'passed';
+          fetch(
+            `${supabaseUrl}/rest/v1/trading_accounts?user_id=eq.${encodeURIComponent(
+              targetSupaUuid
+            )}&id=eq.${encodeURIComponent(accountId)}`,
+            {
+              method: 'PATCH',
+              headers: {
+                apikey: supabaseAnonKey,
+                Authorization: `Bearer ${supabaseAnonKey}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                status: lockedStatus,
+                certificate_id: result.certificateId,
+              }),
+            }
+          ).catch(() => {});
+
+          if (result.deployedAccount) {
+            const depAcc = result.deployedAccount;
+            const limits = getDynamicAccountLimits(depAcc.tier, depAcc.phase);
+            const supaAccountPayload = {
+              user_id: targetSupaUuid,
+              account_type: limits.accountType,
+              starting_balance: depAcc.size || depAcc.initialBalance,
+              current_balance: depAcc.currentBalance,
+              equity: depAcc.equity,
+              daily_drawdown: limits.dailyLossLimitPercent,
+              max_drawdown: limits.maxOverallLossPercent,
+              profit_target: limits.profitTargetPercent,
+              challenge_phase: depAcc.phase,
+              status: 'active',
+            };
+            fetch(`${supabaseUrl}/rest/v1/trading_accounts`, {
+              method: 'POST',
+              headers: {
+                apikey: supabaseAnonKey,
+                Authorization: `Bearer ${supabaseAnonKey}`,
+                'Content-Type': 'application/json',
+                Prefer: 'return=minimal',
+              },
+              body: JSON.stringify(supaAccountPayload),
+            }).catch(() => {});
+          }
+        }
+      }
+
       const accounts = getAccountsForUser(user.id);
       return res.json({
         ok: true,
@@ -1102,8 +1187,10 @@ async function startServer() {
     }
   });
 
-  // POST /api/accounts/purchase - Purchase challenge or instant funded account & run TronGrid TRC-20 verification
-  app.post('/api/accounts/purchase', async (req, res) => {
+  // POST / ALL /api/accounts/purchase - Purchase challenge or instant funded account & run TronGrid TRC-20 verification
+  app.all(
+    ['/api/accounts/purchase', '/functions/v1/accounts-purchase', '/functions/v1/purchase-account'],
+    async (req, res) => {
     try {
       const user = getAuthenticatedUser(req) || getUserById('usr_bft_001');
       if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
@@ -1195,62 +1282,112 @@ async function startServer() {
         console.warn('Purchase user_purchases record warning:', purErr);
       }
 
-      if (supabaseUrl && supabaseAnonKey && isValidUuid(user.id)) {
-        const supaPayload = buildSupabaseCryptoDepositRow({
-          userId: user.id,
-          walletAddress: DIRECT_USDT_WALLET_ADDRESS,
-          amount: price,
-          packageName,
-          sku,
-          accountType,
-        });
-        fetch(`${supabaseUrl}/rest/v1/crypto_deposits`, {
-          method: 'POST',
-          headers: {
-            apikey: supabaseAnonKey,
-            Authorization: `Bearer ${supabaseAnonKey}`,
-            'Content-Type': 'application/json',
-            Prefer: 'return=minimal',
-          },
-          body: JSON.stringify(supaPayload),
-        }).catch(() => {});
-
-        const { fullPayload, corePayload } = buildSupabaseUserPurchasePayload({
-          userId: user.id,
-          packageId: sku,
-          packageName,
-          packageSku: sku,
-          amount: price,
-          packageAmount: price,
-          accountType,
-          status: 'completed',
-          txHash: txHash || null,
-        });
-        fetch(`${supabaseUrl}/rest/v1/user_purchases`, {
-          method: 'POST',
-          headers: {
-            apikey: supabaseAnonKey,
-            Authorization: `Bearer ${supabaseAnonKey}`,
-            'Content-Type': 'application/json',
-            Prefer: 'return=minimal',
-          },
-          body: JSON.stringify(fullPayload),
-        })
-          .then((r) => {
-            if (!r.ok) {
-              return fetch(`${supabaseUrl}/rest/v1/user_purchases`, {
-                method: 'POST',
+      if (supabaseUrl && supabaseAnonKey) {
+        let targetSupaUuid = isValidUuid(user.id) ? user.id : null;
+        if (!targetSupaUuid && user.email) {
+          try {
+            const pRes = await fetch(
+              `${supabaseUrl}/rest/v1/profiles?email=eq.${encodeURIComponent(user.email)}&select=id`,
+              {
                 headers: {
                   apikey: supabaseAnonKey,
                   Authorization: `Bearer ${supabaseAnonKey}`,
-                  'Content-Type': 'application/json',
-                  Prefer: 'return=minimal',
                 },
-                body: JSON.stringify(corePayload),
-              });
+              }
+            );
+            if (pRes.ok) {
+              const rows = await safeParseFetchJson(pRes, []);
+              if (Array.isArray(rows) && rows.length > 0 && rows[0].id) {
+                targetSupaUuid = String(rows[0].id);
+              }
             }
+          } catch {
+            // ignore
+          }
+        }
+
+        if (targetSupaUuid) {
+          const supaPayload = buildSupabaseCryptoDepositRow({
+            userId: targetSupaUuid,
+            walletAddress: DIRECT_USDT_WALLET_ADDRESS,
+            amount: price,
+            packageName,
+            sku,
+            accountType,
+            status: 'completed',
+            txHash: txHash || undefined,
+          });
+          fetch(`${supabaseUrl}/rest/v1/crypto_deposits`, {
+            method: 'POST',
+            headers: {
+              apikey: supabaseAnonKey,
+              Authorization: `Bearer ${supabaseAnonKey}`,
+              'Content-Type': 'application/json',
+              Prefer: 'return=minimal',
+            },
+            body: JSON.stringify(supaPayload),
+          }).catch(() => {});
+
+          const { fullPayload, corePayload } = buildSupabaseUserPurchasePayload({
+            userId: targetSupaUuid,
+            packageId: sku,
+            packageName,
+            packageSku: sku,
+            amount: price,
+            packageAmount: price,
+            accountType,
+            status: 'completed',
+            txHash: txHash || null,
+          });
+          fetch(`${supabaseUrl}/rest/v1/user_purchases`, {
+            method: 'POST',
+            headers: {
+              apikey: supabaseAnonKey,
+              Authorization: `Bearer ${supabaseAnonKey}`,
+              'Content-Type': 'application/json',
+              Prefer: 'return=minimal',
+            },
+            body: JSON.stringify(fullPayload),
           })
-          .catch(() => {});
+            .then((r) => {
+              if (!r.ok) {
+                return fetch(`${supabaseUrl}/rest/v1/user_purchases`, {
+                  method: 'POST',
+                  headers: {
+                    apikey: supabaseAnonKey,
+                    Authorization: `Bearer ${supabaseAnonKey}`,
+                    'Content-Type': 'application/json',
+                    Prefer: 'return=minimal',
+                  },
+                  body: JSON.stringify(corePayload),
+                });
+              }
+            })
+            .catch(() => {});
+
+          const supaAccountPayload = {
+            user_id: targetSupaUuid,
+            account_type: limits.accountType,
+            starting_balance: size,
+            current_balance: size,
+            equity: size,
+            daily_drawdown: limits.dailyLossLimitPercent,
+            max_drawdown: limits.maxOverallLossPercent,
+            profit_target: limits.profitTargetPercent,
+            challenge_phase: limits.initialPhase,
+            status: 'active',
+          };
+          fetch(`${supabaseUrl}/rest/v1/trading_accounts`, {
+            method: 'POST',
+            headers: {
+              apikey: supabaseAnonKey,
+              Authorization: `Bearer ${supabaseAnonKey}`,
+              'Content-Type': 'application/json',
+              Prefer: 'return=minimal',
+            },
+            body: JSON.stringify(supaAccountPayload),
+          }).catch(() => {});
+        }
       }
 
       // Trigger immediate TronGrid TRC-20 verification pass
@@ -1330,8 +1467,10 @@ async function startServer() {
     }
   });
 
-  // POST /api/purchases - Record a user purchase/order directly
-  app.post(['/api/purchases', '/api/orders'], async (req, res) => {
+  // POST / ALL /api/purchases - Record a user purchase/order directly
+  app.all(
+    ['/api/purchases', '/api/orders', '/functions/v1/purchases', '/functions/v1/orders'],
+    async (req, res) => {
     try {
       const user = getAuthenticatedUser(req);
       const userId = String(user?.id || req.body?.userId || req.body?.user_id || 'usr_bft_001').trim();
@@ -1541,7 +1680,9 @@ async function startServer() {
     });
   });
 
-  app.post(['/api/deposit/submit', '/api/crypto-deposits'], async (req, res) => {
+  app.all(
+    ['/api/deposit/submit', '/api/crypto-deposits', '/functions/v1/deposit-submit', '/functions/v1/crypto-deposits'],
+    async (req, res) => {
     try {
       const user = getAuthenticatedUser(req);
       const rawAmount = Number(req.body?.amount);
@@ -1721,7 +1862,16 @@ async function startServer() {
   };
 
   app.all(
-    ['/api/2fa/setup', '/api/profile/2fa/generate', '/functions/v1/2fa-setup', '/functions/v1/2fa-generate'],
+    [
+      '/api/2fa/setup',
+      '/api/2fa/generate',
+      '/api/2fa/reconfigure',
+      '/api/profile/2fa/generate',
+      '/api/profile/2fa/reconfigure',
+      '/functions/v1/2fa-setup',
+      '/functions/v1/2fa-generate',
+      '/functions/v1/2fa-reconfigure',
+    ],
     async (req, res) => {
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       try {
@@ -1776,8 +1926,15 @@ async function startServer() {
     }
   );
 
-  app.post(
-    ['/api/2fa/verify', '/api/profile/2fa/verify', '/functions/v1/2fa-verify'],
+  app.all(
+    [
+      '/api/2fa/verify',
+      '/api/2fa/enable',
+      '/api/profile/2fa/verify',
+      '/api/profile/2fa/enable',
+      '/functions/v1/2fa-verify',
+      '/functions/v1/2fa-enable',
+    ],
     async (req, res) => {
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       try {
@@ -1846,7 +2003,7 @@ async function startServer() {
     }
   );
 
-  app.post(
+  app.all(
     ['/api/2fa/disable', '/api/profile/2fa/disable', '/functions/v1/2fa-disable'],
     (req, res) => {
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -1890,7 +2047,9 @@ async function startServer() {
     }
   );
 
-  app.post(['/api/2fa/validate', '/functions/v1/2fa-validate'], async (req, res) => {
+  app.all(
+    ['/api/2fa/validate', '/api/2fa/check', '/functions/v1/2fa-validate', '/functions/v1/2fa-check'],
+    async (req, res) => {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     try {
       const user = resolveUserFor2faOrProfile(req);

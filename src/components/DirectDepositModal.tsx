@@ -29,7 +29,7 @@ import {
 } from '../config/directDeposit';
 import { apiSubmitCryptoDeposit, apiVerifyCryptoDeposits, safeJsonResponse } from '../utils/apiClient';
 import { supabase } from '../utils/supabase';
-import { insertSupabaseUserPurchase } from '../utils/supabaseRealtimeSync';
+import { insertSupabaseUserPurchase, insertSupabaseCryptoDeposit } from '../utils/supabaseRealtimeSync';
 
 interface DirectDepositModalProps {
   isOpen: boolean;
@@ -182,8 +182,20 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
         if (supaInsertRes.ok && supaInsertRes.row) {
           supaPurchaseRow = supaInsertRes.row;
         }
+        insertSupabaseCryptoDeposit({
+          userId: userProfile?.id,
+          userEmail: userProfile?.email,
+          walletAddress: depositoryAddress,
+          amount: cleanAmount,
+          packageName: computedPackageName,
+          sku: computedSku,
+          accountType,
+          status: 'pending',
+          txHash: txHashInput.trim() || null,
+          accountId: targetAccount?.id || null,
+        }).catch(() => {});
       } catch {
-        // Backend /api/crypto-deposits persists into SQLite & Supabase REST
+        // ignore
       }
 
       // 2. Submit to backend /api/crypto-deposits

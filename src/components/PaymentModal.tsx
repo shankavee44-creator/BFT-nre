@@ -30,7 +30,11 @@ import {
 } from '../config/directDeposit';
 import { apiPurchaseAccount, apiVerifyCryptoDeposits } from '../utils/apiClient';
 import { supabase } from '../utils/supabase';
-import { insertSupabaseUserPurchase } from '../utils/supabaseRealtimeSync';
+import {
+  insertSupabaseUserPurchase,
+  insertSupabaseTradingAccount,
+  insertSupabaseCryptoDeposit,
+} from '../utils/supabaseRealtimeSync';
 
 interface PaymentModalProps {
   packageToBuy: EvaluationPackage | null;
@@ -182,6 +186,26 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
           res.error || 'Direct payment confirmation failed. Please verify your transfer.'
         );
       }
+
+      // Persist purchased trading account and crypto deposit record into Supabase tables immediately
+      insertSupabaseTradingAccount({
+        account: res.account,
+        userId: userProfile?.id,
+        userEmail: userProfile?.email,
+      }).catch(() => {});
+
+      insertSupabaseCryptoDeposit({
+        userId: userProfile?.id,
+        userEmail: userProfile?.email,
+        walletAddress: trc20Address,
+        amount: finalPrice,
+        packageName,
+        sku: packageSku,
+        accountType,
+        status: 'completed',
+        txHash: txHashInput.trim() || null,
+        accountId: res.account.id,
+      }).catch(() => {});
 
       const finalPurchaseRecord = mapPurchaseRecord(
         res.purchase ||

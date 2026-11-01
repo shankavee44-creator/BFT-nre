@@ -5,7 +5,7 @@ import os from 'node:os';
 import {
   matchPendingDepositToTronGridTx,
   parseChallengePackageFromDeposit,
-  TronGridTrc20Transaction,
+  type TronGridTrc20Transaction,
 } from '../config/directDeposit.ts';
 
 function openResilientDatabase(): DatabaseSync {
@@ -973,17 +973,18 @@ export function passChallengePhaseInDb(
   const nowIso = new Date(now).toISOString().split('T')[0];
   const certId = existing.certificate_id || `CERT-${existing.id}-${Math.floor(1000 + Math.random() * 9000)}`;
 
-  // Mark the completed challenge phase as 'passed' with official certificateId
+  const normType = normalizeChallengeAccountType(existing.tier || existing.account_type);
+  const isToPhase2 = !provisionLiveDirectly && normType === 'two_step' && (existing.phase === 'phase_1' || existing.challenge_phase === 'phase_1');
+  const lockedStatus = isToPhase2 ? 'passed_phase_1' : 'passed';
+
+  // Mark the completed challenge phase as 'passed_phase_1' or 'passed' with official certificateId
   db.prepare(`
     UPDATE accounts SET
-      status = 'passed',
+      status = ?,
       certificate_id = ?,
       updated_at = ?
     WHERE id = ? AND user_id = ?
-  `).run(certId, now, accountId, userId);
-
-  const normType = normalizeChallengeAccountType(existing.tier || existing.account_type);
-  const isToPhase2 = !provisionLiveDirectly && normType === 'two_step' && (existing.phase === 'phase_1' || existing.challenge_phase === 'phase_1');
+  `).run(lockedStatus, certId, now, accountId, userId);
   const nextPhase = isToPhase2 ? 'phase_2' : 'funded';
   const nextLimits = getDynamicAccountLimits(normType, nextPhase, {
     dailyDrawdown: existing.daily_loss_limit_percent,
