@@ -1266,7 +1266,7 @@ async function startServer() {
 
   // POST / ALL /api/accounts/purchase - Purchase challenge or instant funded account & run TronGrid TRC-20 verification
   app.all(
-    ['/api/accounts/purchase', '/functions/v1/accounts-purchase', '/functions/v1/purchase-account'],
+    ['/api/accounts/purchase', '/functions/v1/accounts-purchase', '/functions/v1/purchase-account', '/purchase-package', '/functions/v1/purchase-package'],
     async (req, res) => {
     try {
       const user = getAuthenticatedUser(req) || getUserById('usr_bft_001');
@@ -1718,7 +1718,7 @@ async function startServer() {
   });
 
   app.all(
-    ['/api/deposit/submit', '/api/crypto-deposits', '/functions/v1/deposit-submit', '/functions/v1/crypto-deposits'],
+    ['/api/deposit/submit', '/api/crypto-deposits', '/functions/v1/deposit-submit', '/functions/v1/crypto-deposits', '/verify-deposit', '/functions/v1/verify-deposit', '/submit-deposit', '/functions/v1/submit-deposit'],
     async (req, res) => {
     try {
       const user = getAuthenticatedUser(req);

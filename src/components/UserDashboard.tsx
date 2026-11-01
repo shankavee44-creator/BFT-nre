@@ -599,6 +599,13 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           if (isMounted) syncLiveSupabaseData();
         }
       )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'trading_accounts' },
+        () => {
+          if (isMounted) syncLiveSupabaseData();
+        }
+      )
       .subscribe();
 
     const interval = setInterval(syncLiveSupabaseData, 5000);
@@ -1010,7 +1017,8 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         localStorage.getItem('bft_jwt_session') ||
         sessionStorage.getItem('bft_jwt_session') ||
         '';
-      const res = await fetch('/api/profile/2fa/generate', {
+      const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
+      const res = await fetch(`${API_BASE}/api/profile/2fa/generate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1080,7 +1088,8 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         localStorage.getItem('bft_jwt_session') ||
         sessionStorage.getItem('bft_jwt_session') ||
         '';
-      const res = await fetch('/api/profile/2fa/verify', {
+      const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
+      const res = await fetch(`${API_BASE}/api/profile/2fa/verify`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1152,7 +1161,8 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         localStorage.getItem('bft_jwt_session') ||
         sessionStorage.getItem('bft_jwt_session') ||
         '';
-      const res = await fetch('/api/profile/2fa/disable', {
+      const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
+      const res = await fetch(`${API_BASE}/api/profile/2fa/disable`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1721,8 +1731,8 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
                     <div className="grid grid-cols-4 gap-2 p-3 rounded-xl bg-[#111115] border border-white/10 mb-4 font-mono text-xs">
                       <div>
-                        <span className="text-[10px] text-slate-400 block uppercase">Balance</span>
-                        <span className="font-bold text-white">${acc.currentBalance.toLocaleString()}</span>
+                        <span className="text-[10px] text-slate-400 block uppercase">Balance / Equity</span>
+                        <span className="font-bold text-white">${acc.currentBalance.toLocaleString()} / ${acc.equity.toLocaleString()}</span>
                       </div>
                       <div>
                         <span className="text-[10px] text-slate-400 block uppercase">
@@ -1735,17 +1745,19 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                         </span>
                       </div>
                       <div>
-                        <span className="text-[10px] text-slate-400 block uppercase">Limits</span>
+                        <span className="text-[10px] text-slate-400 block uppercase">Limits (DD/Max)</span>
                         <span className="font-bold text-[#ff8800]">
                           {isPersonal || isDemo
-                            ? 'None (Unrestricted)'
+                            ? 'None'
                             : `${acc.dailyLossLimitPercent}% / ${acc.maxOverallLossPercent}%`}
                         </span>
                       </div>
                       <div>
-                        <span className="text-[10px] text-slate-400 block uppercase">Split</span>
+                        <span className="text-[10px] text-slate-400 block uppercase">Profit Target</span>
                         <span className="font-bold text-emerald-400">
-                          {isPersonal ? '100%' : isDemo ? 'Demo' : '80%'}
+                          {isPersonal || isDemo
+                            ? 'N/A'
+                            : `${acc.profitTargetPercent ?? 0}%`}
                         </span>
                       </div>
                     </div>

@@ -312,7 +312,8 @@ export async function apiPurchaseAccount(params: {
   dailyWithdrawalsUnlocked?: boolean;
 }) {
   try {
-    const res = await fetch(`${API_BASE}/api/accounts/purchase`, {
+    const endpoint = API_BASE ? `${API_BASE}/purchase-package` : `${API_BASE}/api/accounts/purchase`;
+    const res = await fetch(endpoint, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(params),
@@ -376,7 +377,8 @@ export async function apiSubmitCryptoDeposit(params: {
   txHash?: string;
 }) {
   try {
-    const res = await fetch(`${API_BASE}/api/crypto-deposits`, {
+    const endpoint = API_BASE ? `${API_BASE}/verify-deposit` : `${API_BASE}/api/crypto-deposits`;
+    const res = await fetch(endpoint, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(params),
@@ -390,7 +392,7 @@ export async function apiSubmitCryptoDeposit(params: {
 export async function apiVerifyCryptoDeposits(params?: { userId?: string }) {
   try {
     const qs = params?.userId ? `?userId=${encodeURIComponent(params.userId)}` : '';
-    const res = await fetch(`/api/crypto-deposits/verify${qs}`, {
+    const res = await fetch(`${API_BASE}/api/crypto-deposits/verify${qs}`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(params || {}),
@@ -408,7 +410,7 @@ export async function apiDepositPersonalAccount(params: {
   txHash?: string;
 }) {
   try {
-    const res = await fetch('/api/accounts/deposit-personal', {
+    const res = await fetch(`${API_BASE}/api/accounts/deposit-personal`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(params),
@@ -424,7 +426,7 @@ export async function apiPassChallenge(params: {
   provisionLiveDirectly?: boolean;
 }) {
   try {
-    const res = await fetch('/api/accounts/pass-challenge', {
+    const res = await fetch(`${API_BASE}/api/accounts/pass-challenge`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(params),
@@ -458,7 +460,7 @@ export async function apiUpdateAccountState(
     return { ok: true, localOnly: true };
   }
   try {
-    const res = await fetch(`/api/accounts/${encodeURIComponent(accountId)}`, {
+    const res = await fetch(`${API_BASE}/api/accounts/${encodeURIComponent(accountId)}`, {
       method: 'PUT',
       headers: getAuthHeaders(),
       body: JSON.stringify(updates),
@@ -471,7 +473,7 @@ export async function apiUpdateAccountState(
 
 export async function apiGetAffiliateDashboard() {
   try {
-    const res = await fetch('/api/affiliate/dashboard', {
+    const res = await fetch(`${API_BASE}/api/affiliate/dashboard`, {
       headers: getAuthHeaders(),
     });
     return await safeJsonResponse(res);
@@ -482,7 +484,7 @@ export async function apiGetAffiliateDashboard() {
 
 export async function apiGetLeaderboard() {
   try {
-    const res = await fetch('/api/leaderboard');
+    const res = await fetch(`${API_BASE}/api/leaderboard`);
     return await safeJsonResponse(res);
   } catch (e: any) {
     return { ok: false, error: e?.message || 'Failed to fetch leaderboard' };
@@ -491,7 +493,7 @@ export async function apiGetLeaderboard() {
 
 export async function apiGetLiveMarketPrices() {
   try {
-    const res = await fetch('/api/market/live-prices');
+    const res = await fetch(`${API_BASE}/api/market/live-prices`);
     return await safeJsonResponse(res);
   } catch (e: any) {
     return { ok: false, error: e?.message || 'Failed to fetch live prices' };
@@ -520,7 +522,7 @@ export async function apiPlaceTrade(params: {
     return { ok: true, localOnly: true };
   }
   try {
-    const res = await fetch('/api/trades', {
+    const res = await fetch(`${API_BASE}/api/trades`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(params),
@@ -538,7 +540,7 @@ export async function apiSettleTrade(params: {
 }) {
   if (!hasJwtSession()) return { ok: true, localOnly: true };
   try {
-    const res = await fetch('/api/trades/settle', {
+    const res = await fetch(`${API_BASE}/api/trades/settle`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(params),
@@ -558,7 +560,7 @@ export async function apiGetUserTrades(accountId?: string) {
   }
   try {
     const qs = accountId ? `?accountId=${encodeURIComponent(accountId)}` : '';
-    const res = await fetch(`/api/trades${qs}`, {
+    const res = await fetch(`${API_BASE}/api/trades${qs}`, {
       headers: getAuthHeaders(),
     });
     return await safeJsonResponse(res);
@@ -569,7 +571,7 @@ export async function apiGetUserTrades(accountId?: string) {
 
 export async function apiCheckAdminAccess() {
   try {
-    const res = await fetch('/api/admin/check-access', {
+    const res = await fetch(`${API_BASE}/api/admin/check-access`, {
       headers: getAuthHeaders(),
     });
     return await safeJsonResponse(res);
@@ -580,7 +582,7 @@ export async function apiCheckAdminAccess() {
 
 export async function apiVerifyAdminKey(adminKey: string) {
   try {
-    const res = await fetch('/api/admin/auth/verify-key', {
+    const res = await fetch(`${API_BASE}/api/admin/auth/verify-key`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ adminKey }),
@@ -601,7 +603,7 @@ export async function apiVerifyAdminKey(adminKey: string) {
 
 export async function apiGetAdminMetrics() {
   try {
-    const res = await fetch('/api/admin/metrics', {
+    const res = await fetch(`${API_BASE}/api/admin/metrics`, {
       headers: getAuthHeaders(),
     });
     return await safeJsonResponse(res);
@@ -612,7 +614,7 @@ export async function apiGetAdminMetrics() {
 
 export async function apiGetAdminUsers() {
   try {
-    const res = await fetch('/api/admin/users', {
+    const res = await fetch(`${API_BASE}/api/admin/users`, {
       headers: getAuthHeaders(),
     });
     return await safeJsonResponse(res);
@@ -628,7 +630,7 @@ export async function apiAdminUpdateBalance(params: {
   reason?: string;
 }) {
   try {
-    const res = await fetch(`/api/admin/users/${encodeURIComponent(params.userId)}/accounts/${encodeURIComponent(params.accountId)}/balance`, {
+    const res = await fetch(`${API_BASE}/api/admin/users/${encodeURIComponent(params.userId)}/accounts/${encodeURIComponent(params.accountId)}/balance`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify({
@@ -644,7 +646,7 @@ export async function apiAdminUpdateBalance(params: {
 
 export async function apiAdminSetRole(params: { userId: string; role: 'admin' | 'trader' }) {
   try {
-    const res = await fetch(`/api/admin/users/${encodeURIComponent(params.userId)}/role`, {
+    const res = await fetch(`${API_BASE}/api/admin/users/${encodeURIComponent(params.userId)}/role`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify({ role: params.role }),
@@ -658,7 +660,7 @@ export async function apiAdminSetRole(params: { userId: string; role: 'admin' | 
 export async function apiGetAdminDeposits(status?: string) {
   try {
     const query = status ? `?status=${encodeURIComponent(status)}` : '';
-    const res = await fetch(`/api/admin/deposits${query}`, {
+    const res = await fetch(`${API_BASE}/api/admin/deposits${query}`, {
       headers: getAuthHeaders(),
     });
     return await safeJsonResponse(res);
@@ -669,7 +671,7 @@ export async function apiGetAdminDeposits(status?: string) {
 
 export async function apiAdminApproveDeposit(depositId: string) {
   try {
-    const res = await fetch(`/api/admin/deposits/${encodeURIComponent(depositId)}/approve`, {
+    const res = await fetch(`${API_BASE}/api/admin/deposits/${encodeURIComponent(depositId)}/approve`, {
       method: 'POST',
       headers: getAuthHeaders(),
     });
@@ -681,7 +683,7 @@ export async function apiAdminApproveDeposit(depositId: string) {
 
 export async function apiAdminDeclineDeposit(depositId: string, reason?: string) {
   try {
-    const res = await fetch(`/api/admin/deposits/${encodeURIComponent(depositId)}/decline`, {
+    const res = await fetch(`${API_BASE}/api/admin/deposits/${encodeURIComponent(depositId)}/decline`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify({ reason }),
@@ -701,7 +703,7 @@ export async function apiAdminCreateDeposit(params: {
   depositSlipUrl?: string;
 }) {
   try {
-    const res = await fetch('/api/admin/deposits/create', {
+    const res = await fetch(`${API_BASE}/api/admin/deposits/create`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(params),
@@ -715,7 +717,7 @@ export async function apiAdminCreateDeposit(params: {
 export async function apiGetAdminWithdrawals(status?: string) {
   try {
     const query = status ? `?status=${encodeURIComponent(status)}` : '';
-    const res = await fetch(`/api/admin/withdrawals${query}`, {
+    const res = await fetch(`${API_BASE}/api/admin/withdrawals${query}`, {
       headers: getAuthHeaders(),
     });
     return await safeJsonResponse(res);
@@ -726,7 +728,7 @@ export async function apiGetAdminWithdrawals(status?: string) {
 
 export async function apiAdminApproveWithdrawal(withdrawalId: string) {
   try {
-    const res = await fetch(`/api/admin/withdrawals/${encodeURIComponent(withdrawalId)}/approve`, {
+    const res = await fetch(`${API_BASE}/api/admin/withdrawals/${encodeURIComponent(withdrawalId)}/approve`, {
       method: 'POST',
       headers: getAuthHeaders(),
     });
@@ -738,7 +740,7 @@ export async function apiAdminApproveWithdrawal(withdrawalId: string) {
 
 export async function apiAdminDeclineWithdrawal(withdrawalId: string, reason?: string) {
   try {
-    const res = await fetch(`/api/admin/withdrawals/${encodeURIComponent(withdrawalId)}/decline`, {
+    const res = await fetch(`${API_BASE}/api/admin/withdrawals/${encodeURIComponent(withdrawalId)}/decline`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify({ reason }),
@@ -752,7 +754,7 @@ export async function apiAdminDeclineWithdrawal(withdrawalId: string, reason?: s
 export async function apiGetAdminKyc(status?: string) {
   try {
     const query = status ? `?status=${encodeURIComponent(status)}` : '';
-    const res = await fetch(`/api/admin/kyc${query}`, {
+    const res = await fetch(`${API_BASE}/api/admin/kyc${query}`, {
       headers: getAuthHeaders(),
     });
     return await safeJsonResponse(res);
@@ -763,7 +765,7 @@ export async function apiGetAdminKyc(status?: string) {
 
 export async function apiAdminApproveKyc(userId: string) {
   try {
-    const res = await fetch(`/api/admin/kyc/${encodeURIComponent(userId)}/approve`, {
+    const res = await fetch(`${API_BASE}/api/admin/kyc/${encodeURIComponent(userId)}/approve`, {
       method: 'POST',
       headers: getAuthHeaders(),
     });
@@ -775,7 +777,7 @@ export async function apiAdminApproveKyc(userId: string) {
 
 export async function apiAdminRejectKyc(userId: string, reason?: string) {
   try {
-    const res = await fetch(`/api/admin/kyc/${encodeURIComponent(userId)}/reject`, {
+    const res = await fetch(`${API_BASE}/api/admin/kyc/${encodeURIComponent(userId)}/reject`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify({ reason }),
@@ -788,7 +790,7 @@ export async function apiAdminRejectKyc(userId: string, reason?: string) {
 
 export async function apiGetAdminReferralTree() {
   try {
-    const res = await fetch('/api/admin/referrals/tree', {
+    const res = await fetch(`${API_BASE}/api/admin/referrals/tree`, {
       headers: getAuthHeaders(),
     });
     return await safeJsonResponse(res);
@@ -799,7 +801,7 @@ export async function apiGetAdminReferralTree() {
 
 export async function apiGetAdminCommissions(limit: number = 100) {
   try {
-    const res = await fetch(`/api/admin/referrals/commissions?limit=${limit}`, {
+    const res = await fetch(`${API_BASE}/api/admin/referrals/commissions?limit=${limit}`, {
       headers: getAuthHeaders(),
     });
     return await safeJsonResponse(res);
@@ -815,7 +817,7 @@ export async function apiAdminDistributeCommission(params: {
   details?: string;
 }) {
   try {
-    const res = await fetch('/api/admin/referrals/distribute-commission', {
+    const res = await fetch(`${API_BASE}/api/admin/referrals/distribute-commission`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(params),
@@ -828,7 +830,7 @@ export async function apiAdminDistributeCommission(params: {
 
 export async function apiGetAdminAuditLogs(limit: number = 50) {
   try {
-    const res = await fetch(`/api/admin/audit-logs?limit=${limit}`, {
+    const res = await fetch(`${API_BASE}/api/admin/audit-logs?limit=${limit}`, {
       headers: getAuthHeaders(),
     });
     return await safeJsonResponse(res);
@@ -839,7 +841,7 @@ export async function apiGetAdminAuditLogs(limit: number = 50) {
 
 export async function apiGetGitHubStatus() {
   try {
-    const res = await fetch('/api/github/status', {
+    const res = await fetch(`${API_BASE}/api/github/status`, {
       headers: getAuthHeaders(),
     });
     return await safeJsonResponse(res);
@@ -866,7 +868,7 @@ export async function apiPushToGitHub(params?: {
   commitMessage?: string;
 }) {
   try {
-    const res = await fetch('/api/github/push', {
+    const res = await fetch(`${API_BASE}/api/github/push`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(params || {}),
@@ -902,7 +904,7 @@ export function generateFallbackBase32Secret(length = 32): string {
 
 export async function apiGenerate2fa(params: { userId?: string; email?: string }) {
   try {
-    const res = await fetch('/api/profile/2fa/generate', {
+    const res = await fetch(`${API_BASE}/api/profile/2fa/generate`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(params),
@@ -938,7 +940,7 @@ export async function apiVerify2fa(params: {
   secret?: string;
 }) {
   try {
-    const res = await fetch('/api/profile/2fa/verify', {
+    const res = await fetch(`${API_BASE}/api/profile/2fa/verify`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(params),
@@ -957,7 +959,7 @@ export async function apiVerify2fa(params: {
 
 export async function apiDisable2fa(params: { userId?: string; email?: string }) {
   try {
-    const res = await fetch('/api/profile/2fa/disable', {
+    const res = await fetch(`${API_BASE}/api/profile/2fa/disable`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(params),
@@ -981,7 +983,7 @@ export async function apiValidate2fa(params: {
   secret?: string;
 }) {
   try {
-    const res = await fetch('/api/2fa/validate', {
+    const res = await fetch(`${API_BASE}/api/2fa/validate`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(params),
@@ -997,5 +999,3 @@ export async function apiValidate2fa(params: {
     };
   }
 }
-
-

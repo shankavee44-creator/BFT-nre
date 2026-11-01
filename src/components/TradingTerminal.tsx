@@ -4653,13 +4653,8 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                   </div>
 
                   <div className="space-y-3">
-                    <button
-                      onClick={handleResetSoftBreach}
-                      className="w-full py-3.5 px-6 rounded-2xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-xl shadow-amber-500/25 cursor-pointer uppercase font-sans tracking-wide transition-all"
-                    >
-                      <Zap className="w-4 h-4 fill-slate-950" />
-                      <span>Simulate Daily Reset & Resume Trading</span>
-                    </button>
+                    {/* Simulation button removed */}
+
 
                     {otherActiveAccounts.length > 0 && (
                       <div className="pt-2">
@@ -5085,12 +5080,8 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                 <p className="text-[8.5px] text-amber-200">
                   Daily loss limit reached. Paused until next reset.
                 </p>
-                <button
-                  onClick={handleResetSoftBreach}
-                  className="w-full py-1.5 rounded-md bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-[10.5px] cursor-pointer uppercase font-sans"
-                >
-                  Simulate Daily Reset
-                </button>
+                {/* Simulation button removed */}
+
               </div>
             ) : isHardBreached ? (
               <div className="p-2.5 rounded-lg bg-rose-950/60 border border-rose-500/60 text-center space-y-1.5 font-mono">

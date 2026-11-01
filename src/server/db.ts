@@ -24,13 +24,28 @@ function openResilientDatabase(): DatabaseSync {
         fs.mkdirSync(dir, { recursive: true });
       }
       const dbFile = path.join(dir, 'bft_platform.sqlite');
-      const instance = new DatabaseSync(dbFile);
       try {
-        instance.exec('PRAGMA journal_mode = WAL;');
-      } catch {
-        // Fallback to default journal mode if container filesystem does not support WAL mmap
+        const instance = new DatabaseSync(dbFile);
+        instance.exec('SELECT count(*) FROM sqlite_master;');
+        try {
+          instance.exec('PRAGMA journal_mode = WAL;');
+        } catch {}
+        return instance;
+      } catch (err: any) {
+        const msg = String(err?.message || '').toLowerCase();
+        if (msg.includes('malformed') || msg.includes('disk image') || msg.includes('file is not a database')) {
+          try {
+            const backupFile = `${dbFile}.corrupted_${Date.now()}`;
+            if (fs.existsSync(dbFile)) {
+              fs.renameSync(dbFile, backupFile);
+              console.warn(`Renamed corrupted SQLite database to ${backupFile}`);
+            }
+            const freshInstance = new DatabaseSync(dbFile);
+            return freshInstance;
+          } catch {}
+        }
+        throw err;
       }
-      return instance;
     } catch {
       // Try next candidate
     }

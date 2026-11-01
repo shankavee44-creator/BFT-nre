@@ -83,12 +83,6 @@ export const AccountBreachModal: React.FC<AccountBreachModalProps> = ({
     return `${h < 10 ? '0' : ''}${h}h ${m < 10 ? '0' : ''}${m}m ${s < 10 ? '0' : ''}${s}s`;
   };
 
-  const handleSimulateNextDay = () => {
-    if (onResetSoftBreach) {
-      onResetSoftBreach(resetSoftBreachedAccount(account));
-      onClose();
-    }
-  };
 
   // Find other active, non-breached accounts owned by user
   const otherActiveAccounts = accounts.filter(
@@ -179,17 +173,7 @@ export const AccountBreachModal: React.FC<AccountBreachModalProps> = ({
               Once the daily reset triggers, your daily drawdown will automatically reset to 0.0%, and your trading terminal will unlock immediately.
             </p>
 
-            {/* Test Simulation Fast-Forward Button */}
-            <div className="mt-3 pt-2 border-t border-amber-500/30 flex items-center justify-between">
-              <span className="text-[10px] text-slate-400 font-sans">Testing / Evaluation Mode:</span>
-              <button
-                onClick={handleSimulateNextDay}
-                className="px-3 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-[11px] font-sans flex items-center gap-1.5 shadow cursor-pointer transition-all"
-              >
-                <Zap className="w-3 h-3 fill-slate-950" />
-                <span>Simulate Next Day (Instant Auto-Unlock)</span>
-              </button>
-            </div>
+
           </div>
         ) : (
           <div className="p-4 rounded-2xl bg-rose-950/40 border border-rose-500/50 mb-5 text-xs text-slate-200">
@@ -313,28 +297,17 @@ export const AccountBreachModal: React.FC<AccountBreachModalProps> = ({
         {/* CTA & Account Switcher */}
         <div className="space-y-3 pt-3 border-t border-slate-800">
           {/* Main Action Button */}
-          {isSoft ? (
-            <button
-              onClick={handleSimulateNextDay}
-              className="w-full py-4 px-6 rounded-2xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-sm flex items-center justify-center gap-2 shadow-xl shadow-amber-500/25 glow-gold transition-all cursor-pointer font-sans uppercase tracking-wide"
-            >
-              <RotateCcw className="w-5 h-5" />
-              <span>Simulate Daily Reset & Resume Trading</span>
-              <ArrowRight className="w-4 h-4 stroke-[3]" />
-            </button>
-          ) : (
-            <button
-              onClick={() => {
-                onClose();
-                onOpenChallengeModal?.();
-              }}
-              className="w-full py-4 px-6 rounded-2xl bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 hover:brightness-110 text-slate-950 font-black text-sm flex items-center justify-center gap-2 shadow-xl shadow-amber-500/25 glow-gold transition-all cursor-pointer font-sans uppercase tracking-wide"
-            >
-              <ShoppingBag className="w-5 h-5 fill-slate-950" />
-              <span>Buy New Account (10% Reset Courtesy Applied)</span>
-              <ArrowRight className="w-4 h-4 stroke-[3]" />
-            </button>
-          )}
+          <button
+            onClick={() => {
+              onClose();
+              onOpenChallengeModal?.();
+            }}
+            className="w-full py-4 px-6 rounded-2xl bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 hover:brightness-110 text-slate-950 font-black text-sm flex items-center justify-center gap-2 shadow-xl shadow-amber-500/25 glow-gold transition-all cursor-pointer font-sans uppercase tracking-wide"
+          >
+            <ShoppingBag className="w-5 h-5 fill-slate-950" />
+            <span>Buy New Account (10% Reset Courtesy Applied)</span>
+            <ArrowRight className="w-4 h-4 stroke-[3]" />
+          </button>
 
           {/* Switch to active account if trader has another active account */}
           {otherActiveAccounts.length > 0 && (

@@ -1397,12 +1397,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 ))}
               </div>
 
-              <button
-                onClick={handleCreateTestDeposit}
-                className="px-3 py-1.5 rounded-xl bg-emerald-950/70 hover:bg-emerald-900 border border-emerald-500/40 text-emerald-300 text-xs font-bold transition-colors cursor-pointer"
-              >
-                + New Simulated Deposit
-              </button>
+
             </div>
 
             {/* Deposits Table */}

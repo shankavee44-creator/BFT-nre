@@ -257,7 +257,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
 
     try {
-      const response = await fetch('/api/auth/session', {
+      const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
+      const response = await fetch(`${API_BASE}/api/auth/session`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: cleanEmail, password, rememberMe }),
@@ -321,7 +322,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setIsSubmitting(true);
 
     try {
-      const response = await fetch('/api/auth/verify-2fa', {
+      const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
+      const response = await fetch(`${API_BASE}/api/auth/verify-2fa`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

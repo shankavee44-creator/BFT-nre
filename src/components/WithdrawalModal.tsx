@@ -519,7 +519,8 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
     setTotpError(null);
 
     try {
-      const res = await fetch('/api/2fa/validate', {
+      const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
+      const res = await fetch(`${API_BASE}/api/2fa/validate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
