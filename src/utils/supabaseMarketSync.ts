@@ -2,6 +2,7 @@ import { supabase } from './supabase';
 import { Candle, AssetInfo, AssetCategory } from '../types';
 import { normalizeAssetSymbol, findAssetBySymbol, DEFAULT_ASSETS } from './storage';
 import { getOrCreateMasterHistory, setMarketBroadcastListener, appendLiveTick } from './priceFeedEngine';
+import { safeJsonResponse } from './apiClient';
 
 export interface MarketTickPayload {
   symbol: string;
@@ -44,7 +45,7 @@ export class SupabaseMarketSyncEngine {
       try {
         const res = await fetch('/api/market/live-prices');
         if (!res.ok) return;
-        const data = await res.json();
+        const data = await safeJsonResponse(res);
         if (data?.ok && data.prices && typeof data.prices === 'object') {
           const now = Date.now();
           Object.entries(data.prices).forEach(([symbol, priceVal]) => {
@@ -75,7 +76,7 @@ export class SupabaseMarketSyncEngine {
     try {
       const res = await fetch('/api/market/live-prices');
       if (res.ok) {
-        const data = await res.json();
+        const data = await safeJsonResponse(res);
         if (data?.ok && data.prices && typeof data.prices === 'object') {
           for (const asset of DEFAULT_ASSETS) {
             const canonical = normalizeAssetSymbol(asset.symbol);
@@ -160,7 +161,7 @@ export class SupabaseMarketSyncEngine {
     try {
       const res = await fetch('/api/market/live-prices');
       if (res.ok) {
-        const data = await res.json();
+        const data = await safeJsonResponse(res);
         const price = Number(data?.prices?.[canonical] ?? data?.prices?.[symbol]);
         if (!Number.isNaN(price) && price > 0) {
           return {

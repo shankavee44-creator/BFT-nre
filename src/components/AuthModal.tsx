@@ -20,7 +20,7 @@ import {
   validateSponsorReferralCode,
   resolve3TierUplineChain,
 } from '../utils/affiliateEngine';
-import { apiEmailSessionSync } from '../utils/apiClient';
+import { apiEmailSessionSync, safeJsonResponse } from '../utils/apiClient';
 import { supabase } from '../utils/supabase';
 import { resolveOrBuildUserProfile } from '../utils/authOtpLogic';
 
@@ -262,7 +262,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: cleanEmail, password, rememberMe }),
       });
-      const data = await response.json();
+      const data = await safeJsonResponse(response);
 
       if (!data.ok) {
         setAuthError(data.error || 'Invalid email or password.');
@@ -331,7 +331,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           rememberMe,
         }),
       });
-      const data = await response.json();
+      const data = await safeJsonResponse(response);
 
       if (!data.ok) {
         setAuthError(data.error || 'Invalid 6-digit verification code.');

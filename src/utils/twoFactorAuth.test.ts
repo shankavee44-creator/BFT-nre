@@ -1,6 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateSecret, generateSync, verify, generateURI } from 'otplib';
+import {
+  safeParseJsonText,
+  safeJsonResponse,
+  generateFallbackBase32Secret,
+} from './apiClient';
 
 describe('Two-Factor Authentication (2FA) & Security Engine', () => {
   it('generates a valid RFC 6238 Base32 secret and otpauth URI', () => {
@@ -148,4 +153,65 @@ describe('Two-Factor Authentication (2FA) & Security Engine', () => {
       assert.equal(isValid, false, 'Invalid code must be rejected with verification failure');
     });
   });
+
+  describe('Safe JSON Response Handling (Prevents Unexpected end of JSON input)', () => {
+    it('safely handles empty or whitespace-only response bodies without throwing', () => {
+      const resEmpty = safeParseJsonText('', { ok: true, status: 200 });
+      assert.equal(resEmpty.ok, true);
+      assert.equal(resEmpty.emptyBody, true);
+      assert.equal(resEmpty.status, 200);
+
+      const resWhitespace = safeParseJsonText('   \n  ', {
+        ok: true,
+        status: 204,
+        fallbackPayload: { is2faEnabled: true },
+      });
+      assert.equal(resWhitespace.ok, true);
+      assert.equal(resWhitespace.emptyBody, true);
+      assert.equal(resWhitespace.is2faEnabled, true);
+    });
+
+    it('safely handles empty error responses with proper error message', () => {
+      const resErr = safeParseJsonText('', {
+        ok: false,
+        status: 500,
+        statusText: 'Internal Server Error',
+      });
+      assert.equal(resErr.ok, false);
+      assert.equal(resErr.emptyBody, true);
+      assert.equal(resErr.error, 'Internal Server Error');
+    });
+
+    it('parses valid JSON payloads accurately via safeJsonResponse', async () => {
+      const secret = generateFallbackBase32Secret(32);
+      assert.equal(secret.length, 32);
+      assert.match(secret, /^[A-Z2-7]+$/);
+
+      const mockRes = new Response(
+        JSON.stringify({ ok: true, secret, message: '2FA generated' }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+
+      const data = await safeJsonResponse(mockRes);
+      assert.equal(data.ok, true);
+      assert.equal(data.secret, secret);
+      assert.equal(data.message, '2FA generated');
+    });
+
+    it('never throws Unexpected end of JSON input when Response has empty body and application/json header', async () => {
+      const mockEmptyJsonRes = new Response('', {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      const data = await safeJsonResponse(mockEmptyJsonRes, { is2faEnabled: true });
+      assert.equal(data.ok, true);
+      assert.equal(data.emptyBody, true);
+      assert.equal(data.is2faEnabled, true);
+    });
+  });
 });
+

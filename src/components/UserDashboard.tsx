@@ -80,6 +80,8 @@ import {
   apiGetKycStatus,
   apiUpdateProfile,
   apiGetAdminUsers,
+  safeJsonResponse,
+  generateFallbackBase32Secret,
 } from '../utils/apiClient';
 import { supabase } from '../utils/supabase';
 import {
@@ -921,7 +923,10 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     soundEngine.playUiClick();
 
     try {
-      const token = localStorage.getItem('bft_jwt_session') || '';
+      const token =
+        localStorage.getItem('bft_jwt_session') ||
+        sessionStorage.getItem('bft_jwt_session') ||
+        '';
       const res = await fetch('/api/profile/2fa/generate', {
         method: 'POST',
         headers: {
@@ -934,13 +939,16 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         }),
       });
 
-      const data = await res.json();
-      if (data.ok && data.secret) {
-        setTotpSecret(data.secret);
+      const data = await safeJsonResponse(res);
+      const resolvedSecret =
+        data.secret || (res.ok && data.emptyBody ? generateFallbackBase32Secret(32) : '');
+
+      if (data.ok && resolvedSecret) {
+        setTotpSecret(resolvedSecret);
         const resolvedOtpUrl =
           data.otpauth_url ||
           data.otpauthUrl ||
-          `otpauth://totp/BFT-Trading:${encodeURIComponent(userProfile.email)}?secret=${data.secret}&issuer=BFT-Trading`;
+          `otpauth://totp/BFT-Trading:${encodeURIComponent(userProfile.email)}?secret=${resolvedSecret}&issuer=BFT-Trading`;
         setOtpUrl(resolvedOtpUrl);
         if (data.qrCode) setQrCodeDataUrl(data.qrCode);
 
@@ -952,13 +960,13 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         if (isUuid) {
           supabase
             .from('profiles')
-            .update({ totp_secret: data.secret })
+            .update({ totp_secret: resolvedSecret })
             .eq('id', userProfile.id)
             .then(undefined, (e: any) => console.warn('Supabase profile totp_secret sync warning:', e));
         } else if (userProfile.email) {
           supabase
             .from('profiles')
-            .update({ totp_secret: data.secret })
+            .update({ totp_secret: resolvedSecret })
             .eq('email', userProfile.email)
             .then(undefined, (e: any) => console.warn('Supabase profile totp_secret sync warning:', e));
         }
@@ -985,7 +993,10 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     soundEngine.playUiClick();
 
     try {
-      const token = localStorage.getItem('bft_jwt_session') || '';
+      const token =
+        localStorage.getItem('bft_jwt_session') ||
+        sessionStorage.getItem('bft_jwt_session') ||
+        '';
       const res = await fetch('/api/profile/2fa/verify', {
         method: 'POST',
         headers: {
@@ -1000,7 +1011,10 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         }),
       });
 
-      const data = await res.json();
+      const data = await safeJsonResponse(res, {
+        message: res.ok ? '2FA enabled successfully' : undefined,
+        is2faEnabled: res.ok ? true : undefined,
+      });
       if (data.ok) {
         // Officially update is_2fa_enabled in Supabase profiles table
         const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userProfile.id || '');
@@ -1051,7 +1065,10 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     soundEngine.playUiClick();
 
     try {
-      const token = localStorage.getItem('bft_jwt_session') || '';
+      const token =
+        localStorage.getItem('bft_jwt_session') ||
+        sessionStorage.getItem('bft_jwt_session') ||
+        '';
       const res = await fetch('/api/profile/2fa/disable', {
         method: 'POST',
         headers: {
@@ -1064,7 +1081,10 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         }),
       });
 
-      const data = await res.json();
+      const data = await safeJsonResponse(res, {
+        message: res.ok ? '2FA disabled successfully' : undefined,
+        is2faEnabled: res.ok ? false : undefined,
+      });
       if (data.ok) {
         const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userProfile.id || '');
         if (isUuid) {

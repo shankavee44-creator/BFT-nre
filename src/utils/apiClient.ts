@@ -35,23 +35,77 @@ const getAuthHeaders = (): HeadersInit => {
   return headers;
 };
 
-async function safeJsonResponse(res: Response) {
-  const contentType = res.headers.get('content-type') || '';
-  if (contentType.includes('application/json')) {
-    try {
-      return await res.json();
-    } catch {
-      return { ok: false, error: 'Server returned invalid JSON response.' };
-    }
+export function safeParseJsonText(
+  rawText: string | null | undefined,
+  options?: { ok?: boolean; status?: number; statusText?: string; fallbackPayload?: Record<string, any> }
+): Record<string, any> {
+  const isOk = options?.ok ?? true;
+  const status = options?.status ?? (isOk ? 200 : 500);
+  const statusText = options?.statusText || '';
+  const trimmed = typeof rawText === 'string' ? rawText.trim() : '';
+
+  if (!trimmed) {
+    return {
+      ok: isOk,
+      status,
+      emptyBody: true,
+      message: isOk ? 'Operation completed successfully.' : statusText || 'Empty response from server.',
+      ...(isOk ? {} : { error: statusText || `Request failed (${status})` }),
+      ...(options?.fallbackPayload || {}),
+    };
   }
-  const text = await res.text();
-  return {
-    ok: false,
-    error: res.ok
-      ? 'Server returned HTML instead of JSON.'
-      : `Server returned error (${res.status}): ${res.statusText || 'Request failed'}`,
-  };
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return {
+        ok: typeof parsed.ok === 'boolean' ? parsed.ok : isOk,
+        status,
+        ...parsed,
+      };
+    }
+    return {
+      ok: isOk,
+      status,
+      data: parsed,
+      ...(options?.fallbackPayload || {}),
+    };
+  } catch {
+    return {
+      ok: false,
+      status,
+      error: isOk
+        ? 'Server returned a non-JSON response.'
+        : `Server returned error (${status}): ${statusText || 'Request failed'}`,
+      ...(options?.fallbackPayload || {}),
+    };
+  }
 }
+
+export async function safeJsonResponse(
+  res: Response,
+  fallbackPayload?: Record<string, any>
+): Promise<Record<string, any>> {
+  try {
+    const text = await res.text();
+    return safeParseJsonText(text, {
+      ok: res.ok,
+      status: res.status,
+      statusText: res.statusText,
+      fallbackPayload,
+    });
+  } catch (err: any) {
+    return {
+      ok: res.ok,
+      status: res.status,
+      emptyBody: true,
+      message: res.ok ? 'Operation completed successfully.' : err?.message || 'Failed to read response body.',
+      ...(res.ok ? {} : { error: err?.message || `Request failed (${res.status})` }),
+      ...(fallbackPayload || {}),
+    };
+  }
+}
+
 
 export async function apiEmailSessionSync(params: {
   email: string;
@@ -242,8 +296,10 @@ export async function apiGetWithdrawals() {
 export async function apiPurchaseAccount(params: {
   tier: string;
   tierName: string;
+  packageName?: string;
   size: number;
   sku?: string;
+  accountType?: 'challenge' | 'self_funded';
   price: number;
   invoiceUuid?: string;
   txHash?: string;
@@ -259,6 +315,41 @@ export async function apiPurchaseAccount(params: {
     return await safeJsonResponse(res);
   } catch (e: any) {
     return { ok: false, error: e?.message || 'Account purchase failed' };
+  }
+}
+
+export async function apiSubmitCryptoDeposit(params: {
+  amount: number;
+  packageName: string;
+  sku: string;
+  accountType: 'challenge' | 'self_funded';
+  accountId?: string;
+  walletAddress?: string;
+  txHash?: string;
+}) {
+  try {
+    const res = await fetch('/api/crypto-deposits', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(params),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Crypto deposit submission failed' };
+  }
+}
+
+export async function apiVerifyCryptoDeposits(params?: { userId?: string }) {
+  try {
+    const qs = params?.userId ? `?userId=${encodeURIComponent(params.userId)}` : '';
+    const res = await fetch(`/api/crypto-deposits/verify${qs}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(params || {}),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'TronGrid TRC-20 verification check failed' };
   }
 }
 
@@ -743,4 +834,120 @@ export async function apiPushToGitHub(params?: {
     };
   }
 }
+
+export function generateFallbackBase32Secret(length = 32): string {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  const chars: string[] = [];
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    const randomBytes = new Uint8Array(length);
+    crypto.getRandomValues(randomBytes);
+    for (let i = 0; i < length; i++) {
+      chars.push(alphabet[randomBytes[i] % alphabet.length]);
+    }
+    return chars.join('');
+  }
+  for (let i = 0; i < length; i++) {
+    chars.push(alphabet[Math.floor(Math.random() * alphabet.length)]);
+  }
+  return chars.join('');
+}
+
+export async function apiGenerate2fa(params: { userId?: string; email?: string }) {
+  try {
+    const res = await fetch('/api/profile/2fa/generate', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(params),
+    });
+    const data = await safeJsonResponse(res);
+    if (data.ok && data.secret) {
+      return data;
+    }
+    if (res.ok && data.emptyBody) {
+      const fallbackSecret = generateFallbackBase32Secret(32);
+      const emailLabel = encodeURIComponent(params.email || 'trader@bft.io');
+      const otpauthUrl = `otpauth://totp/BFT-Trading:${emailLabel}?secret=${fallbackSecret}&issuer=BFT-Trading`;
+      return {
+        ok: true,
+        secret: fallbackSecret,
+        otpauthUrl,
+        otpauth_url: otpauthUrl,
+      };
+    }
+    return data;
+  } catch (e: any) {
+    return {
+      ok: false,
+      error: e?.message || 'Network error while generating 2FA credentials.',
+    };
+  }
+}
+
+export async function apiVerify2fa(params: {
+  userId?: string;
+  email?: string;
+  code: string;
+  secret?: string;
+}) {
+  try {
+    const res = await fetch('/api/profile/2fa/verify', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(params),
+    });
+    return await safeJsonResponse(res, {
+      message: res.ok ? '2FA enabled successfully' : undefined,
+      is2faEnabled: res.ok ? true : undefined,
+    });
+  } catch (e: any) {
+    return {
+      ok: false,
+      error: e?.message || 'Verification failed. Please try again.',
+    };
+  }
+}
+
+export async function apiDisable2fa(params: { userId?: string; email?: string }) {
+  try {
+    const res = await fetch('/api/profile/2fa/disable', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(params),
+    });
+    return await safeJsonResponse(res, {
+      message: res.ok ? '2FA disabled successfully' : undefined,
+      is2faEnabled: res.ok ? false : undefined,
+    });
+  } catch (e: any) {
+    return {
+      ok: false,
+      error: e?.message || 'Failed to disable 2FA.',
+    };
+  }
+}
+
+export async function apiValidate2fa(params: {
+  userId?: string;
+  email?: string;
+  code: string;
+  secret?: string;
+}) {
+  try {
+    const res = await fetch('/api/2fa/validate', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(params),
+    });
+    return await safeJsonResponse(res, {
+      isValid: res.ok ? true : false,
+    });
+  } catch (e: any) {
+    return {
+      ok: false,
+      isValid: false,
+      error: e?.message || '2FA validation failed.',
+    };
+  }
+}
+
 

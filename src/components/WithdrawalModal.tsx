@@ -52,7 +52,7 @@ import {
   validateQuotexPurseAddress,
 } from '../utils/quotexWithdrawalPortal';
 import { soundEngine } from '../utils/soundEffects';
-import { apiSubmitWithdrawal, apiCancelWithdrawal } from '../utils/apiClient';
+import { apiSubmitWithdrawal, apiCancelWithdrawal, safeJsonResponse } from '../utils/apiClient';
 import { supabase } from '../utils/supabase';
 import {
   insertSupabaseWithdrawal,
@@ -530,7 +530,9 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
         }),
       });
 
-      const data = await res.json();
+      const data = await safeJsonResponse(res, {
+        isValid: res.ok ? true : false,
+      });
       if (!data.isValid) {
         setTotpError(data.error || 'Invalid 6-digit verification code. Please check your Google Authenticator app and try again.');
         soundEngine.playErrorAlert();

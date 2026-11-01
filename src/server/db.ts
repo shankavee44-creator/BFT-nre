@@ -2,6 +2,11 @@ import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
+import {
+  matchPendingDepositToTronGridTx,
+  parseChallengePackageFromDeposit,
+  TronGridTrc20Transaction,
+} from '../config/directDeposit';
 
 function openResilientDatabase(): DatabaseSync {
   const candidates = [
@@ -611,10 +616,31 @@ db.exec(`
     payment_method TEXT NOT NULL,
     currency TEXT DEFAULT 'USDT',
     network TEXT DEFAULT 'TRC-20',
+    wallet_address TEXT DEFAULT 'TWr3rLWrWGBcfwix5osJwAwMXmpcu4PNSp',
+    package_name TEXT,
+    sku TEXT,
+    account_type TEXT DEFAULT 'self_funded',
     tx_hash TEXT,
     deposit_slip_url TEXT,
     status TEXT DEFAULT 'pending',
     decline_reason TEXT,
+    created_at INTEGER NOT NULL,
+    processed_at INTEGER
+  );
+
+  CREATE TABLE IF NOT EXISTS crypto_deposits (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    account_id TEXT,
+    wallet_address TEXT NOT NULL DEFAULT 'TWr3rLWrWGBcfwix5osJwAwMXmpcu4PNSp',
+    amount REAL NOT NULL,
+    package_name TEXT NOT NULL,
+    sku TEXT NOT NULL,
+    account_type TEXT NOT NULL DEFAULT 'self_funded',
+    currency TEXT DEFAULT 'USDT',
+    network TEXT DEFAULT 'TRC-20',
+    tx_hash TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
     created_at INTEGER NOT NULL,
     processed_at INTEGER
   );
@@ -1673,11 +1699,34 @@ export function adminSetUserRole(userId: string, newRole: 'admin' | 'trader', ad
   return getUserById(userId);
 }
 
+const depositAlterColumns = [
+  `ALTER TABLE deposits ADD COLUMN wallet_address TEXT DEFAULT 'TWr3rLWrWGBcfwix5osJwAwMXmpcu4PNSp';`,
+  `ALTER TABLE deposits ADD COLUMN package_name TEXT;`,
+  `ALTER TABLE deposits ADD COLUMN sku TEXT;`,
+  `ALTER TABLE deposits ADD COLUMN package_sku TEXT;`,
+  `ALTER TABLE deposits ADD COLUMN account_type TEXT DEFAULT 'self_funded';`,
+  `ALTER TABLE deposits ADD COLUMN is_fulfilled INTEGER DEFAULT 0;`,
+  `ALTER TABLE crypto_deposits ADD COLUMN package_sku TEXT;`,
+  `ALTER TABLE crypto_deposits ADD COLUMN is_fulfilled INTEGER DEFAULT 0;`,
+  `ALTER TABLE crypto_deposits ADD COLUMN processed_at INTEGER;`,
+];
+for (const stmt of depositAlterColumns) {
+  try {
+    db.exec(stmt);
+  } catch {
+    // Column already exists
+  }
+}
+
 export function createDepositRequest(params: {
   userId: string;
   accountId?: string;
   amount: number;
   paymentMethod: string;
+  walletAddress?: string;
+  packageName?: string;
+  sku?: string;
+  accountType?: 'challenge' | 'self_funded';
   currency?: string;
   network?: string;
   txHash?: string;
@@ -1688,10 +1737,26 @@ export function createDepositRequest(params: {
   const cleanAmount = Number(params.amount.toFixed(2));
   if (cleanAmount <= 0) throw new Error('Deposit amount must be greater than $0.');
 
+  const walletAddress = params.walletAddress || 'TWr3rLWrWGBcfwix5osJwAwMXmpcu4PNSp';
+  const accountType: 'challenge' | 'self_funded' =
+    params.accountType === 'challenge' ? 'challenge' : 'self_funded';
+  const packageName =
+    params.packageName ||
+    (accountType === 'challenge'
+      ? 'Funded Challenge Evaluation'
+      : `Self-Funded Personal Live Deposit ($${cleanAmount.toFixed(2)} USDT)`);
+  const sku =
+    params.sku ||
+    (accountType === 'challenge'
+      ? `BFT-CHALLENGE-${Math.round(cleanAmount)}`
+      : `BFT-SELF-${Math.round(cleanAmount)}`);
+
   db.prepare(`
     INSERT INTO deposits (
-      id, user_id, account_id, amount, payment_method, currency, network, tx_hash, deposit_slip_url, status, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+      id, user_id, account_id, amount, payment_method, currency, network,
+      wallet_address, package_name, sku, package_sku, account_type,
+      tx_hash, deposit_slip_url, status, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
   `).run(
     id,
     params.userId,
@@ -1700,13 +1765,265 @@ export function createDepositRequest(params: {
     params.paymentMethod,
     params.currency || 'USDT',
     params.network || 'TRC-20',
+    walletAddress,
+    packageName,
+    sku,
+    sku,
+    accountType,
     params.txHash || null,
     params.depositSlipUrl || null,
     now
   );
 
-  return db.prepare('SELECT * FROM deposits WHERE id = ?').get(id) as any;
+  // Also save pending record into crypto_deposits table
+  db.prepare(`
+    INSERT OR REPLACE INTO crypto_deposits (
+      id, user_id, account_id, wallet_address, amount, package_name, sku, package_sku,
+      account_type, currency, network, tx_hash, status, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+  `).run(
+    id,
+    params.userId,
+    params.accountId || null,
+    walletAddress,
+    cleanAmount,
+    packageName,
+    sku,
+    sku,
+    accountType,
+    params.currency || 'USDT',
+    params.network || 'TRC-20',
+    params.txHash || null,
+    now
+  );
+
+  return db.prepare('SELECT * FROM crypto_deposits WHERE id = ?').get(id) as any;
 }
+
+export function createCryptoDepositRecord(params: {
+  userId: string;
+  accountId?: string;
+  walletAddress?: string;
+  amount: number;
+  packageName: string;
+  sku: string;
+  accountType: 'challenge' | 'self_funded';
+  txHash?: string;
+}) {
+  return createDepositRequest({
+    userId: params.userId,
+    accountId: params.accountId,
+    amount: params.amount,
+    paymentMethod: 'USDT (TRC-20)',
+    walletAddress: params.walletAddress || 'TWr3rLWrWGBcfwix5osJwAwMXmpcu4PNSp',
+    packageName: params.packageName,
+    sku: params.sku,
+    accountType: params.accountType,
+    currency: 'USDT',
+    network: 'TRC-20',
+    txHash: params.txHash,
+  });
+}
+
+export function getCryptoDeposits(params?: { userId?: string; accountId?: string }) {
+  if (params?.userId) {
+    return db
+      .prepare('SELECT * FROM crypto_deposits WHERE user_id = ? ORDER BY created_at DESC LIMIT 50')
+      .all(params.userId) as any[];
+  }
+  if (params?.accountId) {
+    return db
+      .prepare('SELECT * FROM crypto_deposits WHERE account_id = ? ORDER BY created_at DESC LIMIT 50')
+      .all(params.accountId) as any[];
+  }
+  return db
+    .prepare('SELECT * FROM crypto_deposits ORDER BY created_at DESC LIMIT 50')
+    .all() as any[];
+}
+
+export function getPendingCryptoDeposits(userId?: string) {
+  if (userId) {
+    return db
+      .prepare(
+        `SELECT * FROM crypto_deposits WHERE status = 'pending' AND user_id = ? ORDER BY created_at ASC`
+      )
+      .all(userId) as any[];
+  }
+  return db
+    .prepare(`SELECT * FROM crypto_deposits WHERE status = 'pending' ORDER BY created_at ASC`)
+    .all() as any[];
+}
+
+export function getCompletedCryptoDepositTxHashes(): Set<string> {
+  const rows = db
+    .prepare(
+      `SELECT tx_hash FROM crypto_deposits WHERE status IN ('completed', 'approved') AND tx_hash IS NOT NULL`
+    )
+    .all() as Array<{ tx_hash?: string | null }>;
+  const claimed = new Set<string>();
+  for (const row of rows) {
+    const hash = String(row?.tx_hash || '').trim();
+    if (hash && !hash.toLowerCase().startsWith('trc20_')) {
+      claimed.add(hash);
+    }
+  }
+  return claimed;
+}
+
+export function completeCryptoDepositInDb(
+  depositId: string,
+  matchedTxHash: string,
+  options?: { skipBalanceCreditIfAlreadyCredited?: boolean }
+) {
+  let deposit = db.prepare('SELECT * FROM crypto_deposits WHERE id = ?').get(depositId) as any;
+  if (!deposit) {
+    deposit = db.prepare('SELECT * FROM deposits WHERE id = ?').get(depositId) as any;
+  }
+  if (!deposit) {
+    throw new Error(`Crypto deposit record ${depositId} not found.`);
+  }
+
+  const now = Date.now();
+  const cleanTxHash = String(matchedTxHash || deposit.tx_hash || '').trim();
+  const wasAlreadyFulfilled =
+    Number(deposit.is_fulfilled) === 1 ||
+    deposit.status === 'completed' ||
+    deposit.status === 'approved';
+  const accountType: 'challenge' | 'self_funded' =
+    String(deposit.account_type || '').toLowerCase() === 'challenge'
+      ? 'challenge'
+      : 'self_funded';
+  const amount = Number(deposit.amount || 0);
+  const userId = String(deposit.user_id || 'usr_bft_001');
+
+  // Ensure user exists in users table so foreign keys succeed
+  ensureUserInDb({
+    id: userId,
+    email: `${userId.toLowerCase().replace(/[^a-z0-9]/g, '')}@client-bft.com`,
+    fullName: `Trader ${userId.slice(-4)}`,
+  });
+
+  let targetAccount: any = null;
+
+  if (accountType === 'challenge') {
+    const existingAcc = deposit.account_id ? getAccountById(deposit.account_id) : null;
+    if (existingAcc) {
+      db.prepare(`
+        UPDATE accounts SET
+          status = 'active',
+          updated_at = ?
+        WHERE id = ?
+      `).run(now, existingAcc.id);
+      targetAccount = getAccountById(existingAcc.id);
+    } else {
+      const parsedPkg = parseChallengePackageFromDeposit({
+        sku: deposit.sku,
+        package_sku: deposit.package_sku,
+        package_name: deposit.package_name,
+        amount,
+      });
+      targetAccount = createAccount({
+        userId,
+        tier: parsedPkg.tier,
+        tierName: parsedPkg.tierName,
+        size: parsedPkg.size,
+        dailyWithdrawalsUnlocked: false,
+      });
+    }
+  } else {
+    // self_funded: credit user's self-funded balance if not yet fulfilled
+    if (!wasAlreadyFulfilled && !options?.skipBalanceCreditIfAlreadyCredited) {
+      ensurePersonalLiveAccountForUser(userId);
+      targetAccount = creditPersonalAccountDepositInDb({
+        userId,
+        accountId: deposit.account_id || undefined,
+        amountUsdt: amount,
+      });
+    } else {
+      targetAccount =
+        (deposit.account_id ? getAccountById(deposit.account_id) : null) ||
+        ensurePersonalLiveAccountForUser(userId);
+    }
+  }
+
+  const linkedAccountId = targetAccount?.id || deposit.account_id || null;
+
+  db.prepare(`
+    UPDATE crypto_deposits SET
+      status = 'completed',
+      account_id = COALESCE(?, account_id),
+      tx_hash = COALESCE(?, tx_hash),
+      is_fulfilled = 1,
+      processed_at = ?
+    WHERE id = ?
+  `).run(linkedAccountId, cleanTxHash || null, now, depositId);
+
+  try {
+    db.prepare(`
+      UPDATE deposits SET
+        status = 'completed',
+        account_id = COALESCE(?, account_id),
+        tx_hash = COALESCE(?, tx_hash),
+        is_fulfilled = 1,
+        processed_at = ?
+      WHERE id = ?
+    `).run(linkedAccountId, cleanTxHash || null, now, depositId);
+  } catch {}
+
+  let commissionsDistributed: any[] = [];
+  if (!wasAlreadyFulfilled && amount > 0) {
+    try {
+      commissionsDistributed = distribute3TierCommissions(
+        userId,
+        amount,
+        'deposit',
+        `Verified USDT (TRC-20) ${accountType} payment of $${amount.toFixed(2)} USDT (${
+          deposit.sku || deposit.package_sku || 'BFT'
+        })`
+      );
+    } catch {}
+  }
+
+  const updatedDeposit = db
+    .prepare('SELECT * FROM crypto_deposits WHERE id = ?')
+    .get(depositId) as any;
+
+  return {
+    ok: true,
+    deposit: updatedDeposit,
+    account: targetAccount,
+    accountType,
+    amount,
+    txHash: cleanTxHash,
+    commissionsDistributed,
+  };
+}
+
+export function verifyAndCompletePendingCryptoDepositsInDb(
+  transactions: TronGridTrc20Transaction[],
+  options?: { userId?: string }
+) {
+  const pendingDeposits = getPendingCryptoDeposits(options?.userId);
+  const claimedTxIds = getCompletedCryptoDepositTxHashes();
+  const completedResults: Array<ReturnType<typeof completeCryptoDepositInDb>> = [];
+
+  for (const pending of pendingDeposits) {
+    const matchedTx = matchPendingDepositToTronGridTx(pending, transactions, claimedTxIds);
+    if (matchedTx) {
+      claimedTxIds.add(matchedTx.transaction_id);
+      const completed = completeCryptoDepositInDb(pending.id, matchedTx.transaction_id);
+      completedResults.push(completed);
+    }
+  }
+
+  return {
+    checkedCount: pendingDeposits.length,
+    matchedCount: completedResults.length,
+    completedDeposits: completedResults,
+    remainingPendingCount: Math.max(0, pendingDeposits.length - completedResults.length),
+  };
+}
+
 
 export function getAdminDeposits(statusFilter?: string) {
   let query = `
@@ -1737,6 +2054,15 @@ export function adminApproveDeposit(depositId: string, adminUserId: string) {
       processed_at = ?
     WHERE id = ?
   `).run(now, depositId);
+
+  try {
+    db.prepare(`
+      UPDATE crypto_deposits SET
+        status = 'approved',
+        processed_at = ?
+      WHERE id = ?
+    `).run(now, depositId);
+  } catch {}
 
   // Credit user's personal live account or target account
   let targetAccount = deposit.account_id ? getAccountById(deposit.account_id) : null;
@@ -1789,6 +2115,15 @@ export function adminDeclineDeposit(depositId: string, reason: string, adminUser
       processed_at = ?
     WHERE id = ?
   `).run(reason || 'Declined by administrator', now, depositId);
+
+  try {
+    db.prepare(`
+      UPDATE crypto_deposits SET
+        status = 'declined',
+        processed_at = ?
+      WHERE id = ?
+    `).run(now, depositId);
+  } catch {}
 
   recordAdminAuditLog(adminUserId, 'DECLINE_DEPOSIT', depositId, 'deposit', { reason });
 
