@@ -153,10 +153,15 @@ CREATE TABLE IF NOT EXISTS public.user_purchases (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   package_name TEXT NOT NULL,
+  package_sku TEXT,
   package_amount NUMERIC(15, 2) NOT NULL CHECK (package_amount > 0),
   is_self_funded BOOLEAN NOT NULL DEFAULT FALSE,
+  is_provisioned BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE public.user_purchases ADD COLUMN IF NOT EXISTS package_sku TEXT;
+ALTER TABLE public.user_purchases ADD COLUMN IF NOT EXISTS is_provisioned BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- Enable Realtime
 ALTER PUBLICATION supabase_realtime ADD TABLE public.referral_commissions;
@@ -470,14 +475,15 @@ CREATE TRIGGER trg_user_purchase_commission
 CREATE OR REPLACE FUNCTION public.admin_assign_package(
   target_user_id UUID,
   pkg_name TEXT,
+  pkg_sku TEXT,
   pkg_amount NUMERIC
 ) RETURNS VOID AS $$
 BEGIN
   IF NOT public.is_bft_admin() THEN
     RAISE EXCEPTION 'Unauthorized';
   END IF;
-  INSERT INTO public.user_purchases (user_id, package_name, package_amount, is_self_funded)
-  VALUES (target_user_id, pkg_name, pkg_amount, FALSE);
+  INSERT INTO public.user_purchases (user_id, package_name, package_sku, package_amount, is_self_funded)
+  VALUES (target_user_id, pkg_name, pkg_sku, pkg_amount, FALSE);
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 

@@ -164,6 +164,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         tier: packageToBuy.tier,
         tierName: packageToBuy.tierName,
         size: packageToBuy.size,
+        sku: `${packageToBuy.tier.toUpperCase()}-${packageToBuy.size}`,
         price: finalPrice,
         referralCode: activeReferralCode,
         dailyWithdrawalsUnlocked: unlockDailyWithdrawals,

@@ -567,6 +567,8 @@ const kycAlterColumns = [
   `ALTER TABLE users ADD COLUMN kyc_front_filename TEXT;`,
   `ALTER TABLE users ADD COLUMN kyc_back_filename TEXT;`,
   `ALTER TABLE users ADD COLUMN kyc_submitted_at TEXT;`,
+  `ALTER TABLE users ADD COLUMN is_2fa_enabled INTEGER DEFAULT 0;`,
+  `ALTER TABLE users ADD COLUMN totp_secret TEXT;`,
   `ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'trader';`,
   `ALTER TABLE users ADD COLUMN self_balance REAL DEFAULT 0;`,
   `ALTER TABLE users ADD COLUMN demo_balance REAL DEFAULT 10000;`,
@@ -2543,6 +2545,58 @@ export function cancelWithdrawalRequest(userId: string, withdrawalId: string) {
         processed_at = ?
       WHERE id = ? AND status = 'pending'
     `).run(now, withdrawalId);
+
+    if (info.changes === 0) {
+      throw new Error('Withdrawal request is no longer pending or already processed.');
+    }
+
+    // 2. Refund balance
+    const account = getAccountById(withdrawal.account_id);
+    if (account) {
+      const newBalance = Number((account.currentBalance + withdrawal.gross_amount).toFixed(2));
+      const newEquity = Number((account.equity + withdrawal.gross_amount).toFixed(2));
+      
+      db.prepare(`
+        UPDATE accounts SET
+          current_balance = ?,
+          equity = ?,
+          updated_at = ?
+        WHERE id = ?
+      `).run(newBalance, newEquity, now, account.id);
+      
+      // Update user table balance
+      if (account.tier === 'personal' || account.account_category === 'personal_live' || String(withdrawal.account_id).includes('PERS')) {
+          db.prepare(`UPDATE users SET self_balance = ? WHERE id = ?`).run(newBalance, userId);
+      } else if (account.phase === 'funded') {
+          db.prepare(`UPDATE users SET funded_balance = ? WHERE id = ?`).run(newBalance, userId);
+      }
+    }
+
+    db.exec('COMMIT');
+    return { ok: true, withdrawal: db.prepare('SELECT * FROM withdrawals WHERE id = ?').get(withdrawalId) };
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+export function declineWithdrawalRequest(adminUserId: string, userId: string, withdrawalId: string, reason: string) {
+  const withdrawal = db.prepare('SELECT * FROM withdrawals WHERE id = ? AND user_id = ?').get(withdrawalId, userId) as any;
+  if (!withdrawal) throw new Error('Withdrawal record not found.');
+  if (withdrawal.status !== 'pending') throw new Error(`Withdrawal cannot be declined from status: ${withdrawal.status}`);
+
+  const now = Date.now();
+  
+  try {
+    db.exec('BEGIN TRANSACTION');
+
+    // 1. Update status
+    const info = db.prepare(`
+      UPDATE withdrawals SET
+        status = 'rejected',
+        rejection_reason = ?,
+        processed_at = ?
+      WHERE id = ? AND status = 'pending'
+    `).run(reason, now, withdrawalId);
 
     if (info.changes === 0) {
       throw new Error('Withdrawal request is no longer pending or already processed.');

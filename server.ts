@@ -4,6 +4,8 @@ import path from 'path';
 import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
+import { generateSecret, verify, generateURI } from 'otplib';
+import QRCode from 'qrcode';
 import type {
   CryptomusDepositInvoice,
   CryptomusWebhookPayload,
@@ -61,6 +63,8 @@ import {
   settleTradeInDb,
   getUserTradesFromDb,
   cancelWithdrawalRequest,
+  declineWithdrawalRequest,
+  createAccount,
   db,
 } from './src/server/db.ts';
 import { BackendMarketEngine } from './src/server/marketEngine.ts';
@@ -70,7 +74,7 @@ dotenv.config({ override: true });
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = Number(process.env.PORT) || 3000;
+const PORT = 3000;
 const CRYPTOMUS_MERCHANT_ID =
   process.env.CRYPTOMUS_MERCHANT_ID &&
   process.env.CRYPTOMUS_MERCHANT_ID !== 'MY_CRYPTOMUS_MERCHANT_ID' &&
@@ -92,6 +96,62 @@ async function startServer() {
 
   const marketEngine = new BackendMarketEngine();
   marketEngine.start();
+
+  // Polling for manual user_purchases to provision accounts
+  const supabaseUrl = process.env.VITE_SUPABASE_URL;
+  const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY;
+  
+  if (supabaseUrl && supabaseAnonKey) {
+    setInterval(async () => {
+      try {
+        const url = `${supabaseUrl}/rest/v1/user_purchases?is_provisioned=eq.false`;
+        const res = await fetch(url, {
+          headers: {
+            'apikey': supabaseAnonKey,
+            'Authorization': `Bearer ${supabaseAnonKey}`,
+            'Prefer': 'return=representation'
+          }
+        });
+        const purchases = await res.json();
+        if (!Array.isArray(purchases)) return;
+  
+        for (const p of purchases) {
+          // Map sku to tier, tierName, size
+          let tier = 'two-step';
+          let tierName = p.package_name;
+          let size = Number(p.package_amount);
+          
+          if (p.package_sku?.includes('1S')) tier = 'one-step';
+          else if (p.package_sku?.includes('INF')) tier = 'instant';
+          else if (p.package_sku?.includes('2S')) tier = 'two-step';
+  
+          const acc = createAccount({
+            userId: p.user_id,
+            tier: tier as any,
+            tierName: tierName,
+            size: size,
+            dailyWithdrawalsUnlocked: false
+          });
+  
+          if (acc) {
+            await fetch(`${supabaseUrl}/rest/v1/user_purchases?id=eq.${p.id}`, {
+              method: 'PATCH',
+              headers: {
+                'apikey': supabaseAnonKey,
+                'Authorization': `Bearer ${supabaseAnonKey}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({ is_provisioned: true })
+            });
+          }
+        }
+      } catch (e) {
+        console.error('Polling for manual purchases failed:', e);
+      }
+    }, 10000);
+  } else {
+    console.warn('Supabase polling disabled: VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY missing.');
+  }
 
   app.use(express.json({ limit: '5mb' }));
 
@@ -218,6 +278,7 @@ async function startServer() {
       kycBackDocumentFileName: user.kyc_back_filename || sub?.back_file_name || '',
       kycSubmittedAt: user.kyc_submitted_at || '',
       profileLocked: Boolean(user.profile_locked || sub?.profile_locked),
+      is2faEnabled: Boolean(user.is_2fa_enabled),
       address: user.address || sub?.address || '',
       dateOfBirth: user.date_of_birth || sub?.date_of_birth || '',
       country: user.country || sub?.country || 'United States',
@@ -759,7 +820,7 @@ async function startServer() {
   });
 
   // POST /api/withdrawals - Submit withdrawal enforcing 80% net profit rule, $250 min, 10% fee, 8% direct referral bonus
-  app.post('/api/withdrawals', (req, res) => {
+  app.post('/api/withdrawals', async (req, res) => {
     try {
       const user = getAuthenticatedUser(req);
       if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
@@ -769,9 +830,22 @@ async function startServer() {
       const walletAddress = String(req.body?.walletAddress || req.body?.purseAddress || '').trim();
       const network = String(req.body?.network || 'TRON (TRC-20)').trim();
       const paymentMethod = String(req.body?.paymentMethod || 'crypto_trc20').trim();
+      const twoFactorCode = String(req.body?.twoFactorCode || '').trim();
 
       if (!accountId || !requestedAmount || !walletAddress) {
         return res.status(400).json({ ok: false, error: 'Missing required withdrawal parameters.' });
+      }
+
+      if (user.is_2fa_enabled) {
+        if (!twoFactorCode) {
+          return res.status(400).json({ ok: false, error: '2FA verification code required.' });
+        }
+        const isValid = (await verify({ token: twoFactorCode, secret: user.totp_secret })).valid;
+        if (!isValid) {
+          return res.status(400).json({ ok: false, error: 'Invalid 2FA code.' });
+        }
+      } else {
+        return res.status(403).json({ ok: false, error: '2FA is not enabled. Please enable 2FA in Security settings.' });
       }
 
       const result = processWithdrawalRequest({
@@ -1087,6 +1161,57 @@ async function startServer() {
         error: err?.message || 'Webhook processing error.',
       });
     }
+  });
+
+  // ============================================================================
+  // 2FA TOTP AUTHENTICATION
+  // ============================================================================
+  app.get('/api/2fa/setup', (req, res) => {
+    const user = getAuthenticatedUser(req);
+    if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
+    
+    const secret = generateSecret();
+    const otpauthUrl = generateURI({ issuer: 'BFT-Trading', label: user.email, secret });
+    
+    QRCode.toDataURL(otpauthUrl, (err, imageUrl) => {
+      if (err) return res.status(500).json({ ok: false, error: 'Failed to generate QR code' });
+      
+      db.prepare('UPDATE users SET totp_secret = ? WHERE id = ?').run(secret, user.id);
+      
+      res.json({ ok: true, secret, qrCode: imageUrl });
+    });
+  });
+
+  app.post('/api/2fa/verify', async (req, res) => {
+    const user = getAuthenticatedUser(req);
+    if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
+    
+    const { code } = req.body;
+    const secret = user.totp_secret;
+    
+    if (!secret) return res.status(400).json({ ok: false, error: '2FA not initialized' });
+    
+    const isValid = (await verify({ token: code, secret })).valid;
+    if (isValid) {
+      db.prepare('UPDATE users SET is_2fa_enabled = 1 WHERE id = ?').run(user.id);
+      res.json({ ok: true, message: '2FA enabled' });
+    } else {
+      res.status(400).json({ ok: false, error: 'Invalid 2FA code' });
+    }
+  });
+
+  app.post('/api/2fa/validate', async (req, res) => {
+    const user = getAuthenticatedUser(req);
+    if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
+    
+    const { code } = req.body;
+    const secret = user.totp_secret;
+    
+    if (!user.is_2fa_enabled) return res.json({ ok: true, isValid: true });
+    if (!secret) return res.status(400).json({ ok: false, error: '2FA not initialized' });
+    
+    const isValid = (await verify({ token: code, secret })).valid;
+    res.json({ ok: true, isValid });
   });
 
   // ============================================================================

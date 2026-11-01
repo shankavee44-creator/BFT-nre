@@ -29,13 +29,13 @@ export const ReferralNetworkList: React.FC<ReferralNetworkListProps> = ({ userId
     const allIds = allUsers.map(u => u.id);
 
     // Purchases
-    const { data: purchases } = await supabase.from('user_purchases').select('user_id, package_name, package_amount').in('user_id', allIds);
+    const { data: purchases } = await supabase.from('user_purchases').select('user_id, package_name, package_sku, package_amount').in('user_id', allIds);
 
     const networkWithPurchases = allUsers.map(u => {
       const purchase = (purchases || []).find(p => p.user_id === u.id);
       return {
         ...u,
-        latestPurchase: purchase ? { name: purchase.package_name, amount: purchase.package_amount } : undefined
+        latestPurchase: purchase ? { name: purchase.package_name, sku: purchase.package_sku, amount: purchase.package_amount } : undefined
       };
     });
     setNetwork(networkWithPurchases);
@@ -71,7 +71,14 @@ export const ReferralNetworkList: React.FC<ReferralNetworkListProps> = ({ userId
                 <tr key={u.id} className="hover:bg-white/5">
                   <td className="py-3 pl-2 font-bold text-white">{u.fullName}</td>
                   <td className="py-3 text-slate-300">Level {u.level}</td>
-                  <td className="py-3 text-slate-300">{u.latestPurchase ? u.latestPurchase.name : 'No Purchase'}</td>
+                  <td className="py-3 text-slate-300">
+                    {u.latestPurchase ? (
+                      <>
+                        <span className="font-black text-[#ff8800]">{u.latestPurchase.sku}</span>
+                        <span className="text-slate-500 ml-1">({u.latestPurchase.name})</span>
+                      </>
+                    ) : 'No Purchase'}
+                  </td>
                   <td className="py-3 text-right pr-2 font-bold text-emerald-400">
                     {u.latestPurchase ? `$${Number(u.latestPurchase.amount).toFixed(2)}` : '$0'}
                   </td>

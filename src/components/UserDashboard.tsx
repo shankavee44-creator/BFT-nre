@@ -70,6 +70,7 @@ import {
   isDemoAccount,
   getAccountStatusBadgeLabel,
   getChallengeProfitTarget,
+  getPackageSku,
 } from '../utils/propRules';
 import {
   apiLockProfile,
@@ -1514,20 +1515,39 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {purchases.map((purchase) => (
-                  <div
-                    key={purchase.id}
-                    className="p-4 rounded-xl bg-[#111115] border border-white/10 flex items-center justify-between gap-4"
-                  >
-                    <div>
-                      <div className="text-sm font-bold text-white">{purchase.package_name || 'Challenge Account'}</div>
-                      <div className="text-xs text-slate-400">Amount: ${Number(purchase.package_amount).toFixed(2)}</div>
+                {purchases.map((purchase) => {
+                  const accountForPurchase = accounts.find((a) => getPackageSku(a) === purchase.package_sku);
+                  return (
+                    <div
+                      key={purchase.id}
+                      className="p-4 rounded-xl bg-[#111115] border border-white/10 flex items-center justify-between gap-4"
+                    >
+                      <div>
+                        <div className="text-sm font-bold text-white">
+                          {purchase.package_sku || purchase.package_name || 'Challenge Account'}
+                        </div>
+                        <div className="text-xs text-slate-400">Amount: ${Number(purchase.package_amount).toFixed(2)}</div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <div className="text-xs text-slate-400 text-right">
+                          {new Date(purchase.created_at).toLocaleDateString()}
+                        </div>
+                        {accountForPurchase && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onSelectAccount(accountForPurchase.id);
+                              onOpenTerminal();
+                            }}
+                            className="px-3 py-2 rounded-xl bg-[#ff8800] text-slate-950 font-black text-[10px] hover:bg-[#ff9900] transition-colors"
+                          >
+                            Launch Terminal
+                          </button>
+                        )}
+                      </div>
                     </div>
-                    <div className="text-xs text-slate-400">
-                      {new Date(purchase.created_at).toLocaleDateString()}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

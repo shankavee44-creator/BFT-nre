@@ -404,6 +404,12 @@ export const PACKAGES: EvaluationPackage[] = [
   },
 ];
 
+export function getPackageSku(pkg: { tier: string; size: number }): string {
+  const sizeK = pkg.size >= 1000 ? `${pkg.size / 1000}K` : `${pkg.size}`;
+  const prefix = pkg.tier === 'one-step' ? '1S' : pkg.tier === 'two-step' ? '2S' : 'INF';
+  return `${prefix}-${sizeK}`;
+}
+
 export const MIN_WITHDRAWAL_PROFIT = 250; // Strict $250 Minimum Withdrawal Limit
 export const MIN_WITHDRAWAL_AMOUNT = 250;
 export const FIRST_WITHDRAWAL_WAITING_DAYS = 14; // Mandatory 14-day waiting period for the very first withdrawal across all account types
