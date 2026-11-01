@@ -1,4 +1,5 @@
 import express from 'express';
+import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
 import { execSync } from 'child_process';
@@ -193,18 +194,19 @@ async function ensureSupabaseProfileInRest(
 async function startServer() {
   const app = express();
 
-  // Permissive CORS & Options preflight handler to prevent 405 Method Not Allowed
-  app.use((req, res, next) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-admin-key, apikey, prefer');
-    if (req.method === 'OPTIONS') {
-      return res.status(200).end();
-    }
-    next();
-  });
-  app.use(express.json({ limit: '10mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+  // Robust CORS & Options preflight handler to prevent 405 Method Not Allowed
+  app.use(cors({
+    origin: '*',
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-admin-key', 'apikey', 'prefer'],
+    preflightContinue: false,
+    optionsSuccessStatus: 200
+  }));
+
+  app.options('*', cors());
+
+  app.use(express.json({ limit: '20mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
   const marketEngine = new BackendMarketEngine();
   marketEngine.start();
@@ -505,7 +507,7 @@ async function startServer() {
     console.warn('Supabase polling disabled: VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY missing.');
   }
 
-  app.use(express.json({ limit: '5mb' }));
+
 
   app.get(['/api/health', '/healthz'], (_req, res) => {
     res.status(200).json({ ok: true, status: 'healthy', timestamp: Date.now() });
@@ -2757,9 +2759,23 @@ async function startServer() {
   });
 
   // 404 Fallback for unhandled /api/* and /functions/v1/* endpoints
-  app.all(['/api/*', '/functions/v1/*'], (_req, res) => {
+  app.all(['/api/*', '/functions/v1/*'], (req, res) => {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    res.status(404).json({ ok: false, error: 'API endpoint not found.' });
+    console.warn(`[API 404] ${req.method} ${req.url}`);
+    res.status(404).json({ 
+      ok: false, 
+      error: `API endpoint not found: ${req.method} ${req.url}`,
+      code: 'NOT_FOUND'
+    });
+  });
+
+  // Explicit 405 Method Not Allowed handler for known API paths
+  app.use('/api', (req, res, next) => {
+    // If we reached here, it means no route matched. 
+    // But we already have a 404 handler above for /api/*.
+    // So this might be reached if a route matched the path but not the method.
+    // However, Express usually returns 404 in that case too unless we use specific method handlers.
+    next();
   });
 
   // Global JSON error-handling middleware for /api/* and /functions/v1/*

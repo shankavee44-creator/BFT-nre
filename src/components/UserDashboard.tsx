@@ -1018,7 +1018,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         sessionStorage.getItem('bft_jwt_session') ||
         '';
       const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
-      const res = await fetch(`${API_BASE}/api/profile/2fa/generate`, {
+      const res = await fetch(`${API_BASE}/api/2fa/setup`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1089,7 +1089,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         sessionStorage.getItem('bft_jwt_session') ||
         '';
       const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
-      const res = await fetch(`${API_BASE}/api/profile/2fa/verify`, {
+      const res = await fetch(`${API_BASE}/api/2fa/verify`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1162,7 +1162,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         sessionStorage.getItem('bft_jwt_session') ||
         '';
       const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
-      const res = await fetch(`${API_BASE}/api/profile/2fa/disable`, {
+      const res = await fetch(`${API_BASE}/api/2fa/disable`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
