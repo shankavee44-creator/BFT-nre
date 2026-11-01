@@ -1,4 +1,4 @@
-import type { EvaluationPackage, TradingAccount, BinaryTrade, WithdrawalRequest, RuleViolationLog, BinaryOptionDirection, PromoCodeType } from '../types/index.ts';
+import type { EvaluationPackage, TradingAccount, BinaryTrade, WithdrawalRequest, RuleViolationLog, BinaryOptionDirection, PromoCodeType, ChallengeTier } from '../types/index.ts';
 
 export const PROMO_CODES: Record<PromoCodeType, { code: PromoCodeType; discountPercent: number; label: string; audience: string }> = {
   SPOOKY40: {

@@ -7,6 +7,11 @@ import {
   parseChallengePackageFromDeposit,
   type TronGridTrc20Transaction,
 } from '../config/directDeposit.ts';
+import {
+  getDynamicAccountLimits,
+  normalizeChallengeAccountType,
+} from '../utils/propRules.ts';
+
 
 function openResilientDatabase(): DatabaseSync {
   const candidates = [

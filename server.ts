@@ -109,6 +109,83 @@ const isValidUuid = (val: string) =>
     String(val || '').trim()
   );
 
+const toValidUuid = (str?: string | null): string => {
+  if (!str) return '00000000-0000-4000-8000-000000000001';
+  const clean = String(str).trim();
+  if (isValidUuid(clean)) return clean.toLowerCase();
+  let hash1 = 0;
+  let hash2 = 0;
+  for (let i = 0; i < clean.length; i++) {
+    const ch = clean.charCodeAt(i);
+    hash1 = (hash1 << 5) - hash1 + ch;
+    hash1 |= 0;
+    hash2 = (hash2 << 7) ^ hash2 + ch;
+    hash2 |= 0;
+  }
+  const h1 = Math.abs(hash1).toString(16).padStart(8, '0');
+  const h2 = Math.abs(hash2).toString(16).padStart(8, '0');
+  const h3 = Math.abs(hash1 ^ hash2).toString(16).padStart(8, '0');
+  const h4 = Math.abs(hash1 * 31 + hash2).toString(16).padStart(8, '0');
+  const raw = (h1 + h2 + h3 + h4).slice(0, 32);
+  return `${raw.slice(0, 8)}-${raw.slice(8, 12)}-4${raw.slice(13, 16)}-a${raw.slice(17, 20)}-${raw.slice(20, 32)}`;
+};
+
+async function ensureSupabaseProfileInRest(
+  supabaseUrl: string,
+  supabaseAnonKey: string,
+  user: { id: string; email?: string; full_name?: string }
+): Promise<string> {
+  let targetUuid = isValidUuid(user.id) ? user.id : null;
+  if (!targetUuid && user.email) {
+    try {
+      const pRes = await fetch(
+        `${supabaseUrl}/rest/v1/profiles?email=eq.${encodeURIComponent(user.email)}&select=id`,
+        {
+          headers: {
+            apikey: supabaseAnonKey,
+            Authorization: `Bearer ${supabaseAnonKey}`,
+          },
+        }
+      );
+      if (pRes.ok) {
+        const text = await pRes.text();
+        if (text && text.trim()) {
+          const rows = JSON.parse(text.trim());
+          if (Array.isArray(rows) && rows.length > 0 && rows[0].id) {
+            targetUuid = String(rows[0].id);
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+  if (!targetUuid) {
+    targetUuid = toValidUuid(user.id || user.email || 'usr_bft_001');
+  }
+
+  try {
+    fetch(`${supabaseUrl}/rest/v1/profiles`, {
+      method: 'POST',
+      headers: {
+        apikey: supabaseAnonKey,
+        Authorization: `Bearer ${supabaseAnonKey}`,
+        'Content-Type': 'application/json',
+        Prefer: 'resolution=merge-duplicates',
+      },
+      body: JSON.stringify({
+        id: targetUuid,
+        email: (user.email || `${targetUuid.slice(0, 8)}@client-bft.com`).toLowerCase(),
+        full_name: user.full_name || 'Trader User',
+      }),
+    }).catch(() => {});
+  } catch {
+    // ignore
+  }
+
+  return targetUuid;
+}
+
 async function startServer() {
   const app = express();
 
@@ -1213,7 +1290,7 @@ async function startServer() {
         customSku: req.body?.sku ? String(req.body.sku) : undefined,
       });
 
-      const limits = getDynamicAccountLimits(tier, size);
+      const limits = getDynamicAccountLimits(tier, 'phase_1');
 
       const accountId = `BFT-${Math.floor(10000 + Math.random() * 89999)}`;
       const now = Date.now();
@@ -1283,30 +1360,11 @@ async function startServer() {
       }
 
       if (supabaseUrl && supabaseAnonKey) {
-        let targetSupaUuid = isValidUuid(user.id) ? user.id : null;
-        if (!targetSupaUuid && user.email) {
-          try {
-            const pRes = await fetch(
-              `${supabaseUrl}/rest/v1/profiles?email=eq.${encodeURIComponent(user.email)}&select=id`,
-              {
-                headers: {
-                  apikey: supabaseAnonKey,
-                  Authorization: `Bearer ${supabaseAnonKey}`,
-                },
-              }
-            );
-            if (pRes.ok) {
-              const rows = await safeParseFetchJson(pRes, []);
-              if (Array.isArray(rows) && rows.length > 0 && rows[0].id) {
-                targetSupaUuid = String(rows[0].id);
-              }
-            }
-          } catch {
-            // ignore
-          }
-        }
-
-        if (targetSupaUuid) {
+        const targetSupaUuid = await ensureSupabaseProfileInRest(supabaseUrl, supabaseAnonKey, {
+          id: user.id,
+          email: user.email,
+          full_name: user.full_name,
+        });
           const supaPayload = buildSupabaseCryptoDepositRow({
             userId: targetSupaUuid,
             walletAddress: DIRECT_USDT_WALLET_ADDRESS,
@@ -1388,7 +1446,6 @@ async function startServer() {
             body: JSON.stringify(supaAccountPayload),
           }).catch(() => {});
         }
-      }
 
       // Trigger immediate TronGrid TRC-20 verification pass
       let verificationResult: any = null;
@@ -1727,9 +1784,14 @@ async function startServer() {
         txHash: txHash || undefined,
       });
 
-      if (supabaseUrl && supabaseAnonKey && isValidUuid(userId)) {
+      if (supabaseUrl && supabaseAnonKey) {
+        const targetSupaUuid = await ensureSupabaseProfileInRest(supabaseUrl, supabaseAnonKey, {
+          id: userId,
+          email: user?.email,
+          full_name: user?.full_name,
+        });
         const supaPayload = buildSupabaseCryptoDepositRow({
-          userId,
+          userId: targetSupaUuid,
           walletAddress: DIRECT_USDT_WALLET_ADDRESS,
           amount,
           packageName,

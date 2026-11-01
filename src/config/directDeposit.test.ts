@@ -339,7 +339,7 @@ test('buildSupabaseUserPurchasePayload, mapPurchaseRecord, mergeRealtimePurchase
   assert.equal(created.amount, 249.5);
   assert.equal(created.status, 'completed');
 
-  const userPurchases = getUserPurchases('usr_bft_001');
+  const userPurchases = getUserPurchases({ userId: 'usr_bft_001' });
   assert.ok(userPurchases.some((p) => p.id === created.id));
 
   // Verify real-time merge deduplicates and updates status

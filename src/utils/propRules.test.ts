@@ -508,7 +508,7 @@ test('dynamic account limits and normalization for instant, one_step, and two_st
   assert.equal(normalizeChallengeAccountType('instant'), 'instant');
 
   // One-Step limits (30% Profit Target, 10% Daily DD, 15% Max DD, initial phase_1)
-  const osLimits = getDynamicAccountLimits('one_step', 10000);
+  const osLimits = getDynamicAccountLimits('one_step', 'phase_1');
   assert.equal(osLimits.accountType, 'one_step');
   assert.equal(osLimits.profitTargetPercent, 30);
   assert.equal(osLimits.dailyLossLimitPercent, 10);
@@ -531,7 +531,7 @@ test('dynamic account limits and normalization for instant, one_step, and two_st
   assert.equal(getChallengeProfitTarget({ accountType: 'two_step', phase: 'phase_2', initialBalance: 10000, currentBalance: 10000 } as any).targetAmount, 1500);
 
   // Instant Funded limits (0% Profit Target, 6% Daily DD, 12% Max DD, phase funded)
-  const instLimits = getDynamicAccountLimits('instant', 10000);
+  const instLimits = getDynamicAccountLimits('instant', 'funded');
   assert.equal(instLimits.accountType, 'instant');
   assert.equal(instLimits.profitTargetPercent, 0);
   assert.equal(instLimits.dailyLossLimitPercent, 6);
