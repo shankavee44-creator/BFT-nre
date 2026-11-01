@@ -243,6 +243,7 @@ export async function apiPurchaseAccount(params: {
   tier: string;
   tierName: string;
   size: number;
+  sku?: string;
   price: number;
   invoiceUuid: string;
   referralCode?: string | null;

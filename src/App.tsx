@@ -560,9 +560,9 @@ export default function App() {
       },
       onPurchaseEvent: (eventType, newRow, oldRow) => {
         setPurchases((prev) => {
-          if (eventType === 'DELETE') return prev.filter((p) => String(p.id) !== String(oldRow.id));
-          if (eventType === 'INSERT') return [newRow, ...prev];
-          if (eventType === 'UPDATE')
+          if (eventType === 'DELETE' && oldRow) return prev.filter((p) => String(p.id) !== String(oldRow.id));
+          if (eventType === 'INSERT' && newRow) return [newRow, ...prev];
+          if (eventType === 'UPDATE' && newRow)
             return prev.map((p) => (String(p.id) === String(newRow.id) ? newRow : p));
           return prev;
         });

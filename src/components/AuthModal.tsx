@@ -84,6 +84,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
+  const [is2faRequired, setIs2faRequired] = useState(false);
+  const [tempUserId, setTempUserId] = useState('');
+  const [totpCode, setTotpCode] = useState('');
 
   const [referralCodeInput, setReferralCodeInput] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
@@ -95,6 +98,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     if (isOpen || isPageView) {
       if (initialMode === 'register') setAuthTab('email_signup');
       else setAuthTab('email_signin');
+      setIs2faRequired(false);
     }
   }, [initialMode, isOpen, isPageView]);
 
@@ -252,90 +256,80 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
 
     try {
-      // 1. Supabase Auth Email & Password Sign-In
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: cleanEmail,
-        password,
+      const response = await fetch('/api/auth/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: cleanEmail, password, rememberMe }),
       });
+      const data = await response.json();
 
-      if (error || !data?.user) {
-        // Check if user was registered via backend session sync
-        const backendRes = await apiEmailSessionSync({
-          email: cleanEmail,
-          name: cleanEmail.split('@')[0],
-          rememberMe,
-        });
-        if (backendRes?.ok && backendRes.user) {
-          let supaProfileByEmail: any = null;
-          try {
-            const { data: pByEmail } = await supabase
-              .from('profiles')
-              .select('*')
-              .ilike('email', cleanEmail)
-              .maybeSingle();
-            supaProfileByEmail = pByEmail;
-          } catch {
-            // ignore
-          }
-          const resolvedId = supaProfileByEmail?.id || backendRes.user.id;
-          const jwtToken =
-            backendRes.token ||
-            createSessionJwtToken({
-              userId: resolvedId,
-              email: cleanEmail,
-              referralCode: supaProfileByEmail?.referral_code || backendRes.user.referralCode || 'BFT-PRO',
-              rememberMe,
-            });
-          try {
-            if (rememberMe) {
-              localStorage.setItem('bft_jwt_session', jwtToken);
-            } else {
-              sessionStorage.setItem('bft_jwt_session', jwtToken);
-            }
-          } catch {
-            // ignore
-          }
-          const mergedServerUser = {
-            ...backendRes.user,
-            id: resolvedId,
-            selfBalance:
-              supaProfileByEmail?.self_balance !== undefined && supaProfileByEmail?.self_balance !== null
-                ? Number(supaProfileByEmail.self_balance)
-                : backendRes.user.selfBalance,
-            demoBalance:
-              supaProfileByEmail?.demo_balance !== undefined && supaProfileByEmail?.demo_balance !== null
-                ? Number(supaProfileByEmail.demo_balance)
-                : backendRes.user.demoBalance,
-            fundedBalance:
-              supaProfileByEmail?.funded_balance !== undefined && supaProfileByEmail?.funded_balance !== null
-                ? Number(supaProfileByEmail.funded_balance)
-                : backendRes.user.fundedBalance,
-          };
-          onAuthSuccess({
-            userId: resolvedId,
-            email: backendRes.user.email,
-            fullName: supaProfileByEmail?.full_name || backendRes.user.fullName,
-            referralCode: supaProfileByEmail?.referral_code || backendRes.user.referralCode,
-            referredBy: supaProfileByEmail?.referred_by || backendRes.user.referredBy || null,
-            rememberMe,
-            jwtToken,
-            isNewRegistration: false,
-            serverUser: mergedServerUser,
-            serverAccounts: Array.isArray(backendRes.accounts) ? backendRes.accounts : [],
-          });
-          onClose();
-          setIsSubmitting(false);
-          return;
-        }
-
-        setAuthError('Invalid email or password.');
+      if (!data.ok) {
+        setAuthError(data.error || 'Invalid email or password.');
         setIsSubmitting(false);
         return;
       }
 
-      await ensureSupabaseUserProfileAndLogin(data.user, effectiveCodeForLookup || null);
+      if (data.is2faRequired) {
+        setTempUserId(data.userId);
+        setIs2faRequired(true);
+        setIsSubmitting(false);
+        return;
+      }
+
+      onAuthSuccess({
+        userId: data.user.id,
+        email: data.user.email,
+        fullName: data.user.fullName,
+        referralCode: data.user.referralCode,
+        referredBy: data.user.referredBy,
+        rememberMe,
+        jwtToken: data.token,
+        isNewRegistration: false,
+        serverUser: data.user,
+        serverAccounts: data.accounts,
+      });
+      onClose();
     } catch {
-      setAuthError('Invalid email or password.');
+      setAuthError('An error occurred during sign-in.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleVerify2fa = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError(null);
+    setIsSubmitting(true);
+
+    try {
+      const response = await fetch('/api/auth/verify-2fa', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: tempUserId, code: totpCode, rememberMe }),
+      });
+      const data = await response.json();
+
+      if (!data.ok) {
+        setAuthError(data.error || 'Invalid 2FA code.');
+        setIsSubmitting(false);
+        return;
+      }
+
+      onAuthSuccess({
+        userId: data.user.id,
+        email: data.user.email,
+        fullName: data.user.fullName,
+        referralCode: data.user.referralCode,
+        referredBy: data.user.referredBy,
+        rememberMe,
+        jwtToken: data.token,
+        isNewRegistration: false,
+        serverUser: data.user,
+        serverAccounts: data.accounts,
+      });
+      onClose();
+    } catch {
+      setAuthError('An error occurred during 2FA verification.');
     } finally {
       setIsSubmitting(false);
     }
@@ -622,7 +616,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       )}
 
       {/* FORM MODE 1: EMAIL & PASSWORD SIGN IN */}
-      {authTab === 'email_signin' && (
+      {authTab === 'email_signin' && !is2faRequired && (
         <form onSubmit={handleEmailSignIn} className="space-y-3.5 mb-4">
           <div>
             <label
@@ -670,7 +664,46 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             data-testid="signin-submit-btn"
             className="w-full py-3.5 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] disabled:opacity-60 text-slate-950 font-black text-xs cursor-pointer transition-colors flex items-center justify-center gap-1.5 font-mono uppercase tracking-wider mt-2"
           >
-            <span>{isSubmitting ? 'Verifying Session...' : 'Sign In & Enter Dashboard'}</span>
+            <span>{isSubmitting ? 'Verifying Credentials...' : 'Sign In'}</span>
+            <ArrowRight className="w-4 h-4 stroke-[2.5]" />
+          </button>
+        </form>
+      )}
+
+      {/* FORM MODE 1B: 2FA VERIFICATION */}
+      {authTab === 'email_signin' && is2faRequired && (
+        <form onSubmit={handleVerify2fa} className="space-y-3.5 mb-4">
+          <div className="text-center mb-4">
+            <p className="text-xs text-slate-400">Please enter the 6-digit code from your Google Authenticator app.</p>
+          </div>
+          <div>
+            <label
+              htmlFor="signin-2fa"
+              className="block text-[11px] font-mono font-bold text-slate-300 mb-1 flex items-center gap-1.5"
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-[#ff8800]" />
+              <span>2FA Code *</span>
+            </label>
+            <input
+              id="signin-2fa"
+              data-testid="signin-2fa-input"
+              type="text"
+              required
+              maxLength={6}
+              value={totpCode}
+              onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, ''))}
+              placeholder="000000"
+              className="w-full px-3.5 py-2.5 bg-[#0a0a0a] border border-[#262c3a] rounded-lg text-white font-mono text-xs text-center tracking-[0.5em] focus:outline-none focus:border-[#ff8800]"
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            data-testid="signin-2fa-submit-btn"
+            className="w-full py-3.5 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] disabled:opacity-60 text-slate-950 font-black text-xs cursor-pointer transition-colors flex items-center justify-center gap-1.5 font-mono uppercase tracking-wider mt-2"
+          >
+            <span>{isSubmitting ? 'Verifying Code...' : 'Verify & Enter Dashboard'}</span>
             <ArrowRight className="w-4 h-4 stroke-[2.5]" />
           </button>
         </form>

@@ -27,7 +27,9 @@ import {
   Zap,
   Ban,
   LogOut,
+  Smartphone,
 } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 import {
   ResponsiveContainer,
   AreaChart,
@@ -148,7 +150,23 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   const [dateOfBirth, setDateOfBirth] = useState(userProfile.dateOfBirth || '');
   const [country, setCountry] = useState(userProfile.country || 'United States');
   const [telegramHandle, setTelegramHandle] = useState(userProfile.telegramHandle || '');
-  const [twoFactor, setTwoFactor] = useState(userProfile.twoFactorEnabled);
+  const [twoFactor, setTwoFactor] = useState(
+    Boolean(
+      userProfile.twoFactorEnabled ||
+      (userProfile as any).is2faEnabled ||
+      (userProfile as any).is_2fa_enabled
+    )
+  );
+  const [twoFactorSetupState, setTwoFactorSetupState] = useState<'idle' | 'generating' | 'verifying'>('idle');
+  const [totpSecret, setTotpSecret] = useState('');
+  const [otpUrl, setOtpUrl] = useState('');
+  const [qrCodeDataUrl, setQrCodeDataUrl] = useState('');
+  const [verificationCode, setVerificationCode] = useState('');
+  const [twoFactorError, setTwoFactorError] = useState<string | null>(null);
+  const [twoFactorSuccess, setTwoFactorSuccess] = useState<string | null>(null);
+  const [copiedSecret, setCopiedSecret] = useState(false);
+  const [isVerifyingCode, setIsVerifyingCode] = useState(false);
+  const [isDisabling2fa, setIsDisabling2fa] = useState(false);
 
   const [profileSaveMessage, setProfileSaveMessage] = useState<string | null>(null);
   const [profileErrorMessage, setProfileErrorMessage] = useState<string | null>(null);
@@ -861,6 +879,17 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     if (accId) {
       onSelectAccount(accId);
     }
+    const is2faActive = Boolean(
+      userProfile.twoFactorEnabled ||
+      userProfile.is2faEnabled ||
+      (userProfile as any).is_2fa_enabled ||
+      twoFactor
+    );
+    if (!is2faActive) {
+      setWithdrawalBlockNotice('Two-Factor Authentication (2FA) is mandatory for withdrawals. Please enable Google Authenticator in the Security & 2FA tab.');
+      soundEngine.playErrorAlert();
+      return;
+    }
     const check = canUserWithdraw(userProfile);
     if (!check.allowed) {
       setWithdrawalBlockNotice(check.message);
@@ -883,6 +912,214 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   const handleExportCSV = (accId?: string) => {
     soundEngine.playTradeWin();
     exportTradesToCSV(trades, accId);
+  };
+
+  const handleStart2faSetup = async () => {
+    setTwoFactorError(null);
+    setTwoFactorSuccess(null);
+    setTwoFactorSetupState('generating');
+    soundEngine.playUiClick();
+
+    try {
+      const token = localStorage.getItem('bft_jwt_session') || '';
+      const res = await fetch('/api/profile/2fa/generate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          userId: userProfile.id,
+          email: userProfile.email,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.ok && data.secret) {
+        setTotpSecret(data.secret);
+        const resolvedOtpUrl =
+          data.otpauth_url ||
+          data.otpauthUrl ||
+          `otpauth://totp/BFT-Trading:${encodeURIComponent(userProfile.email)}?secret=${data.secret}&issuer=BFT-Trading`;
+        setOtpUrl(resolvedOtpUrl);
+        if (data.qrCode) setQrCodeDataUrl(data.qrCode);
+
+        setVerificationCode('');
+        setTwoFactorSetupState('verifying');
+
+        // Safe async Supabase profile update (supports UUID id or email)
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userProfile.id || '');
+        if (isUuid) {
+          supabase
+            .from('profiles')
+            .update({ totp_secret: data.secret })
+            .eq('id', userProfile.id)
+            .then(() => {})
+            .catch((e) => console.warn('Supabase profile totp_secret sync warning:', e));
+        } else if (userProfile.email) {
+          supabase
+            .from('profiles')
+            .update({ totp_secret: data.secret })
+            .eq('email', userProfile.email)
+            .then(() => {})
+            .catch((e) => console.warn('Supabase profile totp_secret sync warning:', e));
+        }
+      } else {
+        setTwoFactorError(data.error || 'Failed to generate 2FA credentials. Please try again.');
+        setTwoFactorSetupState('idle');
+      }
+    } catch (err: any) {
+      setTwoFactorError(err?.message || 'Network error while generating 2FA credentials.');
+      setTwoFactorSetupState('idle');
+    }
+  };
+
+  const handleVerify2faCode = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const cleanCode = verificationCode.replace(/\D/g, '').trim();
+    if (cleanCode.length !== 6) {
+      setTwoFactorError('Please enter the full 6-digit verification code from Google Authenticator.');
+      return;
+    }
+
+    setTwoFactorError(null);
+    setIsVerifyingCode(true);
+    soundEngine.playUiClick();
+
+    try {
+      const token = localStorage.getItem('bft_jwt_session') || '';
+      const res = await fetch('/api/profile/2fa/verify', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          userId: userProfile.id,
+          email: userProfile.email,
+          code: cleanCode,
+          secret: totpSecret,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.ok) {
+        // Officially update is_2fa_enabled in Supabase profiles table
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userProfile.id || '');
+        if (isUuid) {
+          supabase
+            .from('profiles')
+            .update({
+              is_2fa_enabled: true,
+              totp_secret: totpSecret,
+            })
+            .eq('id', userProfile.id)
+            .then(() => {})
+            .catch((e) => console.warn('Supabase is_2fa_enabled update warning:', e));
+        } else if (userProfile.email) {
+          supabase
+            .from('profiles')
+            .update({
+              is_2fa_enabled: true,
+              totp_secret: totpSecret,
+            })
+            .eq('email', userProfile.email)
+            .then(() => {})
+            .catch((e) => console.warn('Supabase is_2fa_enabled update warning:', e));
+        }
+
+        setTwoFactor(true);
+        setTwoFactorSetupState('idle');
+        setVerificationCode('');
+        setTwoFactorSuccess('Google Authenticator 2FA successfully linked and verified!');
+        onUpdateProfile({
+          ...userProfile,
+          twoFactorEnabled: true,
+          is2faEnabled: true,
+          totpSecret,
+        });
+        soundEngine.playTradeWin();
+      } else {
+        setTwoFactorError(data.error || 'Invalid 6-digit verification code. Please check Google Authenticator.');
+      }
+    } catch (err: any) {
+      setTwoFactorError(err?.message || 'Verification failed. Please try again.');
+    } finally {
+      setIsVerifyingCode(false);
+    }
+  };
+
+  const handleDisable2fa = async () => {
+    setIsDisabling2fa(true);
+    setTwoFactorError(null);
+    soundEngine.playUiClick();
+
+    try {
+      const token = localStorage.getItem('bft_jwt_session') || '';
+      const res = await fetch('/api/profile/2fa/disable', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          userId: userProfile.id,
+          email: userProfile.email,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.ok) {
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userProfile.id || '');
+        if (isUuid) {
+          supabase
+            .from('profiles')
+            .update({ is_2fa_enabled: false })
+            .eq('id', userProfile.id)
+            .then(() => {})
+            .catch(() => {});
+        } else if (userProfile.email) {
+          supabase
+            .from('profiles')
+            .update({ is_2fa_enabled: false })
+            .eq('email', userProfile.email)
+            .then(() => {})
+            .catch(() => {});
+        }
+
+        setTwoFactor(false);
+        setTwoFactorSetupState('idle');
+        setTotpSecret('');
+        setOtpUrl('');
+        setQrCodeDataUrl('');
+        setTwoFactorSuccess('2FA has been disabled. You can re-enable it anytime.');
+        onUpdateProfile({
+          ...userProfile,
+          twoFactorEnabled: false,
+          is2faEnabled: false,
+        });
+      } else {
+        setTwoFactorError(data.error || 'Failed to disable 2FA.');
+      }
+    } catch (err: any) {
+      setTwoFactorError(err?.message || 'Failed to disable 2FA.');
+    } finally {
+      setIsDisabling2fa(false);
+    }
+  };
+
+  const handleCopySecretKey = () => {
+    if (!totpSecret) return;
+    try {
+      if (navigator?.clipboard?.writeText) {
+        navigator.clipboard.writeText(totpSecret).catch(() => {});
+      }
+    } catch {
+      // fallback
+    }
+    setCopiedSecret(true);
+    soundEngine.playUiClick();
+    setTimeout(() => setCopiedSecret(false), 2500);
   };
 
   // Filter trades based on the currently selected account for history and analytics consistency
@@ -1133,8 +1370,8 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           </div>
         )}
 
-        {/* Explicit Withdrawal Blocked Alert Notice when user clicks Request Withdrawal while Unverified */}
-        {withdrawalBlockNotice && userProfile.kycStatus !== 'verified' && (
+        {/* Explicit Withdrawal Blocked Alert Notice when user clicks Request Withdrawal while Unverified or 2FA disabled */}
+        {withdrawalBlockNotice && (
           <div
             data-testid="withdrawal-blocked-alert"
             className="mt-3 p-3.5 rounded-xl bg-rose-950/90 border border-rose-500 text-xs font-mono text-rose-200 flex items-center justify-between gap-3"
@@ -1145,13 +1382,24 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             </div>
             <button
               type="button"
+              data-testid="resolve-withdrawal-block-btn"
               onClick={() => {
                 setWithdrawalBlockNotice(null);
-                setActiveTab('kyc');
+                if (
+                  withdrawalBlockNotice.toLowerCase().includes('2fa') ||
+                  withdrawalBlockNotice.toLowerCase().includes('two-factor')
+                ) {
+                  setActiveTab('security');
+                } else {
+                  setActiveTab('kyc');
+                }
               }}
-              className="px-3 py-1 rounded-lg bg-[#ff8800] text-slate-950 font-black text-[11px] uppercase cursor-pointer shrink-0"
+              className="px-3 py-1 rounded-lg bg-[#ff8800] text-slate-950 font-black text-[11px] uppercase cursor-pointer shrink-0 hover:bg-[#ff9900] transition-colors"
             >
-              Verify KYC
+              {withdrawalBlockNotice.toLowerCase().includes('2fa') ||
+              withdrawalBlockNotice.toLowerCase().includes('two-factor')
+                ? 'Enable 2FA'
+                : 'Verify KYC'}
             </button>
           </div>
         )}
@@ -2599,34 +2847,321 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
       {/* Tab 6: Security & 2FA */}
       {activeTab === 'security' && (
-        <div className="p-6 sm:p-8 rounded-3xl bg-[#0a0a0a] border border-[#ff8800]/40 max-w-2xl">
-          <h3 className="text-lg font-bold text-white mb-2">Two-Factor Authentication (2FA)</h3>
-          <p className="text-xs text-slate-400 mb-6">
-            Protects your trading credentials, TRC-20 withdrawals, and affiliate payouts.
-          </p>
-
-          <div className="flex items-center justify-between p-4 rounded-xl bg-[#111115] border border-white/10">
-            <div className="flex items-center gap-3">
-              <ShieldCheck className={`w-6 h-6 ${twoFactor ? 'text-emerald-400' : 'text-slate-500'}`} />
-              <div>
-                <h4 className="text-sm font-bold text-white">Authenticator App (TOTP)</h4>
-                <p className="text-xs text-slate-400">Google Authenticator / Authy</p>
-              </div>
+        <div className="p-6 sm:p-8 rounded-3xl bg-[#0a0a0a] border border-[#ff8800]/40 max-w-2xl font-mono">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4 pb-4 border-b border-white/10">
+            <div>
+              <span className="text-[10px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded bg-[#ff8800]/15 text-[#ff8800] border border-[#ff8800]/40">
+                ACCOUNT PROTECTION & CREDENTIALS
+              </span>
+              <h3 className="text-xl font-black text-white mt-1 flex items-center gap-2">
+                <ShieldCheck className="w-5 h-5 text-[#ff8800]" />
+                Two-Factor Authentication (2FA)
+              </h3>
             </div>
-            <button
-              type="button"
-              onClick={() => {
-                const nextState = !twoFactor;
-                setTwoFactor(nextState);
-                onUpdateProfile({ ...userProfile, twoFactorEnabled: nextState });
-              }}
-              className={`px-4 py-1.5 rounded-xl text-xs font-bold font-mono transition-colors cursor-pointer ${
-                twoFactor ? 'bg-emerald-500 text-slate-950' : 'bg-white/10 text-slate-400 hover:text-white'
+            <span
+              className={`px-3 py-1 rounded-full text-xs font-black uppercase border shrink-0 text-center ${
+                twoFactor
+                  ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                  : 'bg-rose-500/20 text-rose-400 border-rose-500/40'
               }`}
             >
-              {twoFactor ? 'ENABLED' : 'DISABLED'}
-            </button>
+              {twoFactor ? '2FA Active' : '2FA Disabled'}
+            </span>
           </div>
+
+          <p className="text-xs text-slate-400 mb-6 leading-relaxed">
+            Protect your funded trading accounts, balance credits, and TRC-20 withdrawals using time-based one-time password (TOTP) authentication via Google Authenticator or Authy.
+          </p>
+
+          {/* Feedback Success Banner */}
+          {twoFactorSuccess && (
+            <div
+              data-testid="twofactor-success-banner"
+              className="mb-6 p-4 rounded-2xl bg-emerald-950/80 border border-emerald-500/50 text-xs text-emerald-200 flex items-start gap-3"
+            >
+              <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <strong className="block font-bold text-white mb-0.5">Success</strong>
+                <span>{twoFactorSuccess}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTwoFactorSuccess(null)}
+                className="text-slate-400 hover:text-white text-xs cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
+          {/* Feedback Error Banner */}
+          {twoFactorError && (
+            <div
+              data-testid="twofactor-error-banner"
+              className="mb-6 p-4 rounded-2xl bg-rose-950/80 border border-rose-500/50 text-xs text-rose-200 flex items-start gap-3"
+            >
+              <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <strong className="block font-bold text-white mb-0.5">Security Notice</strong>
+                <span>{twoFactorError}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTwoFactorError(null)}
+                className="text-slate-400 hover:text-white text-xs cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
+          {/* STATE 1: 2FA IS ALREADY ENABLED */}
+          {twoFactor && twoFactorSetupState !== 'verifying' ? (
+            <div className="space-y-5">
+              <div
+                data-testid="twofactor-enabled-card"
+                className="p-5 sm:p-6 rounded-2xl bg-emerald-950/20 border border-emerald-500/40 space-y-4"
+              >
+                <div className="flex items-center gap-3.5">
+                  <div className="w-12 h-12 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shrink-0">
+                    <ShieldCheck className="w-7 h-7" />
+                  </div>
+                  <div>
+                    <h4 className="text-base font-black text-white">
+                      Google Authenticator 2FA is Active
+                    </h4>
+                    <p className="text-xs text-emerald-300 mt-0.5">
+                      Your account is protected against unauthorized withdrawals and logins.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-3 border-t border-emerald-500/20 text-xs">
+                  <div className="p-3 rounded-xl bg-[#0a0a0a] border border-white/10 flex items-center gap-2">
+                    <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <span className="text-slate-300">TRC-20 Withdrawals Unlocked</span>
+                  </div>
+                  <div className="p-3 rounded-xl bg-[#0a0a0a] border border-white/10 flex items-center gap-2">
+                    <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <span className="text-slate-300">TOTP Protected Sign-In</span>
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={handleStart2faSetup}
+                    className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-[#141418] hover:bg-[#1c1c22] border border-white/15 text-slate-200 text-xs font-bold cursor-pointer transition-colors"
+                  >
+                    Reconfigure / Re-link Authenticator
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isDisabling2fa}
+                    onClick={handleDisable2fa}
+                    className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-rose-950/50 hover:bg-rose-900/60 border border-rose-500/40 text-rose-300 text-xs font-bold cursor-pointer transition-colors"
+                  >
+                    {isDisabling2fa ? 'Disabling 2FA...' : 'Disable 2FA'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : twoFactorSetupState === 'generating' ? (
+            /* STATE 2: GENERATING CREDENTIALS SPINNER */
+            <div className="p-10 rounded-2xl bg-[#111115] border border-white/10 text-center space-y-3">
+              <Clock className="w-8 h-8 text-[#ff8800] mx-auto animate-spin" />
+              <h4 className="text-sm font-bold text-white">Generating Unique TOTP Secret & QR Code...</h4>
+              <p className="text-xs text-slate-400">
+                Contacting security module to generate your cryptographic key pair...
+              </p>
+            </div>
+          ) : twoFactorSetupState === 'verifying' ? (
+            /* STATE 3: STEP-BY-STEP QR CODE & 6-DIGIT VERIFICATION FLOW */
+            <div data-testid="twofactor-setup-flow" className="space-y-6">
+              {/* Stepper Header */}
+              <div className="flex items-center gap-2 text-xs text-slate-400 font-bold">
+                <span className="px-2 py-0.5 rounded bg-[#ff8800] text-slate-950 font-black">
+                  Step 1
+                </span>
+                <span className="text-white">Scan QR / Save Key</span>
+                <span className="text-slate-600">→</span>
+                <span className="px-2 py-0.5 rounded bg-white/10 text-slate-300">
+                  Step 2
+                </span>
+                <span className="text-slate-300">Enter 6-Digit Code</span>
+              </div>
+
+              {/* Step 1 Box: QR Code & Manual Secret Key */}
+              <div className="p-5 rounded-2xl bg-[#111115] border border-[#ff8800]/30 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-black text-white flex items-center gap-2">
+                    <Smartphone className="w-4 h-4 text-[#ff8800]" />
+                    1. Link with Google Authenticator or Authy
+                  </h4>
+                  <span className="text-[10px] text-slate-400">Standard RFC 6238 TOTP</span>
+                </div>
+
+                <p className="text-xs text-slate-400">
+                  Open your authenticator app, tap <strong className="text-white">+ (Add Account)</strong>, and scan this QR code:
+                </p>
+
+                {/* QR Code Canvas */}
+                <div className="flex flex-col sm:flex-row items-center gap-6 p-4 rounded-xl bg-[#0a0a0a] border border-white/10">
+                  <div
+                    data-testid="totp-qrcode-container"
+                    className="p-3 bg-white rounded-xl shadow-lg border border-white/20 shrink-0 flex items-center justify-center"
+                  >
+                    {otpUrl ? (
+                      <QRCodeSVG value={otpUrl} size={168} level="M" />
+                    ) : qrCodeDataUrl ? (
+                      <img src={qrCodeDataUrl} alt="2FA QR Code" className="w-[168px] h-[168px]" />
+                    ) : (
+                      <div className="w-[168px] h-[168px] flex items-center justify-center text-slate-900 text-xs">
+                        QR Code Loading...
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Manual Entry Secret Key Section */}
+                  <div className="flex-1 space-y-3 w-full text-center sm:text-left">
+                    <div>
+                      <span className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">
+                        Can&apos;t scan? Enter Secret Key manually:
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <code
+                          data-testid="totp-secret-key"
+                          className="flex-1 px-3 py-2 rounded-lg bg-[#141418] border border-white/15 text-[#ff8800] font-black text-xs sm:text-sm tracking-wider select-all break-all"
+                        >
+                          {totpSecret || 'JBSWY3DPEHPK3PXP'}
+                        </code>
+                        <button
+                          type="button"
+                          data-testid="copy-totp-secret-btn"
+                          onClick={handleCopySecretKey}
+                          className="px-3 py-2 rounded-lg bg-[#ff8800]/20 hover:bg-[#ff8800]/30 border border-[#ff8800]/40 text-[#ff8800] text-xs font-bold flex items-center gap-1.5 cursor-pointer shrink-0 transition-colors"
+                        >
+                          {copiedSecret ? (
+                            <>
+                              <Check className="w-3.5 h-3.5 text-emerald-400" />
+                              <span className="text-emerald-400">Copied!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3.5 h-3.5" />
+                              <span>Copy</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="text-[11px] text-slate-400 space-y-1">
+                      <div>Account: <strong className="text-slate-300">{userProfile.email}</strong></div>
+                      <div>Issuer: <strong className="text-slate-300">BFT-Trading</strong></div>
+                      <div>Key Type: <strong className="text-slate-300">Time-based (30s interval)</strong></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Step 2 Box: 6-Digit Code Verification */}
+              <form onSubmit={handleVerify2faCode} className="p-5 rounded-2xl bg-[#111115] border border-white/15 space-y-4">
+                <div>
+                  <h4 className="text-sm font-black text-white flex items-center gap-2 mb-1">
+                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                    2. Verify 6-Digit Code from Authenticator
+                  </h4>
+                  <p className="text-xs text-slate-400">
+                    Enter the current 6-digit confirmation code generated by your app:
+                  </p>
+                </div>
+
+                <div className="max-w-xs mx-auto">
+                  <input
+                    id="twofactor-verification-code-input"
+                    data-testid="twofactor-verification-input"
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    autoFocus
+                    required
+                    maxLength={6}
+                    value={verificationCode}
+                    onChange={(e) => setVerificationCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    placeholder="000000"
+                    className="w-full px-4 py-3 rounded-xl bg-[#0a0a0a] border border-white/20 text-white text-center tracking-[0.5em] font-mono text-xl font-black focus:outline-none focus:border-[#ff8800]"
+                  />
+                  <span className="text-[10px] text-slate-500 block text-center mt-1.5">
+                    {verificationCode.length}/6 digits entered
+                  </span>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
+                  <button
+                    type="submit"
+                    disabled={verificationCode.length !== 6 || isVerifyingCode}
+                    data-testid="verify-enable-2fa-btn"
+                    className="w-full sm:flex-1 py-3.5 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] disabled:opacity-50 text-slate-950 font-black text-xs uppercase tracking-wider cursor-pointer transition-colors flex items-center justify-center gap-2"
+                  >
+                    <ShieldCheck className="w-4 h-4 stroke-[2.5]" />
+                    <span>
+                      {isVerifyingCode ? 'Verifying Code...' : 'Verify & Enable 2FA Officially'}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTwoFactorSetupState('idle');
+                      setTwoFactorError(null);
+                      setVerificationCode('');
+                    }}
+                    className="w-full sm:w-auto px-5 py-3.5 rounded-xl bg-[#141418] hover:bg-[#1c1c22] border border-white/10 text-slate-400 hover:text-white text-xs font-bold cursor-pointer transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            </div>
+          ) : (
+            /* STATE 4: IDLE - 2FA IS NOT ENABLED YET */
+            <div className="space-y-4">
+              <div
+                data-testid="twofactor-disabled-card"
+                className="p-5 sm:p-6 rounded-2xl bg-amber-950/20 border border-amber-500/40 space-y-4"
+              >
+                <div className="flex items-center gap-3.5">
+                  <div className="w-12 h-12 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0">
+                    <ShieldAlert className="w-7 h-7" />
+                  </div>
+                  <div>
+                    <h4 className="text-base font-black text-white">
+                      Two-Factor Authentication is Not Configured
+                    </h4>
+                    <p className="text-xs text-amber-300 mt-0.5">
+                      Withdrawals are blocked until Google Authenticator is enabled on your profile.
+                    </p>
+                  </div>
+                </div>
+
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  Setting up 2FA requires scanning a QR code with the Google Authenticator or Authy app on your phone. It adds an impenetrable secondary security layer to your trading accounts and payouts.
+                </p>
+
+                <button
+                  type="button"
+                  data-testid="start-2fa-setup-btn"
+                  onClick={handleStart2faSetup}
+                  className="w-full py-3.5 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] text-slate-950 font-black text-xs uppercase tracking-wider cursor-pointer transition-colors flex items-center justify-center gap-2 shadow-lg"
+                >
+                  <Smartphone className="w-4 h-4 stroke-[2.5]" />
+                  <span>Enable 2FA & Link Google Authenticator</span>
+                  <ArrowRight className="w-4 h-4 stroke-[2.5]" />
+                </button>
+              </div>
+            </div>
+          )}
 
           {onLogout && (
             <div className="mt-8 pt-6 border-t border-white/10">
@@ -2652,6 +3187,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           )}
         </div>
       )}
+
 
       {/* Tab 7: User Management / Admin Command Center */}
       {activeTab === 'admin_users' && (

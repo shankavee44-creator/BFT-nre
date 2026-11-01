@@ -23,6 +23,7 @@ import {
   Store,
   XCircle,
   RefreshCw,
+  Smartphone,
 } from 'lucide-react';
 import { TradingAccount, WithdrawalRequest, WithdrawalPaymentMethod, UserProfile, BinaryTrade } from '../types';
 import {
@@ -151,6 +152,17 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
   const [successBanner, setSuccessBanner] = useState<string | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [nowTick, setNowTick] = useState<number>(() => Date.now());
+
+  // 2FA Mandatory Check & Verification States
+  const is2faActive = Boolean(
+    userProfile?.twoFactorEnabled ||
+    (userProfile as any)?.is2faEnabled ||
+    (userProfile as any)?.is_2fa_enabled
+  );
+  const [showTwoFactorModal, setShowTwoFactorModal] = useState<boolean>(false);
+  const [withdrawalTotpCode, setWithdrawalTotpCode] = useState<string>('');
+  const [isVerifyingTotp, setIsVerifyingTotp] = useState<boolean>(false);
+  const [totpError, setTotpError] = useState<string | null>(null);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -357,65 +369,8 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
     setActivePortalTab(tab);
   };
 
-  const handleRequestWithdrawal = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setSuccessBanner(null);
-
-    if (!kycCheck.allowed) {
-      setError(KYC_WITHDRAWAL_LOCK_MESSAGE);
-      soundEngine.playErrorAlert();
-      return;
-    }
-
-    if (!account) {
-      setError('No Active Account available for withdrawal. Please purchase or select an active account.');
-      soundEngine.playErrorAlert();
-      return;
-    }
-
-    // Single Active Withdrawal Constraint Guard (Per User / Account Type)
-    if (hasActivePending) {
-      setError(PENDING_WITHDRAWAL_WARNING_MESSAGE);
-      soundEngine.playErrorAlert();
-      return;
-    }
-
-    const validation = validateWithdrawalRequest(account, amount, { enforceFirstWithdrawalLock: true });
-    if (!validation.valid) {
-      setError(validation.reason || 'Withdrawal validation failed.');
-      soundEngine.playErrorAlert();
-      return;
-    }
-
-    // Enforce strict 80% Net Generated Profit Payout Ceiling Rule ONLY for Prop Funded accounts
-    // Personal Live accounts can withdraw 100% of their personal profits and deposited capital
-    if (!isPersonalLiveAccount(account)) {
-      const maxAllowedProfitCeiling = Math.max(0, Number((netProfit * 0.80).toFixed(2)));
-      if (amount > maxAllowedProfitCeiling) {
-        setError(
-          `Withdrawal exceeds the 80% profit payout ceiling. Maximum allowable withdrawal is $${maxAllowedProfitCeiling.toFixed(2)} (80% of $${netProfit.toFixed(2)} net generated profit).`
-        );
-        soundEngine.playErrorAlert();
-        return;
-      }
-    }
-
-    if (paymentMethod === 'crypto_trc20') {
-      const purseValidation = validateQuotexPurseAddress(purseAddress, network, quotexMethod);
-      if (!purseValidation.valid) {
-        setError(purseValidation.reason || 'Invalid purse address.');
-        soundEngine.playErrorAlert();
-        return;
-      }
-    } else {
-      if (!bankName.trim() || !accountHolder.trim() || accountNumber.trim().length < 6 || swiftCode.trim().length < 6) {
-        setError('Please complete all required Bank Transfer fields.');
-        soundEngine.playErrorAlert();
-        return;
-      }
-    }
-
+  const proceedWithdrawalSubmission = async () => {
+    if (!account) return;
     const walletAddr =
       paymentMethod === 'crypto_trc20'
         ? purseAddress.trim()
@@ -549,6 +504,121 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
       setError(err?.message || 'Failed to submit withdrawal request.');
       soundEngine.playErrorAlert();
     }
+  };
+
+  const handleConfirmWithdrawalWith2fa = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanCode = withdrawalTotpCode.replace(/\D/g, '').trim();
+    if (cleanCode.length !== 6) {
+      setTotpError('Please enter the full 6-digit code from Google Authenticator.');
+      soundEngine.playErrorAlert();
+      return;
+    }
+
+    setIsVerifyingTotp(true);
+    setTotpError(null);
+
+    try {
+      const res = await fetch('/api/2fa/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: userProfile?.id || account?.ownerId,
+          email: userProfile?.email,
+          code: cleanCode,
+          secret: (userProfile as any)?.totp_secret || (userProfile as any)?.totpSecret,
+        }),
+      });
+
+      const data = await res.json();
+      if (!data.isValid) {
+        setTotpError(data.error || 'Invalid 6-digit verification code. Please check your Google Authenticator app and try again.');
+        soundEngine.playErrorAlert();
+        setIsVerifyingTotp(false);
+        return;
+      }
+
+      setShowTwoFactorModal(false);
+      setIsVerifyingTotp(false);
+      await proceedWithdrawalSubmission();
+    } catch (err: any) {
+      setTotpError(err?.message || '2FA verification failed. Please try again.');
+      setIsVerifyingTotp(false);
+    }
+  };
+
+  const handleRequestWithdrawal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setSuccessBanner(null);
+
+    // Mandatory 2FA Check: Completely block if 2FA is not enabled
+    if (!is2faActive) {
+      setError(
+        'Two-Factor Authentication (2FA) is mandatory for withdrawals. Please enable Google Authenticator in your Security & 2FA settings before requesting a payout.'
+      );
+      soundEngine.playErrorAlert();
+      return;
+    }
+
+    if (!kycCheck.allowed) {
+      setError(KYC_WITHDRAWAL_LOCK_MESSAGE);
+      soundEngine.playErrorAlert();
+      return;
+    }
+
+    if (!account) {
+      setError('No Active Account available for withdrawal. Please purchase or select an active account.');
+      soundEngine.playErrorAlert();
+      return;
+    }
+
+    // Single Active Withdrawal Constraint Guard (Per User / Account Type)
+    if (hasActivePending) {
+      setError(PENDING_WITHDRAWAL_WARNING_MESSAGE);
+      soundEngine.playErrorAlert();
+      return;
+    }
+
+    const validation = validateWithdrawalRequest(account, amount, { enforceFirstWithdrawalLock: true });
+    if (!validation.valid) {
+      setError(validation.reason || 'Withdrawal validation failed.');
+      soundEngine.playErrorAlert();
+      return;
+    }
+
+    // Enforce strict 80% Net Generated Profit Payout Ceiling Rule ONLY for Prop Funded accounts
+    if (!isPersonalLiveAccount(account)) {
+      const maxAllowedProfitCeiling = Math.max(0, Number((netProfit * 0.80).toFixed(2)));
+      if (amount > maxAllowedProfitCeiling) {
+        setError(
+          `Withdrawal exceeds the 80% profit payout ceiling. Maximum allowable withdrawal is $${maxAllowedProfitCeiling.toFixed(2)} (80% of $${netProfit.toFixed(2)} net generated profit).`
+        );
+        soundEngine.playErrorAlert();
+        return;
+      }
+    }
+
+    if (paymentMethod === 'crypto_trc20') {
+      const purseValidation = validateQuotexPurseAddress(purseAddress, network, quotexMethod);
+      if (!purseValidation.valid) {
+        setError(purseValidation.reason || 'Invalid purse address.');
+        soundEngine.playErrorAlert();
+        return;
+      }
+    } else {
+      if (!bankName.trim() || !accountHolder.trim() || accountNumber.trim().length < 6 || swiftCode.trim().length < 6) {
+        setError('Please complete all required Bank Transfer fields.');
+        soundEngine.playErrorAlert();
+        return;
+      }
+    }
+
+    // All validation passed: Prompt user for 6-digit Google Authenticator code
+    setShowTwoFactorModal(true);
+    setWithdrawalTotpCode('');
+    setTotpError(null);
+    soundEngine.playUiClick();
   };
 
   const portalNavTabs: { id: QuotexPortalTab; label: string }[] = [
@@ -1299,20 +1369,66 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                     </div>
                   )}
 
-                  {/* Submission Button (Disabled when a pending request exists) */}
+                  {/* Mandatory 2FA Notice Banner */}
+                  {!is2faActive && (
+                    <div
+                      data-testid="withdrawal-2fa-warning-card"
+                      className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/40 flex items-start gap-3"
+                    >
+                      <Lock className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                      <div className="flex-1 text-xs">
+                        <strong className="block text-white font-bold mb-0.5 font-mono uppercase tracking-wider text-amber-400">
+                          Two-Factor Authentication (2FA) Required
+                        </strong>
+                        <p className="text-amber-200/90 mb-2.5 font-mono text-xs">
+                          For institutional security, Google Authenticator 2FA is mandatory before requesting any payout. Please enable 2FA in your Security settings.
+                        </p>
+                        <button
+                          type="button"
+                          data-testid="withdrawal-goto-security-btn"
+                          onClick={() => {
+                            if (onNavigateTab) {
+                              onClose();
+                              onNavigateTab('security');
+                            } else {
+                              onClose();
+                            }
+                          }}
+                          className="px-3.5 py-1.5 rounded-lg bg-[#ff8800] hover:bg-[#ff9900] text-slate-950 font-black text-xs uppercase cursor-pointer transition-colors font-mono inline-flex items-center gap-1.5 shadow"
+                        >
+                          <ShieldCheck className="w-3.5 h-3.5" />
+                          <span>Enable 2FA in Security & 2FA Settings →</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Submission Button (Disabled when a pending request exists or 2FA is disabled) */}
                   <div className="pt-2">
                     <button
                       type="submit"
                       data-testid="submit-withdrawal-btn"
-                      disabled={hasActivePending}
-                      title={hasActivePending ? PENDING_WITHDRAWAL_WARNING_MESSAGE : undefined}
+                      disabled={hasActivePending || !is2faActive}
+                      title={
+                        !is2faActive
+                          ? 'Google Authenticator 2FA is required before submitting a withdrawal'
+                          : hasActivePending
+                          ? PENDING_WITHDRAWAL_WARNING_MESSAGE
+                          : undefined
+                      }
                       className={`w-full sm:w-auto min-w-[200px] px-7 py-3 rounded-lg font-bold text-sm flex items-center justify-center gap-2.5 transition-colors ${
-                        hasActivePending
+                        hasActivePending || !is2faActive
                           ? 'bg-slate-800 text-slate-400 border border-slate-700 cursor-not-allowed opacity-60'
                           : 'bg-[#2b70ff] hover:bg-[#3b82f6] text-white cursor-pointer'
                       }`}
                     >
-                      <span>{hasActivePending ? 'Pending Withdrawal Active' : 'Confirm'}</span>
+                      <span>
+                        {!is2faActive
+                          ? '2FA Setup Required'
+                          : hasActivePending
+                          ? 'Pending Withdrawal Active'
+                          : 'Confirm Payout Request'}
+                      </span>
                       <ArrowRight className="w-4 h-4" />
                     </button>
                   </div>
@@ -1986,6 +2102,97 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
           <span className="text-[10px] mt-0.5 font-medium">Analytics</span>
         </button>
       </nav>
+
+      {/* 2FA Google Authenticator Verification Prompt Modal */}
+      {showTwoFactorModal && (
+        <div
+          data-testid="withdrawal-2fa-modal-overlay"
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm"
+        >
+          <div className="w-full max-w-md rounded-2xl bg-[#0c0d12] border border-[#ff8800]/50 p-6 shadow-2xl space-y-5 font-mono text-left">
+            <div className="flex items-center justify-between pb-3 border-b border-white/10">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-[#ff8800]/15 border border-[#ff8800]/40 flex items-center justify-center text-[#ff8800]">
+                  <ShieldCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-white">Google Authenticator (2FA)</h3>
+                  <span className="text-[10px] text-slate-400">Withdrawal Security Verification</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowTwoFactorModal(false);
+                  setTotpError(null);
+                  setWithdrawalTotpCode('');
+                }}
+                className="text-slate-400 hover:text-white text-xs cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              To authorize payout of <strong className="text-emerald-400 font-bold">${breakdown.netPayoutToReceive.toFixed(2)} USD</strong>, please enter the current 6-digit code from your Google Authenticator app:
+            </p>
+
+            {totpError && (
+              <div
+                data-testid="withdrawal-2fa-error"
+                className="p-3 rounded-xl bg-rose-950/80 border border-rose-500/50 text-xs text-rose-200 flex items-center gap-2"
+              >
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>{totpError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleConfirmWithdrawalWith2fa} className="space-y-4">
+              <div>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  autoFocus
+                  required
+                  maxLength={6}
+                  data-testid="withdrawal-2fa-code-input"
+                  value={withdrawalTotpCode}
+                  onChange={(e) => setWithdrawalTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  placeholder="000000"
+                  className="w-full px-4 py-3 rounded-xl bg-[#050608] border border-white/20 text-white text-center tracking-[0.5em] font-mono text-2xl font-black focus:outline-none focus:border-[#ff8800]"
+                />
+                <span className="text-[10px] text-slate-500 block text-center mt-1.5">
+                  {withdrawalTotpCode.length}/6 digits entered
+                </span>
+              </div>
+
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  type="submit"
+                  disabled={withdrawalTotpCode.length !== 6 || isVerifyingTotp}
+                  data-testid="confirm-withdrawal-2fa-btn"
+                  className="flex-1 py-3 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] disabled:opacity-50 text-slate-950 font-black text-xs uppercase cursor-pointer transition-colors flex items-center justify-center gap-2"
+                >
+                  <ShieldCheck className="w-4 h-4 stroke-[2.5]" />
+                  <span>{isVerifyingTotp ? 'Verifying...' : 'Authorize Payout'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowTwoFactorModal(false);
+                    setTotpError(null);
+                    setWithdrawalTotpCode('');
+                  }}
+                  className="px-4 py-3 rounded-xl bg-[#141418] hover:bg-[#1c1c22] border border-white/10 text-slate-400 hover:text-white text-xs font-bold cursor-pointer transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 

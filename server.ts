@@ -65,6 +65,8 @@ import {
   cancelWithdrawalRequest,
   declineWithdrawalRequest,
   createAccount,
+  updateUser2faSecret,
+  enableUser2fa,
   db,
 } from './src/server/db.ts';
 import { BackendMarketEngine } from './src/server/marketEngine.ts';
@@ -322,6 +324,14 @@ async function startServer() {
         referralCodeInput: referralCode,
       });
 
+      if (user.is_2fa_enabled) {
+        return res.json({
+          ok: true,
+          is2faRequired: true,
+          userId: user.id,
+        });
+      }
+
       const { token, expiresAt } = createSessionToken(user.id, rememberMe);
       const maxAgeMs = expiresAt - Date.now();
       const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
@@ -343,6 +353,51 @@ async function startServer() {
       });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err?.message || 'Authentication error.' });
+    }
+  });
+
+  // POST /api/auth/verify-2fa - Verify TOTP code and finalize session
+  app.post('/api/auth/verify-2fa', async (req, res) => {
+    try {
+      const userId = String(req.body?.userId || '').trim();
+      const code = String(req.body?.code || '').trim();
+      const rememberMe = req.body?.rememberMe !== false;
+
+      if (!userId || !code) {
+        return res.status(400).json({ ok: false, error: 'Missing userId or 2FA code.' });
+      }
+
+      const user = getUserById(userId);
+      if (!user || !user.is_2fa_enabled || !user.totp_secret) {
+        return res.status(400).json({ ok: false, error: 'User 2FA is not enabled or invalid.' });
+      }
+
+      const isValid = (await verify({ token: code, secret: user.totp_secret })).valid;
+      if (!isValid) {
+        return res.status(400).json({ ok: false, error: 'Invalid 2FA code.' });
+      }
+
+      const { token, expiresAt } = createSessionToken(user.id, rememberMe);
+      const maxAgeMs = expiresAt - Date.now();
+      const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
+
+      res.setHeader(
+        'Set-Cookie',
+        `bft_session=${token}; Path=/; Max-Age=${Math.floor(maxAgeMs / 1000)}; HttpOnly; ${
+          isHttps ? 'SameSite=None; Secure' : 'SameSite=Lax'
+        }`
+      );
+
+      const accounts = getAccountsForUser(user.id);
+
+      return res.json({
+        ok: true,
+        token,
+        user: formatUserResponse(user),
+        accounts,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || '2FA verification error.' });
     }
   });
 
@@ -525,6 +580,7 @@ async function startServer() {
       return res.status(500).json({ ok: false, error: err?.message || 'Failed to fetch KYC status.' });
     }
   });
+
 
   // GET /api/accounts - List user's trading accounts
   app.get('/api/accounts', (req, res) => {
@@ -1166,38 +1222,108 @@ async function startServer() {
   // ============================================================================
   // 2FA TOTP AUTHENTICATION
   // ============================================================================
-  app.get('/api/2fa/setup', (req, res) => {
+  app.all(['/api/2fa/setup', '/api/profile/2fa/generate'], (req, res) => {
     const user = getAuthenticatedUser(req);
     if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
     
     const secret = generateSecret();
     const otpauthUrl = generateURI({ issuer: 'BFT-Trading', label: user.email, secret });
     
-    QRCode.toDataURL(otpauthUrl, (err, imageUrl) => {
+    QRCode.toDataURL(otpauthUrl, (err: any, imageUrl: string) => {
       if (err) return res.status(500).json({ ok: false, error: 'Failed to generate QR code' });
       
-      db.prepare('UPDATE users SET totp_secret = ? WHERE id = ?').run(secret, user.id);
+      try {
+        db.prepare('UPDATE users SET totp_secret = ? WHERE id = ?').run(secret, user.id);
+      } catch (e) {
+        console.warn('Failed to update SQLite totp_secret:', e);
+      }
+
+      if (supabaseUrl && supabaseAnonKey) {
+        fetch(`${supabaseUrl}/rest/v1/profiles?id=eq.${user.id}`, {
+          method: 'PATCH',
+          headers: {
+            apikey: supabaseAnonKey,
+            Authorization: `Bearer ${supabaseAnonKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ totp_secret: secret }),
+        }).catch(() => {});
+      }
       
-      res.json({ ok: true, secret, qrCode: imageUrl });
+      res.json({
+        ok: true,
+        secret,
+        qrCode: imageUrl,
+        otpauthUrl,
+        otpauth_url: otpauthUrl,
+      });
     });
   });
 
-  app.post('/api/2fa/verify', async (req, res) => {
+  app.post(['/api/2fa/verify', '/api/profile/2fa/verify'], async (req, res) => {
     const user = getAuthenticatedUser(req);
     if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
     
-    const { code } = req.body;
-    const secret = user.totp_secret;
+    const code = String(req.body?.code || '').trim();
+    const secret = req.body?.secret || user.totp_secret;
     
-    if (!secret) return res.status(400).json({ ok: false, error: '2FA not initialized' });
+    if (!secret) return res.status(400).json({ ok: false, error: '2FA not initialized. Please click Enable 2FA to generate a secret key.' });
+    if (!code) return res.status(400).json({ ok: false, error: 'Verification code required' });
     
-    const isValid = (await verify({ token: code, secret })).valid;
-    if (isValid) {
-      db.prepare('UPDATE users SET is_2fa_enabled = 1 WHERE id = ?').run(user.id);
-      res.json({ ok: true, message: '2FA enabled' });
-    } else {
-      res.status(400).json({ ok: false, error: 'Invalid 2FA code' });
+    try {
+      const verifyResult = await verify({ token: code, secret });
+      const isValid = Boolean(verifyResult && (verifyResult as any).valid);
+      if (isValid) {
+        try {
+          db.prepare('UPDATE users SET is_2fa_enabled = 1, totp_secret = ? WHERE id = ?').run(secret, user.id);
+        } catch (e) {
+          console.warn('Failed to update SQLite is_2fa_enabled:', e);
+        }
+
+        if (supabaseUrl && supabaseAnonKey) {
+          fetch(`${supabaseUrl}/rest/v1/profiles?id=eq.${user.id}`, {
+            method: 'PATCH',
+            headers: {
+              apikey: supabaseAnonKey,
+              Authorization: `Bearer ${supabaseAnonKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ is_2fa_enabled: true, totp_secret: secret }),
+          }).catch(() => {});
+        }
+
+        res.json({ ok: true, message: '2FA enabled successfully', is2faEnabled: true });
+      } else {
+        res.status(400).json({ ok: false, error: 'Invalid 6-digit verification code. Please check your authenticator app.' });
+      }
+    } catch (err: any) {
+      res.status(400).json({ ok: false, error: err?.message || 'Invalid 6-digit verification code' });
     }
+  });
+
+  app.post(['/api/2fa/disable', '/api/profile/2fa/disable'], (req, res) => {
+    const user = getAuthenticatedUser(req);
+    if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
+    
+    try {
+      db.prepare('UPDATE users SET is_2fa_enabled = 0, totp_secret = NULL WHERE id = ?').run(user.id);
+    } catch (e) {
+      console.warn('Failed to disable 2FA in SQLite:', e);
+    }
+
+    if (supabaseUrl && supabaseAnonKey) {
+      fetch(`${supabaseUrl}/rest/v1/profiles?id=eq.${user.id}`, {
+        method: 'PATCH',
+        headers: {
+          apikey: supabaseAnonKey,
+          Authorization: `Bearer ${supabaseAnonKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ is_2fa_enabled: false, totp_secret: null }),
+      }).catch(() => {});
+    }
+
+    res.json({ ok: true, message: '2FA disabled successfully', is2faEnabled: false });
   });
 
   app.post('/api/2fa/validate', async (req, res) => {
@@ -1205,13 +1331,18 @@ async function startServer() {
     if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
     
     const { code } = req.body;
-    const secret = user.totp_secret;
+    const secret = req.body?.secret || user.totp_secret;
     
     if (!user.is_2fa_enabled) return res.json({ ok: true, isValid: true });
     if (!secret) return res.status(400).json({ ok: false, error: '2FA not initialized' });
     
-    const isValid = (await verify({ token: code, secret })).valid;
-    res.json({ ok: true, isValid });
+    try {
+      const verifyResult = await verify({ token: code, secret });
+      const isValid = Boolean(verifyResult && (verifyResult as any).valid);
+      res.json({ ok: true, isValid });
+    } catch {
+      res.json({ ok: false, isValid: false, error: 'Verification failed' });
+    }
   });
 
   // ============================================================================
@@ -1803,7 +1934,7 @@ async function startServer() {
   if (!isProduction) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { middlewareMode: true, hmr: false },
       appType: 'spa',
     });
     app.use(vite.middlewares);

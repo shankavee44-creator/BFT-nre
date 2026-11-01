@@ -143,7 +143,7 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
     ),
     lifetimeEarnings: supabaseCommissions.reduce((sum, c) => sum + c.commissionAmount, 0),
     level1Earnings: supabaseCommissions
-      .filter((c) => c.level === 1 && c.commissionType === 'purchase')
+      .filter((c) => c.level === 1 && c.commissionType === 'package')
       .reduce((sum, c) => sum + c.commissionAmount, 0),
     level2Earnings: supabaseCommissions
       .filter((c) => c.level === 2)

@@ -2170,6 +2170,14 @@ export function getAdminAuditLogs(limit: number = 50) {
   `).all(limit) as any[];
 }
 
+export function updateUser2faSecret(userId: string, secret: string) {
+  db.prepare(`UPDATE users SET totp_secret = ? WHERE id = ?`).run(secret, userId);
+}
+
+export function enableUser2fa(userId: string) {
+  db.prepare(`UPDATE users SET is_2fa_enabled = 1 WHERE id = ?`).run(userId);
+}
+
 /**
  * Idempotent seed function to guarantee admin accounts, sample pending deposits,
  * pending withdrawals, and pending KYC requests are present.

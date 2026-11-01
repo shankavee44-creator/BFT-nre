@@ -217,6 +217,8 @@ export interface UserProfile {
   kycVerificationEndsAt?: number; // ms timestamp when 2-minute auto-verification completes
   kycRejectionReason?: string;
   twoFactorEnabled: boolean;
+  is2faEnabled?: boolean;
+  totpSecret?: string;
   activeAccountId: string;
   referralCode?: string;
   referredBy?: string;
@@ -262,7 +264,7 @@ export interface ReferredUser {
   id: string;
   fullName: string;
   level: ReferralLevel;
-  latestPurchase?: { name: string; amount: number };
+  latestPurchase?: { name: string; amount: number; sku?: string };
 }
 
 export interface AffiliatePayout {
