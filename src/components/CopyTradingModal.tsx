@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Users, ShieldCheck, Trophy, TrendingUp, TrendingDown, ArrowRight, Check, X, AlertTriangle, Zap, DollarSign, ChevronRight, Activity, Shield, Award, Globe, UserPlus, StopCircle, Flame, Star, Lock } from 'lucide-react';
+import { Users, ShieldCheck, Trophy, TrendingUp, TrendingDown, ArrowRight, Check, X, AlertTriangle, Zap, DollarSign, ChevronRight, Activity, Shield, Award, Globe, UserPlus, StopCircle, Flame, Star, Lock, CheckCircle2 } from 'lucide-react';
 import { TradingAccount, UserProfile } from '../types';
 import { soundEngine } from '../utils/soundEffects';
 
@@ -38,36 +38,36 @@ interface CopyTrader {
   winRate3m: number;
 }
 
-const INSTITUTIONAL_TRADERS: CopyTrader[] = [
+const INSTITUTIONAL_MASTERS: CopyTrader[] = [
   // --- INSTANT FUNDED TRADERS (Top 20) ---
   {
-    id: 'trd_1',
+    id: 'trd_i1',
     userId: 'usr_inst_1',
-    name: 'Alexander Vance',
-    country: 'United States',
-    flag: '🇺🇸',
-    avatar: '👨‍💼',
+    name: 'Rajesh Kumar',
+    country: 'India',
+    flag: '🇮🇳',
+    avatar: '🇮🇳',
     category: 'instant_funded',
-    strategyName: 'Alpha FX Momentum $100K',
+    strategyName: 'Mumbai Nifty Alpha $100K',
     vipLevel: 'VIP Elite',
     startingCapital: 100000,
-    currentBalance: 148500,
-    lifetimeEarnings: 48500,
-    dailyProfitDollars: 8445.00,
-    dailyProfitPct: 8.4,
-    weeklyProfitDollars: 18450.00,
-    weeklyProfitPct: 18.5,
-    monthlyProfitDollars: 48500.00,
-    monthlyProfitPct: 45.2,
-    winRate: 83.4,
-    totalTrades: 382,
-    tradingTurnover: 1450000,
+    currentBalance: 154200,
+    lifetimeEarnings: 54200,
+    dailyProfitDollars: 9845.00,
+    dailyProfitPct: 9.8,
+    weeklyProfitDollars: 22100.00,
+    weeklyProfitPct: 22.1,
+    monthlyProfitDollars: 54200.00,
+    monthlyProfitPct: 54.2,
+    winRate: 85.2,
+    totalTrades: 412,
+    tradingTurnover: 1850000,
     totalCopiers: 500, // Fully booked #1
     maxCopiers: 500,
-    winRate3m: 83.4,
+    winRate3m: 85.2,
   },
   {
-    id: 'trd_2',
+    id: 'trd_i2',
     userId: 'usr_inst_2',
     name: 'Kasun Perera',
     country: 'Sri Lanka',
@@ -77,233 +77,233 @@ const INSTITUTIONAL_TRADERS: CopyTrader[] = [
     strategyName: 'Colombo Gold Scalper $50K',
     vipLevel: 'VIP Pro',
     startingCapital: 50000,
-    currentBalance: 73200,
-    lifetimeEarnings: 23200,
-    dailyProfitDollars: 6510.50,
-    dailyProfitPct: 13.0,
-    weeklyProfitDollars: 14200.00,
-    weeklyProfitPct: 28.4,
-    monthlyProfitDollars: 23200.00,
-    monthlyProfitPct: 46.4,
-    winRate: 83.2,
-    totalTrades: 290,
-    tradingTurnover: 920000,
+    currentBalance: 78400,
+    lifetimeEarnings: 28400,
+    dailyProfitDollars: 8120.00,
+    dailyProfitPct: 16.2,
+    weeklyProfitDollars: 17500.00,
+    weeklyProfitPct: 35.0,
+    monthlyProfitDollars: 28400.00,
+    monthlyProfitPct: 56.8,
+    winRate: 84.6,
+    totalTrades: 320,
+    tradingTurnover: 1200000,
     totalCopiers: 500, // Fully booked #2
     maxCopiers: 500,
-    winRate3m: 83.2,
+    winRate3m: 84.6,
   },
   {
-    id: 'trd_3',
+    id: 'trd_i3',
     userId: 'usr_inst_3',
+    name: 'Tariq Mahmood',
+    country: 'Pakistan',
+    flag: '🇵🇰',
+    avatar: '🇵🇰',
+    category: 'instant_funded',
+    strategyName: 'Lahore Forex Titan $100K',
+    vipLevel: 'VIP Elite',
+    startingCapital: 100000,
+    currentBalance: 145000,
+    lifetimeEarnings: 45000,
+    dailyProfitDollars: 7450.00,
+    dailyProfitPct: 7.4,
+    weeklyProfitDollars: 16200.00,
+    weeklyProfitPct: 16.2,
+    monthlyProfitDollars: 45000.00,
+    monthlyProfitPct: 45.0,
+    winRate: 81.9,
+    totalTrades: 350,
+    tradingTurnover: 1350000,
+    totalCopiers: 500, // Fully booked #3
+    maxCopiers: 500,
+    winRate3m: 81.9,
+  },
+  {
+    id: 'trd_i4',
+    userId: 'usr_inst_4',
+    name: 'Faizul Islam',
+    country: 'Bangladesh',
+    flag: '🇧🇩',
+    avatar: '🇧🇩',
+    category: 'instant_funded',
+    strategyName: 'Dhaka FX Momentum $50K',
+    vipLevel: 'VIP Pro',
+    startingCapital: 50000,
+    currentBalance: 71200,
+    lifetimeEarnings: 21200,
+    dailyProfitDollars: 6890.00,
+    dailyProfitPct: 13.7,
+    weeklyProfitDollars: 14800.00,
+    weeklyProfitPct: 29.6,
+    monthlyProfitDollars: 21200.00,
+    monthlyProfitPct: 42.4,
+    winRate: 82.1,
+    totalTrades: 280,
+    tradingTurnover: 980000,
+    totalCopiers: 500, // Fully booked #4
+    maxCopiers: 500,
+    winRate3m: 82.1,
+  },
+  {
+    id: 'trd_i5',
+    userId: 'usr_inst_5',
+    name: 'Amir Al-Maktoum',
+    country: 'United Arab Emirates',
+    flag: '🇦🇪',
+    avatar: '🇦🇪',
+    category: 'instant_funded',
+    strategyName: 'Dubai Prime Scalper $200K',
+    vipLevel: 'VIP Master',
+    startingCapital: 200000,
+    currentBalance: 278000,
+    lifetimeEarnings: 78000,
+    dailyProfitDollars: 6240.00,
+    dailyProfitPct: 3.1,
+    weeklyProfitDollars: 19500.00,
+    weeklyProfitPct: 9.7,
+    monthlyProfitDollars: 78000.00,
+    monthlyProfitPct: 39.0,
+    winRate: 83.0,
+    totalTrades: 450,
+    tradingTurnover: 2400000,
+    totalCopiers: 500, // Fully booked #5
+    maxCopiers: 500,
+    winRate3m: 83.0,
+  },
+  {
+    id: 'trd_i6',
+    userId: 'usr_inst_6',
+    name: 'Zulkifli Rahman',
+    country: 'Malaysia',
+    flag: '🇲🇾',
+    avatar: '🇲🇾',
+    category: 'instant_funded',
+    strategyName: 'Kuala Lumpur Breakout $50K',
+    vipLevel: 'VIP Pro',
+    startingCapital: 50000,
+    currentBalance: 68500,
+    lifetimeEarnings: 18500,
+    dailyProfitDollars: 5410.00,
+    dailyProfitPct: 10.8,
+    weeklyProfitDollars: 11900.00,
+    weeklyProfitPct: 23.8,
+    monthlyProfitDollars: 18500.00,
+    monthlyProfitPct: 37.0,
+    winRate: 79.4,
+    totalTrades: 240,
+    tradingTurnover: 850000,
+    totalCopiers: 340, // Available #6+
+    maxCopiers: 500,
+    winRate3m: 79.4,
+  },
+  {
+    id: 'trd_i7',
+    userId: 'usr_inst_7',
+    name: 'Sheikh Al-Thani',
+    country: 'Qatar',
+    flag: '🇶🇦',
+    avatar: '🇶🇦',
+    category: 'instant_funded',
+    strategyName: 'Doha Energy Hedge $100K',
+    vipLevel: 'VIP Elite',
+    startingCapital: 100000,
+    currentBalance: 132000,
+    lifetimeEarnings: 32000,
+    dailyProfitDollars: 4820.00,
+    dailyProfitPct: 4.8,
+    weeklyProfitDollars: 10800.00,
+    weeklyProfitPct: 10.8,
+    monthlyProfitDollars: 32000.00,
+    monthlyProfitPct: 32.0,
+    winRate: 80.5,
+    totalTrades: 295,
+    tradingTurnover: 1100000,
+    totalCopiers: 410,
+    maxCopiers: 500,
+    winRate3m: 80.5,
+  },
+  {
+    id: 'trd_i8',
+    userId: 'usr_inst_8',
+    name: 'Alexander Vance',
+    country: 'United States',
+    flag: '🇺🇸',
+    avatar: '🇺🇸',
+    category: 'instant_funded',
+    strategyName: 'Wall Street Index Pro $100K',
+    vipLevel: 'VIP Elite',
+    startingCapital: 100000,
+    currentBalance: 129400,
+    lifetimeEarnings: 29400,
+    dailyProfitDollars: 3950.00,
+    dailyProfitPct: 3.9,
+    weeklyProfitDollars: 9200.00,
+    weeklyProfitPct: 9.2,
+    monthlyProfitDollars: 29400.00,
+    monthlyProfitPct: 29.4,
+    winRate: 78.2,
+    totalTrades: 260,
+    tradingTurnover: 940000,
+    totalCopiers: 290,
+    maxCopiers: 500,
+    winRate3m: 78.2,
+  },
+  {
+    id: 'trd_i9',
+    userId: 'usr_inst_9',
     name: 'Liam Davies',
     country: 'United Kingdom',
     flag: '🇬🇧',
     avatar: '🇬🇧',
     category: 'instant_funded',
-    strategyName: 'London Breakout $100K',
-    vipLevel: 'VIP Elite',
-    startingCapital: 100000,
-    currentBalance: 141000,
-    lifetimeEarnings: 41000,
-    dailyProfitDollars: 5920.00,
-    dailyProfitPct: 5.9,
-    weeklyProfitDollars: 12500.00,
-    weeklyProfitPct: 12.5,
-    monthlyProfitDollars: 41000.00,
-    monthlyProfitPct: 41.0,
-    winRate: 79.8,
-    totalTrades: 330,
-    tradingTurnover: 1150000,
-    totalCopiers: 500, // Fully booked #3
+    strategyName: 'London Forex Scalp $50K',
+    vipLevel: 'VIP Pro',
+    startingCapital: 50000,
+    currentBalance: 61200,
+    lifetimeEarnings: 11200,
+    dailyProfitDollars: 3120.00,
+    dailyProfitPct: 6.2,
+    weeklyProfitDollars: 7400.00,
+    weeklyProfitPct: 14.8,
+    monthlyProfitDollars: 11200.00,
+    monthlyProfitPct: 22.4,
+    winRate: 76.9,
+    totalTrades: 190,
+    tradingTurnover: 580000,
+    totalCopiers: 210,
     maxCopiers: 500,
-    winRate3m: 79.8,
+    winRate3m: 76.9,
   },
   {
-    id: 'trd_4',
-    userId: 'usr_inst_4',
-    name: 'Aarav Sharma',
+    id: 'trd_i10',
+    userId: 'usr_inst_10',
+    name: 'Priya Sharma',
     country: 'India',
     flag: '🇮🇳',
     avatar: '🇮🇳',
     category: 'instant_funded',
-    strategyName: 'Mumbai Nifty FX $25K',
-    vipLevel: 'VIP Pro',
-    startingCapital: 25000,
-    currentBalance: 36200,
-    lifetimeEarnings: 11200,
-    dailyProfitDollars: 4120.00,
-    dailyProfitPct: 16.4,
-    weeklyProfitDollars: 8900.00,
-    weeklyProfitPct: 35.6,
-    monthlyProfitDollars: 11200.00,
-    monthlyProfitPct: 44.8,
-    winRate: 82.5,
-    totalTrades: 210,
-    tradingTurnover: 480000,
-    totalCopiers: 500, // Fully booked #4
-    maxCopiers: 500,
-    winRate3m: 82.5,
-  },
-  {
-    id: 'trd_5',
-    userId: 'usr_inst_5',
-    name: 'Hans Weber',
-    country: 'Germany',
-    flag: '🇩🇪',
-    avatar: '🇩🇪',
-    category: 'instant_funded',
-    strategyName: 'Frankfurt Dax Trend $50K',
-    vipLevel: 'VIP Master',
-    startingCapital: 50000,
-    currentBalance: 69400,
-    lifetimeEarnings: 19400,
-    dailyProfitDollars: 3890.00,
-    dailyProfitPct: 7.7,
-    weeklyProfitDollars: 9400.00,
-    weeklyProfitPct: 18.8,
-    monthlyProfitDollars: 19400.00,
-    monthlyProfitPct: 38.8,
-    winRate: 78.5,
-    totalTrades: 245,
-    tradingTurnover: 760000,
-    totalCopiers: 500, // Fully booked #5
-    maxCopiers: 500,
-    winRate3m: 78.5,
-  },
-  {
-    id: 'trd_6',
-    userId: 'usr_inst_6',
-    name: 'Yuki Tanaka',
-    country: 'Japan',
-    flag: '🇯🇵',
-    avatar: '🇯🇵',
-    category: 'instant_funded',
-    strategyName: 'Tokyo Yen Scalper $100K',
-    vipLevel: 'VIP Elite',
-    startingCapital: 100000,
-    currentBalance: 134000,
-    lifetimeEarnings: 34000,
-    dailyProfitDollars: 3450.00,
-    dailyProfitPct: 3.4,
-    weeklyProfitDollars: 8200.00,
-    weeklyProfitPct: 8.2,
-    monthlyProfitDollars: 34000.00,
-    monthlyProfitPct: 34.0,
-    winRate: 81.2,
-    totalTrades: 275,
-    tradingTurnover: 980000,
-    totalCopiers: 320, // Available #6+
-    maxCopiers: 500,
-    winRate3m: 81.2,
-  },
-  {
-    id: 'trd_7',
-    userId: 'usr_inst_7',
-    name: 'Pierre Dupont',
-    country: 'France',
-    flag: '🇫🇷',
-    avatar: '🇫🇷',
-    category: 'instant_funded',
-    strategyName: 'Paris Euro Reversal $50K',
-    vipLevel: 'VIP Pro',
-    startingCapital: 50000,
-    currentBalance: 64200,
-    lifetimeEarnings: 14200,
-    dailyProfitDollars: 2950.00,
-    dailyProfitPct: 5.9,
-    weeklyProfitDollars: 6800.00,
-    weeklyProfitPct: 13.6,
-    monthlyProfitDollars: 14200.00,
-    monthlyProfitPct: 28.4,
-    winRate: 77.9,
-    totalTrades: 190,
-    tradingTurnover: 540000,
-    totalCopiers: 280,
-    maxCopiers: 500,
-    winRate3m: 77.9,
-  },
-  {
-    id: 'trd_8',
-    userId: 'usr_inst_8',
-    name: 'Mateo Fernandez',
-    country: 'Spain',
-    flag: '🇪🇸',
-    avatar: '🇪🇸',
-    category: 'instant_funded',
-    strategyName: 'Madrid Ibex Swing $25K',
+    strategyName: 'Bangalore Tech Momentum $25K',
     vipLevel: 'Pro Trader',
     startingCapital: 25000,
-    currentBalance: 31800,
-    lifetimeEarnings: 6800,
-    dailyProfitDollars: 2150.00,
-    dailyProfitPct: 8.6,
-    weeklyProfitDollars: 4900.00,
-    weeklyProfitPct: 19.6,
-    monthlyProfitDollars: 6800.00,
-    monthlyProfitPct: 27.2,
-    winRate: 76.2,
-    totalTrades: 160,
-    tradingTurnover: 390000,
-    totalCopiers: 190,
+    currentBalance: 31400,
+    lifetimeEarnings: 6400,
+    dailyProfitDollars: 2450.00,
+    dailyProfitPct: 9.8,
+    weeklyProfitDollars: 5100.00,
+    weeklyProfitPct: 20.4,
+    monthlyProfitDollars: 6400.00,
+    monthlyProfitPct: 25.6,
+    winRate: 75.4,
+    totalTrades: 165,
+    tradingTurnover: 420000,
+    totalCopiers: 180,
     maxCopiers: 500,
-    winRate3m: 76.2,
-  },
-  {
-    id: 'trd_9',
-    userId: 'usr_inst_9',
-    name: 'Giovanni Rossi',
-    country: 'Italy',
-    flag: '🇮🇹',
-    avatar: '🇮🇹',
-    category: 'instant_funded',
-    strategyName: 'Milan MIB Growth $50K',
-    vipLevel: 'VIP Pro',
-    startingCapital: 50000,
-    currentBalance: 61000,
-    lifetimeEarnings: 11000,
-    dailyProfitDollars: 1850.00,
-    dailyProfitPct: 3.7,
-    weeklyProfitDollars: 4500.00,
-    weeklyProfitPct: 9.0,
-    monthlyProfitDollars: 11000.00,
-    monthlyProfitPct: 22.0,
-    winRate: 75.8,
-    totalTrades: 155,
-    tradingTurnover: 410000,
-    totalCopiers: 145,
-    maxCopiers: 500,
-    winRate3m: 75.8,
-  },
-  {
-    id: 'trd_10',
-    userId: 'usr_inst_10',
-    name: 'Henrik Larsson',
-    country: 'Sweden',
-    flag: '🇸🇪',
-    avatar: '🇸🇪',
-    category: 'instant_funded',
-    strategyName: 'Stockholm Nordic Trend $100K',
-    vipLevel: 'VIP Elite',
-    startingCapital: 100000,
-    currentBalance: 122000,
-    lifetimeEarnings: 22000,
-    dailyProfitDollars: 1520.00,
-    dailyProfitPct: 1.5,
-    weeklyProfitDollars: 7800.00,
-    weeklyProfitPct: 7.8,
-    monthlyProfitDollars: 22000.00,
-    monthlyProfitPct: 22.0,
-    winRate: 80.4,
-    totalTrades: 210,
-    tradingTurnover: 650000,
-    totalCopiers: 210,
-    maxCopiers: 500,
-    winRate3m: 80.4,
+    winRate3m: 75.4,
   },
 
   // --- SELF CAPITAL TRADERS (Top 20) ---
   {
-    id: 'trd_11',
+    id: 'trd_s1',
     userId: 'usr_self_1',
     name: 'Marcus Sterling',
     country: 'United States',
@@ -313,76 +313,50 @@ const INSTITUTIONAL_TRADERS: CopyTrader[] = [
     strategyName: 'Crypto OTC Breakout Pro',
     vipLevel: 'VIP Master',
     startingCapital: 5000,
-    currentBalance: 29800,
-    lifetimeEarnings: 24800,
-    dailyProfitDollars: 5120.00,
-    dailyProfitPct: 20.7,
-    weeklyProfitDollars: 14200.00,
-    weeklyProfitPct: 57.5,
-    monthlyProfitDollars: 24800.00,
-    monthlyProfitPct: 99.2,
-    winRate: 84.2,
-    totalTrades: 485,
-    tradingTurnover: 2100000,
-    totalCopiers: 500, // Fully booked #1 Self Capital
+    currentBalance: 34200,
+    lifetimeEarnings: 29200,
+    dailyProfitDollars: 6840.00,
+    dailyProfitPct: 27.3,
+    weeklyProfitDollars: 18200.00,
+    weeklyProfitPct: 72.8,
+    monthlyProfitDollars: 29200.00,
+    monthlyProfitPct: 116.8,
+    winRate: 86.4,
+    totalTrades: 510,
+    tradingTurnover: 2450000,
+    totalCopiers: 500, // Fully booked #1 Self-Capital
     maxCopiers: 500,
-    winRate3m: 84.2,
+    winRate3m: 86.4,
   },
   {
-    id: 'trd_12',
+    id: 'trd_s2',
     userId: 'usr_self_2',
-    name: 'Elena Rostova',
-    country: 'Russia',
-    flag: '🇷🇺',
-    avatar: '🎯',
-    category: 'self_capital',
-    strategyName: 'Siberian Macro Swing',
-    vipLevel: 'Pro Trader',
-    startingCapital: 2500,
-    currentBalance: 13200,
-    lifetimeEarnings: 10700,
-    dailyProfitDollars: 1840.50,
-    dailyProfitPct: 16.2,
-    weeklyProfitDollars: 5200.00,
-    weeklyProfitPct: 45.8,
-    monthlyProfitDollars: 10700.00,
-    monthlyProfitPct: 94.2,
-    winRate: 88.6,
-    totalTrades: 150,
-    tradingTurnover: 620000,
-    totalCopiers: 500, // Fully booked #2 Self Capital
-    maxCopiers: 500,
-    winRate3m: 88.6,
-  },
-  {
-    id: 'trd_13',
-    userId: 'usr_self_3',
     name: 'Suresh Patel',
     country: 'India',
     flag: '🇮🇳',
     avatar: '🇮🇳',
     category: 'self_capital',
     strategyName: 'Gujarat Momentum Club',
-    vipLevel: 'Pro Trader',
-    startingCapital: 1500,
-    currentBalance: 8400,
-    lifetimeEarnings: 6900,
-    dailyProfitDollars: 1210.00,
-    dailyProfitPct: 16.8,
-    weeklyProfitDollars: 3400.00,
-    weeklyProfitPct: 47.2,
-    monthlyProfitDollars: 6900.00,
-    monthlyProfitPct: 95.8,
-    winRate: 77.4,
-    totalTrades: 140,
-    tradingTurnover: 380000,
-    totalCopiers: 500, // Fully booked #3 Self Capital
+    vipLevel: 'VIP Master',
+    startingCapital: 3000,
+    currentBalance: 19800,
+    lifetimeEarnings: 16800,
+    dailyProfitDollars: 5210.00,
+    dailyProfitPct: 34.7,
+    weeklyProfitDollars: 12400.00,
+    weeklyProfitPct: 82.6,
+    monthlyProfitDollars: 16800.00,
+    monthlyProfitPct: 112.0,
+    winRate: 83.9,
+    totalTrades: 380,
+    tradingTurnover: 1600000,
+    totalCopiers: 500, // Fully booked #2 Self-Capital
     maxCopiers: 500,
-    winRate3m: 77.4,
+    winRate3m: 83.9,
   },
   {
-    id: 'trd_14',
-    userId: 'usr_self_4',
+    id: 'trd_s3',
+    userId: 'usr_self_3',
     name: 'Nimal Jayasinghe',
     country: 'Sri Lanka',
     flag: '🇱🇰',
@@ -390,99 +364,125 @@ const INSTITUTIONAL_TRADERS: CopyTrader[] = [
     category: 'self_capital',
     strategyName: 'Kandy Forex Syndicate',
     vipLevel: 'VIP Pro',
-    startingCapital: 3000,
-    currentBalance: 12100,
-    lifetimeEarnings: 9100,
-    dailyProfitDollars: 980.00,
-    dailyProfitPct: 8.8,
-    weeklyProfitDollars: 3100.00,
-    weeklyProfitPct: 27.9,
-    monthlyProfitDollars: 9100.00,
-    monthlyProfitPct: 81.9,
-    winRate: 80.5,
-    totalTrades: 175,
-    tradingTurnover: 490000,
-    totalCopiers: 500, // Fully booked #4 Self Capital
+    startingCapital: 2500,
+    currentBalance: 15400,
+    lifetimeEarnings: 12900,
+    dailyProfitDollars: 4120.00,
+    dailyProfitPct: 27.4,
+    weeklyProfitDollars: 9800.00,
+    weeklyProfitPct: 65.3,
+    monthlyProfitDollars: 12900.00,
+    monthlyProfitPct: 86.0,
+    winRate: 82.0,
+    totalTrades: 290,
+    tradingTurnover: 1100000,
+    totalCopiers: 500, // Fully booked #3 Self-Capital
     maxCopiers: 500,
-    winRate3m: 80.5,
+    winRate3m: 82.0,
   },
   {
-    id: 'trd_15',
-    userId: 'usr_self_5',
-    name: 'Chloe Bennett',
-    country: 'Australia',
-    flag: '🇦🇺',
-    avatar: '🇦🇺',
+    id: 'trd_s4',
+    userId: 'usr_self_4',
+    name: 'Bilal Ahmed',
+    country: 'Pakistan',
+    flag: '🇵🇰',
+    avatar: '🇵🇰',
     category: 'self_capital',
-    strategyName: 'Sydney Session Sniper',
+    strategyName: 'Karachi Crypto Surge',
+    vipLevel: 'VIP Pro',
+    startingCapital: 2000,
+    currentBalance: 12800,
+    lifetimeEarnings: 10800,
+    dailyProfitDollars: 3510.00,
+    dailyProfitPct: 35.1,
+    weeklyProfitDollars: 8100.00,
+    weeklyProfitPct: 81.0,
+    monthlyProfitDollars: 10800.00,
+    monthlyProfitPct: 108.0,
+    winRate: 81.5,
+    totalTrades: 260,
+    tradingTurnover: 950000,
+    totalCopiers: 500, // Fully booked #4 Self-Capital
+    maxCopiers: 500,
+    winRate3m: 81.5,
+  },
+  {
+    id: 'trd_s5',
+    userId: 'usr_self_5',
+    name: 'Mohamed Farhan',
+    country: 'Bangladesh',
+    flag: '🇧🇩',
+    avatar: '🇧🇩',
+    category: 'self_capital',
+    strategyName: 'Chittagong Swing Trader',
+    vipLevel: 'VIP Pro',
+    startingCapital: 1500,
+    currentBalance: 9500,
+    lifetimeEarnings: 8000,
+    dailyProfitDollars: 2840.00,
+    dailyProfitPct: 37.8,
+    weeklyProfitDollars: 6200.00,
+    weeklyProfitPct: 82.6,
+    monthlyProfitDollars: 8000.00,
+    monthlyProfitPct: 106.6,
+    winRate: 79.8,
+    totalTrades: 210,
+    tradingTurnover: 720000,
+    totalCopiers: 500, // Fully booked #5 Self-Capital
+    maxCopiers: 500,
+    winRate3m: 79.8,
+  },
+  {
+    id: 'trd_s6',
+    userId: 'usr_self_6',
+    name: 'Azlan Shah',
+    country: 'Malaysia',
+    flag: '🇲🇾',
+    avatar: '🇲🇾',
+    category: 'self_capital',
+    strategyName: 'Penang FX Reversal',
     vipLevel: 'Pro Trader',
     startingCapital: 2000,
-    currentBalance: 9600,
-    lifetimeEarnings: 7600,
-    dailyProfitDollars: 840.00,
-    dailyProfitPct: 9.6,
-    weeklyProfitDollars: 2800.00,
-    weeklyProfitPct: 32.1,
-    monthlyProfitDollars: 7600.00,
-    monthlyProfitPct: 87.3,
-    winRate: 79.2,
-    totalTrades: 130,
-    tradingTurnover: 310000,
-    totalCopiers: 500, // Fully booked #5 Self Capital
+    currentBalance: 8900,
+    lifetimeEarnings: 6900,
+    dailyProfitDollars: 2150.00,
+    dailyProfitPct: 21.5,
+    weeklyProfitDollars: 4900.00,
+    weeklyProfitPct: 49.0,
+    monthlyProfitDollars: 6900.00,
+    monthlyProfitPct: 69.0,
+    winRate: 77.2,
+    totalTrades: 180,
+    tradingTurnover: 540000,
+    totalCopiers: 320, // Available #6+
     maxCopiers: 500,
-    winRate3m: 79.2,
+    winRate3m: 77.2,
   },
   {
-    id: 'trd_16',
-    userId: 'usr_self_6',
-    name: 'Carlos Santana',
-    country: 'Brazil',
-    flag: '🇧🇷',
-    avatar: '🇧🇷',
-    category: 'self_capital',
-    strategyName: 'Sao Paulo Real Yield',
-    vipLevel: 'Pro Trader',
-    startingCapital: 1000,
-    currentBalance: 4800,
-    lifetimeEarnings: 3800,
-    dailyProfitDollars: 620.00,
-    dailyProfitPct: 14.8,
-    weeklyProfitDollars: 1800.00,
-    weeklyProfitPct: 42.8,
-    monthlyProfitDollars: 3800.00,
-    monthlyProfitPct: 90.4,
-    winRate: 76.5,
-    totalTrades: 110,
-    tradingTurnover: 220000,
-    totalCopiers: 280, // Available #6+ Self Capital
-    maxCopiers: 500,
-    winRate3m: 76.5,
-  },
-  {
-    id: 'trd_17',
+    id: 'trd_s7',
     userId: 'usr_self_7',
-    name: 'Fatima Al-Farsi',
+    name: 'Hamdan Al-Maktoum',
     country: 'United Arab Emirates',
     flag: '🇦🇪',
     avatar: '🇦🇪',
     category: 'self_capital',
-    strategyName: 'Dubai Gold Horizon',
+    strategyName: 'Sharjah Wealth Compounder',
     vipLevel: 'VIP Pro',
     startingCapital: 5000,
-    currentBalance: 16400,
-    lifetimeEarnings: 11400,
-    dailyProfitDollars: 550.00,
-    dailyProfitPct: 3.4,
-    weeklyProfitDollars: 3200.00,
-    weeklyProfitPct: 19.8,
-    monthlyProfitDollars: 11400.00,
-    monthlyProfitPct: 70.3,
-    winRate: 81.0,
-    totalTrades: 145,
-    tradingTurnover: 510000,
-    totalCopiers: 340,
+    currentBalance: 18200,
+    lifetimeEarnings: 13200,
+    dailyProfitDollars: 1890.00,
+    dailyProfitPct: 11.3,
+    weeklyProfitDollars: 6100.00,
+    weeklyProfitPct: 36.6,
+    monthlyProfitDollars: 13200.00,
+    monthlyProfitPct: 79.2,
+    winRate: 80.1,
+    totalTrades: 195,
+    tradingTurnover: 680000,
+    totalCopiers: 390,
     maxCopiers: 500,
-    winRate3m: 81.0,
+    winRate3m: 80.1,
   },
 ];
 
@@ -494,7 +494,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
   onNavigateToPricing,
 }) => {
   const [activeTab, setActiveTab] = useState<'instant_funded' | 'self_capital'>('instant_funded');
-  const [tradersList, setTradersList] = useState<CopyTrader[]>(INSTITUTIONAL_TRADERS);
+  const [tradersList, setTradersList] = useState<CopyTrader[]>(INSTITUTIONAL_MASTERS);
   const [viewingTrader, setViewingTrader] = useState<CopyTrader | null>(null);
   const [activeSubscriptions, setActiveSubscriptions] = useState<Record<string, boolean>>({});
   
@@ -531,10 +531,16 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
     return isInstant25k || isSelfCapital100;
   });
 
-  const handleToggleCopy = (trader: CopyTrader) => {
+  const handleToggleCopy = (trader: CopyTrader, index: number) => {
     soundEngine.playUiClick();
+    if (index < 5) {
+      setSuccessNotice('This elite trader is in the Top 5 and currently fully booked (500/500 Copiers - Waitlist Only).');
+      setTimeout(() => setSuccessNotice(null), 4000);
+      return;
+    }
+
     if (trader.totalCopiers >= trader.maxCopiers && !activeSubscriptions[trader.id]) {
-      setSuccessNotice('This trading provider has reached the maximum cap of 500 copiers (Fully Booked).');
+      setSuccessNotice('This trading provider has reached the maximum cap of 500 copiers.');
       setTimeout(() => setSuccessNotice(null), 4000);
       return;
     }
@@ -571,8 +577,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
 
   const handleApplyAsProvider = () => {
     soundEngine.playUiClick();
-    // Rule: Must have minimum 60% Profitability Win Rate over the last 3 months
-    const userBestWinRate = accounts.reduce((max, acc) => Math.max(max, acc.winRate || 0), 72);
+    const userBestWinRate = accounts.reduce((max, acc) => Math.max(max, acc.winRate || 0), 75);
     const hasRequiredWinRate = userBestWinRate >= 60;
 
     if (!hasRequiredWinRate) {
@@ -585,8 +590,8 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
       id: newProviderId,
       userId: userProfile?.id || 'usr_bft_001',
       name: userProfile?.fullName || userProfile?.email || 'My Trading Strategy',
-      country: userProfile?.country || 'United States',
-      flag: '🇺🇸',
+      country: userProfile?.country || 'India',
+      flag: '🇮🇳',
       avatar: '⭐',
       category: providerCategory,
       strategyName: providerStrategyName,
@@ -615,24 +620,24 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/90 backdrop-blur-md animate-fade-in font-sans">
-      <div className="relative w-full max-w-5xl bg-[#0d0f17] border border-white/15 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-[#090A0F]/90 backdrop-blur-md animate-fade-in font-sans">
+      <div className="relative w-full max-w-5xl bg-[#0d0f17] border border-slate-800/80 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
         
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-5 border-b border-white/10 bg-gradient-to-r from-[#141722] via-[#0d0f17] to-[#141722]">
+        <div className="flex items-center justify-between px-6 py-5 border-b border-slate-800/80 bg-gradient-to-r from-[#141722] via-[#0d0f17] to-[#141722]">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-[#ff8800] to-[#ffaa00] flex items-center justify-center shadow-lg shadow-[#ff8800]/25">
               <Users className="w-5 h-5 text-slate-950" />
             </div>
             <div>
               <h2 className="text-lg font-black text-white flex items-center gap-2">
-                Elite Advanced Social Copy Trading
+                Institutional Social Copy Trading Platform
                 <span className="text-[10px] font-mono bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full">
                   100% Free
                 </span>
               </h2>
               <p className="text-xs text-slate-400">
-                Institutional-grade algorithmic copy trading. Zero fees or profit splits.
+                Mirror elite traders with 0% profit splits or hidden fees.
               </p>
             </div>
           </div>
@@ -655,11 +660,11 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
           </div>
         </div>
 
-        {/* Eye-Catching Marketing Banner */}
-        <div className="mx-6 mt-4 p-3.5 rounded-2xl bg-gradient-to-r from-[#ff8800]/20 via-[#1a150c] to-emerald-500/20 border border-[#ff8800]/40 flex items-center justify-between flex-wrap gap-2 text-xs">
+        {/* Top-Level Glowing Marketing Banner */}
+        <div className="mx-6 mt-4 p-3.5 rounded-2xl bg-gradient-to-r from-[#ff8800]/25 via-[#1a150c] to-emerald-500/25 border border-[#ff8800]/50 shadow-lg shadow-[#ff8800]/10 flex items-center justify-between flex-wrap gap-2 text-xs">
           <div className="flex items-center gap-2 text-amber-200">
             <Zap className="w-4 h-4 text-[#ffaa00]" />
-            <span><strong>100% Free Copy Trading - Mirror elite performers instantly. Zero fees or profit splits.</strong></span>
+            <span><strong>100% Free Institutional Copy Trading — Mirror Top-Ranked Performers with 0% Profit Splits or Hidden Fees.</strong></span>
           </div>
           <div className="font-mono text-[11px] text-emerald-400">
             Real-Time Supabase Sync Active
@@ -674,7 +679,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
         )}
 
         {/* Top 20 Tabs */}
-        <div className="px-6 mt-4 flex items-center gap-3 border-b border-white/10 pb-4">
+        <div className="px-6 mt-4 flex items-center gap-3 border-b border-slate-800/80 pb-4">
           <button
             type="button"
             onClick={() => { soundEngine.playUiClick(); setActiveTab('instant_funded'); }}
@@ -705,7 +710,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
         <div className="flex-1 overflow-y-auto p-6 space-y-2.5">
           {displayedTraders.map((trader, index) => {
             const isCopying = !!activeSubscriptions[trader.id];
-            const isFull = trader.totalCopiers >= trader.maxCopiers;
+            const isTop5FullyBooked = index < 5;
             return (
               <div
                 key={trader.id}
@@ -713,22 +718,28 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                 className={`group rounded-2xl border p-4 transition-all flex flex-col md:flex-row md:items-center justify-between gap-4 cursor-pointer ${
                   isCopying
                     ? 'bg-[#181d18] border-emerald-500/50 shadow-md shadow-emerald-500/10'
-                    : isFull
-                    ? 'bg-[#13151f]/80 border-white/5 opacity-85 hover:border-white/15'
-                    : 'bg-[#131622] border-white/10 hover:border-[#ff8800]/40 hover:bg-[#1a1e2e]'
+                    : isTop5FullyBooked
+                    ? 'bg-[#13151f] border-amber-500/20 opacity-90 hover:border-amber-500/40'
+                    : 'bg-[#131622] border-slate-800/80 hover:border-[#ff8800]/40 hover:bg-[#1a1e2e]'
                 }`}
               >
-                {/* Rank #, Flag & Name / Strategy */}
+                {/* Rank Position with Glowing Badge for Top 3 & Verified Checkmark */}
                 <div className="flex items-center gap-3">
-                  <span className="w-6 text-center font-mono font-bold text-xs text-slate-500">
+                  <span className={`w-7 h-7 rounded-xl flex items-center justify-center font-mono font-black text-xs ${
+                    index === 0 ? 'bg-amber-400 text-slate-950 shadow-md shadow-amber-400/40' :
+                    index === 1 ? 'bg-slate-300 text-slate-950 shadow-md' :
+                    index === 2 ? 'bg-amber-700 text-white shadow-md' :
+                    'text-slate-400 bg-white/5'
+                  }`}>
                     #{index + 1}
                   </span>
                   <div className="w-10 h-10 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-xl shrink-0">
                     {trader.flag}
                   </div>
                   <div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5">
                       <h3 className="text-sm font-bold text-white group-hover:text-[#ffaa00] transition">{trader.name}</h3>
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400" title="Verified Institutional Trader" />
                       <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-white/10 text-amber-300 border border-white/10 font-bold">
                         {trader.category === 'instant_funded' ? 'Instant Funded' : 'Self-Capital'}
                       </span>
@@ -737,11 +748,11 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                   </div>
                 </div>
 
-                {/* Daily Profit in Dollars and Percentage, Win Rate, Copiers */}
+                {/* Daily Profit in Both Dollar ($) & Percentage (%), Win Rate, Copiers */}
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 items-center font-mono text-xs">
                   <div>
                     <span className="text-[10px] text-slate-400 block uppercase">Daily Profit</span>
-                    <span className="text-sm font-black text-emerald-400">
+                    <span className="text-sm font-black text-[#00e676]">
                       +${trader.dailyProfitDollars.toLocaleString(undefined, { minimumFractionDigits: 2 })} (+{trader.dailyProfitPct}%)
                     </span>
                   </div>
@@ -751,8 +762,8 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                   </div>
                   <div>
                     <span className="text-[10px] text-slate-400 block uppercase">Copier Slots</span>
-                    <span className={`text-xs font-bold ${isFull ? 'text-amber-400' : 'text-white'}`}>
-                      {trader.totalCopiers} / {trader.maxCopiers} Copiers
+                    <span className={`text-xs font-bold ${isTop5FullyBooked ? 'text-amber-400' : 'text-white'}`}>
+                      {isTop5FullyBooked ? '500 / 500 Copiers' : `${trader.totalCopiers} / 500 Copiers`}
                     </span>
                   </div>
                 </div>
@@ -760,22 +771,22 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                 {/* Action */}
                 <div>
                   {isCopying ? (
-                    <span className="px-3 py-1.5 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-xs font-bold flex items-center gap-1">
-                      <Check className="w-3.5 h-3.5" />
+                    <span className="px-3 py-1.5 rounded-xl bg-emerald-500/20 text-[#00e676] border border-emerald-500/40 text-xs font-bold flex items-center gap-1">
+                      <Check className="w-3.5 h-3.5 text-[#00e676]" />
                       Copying Active
                     </span>
-                  ) : isFull ? (
-                    <span className="px-3 py-1.5 rounded-xl bg-amber-500/15 text-amber-400 border border-amber-500/30 text-xs font-bold flex items-center gap-1.5">
+                  ) : isTop5FullyBooked ? (
+                    <span className="px-3 py-1.5 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs font-bold flex items-center gap-1.5 shadow-sm">
                       <Lock className="w-3.5 h-3.5" />
-                      Full (Waitlist)
+                      [ 🔒 FULL - WAITLIST ONLY ]
                     </span>
                   ) : (
                     <button
                       type="button"
-                      onClick={(e) => { e.stopPropagation(); handleToggleCopy(trader); }}
-                      className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#ff8800] to-[#ffaa00] hover:brightness-110 text-slate-950 font-black text-xs transition cursor-pointer shadow-md shadow-[#ff8800]/25 flex items-center gap-1.5"
+                      onClick={(e) => { e.stopPropagation(); handleToggleCopy(trader, index); }}
+                      className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#ff8800] to-[#ffaa00] hover:brightness-110 text-slate-950 font-black text-xs transition cursor-pointer shadow-md shadow-[#ff8800]/25 flex items-center gap-1.5 animate-pulse"
                     >
-                      <span>Copy</span>
+                      <span>COPY TRADER</span>
                       <ChevronRight className="w-4 h-4 stroke-[3]" />
                     </button>
                   )}
@@ -786,8 +797,8 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-white/10 bg-[#141722] flex items-center justify-between text-xs text-slate-400">
-          <span>First 5 traders are fully booked to ensure low-latency execution quality.</span>
+        <div className="px-6 py-4 border-t border-slate-800/80 bg-[#141722] flex items-center justify-between text-xs text-slate-400">
+          <span>Top 5 traders are fully booked to maintain low-latency algorithmic stability.</span>
           <button
             type="button"
             onClick={onClose}
@@ -801,11 +812,11 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
 
       {/* Advanced Interactive Trader Profile Modal */}
       {viewingTrader && !showEligibilityModal && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in">
-          <div className="relative w-full max-w-xl bg-[#131622] border border-[#ff8800]/40 rounded-3xl p-6 sm:p-8 shadow-2xl overflow-hidden space-y-6">
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-[#090A0F]/85 backdrop-blur-md animate-fade-in font-sans">
+          <div className="relative w-full max-w-xl bg-[#0d0f17] border border-slate-800/80 rounded-3xl p-6 sm:p-8 shadow-2xl overflow-hidden space-y-6">
             
             {/* Modal Header */}
-            <div className="flex items-center justify-between border-b border-white/10 pb-4">
+            <div className="flex items-center justify-between border-b border-slate-800/80 pb-4">
               <div className="flex items-center gap-4">
                 <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-3xl shadow">
                   {viewingTrader.flag}
@@ -813,6 +824,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                 <div>
                   <div className="flex items-center gap-2">
                     <h3 className="text-lg font-black text-white">{viewingTrader.name}</h3>
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                     <span className="text-[10px] font-mono bg-[#ff8800]/20 text-amber-300 border border-[#ff8800]/40 px-2 py-0.5 rounded-full font-bold">
                       {viewingTrader.vipLevel}
                     </span>
@@ -829,9 +841,9 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
               </button>
             </div>
 
-            {/* Starting Balance ($) & Current Balance ($) in Glowing Cards */}
+            {/* Glowing Stat Panels: Starting Balance & Current Account Balance */}
             <div className="grid grid-cols-2 gap-3 font-mono">
-              <div className="p-4 rounded-2xl bg-black/60 border border-white/10 shadow-lg shadow-black/50">
+              <div className="p-4 rounded-2xl bg-black/60 border border-slate-800/80 shadow-lg shadow-black/50">
                 <span className="text-[10px] text-slate-400 block uppercase mb-1">Starting Balance</span>
                 <span className="text-lg sm:text-xl font-black text-slate-200">
                   {viewingTrader.category === 'self_capital' && viewingTrader.startingCapital < 1000
@@ -840,57 +852,55 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                 </span>
               </div>
               <div className="p-4 rounded-2xl bg-gradient-to-br from-emerald-950/60 to-black border border-emerald-500/50 shadow-lg shadow-emerald-500/20">
-                <span className="text-[10px] text-emerald-400 block uppercase mb-1 font-bold">Current Balance</span>
-                <span className="text-lg sm:text-xl font-black text-emerald-400">${viewingTrader.currentBalance.toLocaleString()}</span>
+                <span className="text-[10px] text-[#00e676] block uppercase mb-1 font-bold">Current Account Balance</span>
+                <span className="text-lg sm:text-xl font-black text-[#00e676]">${viewingTrader.currentBalance.toLocaleString()}</span>
               </div>
             </div>
 
-            {/* Dual Performance Metric View (Side-by-Side / Cleanly Formatted) */}
-            <div className="space-y-3 p-4 rounded-2xl bg-black/50 border border-white/10 font-mono">
+            {/* Dual Performance Breakdown Grid */}
+            <div className="space-y-3 p-4 rounded-2xl bg-black/50 border border-slate-800/80 font-mono">
               <div className="text-xs text-slate-300 font-bold uppercase tracking-wider mb-2">Institutional Performance Breakdown</div>
               <div className="grid grid-cols-3 gap-2 text-center text-xs">
                 <div className="p-2.5 rounded-xl bg-white/5 border border-white/5">
                   <span className="text-[10px] text-slate-400 block uppercase">Daily</span>
-                  <span className="font-black text-emerald-400 text-xs sm:text-sm">
+                  <span className="font-black text-[#00e676] text-xs sm:text-sm">
                     +${viewingTrader.dailyProfitDollars.toLocaleString()}
                   </span>
-                  <span className="text-[9px] text-emerald-500 block">
+                  <span className="text-[9px] text-[#00e676] block">
                     (+{viewingTrader.dailyProfitPct}%)
                   </span>
                 </div>
                 <div className="p-2.5 rounded-xl bg-white/5 border border-white/5">
                   <span className="text-[10px] text-slate-400 block uppercase">Weekly</span>
-                  <span className="font-black text-emerald-400 text-xs sm:text-sm">
+                  <span className="font-black text-[#00e676] text-xs sm:text-sm">
                     +${viewingTrader.weeklyProfitDollars.toLocaleString()}
                   </span>
-                  <span className="text-[9px] text-emerald-500 block">
+                  <span className="text-[9px] text-[#00e676] block">
                     (+{viewingTrader.weeklyProfitPct}%)
                   </span>
                 </div>
                 <div className="p-2.5 rounded-xl bg-white/5 border border-white/5">
                   <span className="text-[10px] text-slate-400 block uppercase">Monthly</span>
-                  <span className="font-black text-emerald-400 text-xs sm:text-sm">
+                  <span className="font-black text-[#00e676] text-xs sm:text-sm">
                     +${viewingTrader.monthlyProfitDollars.toLocaleString()}
                   </span>
-                  <span className="text-[9px] text-emerald-500 block">
+                  <span className="text-[9px] text-[#00e676] block">
                     (+{viewingTrader.monthlyProfitPct}%)
                   </span>
                 </div>
               </div>
             </div>
 
-            {/* Live Copier Progress Bar */}
-            <div className="space-y-2 p-3.5 rounded-xl bg-black/40 border border-white/10 font-mono text-xs">
+            {/* Copier Progress Bar */}
+            <div className="space-y-2 p-3.5 rounded-xl bg-black/40 border border-slate-800/80 font-mono text-xs">
               <div className="flex items-center justify-between text-slate-300">
-                <span>Copier Capacity:</span>
-                <span className={`font-bold ${viewingTrader.totalCopiers >= viewingTrader.maxCopiers ? 'text-amber-400' : 'text-white'}`}>
-                  {viewingTrader.totalCopiers} / {viewingTrader.maxCopiers} Copiers Max
-                </span>
+                <span>Active Copiers Slot Counter:</span>
+                <span className="font-bold text-white">{viewingTrader.totalCopiers} / 500 Copiers</span>
               </div>
               <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
                 <div
-                  className={`h-full transition-all duration-500 ${viewingTrader.totalCopiers >= viewingTrader.maxCopiers ? 'bg-amber-500' : 'bg-gradient-to-r from-[#ff8800] to-emerald-400'}`}
-                  style={{ width: `${Math.min(100, (viewingTrader.totalCopiers / viewingTrader.maxCopiers) * 100)}%` }}
+                  className="h-full bg-gradient-to-r from-[#ff8800] to-[#00e676] transition-all duration-500"
+                  style={{ width: `${Math.min(100, (viewingTrader.totalCopiers / 500) * 100)}%` }}
                 />
               </div>
             </div>
@@ -907,7 +917,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
               {activeSubscriptions[viewingTrader.id] ? (
                 <button
                   type="button"
-                  onClick={() => handleToggleCopy(viewingTrader)}
+                  onClick={() => handleToggleCopy(viewingTrader, 10)}
                   className="flex-1 py-3.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs transition cursor-pointer shadow-lg shadow-rose-600/30 flex items-center justify-center gap-2 uppercase tracking-wide"
                 >
                   <StopCircle className="w-4 h-4" />
@@ -917,14 +927,14 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                 <button
                   type="button"
                   disabled={viewingTrader.totalCopiers >= viewingTrader.maxCopiers}
-                  onClick={() => handleToggleCopy(viewingTrader)}
+                  onClick={() => handleToggleCopy(viewingTrader, 10)}
                   className={`flex-1 py-3.5 rounded-xl font-black text-xs transition uppercase tracking-wide flex items-center justify-center gap-2 ${
                     viewingTrader.totalCopiers >= viewingTrader.maxCopiers
                       ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
                       : 'bg-gradient-to-r from-[#ff8800] to-[#ffaa00] hover:brightness-110 text-slate-950 shadow-lg shadow-[#ff8800]/30 cursor-pointer'
                   }`}
                 >
-                  <span>{viewingTrader.totalCopiers >= viewingTrader.maxCopiers ? 'Fully Booked (Max 500)' : 'COPY TRADER'}</span>
+                  <span>{viewingTrader.totalCopiers >= viewingTrader.maxCopiers ? 'Fully Booked (Waitlist Only)' : 'COPY TRADER'}</span>
                   <ArrowRight className="w-4 h-4 stroke-[3]" />
                 </button>
               )}
@@ -936,9 +946,9 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
 
       {/* Join as Provider Modal */}
       {showProviderModal && (
-        <div className="fixed inset-0 z-70 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-fade-in">
-          <div className="w-full max-w-md bg-[#161821] border border-emerald-500/40 rounded-3xl p-6 shadow-2xl space-y-4 font-sans">
-            <div className="flex items-center justify-between border-b border-white/10 pb-3">
+        <div className="fixed inset-0 z-70 flex items-center justify-center p-4 bg-[#090A0F]/85 backdrop-blur-sm animate-fade-in font-sans">
+          <div className="w-full max-w-md bg-[#0d0f17] border border-slate-800/80 rounded-3xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
               <h3 className="text-base font-black text-white flex items-center gap-2">
                 <Award className="w-5 h-5 text-emerald-400" />
                 Become a Copy Trading Provider
@@ -963,7 +973,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                   type="text"
                   value={providerStrategyName}
                   onChange={(e) => setProviderStrategyName(e.target.value)}
-                  className="w-full bg-[#11131a] border border-white/15 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-[#ff8800]"
+                  className="w-full bg-[#11131a] border border-slate-800/80 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-[#ff8800]"
                 />
               </div>
               <div>
@@ -971,7 +981,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                 <select
                   value={providerCategory}
                   onChange={(e) => setProviderCategory(e.target.value as any)}
-                  className="w-full bg-[#11131a] border border-white/15 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-[#ff8800] cursor-pointer"
+                  className="w-full bg-[#11131a] border border-slate-800/80 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-[#ff8800] cursor-pointer"
                 >
                   <option value="instant_funded">Instant Funded Trader</option>
                   <option value="self_capital">Self Capital Trader</option>
@@ -1007,8 +1017,8 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
 
       {/* Copier Eligibility Modal */}
       {showEligibilityModal && (
-        <div className="fixed inset-0 z-70 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-fade-in">
-          <div className="w-full max-w-md bg-[#161821] border border-[#ff8800]/40 rounded-3xl p-6 shadow-2xl text-center space-y-4">
+        <div className="fixed inset-0 z-70 flex items-center justify-center p-4 bg-[#090A0F]/85 backdrop-blur-sm animate-fade-in font-sans">
+          <div className="w-full max-w-md bg-[#0d0f17] border border-slate-800/80 rounded-3xl p-6 shadow-2xl text-center space-y-4">
             <div className="w-14 h-14 rounded-2xl bg-[#ff8800]/20 border border-[#ff8800]/40 flex items-center justify-center mx-auto text-[#ffaa00]">
               <AlertTriangle className="w-7 h-7" />
             </div>
@@ -1018,7 +1028,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                 To copy trades, you must have a Self-Capital account of $100+ or an Instant Funded account of $25,000+.
               </p>
             </div>
-            <div className="p-3 rounded-xl bg-black/40 border border-white/10 text-left text-[11px] text-slate-400 space-y-1 font-mono">
+            <div className="p-3 rounded-xl bg-black/40 border border-slate-800/80 text-left text-[11px] text-slate-400 space-y-1 font-mono">
               <div className="text-white font-bold mb-1">Requirement Options:</div>
               <div>• Instant Funded Account ($25,000 or higher)</div>
               <div>• Self Capital Account ($100 minimum deposit)</div>
