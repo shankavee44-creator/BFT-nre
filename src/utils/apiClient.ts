@@ -999,3 +999,55 @@ export async function apiValidate2fa(params: {
     };
   }
 }
+export async function apiGetCopyTraders(category: 'instant_funded' | 'self_capital' = 'instant_funded') {
+  try {
+    const res = await fetch(`${API_BASE}/api/copy-trading/traders?category=${category}`);
+    return await safeJsonResponse(res, { traders: [] });
+  } catch (e: any) {
+    return { ok: false, traders: [], error: e?.message || 'Failed to fetch copy traders' };
+  }
+}
+
+export async function apiCopyTrader(params: {
+  providerId: string;
+  allocatedCapital: number;
+  maxLossLimit?: number;
+  takeProfitLimit?: number;
+  tradeSizingType?: 'proportionate' | 'fixed';
+  sizingMultiplier?: number;
+}) {
+  try {
+    const res = await fetch(`${API_BASE}/api/copy-trading/copy`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(params),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Failed to copy trader' };
+  }
+}
+
+export async function apiCancelCopy(providerId: string) {
+  try {
+    const res = await fetch(`${API_BASE}/api/copy-trading/cancel`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ providerId }),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Failed to cancel copy' };
+  }
+}
+
+export async function apiGetSubscriptions() {
+  try {
+    const res = await fetch(`${API_BASE}/api/copy-trading/subscriptions`, {
+      headers: getAuthHeaders(),
+    });
+    return await safeJsonResponse(res, { subscriptions: [] });
+  } catch (e: any) {
+    return { ok: false, subscriptions: [], error: e?.message || 'Failed to fetch subscriptions' };
+  }
+}

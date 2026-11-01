@@ -89,13 +89,17 @@ import {
   db,
 } from './src/server/db.ts';
 import { BackendMarketEngine } from './src/server/marketEngine.ts';
+import { CopyTradingEngine } from './src/server/copyTradingEngine.ts';
 
 dotenv.config({ override: true });
 
 const __filename = fileURLToPath(import.meta.url);
+
 const __dirname = path.dirname(__filename);
 
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
+console.log(`Starting server on port ${PORT}...`);
+
 const DIRECT_USDT_WALLET_ADDRESS =
   process.env.DIRECT_USDT_TRC20_WALLET_ADDRESS || DIRECT_USDT_TRC20_CONFIG.walletAddress;
 const ACTIVE_TRONGRID_API_KEY =
@@ -204,6 +208,9 @@ async function startServer() {
 
   const marketEngine = new BackendMarketEngine();
   marketEngine.start();
+
+  const copyTradingEngine = CopyTradingEngine.getInstance();
+  copyTradingEngine.start();
 
   // Polling for manual user_purchases to provision accounts
   const supabaseUrl = process.env.VITE_SUPABASE_URL;
@@ -2593,6 +2600,162 @@ async function startServer() {
     }
   });
 
+  // ============================================================================
+  // COPY TRADING SYSTEM ENDPOINTS
+  // ============================================================================
+  app.get('/api/copy-trading/traders', (req, res) => {
+    try {
+      const category = (req.query.category as 'instant_funded' | 'self_capital') || 'instant_funded';
+      const traders = copyTradingEngine.getLeaderboard(category);
+      return res.json({ ok: true, traders });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || 'Failed to fetch copy traders.' });
+    }
+  });
+
+  app.post('/api/copy-trading/copy', (req, res) => {
+    try {
+      const user = getAuthenticatedUser(req);
+      if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
+
+      const { 
+        providerId, 
+        allocatedCapital, 
+        maxLossLimit, 
+        takeProfitLimit, 
+        tradeSizingType, 
+        sizingMultiplier 
+      } = req.body;
+
+      if (!providerId) return res.status(400).json({ ok: false, error: 'Provider ID required.' });
+
+      const id = `SUB-${user.id}-${providerId}-${Date.now().toString(36)}`;
+      
+      // Update if already exists or insert new
+      const existing = db.prepare('SELECT id FROM copy_trading_subscriptions WHERE user_id = ? AND provider_id = ?').get(user.id, providerId) as any;
+      
+      if (existing) {
+        db.prepare(`
+          UPDATE copy_trading_subscriptions SET
+            allocated_capital = ?,
+            max_loss_limit = ?,
+            take_profit_limit = ?,
+            trade_sizing_type = ?,
+            sizing_multiplier = ?,
+            status = 'active',
+            created_at = ?
+          WHERE id = ?
+        `).run(
+          Number(allocatedCapital || 100),
+          Number(maxLossLimit || 0),
+          Number(takeProfitLimit || 0),
+          tradeSizingType || 'proportionate',
+          Number(sizingMultiplier || 1.0),
+          Date.now(),
+          existing.id
+        );
+      } else {
+        db.prepare(`
+          INSERT INTO copy_trading_subscriptions (
+            id, user_id, provider_id, allocated_capital, max_loss_limit, 
+            take_profit_limit, trade_sizing_type, sizing_multiplier, status, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+        `).run(
+          id,
+          user.id,
+          providerId,
+          Number(allocatedCapital || 100),
+          Number(maxLossLimit || 0),
+          Number(takeProfitLimit || 0),
+          tradeSizingType || 'proportionate',
+          Number(sizingMultiplier || 1.0),
+          Date.now()
+        );
+      }
+
+      const updatedSub = db.prepare(`
+        SELECT 
+          provider_id, 
+          allocated_capital, 
+          max_loss_limit, 
+          take_profit_limit, 
+          trade_sizing_type, 
+          sizing_multiplier, 
+          current_pnl, 
+          status, 
+          created_at 
+        FROM copy_trading_subscriptions 
+        WHERE user_id = ? AND provider_id = ?
+      `).get(user.id, providerId) as any;
+
+      return res.json({ 
+        ok: true, 
+        message: 'Successfully subscribed to copy trader with risk settings.',
+        subscription: updatedSub
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || 'Failed to copy trader.' });
+    }
+  });
+
+  app.post('/api/copy-trading/cancel', (req, res) => {
+    try {
+      const user = getAuthenticatedUser(req);
+      if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
+
+      const { providerId } = req.body;
+      if (!providerId) return res.status(400).json({ ok: false, error: 'Provider ID required.' });
+
+      db.prepare(`
+        DELETE FROM copy_trading_subscriptions 
+        WHERE user_id = ? AND provider_id = ?
+      `).run(user.id, providerId);
+
+      return res.json({ ok: true, message: 'Successfully cancelled copy trading subscription.' });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || 'Failed to cancel subscription.' });
+    }
+  });
+
+  app.get('/api/copy-trading/subscriptions', (req, res) => {
+    try {
+      const user = getAuthenticatedUser(req);
+      if (!user) return res.json({ ok: true, subscriptions: [] });
+
+      const subs = db.prepare(`
+        SELECT 
+          provider_id, 
+          allocated_capital, 
+          max_loss_limit, 
+          take_profit_limit, 
+          trade_sizing_type, 
+          sizing_multiplier, 
+          current_pnl, 
+          status, 
+          created_at 
+        FROM copy_trading_subscriptions 
+        WHERE user_id = ?
+      `).all(user.id) as any[];
+
+      return res.json({ 
+        ok: true, 
+        subscriptions: subs.map(s => ({
+          provider_id: s.provider_id,
+          allocated_capital: s.allocated_capital,
+          max_loss_limit: s.max_loss_limit,
+          take_profit_limit: s.take_profit_limit,
+          trade_sizing_type: s.trade_sizing_type,
+          sizing_multiplier: s.sizing_multiplier,
+          current_pnl: s.current_pnl,
+          status: s.status,
+          created_at: s.created_at
+        })) 
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || 'Failed to fetch subscriptions.' });
+    }
+  });
+
   // 404 Fallback for unhandled /api/* and /functions/v1/* endpoints
   app.all(['/api/*', '/functions/v1/*'], (_req, res) => {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -2617,15 +2780,17 @@ async function startServer() {
   // ============================================================================
   const distPath = path.resolve(__dirname, 'dist');
   const hasDist = fs.existsSync(path.join(distPath, 'index.html'));
-  const isDev =
-    (process.env.NODE_ENV === 'development' || !process.env.NODE_ENV) &&
-    process.env.npm_lifecycle_event === 'dev';
-  const isProduction = !isDev && (process.env.NODE_ENV === 'production' || hasDist);
+  const isProduction = process.env.NODE_ENV === 'production';
+  const isDev = !isProduction;
 
-  if (!isProduction) {
+  if (isDev) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true, hmr: false },
+      server: { 
+        middlewareMode: true,
+        hmr: false,
+        watch: { usePolling: true, interval: 100 }
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);

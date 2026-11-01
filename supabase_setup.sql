@@ -228,6 +228,117 @@ ALTER PUBLICATION supabase_realtime ADD TABLE public.user_purchases;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.crypto_deposits;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.trading_accounts;
 
+-- COPY TRADING PROFILES TABLE
+CREATE TABLE IF NOT EXISTS public.copy_trading_profiles (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  provider_name TEXT NOT NULL,
+  country_code TEXT DEFAULT 'US',
+  flag TEXT DEFAULT '🇺🇸',
+  avatar_url TEXT,
+  account_category TEXT NOT NULL CHECK (account_category IN ('instant_funded', 'self_capital')),
+  strategy_title TEXT NOT NULL,
+  tier_name TEXT DEFAULT '$25K',
+  vip_level TEXT DEFAULT 'VIP 1',
+  starting_balance NUMERIC(15, 2) NOT NULL DEFAULT 25000.00,
+  current_balance NUMERIC(15, 2) NOT NULL DEFAULT 25000.00,
+  lifetime_earnings NUMERIC(15, 2) NOT NULL DEFAULT 0.00,
+  daily_profit NUMERIC(15, 2) NOT NULL DEFAULT 0.00,
+  daily_profit_pct NUMERIC(5, 2) NOT NULL DEFAULT 0.00,
+  weekly_profit_pct NUMERIC(5, 2) NOT NULL DEFAULT 0.00,
+  monthly_profit_pct NUMERIC(5, 2) NOT NULL DEFAULT 0.00,
+  win_rate_3m NUMERIC(5, 2) NOT NULL DEFAULT 0.00,
+  profit_factor NUMERIC(5, 2) DEFAULT 1.50,
+  max_drawdown NUMERIC(5, 2) DEFAULT 5.00,
+  avg_holding_time TEXT DEFAULT '4h 30m',
+  total_trades INTEGER NOT NULL DEFAULT 0,
+  current_copiers INTEGER NOT NULL DEFAULT 0,
+  max_copiers INTEGER NOT NULL DEFAULT 500,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Ensure new columns exist on existing table if necessary
+ALTER TABLE public.copy_trading_profiles ADD COLUMN IF NOT EXISTS provider_name TEXT;
+ALTER TABLE public.copy_trading_profiles ADD COLUMN IF NOT EXISTS strategy_title TEXT;
+ALTER TABLE public.copy_trading_profiles ADD COLUMN IF NOT EXISTS tier_name TEXT;
+ALTER TABLE public.copy_trading_profiles ADD COLUMN IF NOT EXISTS win_rate_3m NUMERIC(5, 2) DEFAULT 0.00;
+ALTER TABLE public.copy_trading_profiles ADD COLUMN IF NOT EXISTS current_copiers INTEGER DEFAULT 0;
+
+-- Migration logic to copy data from old columns if they exist
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='copy_trading_profiles' AND column_name='name') THEN
+    UPDATE public.copy_trading_profiles SET provider_name = name WHERE provider_name IS NULL;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='copy_trading_profiles' AND column_name='strategy_name') THEN
+    UPDATE public.copy_trading_profiles SET strategy_title = strategy_name WHERE strategy_title IS NULL;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='copy_trading_profiles' AND column_name='win_rate') THEN
+    UPDATE public.copy_trading_profiles SET win_rate_3m = win_rate WHERE win_rate_3m = 0;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='copy_trading_profiles' AND column_name='active_copiers') THEN
+    UPDATE public.copy_trading_profiles SET current_copiers = active_copiers WHERE current_copiers = 0;
+  END IF;
+END $$;
+
+-- Enable Realtime for Copy Trading
+ALTER PUBLICATION supabase_realtime ADD TABLE public.copy_trading_profiles;
+
+-- Seed Sample Copy Traders (only if table is empty or names are null)
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.copy_trading_profiles WHERE provider_name IS NOT NULL LIMIT 1) THEN
+    DELETE FROM public.copy_trading_profiles;
+    INSERT INTO public.copy_trading_profiles 
+      (provider_name, country_code, flag, account_category, strategy_title, tier_name, starting_balance, current_balance, daily_profit, daily_profit_pct, weekly_profit_pct, monthly_profit_pct, win_rate_3m, profit_factor, max_drawdown, avg_holding_time, total_trades, current_copiers)
+    VALUES
+      ('Kasun Perera', 'LK', '🇱🇰', 'instant_funded', 'Colombo Gold Scalper $100K', '$100K', 100000, 108445.50, 8445.50, 8.44, 22.5, 45.2, 88.5, 2.85, 3.2, '1h 15m', 1240, 500),
+      ('Alex Thompson', 'GB', '🇬🇧', 'instant_funded', 'London Breakout Specialist', '$50K', 50000, 56510.50, 6510.50, 13.02, 18.2, 38.4, 82.1, 2.45, 4.8, '2h 45m', 840, 500),
+      ('Sarah Jenkins', 'US', '🇺🇸', 'instant_funded', 'NASDAQ Trend Rider', '$25K', 25000, 29200.00, 4200.00, 16.8, 12.5, 28.9, 79.4, 2.15, 6.5, '5h 20m', 450, 500),
+      ('Elena Rodriguez', 'ES', '🇪🇸', 'instant_funded', 'Euro Volatility Master', '$50K', 50000, 53800.00, 3800.00, 7.6, 14.2, 31.5, 84.6, 2.38, 4.2, '3h 10m', 620, 500),
+      ('Yuki Tanaka', 'JP', '🇯🇵', 'instant_funded', 'Jpy Carry Trade Pro', '$100K', 100000, 107200.00, 7200.00, 7.2, 9.8, 24.1, 77.2, 1.95, 7.8, '12h 45m', 980, 500),
+      ('Marco Rossi', 'IT', '🇮🇹', 'instant_funded', 'DAX Index Scalper', '$25K', 25000, 27150.00, 2150.00, 8.6, 11.4, 25.8, 81.3, 2.25, 5.1, '45m', 310, 340),
+      ('Chen Wei', 'CN', '🇨🇳', 'instant_funded', 'Asian Market Arb', '$50K', 50000, 51900.00, 1900.00, 3.8, 7.5, 18.2, 75.8, 1.82, 8.4, '6h 15m', 540, 210),
+      ('Priya Sharma', 'IN', '🇮🇳', 'self_capital', 'Nifty Momentum', 'Self-Capital', 1000, 1450.00, 450.00, 45.0, 62.4, 124.5, 92.4, 3.12, 2.4, '2h 30m', 180, 500),
+      ('David Smith', 'US', '🇺🇸', 'self_capital', 'Crypto Swing King', 'Self-Capital', 5000, 6200.00, 1200.00, 24.0, 34.2, 78.9, 86.2, 2.65, 4.5, '24h 00m', 240, 500),
+      ('Hans Muller', 'DE', '🇩🇪', 'self_capital', 'Forex Sniper', 'Self-Capital', 2500, 2950.00, 450.00, 18.0, 22.1, 48.5, 83.4, 2.41, 3.9, '4h 15m', 320, 420);
+  END IF;
+END $$;
+
+-- COPY TRADING SUBSCRIPTIONS TABLE
+CREATE TABLE IF NOT EXISTS public.copy_trading_subscriptions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  provider_id UUID NOT NULL REFERENCES public.copy_trading_profiles(id) ON DELETE CASCADE,
+  allocated_capital NUMERIC(15, 2) NOT NULL DEFAULT 100.00,
+  max_loss_limit NUMERIC(15, 2) DEFAULT 0.00,
+  take_profit_limit NUMERIC(15, 2) DEFAULT 0.00,
+  trade_sizing_type TEXT DEFAULT 'proportionate' CHECK (trade_sizing_type IN ('proportionate', 'fixed')),
+  sizing_multiplier NUMERIC(5, 2) DEFAULT 1.00,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused', 'cancelled')),
+  current_pnl NUMERIC(15, 2) DEFAULT 0.00,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(user_id, provider_id)
+);
+
+-- Enable Realtime for Subscriptions
+ALTER PUBLICATION supabase_realtime ADD TABLE public.copy_trading_subscriptions;
+
+-- RLS for Subscriptions
+ALTER TABLE public.copy_trading_subscriptions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view own subscriptions" ON public.copy_trading_subscriptions;
+CREATE POLICY "Users can view own subscriptions" ON public.copy_trading_subscriptions FOR SELECT USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can insert own subscriptions" ON public.copy_trading_subscriptions;
+CREATE POLICY "Users can insert own subscriptions" ON public.copy_trading_subscriptions FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can update own subscriptions" ON public.copy_trading_subscriptions;
+CREATE POLICY "Users can update own subscriptions" ON public.copy_trading_subscriptions FOR UPDATE USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can delete own subscriptions" ON public.copy_trading_subscriptions;
+CREATE POLICY "Users can delete own subscriptions" ON public.copy_trading_subscriptions FOR DELETE USING (auth.uid() = user_id);
+
 -- AFFILIATE COMMISSIONS TABLE (User requested)
 CREATE TABLE IF NOT EXISTS public.affiliate_commissions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

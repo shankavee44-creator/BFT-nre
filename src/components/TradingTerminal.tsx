@@ -5466,6 +5466,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         onResetChartPan={() => setPanOffset(0)}
         isSoundMuted={!soundEnabled}
         onToggleSound={handleToggleSound}
+        onOpenCopyTrading={() => setIsCopyTradingOpen(true)}
         signalsCount={3}
       />
       {/* Confirmation Modal (only if One-Click is disabled) */}

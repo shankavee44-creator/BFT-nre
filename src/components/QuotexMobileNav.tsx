@@ -15,6 +15,7 @@ import {
   X,
   Clock,
   Sparkles,
+  Users,
 } from 'lucide-react';
 import { soundEngine } from '../utils/soundEffects';
 
@@ -28,6 +29,7 @@ interface QuotexMobileNavProps {
   onResetChartPan: () => void;
   isSoundMuted: boolean;
   onToggleSound: () => void;
+  onOpenCopyTrading: () => void;
   signalsCount?: number;
 }
 
@@ -41,6 +43,7 @@ export const QuotexMobileNav: React.FC<QuotexMobileNavProps> = ({
   onResetChartPan,
   isSoundMuted,
   onToggleSound,
+  onOpenCopyTrading,
   signalsCount = 3,
 }) => {
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
@@ -217,6 +220,30 @@ export const QuotexMobileNav: React.FC<QuotexMobileNavProps> = ({
                 <div>
                   <div className="font-semibold text-white">Leaderboard</div>
                   <div className="text-[10px] text-[#848e9c]">Top payouts & rank</div>
+                </div>
+              </button>
+
+              {/* Copy Trading */}
+              <button
+                type="button"
+                data-testid="mobile-sheet-copy-trading"
+                onClick={() => {
+                  setIsMoreMenuOpen(false);
+                  onOpenCopyTrading();
+                  soundEngine.playUiClick();
+                }}
+                className="flex items-center gap-2.5 p-3 rounded-xl bg-[#181b24] hover:bg-[#1f2430] border border-[#232733] text-left transition-colors relative group"
+              >
+                <div className="relative">
+                  <Users className="w-4 h-4 text-[#ff8800] shrink-0" />
+                  <span className="absolute -top-1 -right-1 w-1.5 h-1.5 bg-[#00F5A0] rounded-full animate-pulse shadow-[0_0_5px_#00F5A0]" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-semibold text-white">Copy Trading</span>
+                    <span className="text-[7px] font-black bg-[#00F5A0]/10 text-[#00F5A0] px-1 py-0.5 rounded border border-[#00F5A0]/20 uppercase">Live</span>
+                  </div>
+                  <div className="text-[10px] text-[#848e9c]">Institutional Mirror</div>
                 </div>
               </button>
 

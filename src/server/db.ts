@@ -199,6 +199,10 @@ db.exec(`
     total_copiers INTEGER DEFAULT 0,
     max_copiers INTEGER DEFAULT 1000,
     win_rate_3m REAL NOT NULL,
+    profit_factor REAL DEFAULT 2.15,
+    max_drawdown REAL DEFAULT 4.2,
+    sharpe_ratio REAL DEFAULT 1.85,
+    avg_holding_time TEXT DEFAULT '4h 12m',
     status TEXT DEFAULT 'approved',
     created_at INTEGER NOT NULL
   );
@@ -208,10 +212,36 @@ db.exec(`
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     provider_id TEXT NOT NULL,
+    allocated_capital REAL DEFAULT 100,
+    max_loss_limit REAL DEFAULT 0,
+    take_profit_limit REAL DEFAULT 0,
+    trade_sizing_type TEXT DEFAULT 'proportionate',
+    sizing_multiplier REAL DEFAULT 1.0,
     status TEXT DEFAULT 'active',
+    current_pnl REAL DEFAULT 0,
     created_at INTEGER NOT NULL
   );
 `);
+
+const copyTradingAlterColumns = [
+  `ALTER TABLE copy_trading_subscriptions ADD COLUMN allocated_capital REAL DEFAULT 100;`,
+  `ALTER TABLE copy_trading_subscriptions ADD COLUMN max_loss_limit REAL DEFAULT 0;`,
+  `ALTER TABLE copy_trading_subscriptions ADD COLUMN take_profit_limit REAL DEFAULT 0;`,
+  `ALTER TABLE copy_trading_subscriptions ADD COLUMN trade_sizing_type TEXT DEFAULT 'proportionate';`,
+  `ALTER TABLE copy_trading_subscriptions ADD COLUMN sizing_multiplier REAL DEFAULT 1.0;`,
+  `ALTER TABLE copy_trading_subscriptions ADD COLUMN current_pnl REAL DEFAULT 0;`,
+  `ALTER TABLE copy_trading_profiles ADD COLUMN profit_factor REAL DEFAULT 2.15;`,
+  `ALTER TABLE copy_trading_profiles ADD COLUMN max_drawdown REAL DEFAULT 4.2;`,
+  `ALTER TABLE copy_trading_profiles ADD COLUMN sharpe_ratio REAL DEFAULT 1.85;`,
+  `ALTER TABLE copy_trading_profiles ADD COLUMN avg_holding_time TEXT DEFAULT '4h 12m';`,
+];
+for (const stmt of copyTradingAlterColumns) {
+  try {
+    db.exec(stmt);
+  } catch {
+    // Column already exists
+  }
+}
 
 // ============================================================================
 // Seed Initial Production Data (Alex Mercer usr_bft_001, Upline, Downline & Kasun Perera)
