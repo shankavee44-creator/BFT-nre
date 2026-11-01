@@ -9,6 +9,7 @@ import {
   ShieldCheck,
   Cookie,
   Lock,
+  ArrowLeft,
 } from 'lucide-react';
 import { UserAccount, TradingAccount } from '../types';
 import {
@@ -272,8 +273,19 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       if (data.is2faRequired) {
         setTempUserId(data.userId);
         setIs2faRequired(true);
+        setTotpCode('');
+        setAuthError(null);
         setIsSubmitting(false);
         return;
+      }
+
+      try {
+        sessionStorage.setItem(`bft_2fa_verified_${data.user.id}`, 'true');
+        if (rememberMe) {
+          localStorage.setItem(`bft_2fa_verified_${data.user.id}`, 'true');
+        }
+      } catch {
+        // ignore
       }
 
       onAuthSuccess({
@@ -299,20 +311,41 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const handleVerify2fa = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError(null);
+
+    const cleanCode = totpCode.replace(/\D/g, '').trim();
+    if (cleanCode.length !== 6) {
+      setAuthError('Please enter the full 6-digit verification code from Google Authenticator.');
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
       const response = await fetch('/api/auth/verify-2fa', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: tempUserId, code: totpCode, rememberMe }),
+        body: JSON.stringify({
+          userId: tempUserId,
+          email: email.trim().toLowerCase(),
+          code: cleanCode,
+          rememberMe,
+        }),
       });
       const data = await response.json();
 
       if (!data.ok) {
-        setAuthError(data.error || 'Invalid 2FA code.');
+        setAuthError(data.error || 'Invalid 6-digit verification code.');
         setIsSubmitting(false);
         return;
+      }
+
+      try {
+        sessionStorage.setItem(`bft_2fa_verified_${data.user.id}`, 'true');
+        if (rememberMe) {
+          localStorage.setItem(`bft_2fa_verified_${data.user.id}`, 'true');
+        }
+      } catch {
+        // ignore
       }
 
       onAuthSuccess({
@@ -550,41 +583,43 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       )}
 
       {/* Auth Tab Navigation: Email Sign In | Register (Sign Up) */}
-      <div className="flex bg-[#141720] border border-[#262c3a] p-1 rounded-xl mb-5 font-mono text-[11px] font-bold">
-        <button
-          type="button"
-          data-testid="auth-tab-email-signin"
-          onClick={() => {
-            setAuthTab('email_signin');
-            setAuthError(null);
-          }}
-          className={`flex-1 py-2 rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${
-            authTab === 'email_signin'
-              ? 'bg-[#ff8800] text-slate-950 font-black'
-              : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          <Mail className="w-3.5 h-3.5" />
-          <span>Sign In</span>
-        </button>
+      {!is2faRequired && (
+        <div className="flex bg-[#141720] border border-[#262c3a] p-1 rounded-xl mb-5 font-mono text-[11px] font-bold">
+          <button
+            type="button"
+            data-testid="auth-tab-email-signin"
+            onClick={() => {
+              setAuthTab('email_signin');
+              setAuthError(null);
+            }}
+            className={`flex-1 py-2 rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${
+              authTab === 'email_signin'
+                ? 'bg-[#ff8800] text-slate-950 font-black'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <Mail className="w-3.5 h-3.5" />
+            <span>Sign In</span>
+          </button>
 
-        <button
-          type="button"
-          data-testid="auth-tab-email-signup"
-          onClick={() => {
-            setAuthTab('email_signup');
-            setAuthError(null);
-          }}
-          className={`flex-1 py-2 rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${
-            authTab === 'email_signup'
-              ? 'bg-[#ff8800] text-slate-950 font-black'
-              : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          <User className="w-3.5 h-3.5" />
-          <span>Register</span>
-        </button>
-      </div>
+          <button
+            type="button"
+            data-testid="auth-tab-email-signup"
+            onClick={() => {
+              setAuthTab('email_signup');
+              setAuthError(null);
+            }}
+            className={`flex-1 py-2 rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${
+              authTab === 'email_signup'
+                ? 'bg-[#ff8800] text-slate-950 font-black'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <User className="w-3.5 h-3.5" />
+            <span>Register</span>
+          </button>
+        </div>
+      )}
 
       {/* Header Badge & Title */}
       <div className="text-center mb-5">
@@ -592,13 +627,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           data-testid="bft-auth-badge"
           className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded bg-[#141720] border border-[#262c3a] text-[#ff8800] text-[10px] font-mono font-bold uppercase tracking-wider mb-1.5"
         >
-          <ShieldCheck className="w-3 h-3" /> BFT Encrypted Email & Password Auth
+          <ShieldCheck className="w-3 h-3" />{' '}
+          {is2faRequired ? 'TWO-FACTOR VERIFICATION REQUIRED' : 'BFT Encrypted Email & Password Auth'}
         </span>
         <h3 className="text-xl font-black text-white font-mono">
-          {authTab === 'email_signin' ? 'Sign In to Trader Portal' : 'Create Trader Account'}
+          {is2faRequired
+            ? 'Two-Factor Authentication (2FA)'
+            : authTab === 'email_signin'
+            ? 'Sign In to Trader Portal'
+            : 'Create Trader Account'}
         </h3>
         <p className="text-xs text-slate-400 mt-1">
-          {authTab === 'email_signin'
+          {is2faRequired
+            ? 'Enter your 6-digit Google Authenticator code to unlock your dashboard.'
+            : authTab === 'email_signin'
             ? 'Enter your registered email and password to access your prop trading dashboard and OTC terminal.'
             : 'Register with your email and password to receive instant $100,000 OTC trading terminal access.'}
         </p>
@@ -672,40 +714,72 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
       {/* FORM MODE 1B: 2FA VERIFICATION */}
       {authTab === 'email_signin' && is2faRequired && (
-        <form onSubmit={handleVerify2fa} className="space-y-3.5 mb-4">
-          <div className="text-center mb-4">
-            <p className="text-xs text-slate-400">Please enter the 6-digit code from your Google Authenticator app.</p>
+        <form onSubmit={handleVerify2fa} className="space-y-4 mb-4 font-mono">
+          <div
+            data-testid="signin-2fa-card"
+            className="p-4 rounded-xl bg-[#141720] border border-[#ff8800]/30 text-center space-y-2"
+          >
+            <div className="w-12 h-12 mx-auto rounded-xl bg-[#ff8800]/15 border border-[#ff8800]/40 flex items-center justify-center text-[#ff8800]">
+              <ShieldCheck className="w-6 h-6 stroke-[2.5]" />
+            </div>
+            <h4 className="text-sm font-black text-white">Google Authenticator (2FA)</h4>
+            <p className="text-xs text-slate-400">
+              Two-Factor Authentication is active for <strong className="text-white">{email}</strong>. Enter the 6-digit code from your authenticator app:
+            </p>
           </div>
+
           <div>
             <label
               htmlFor="signin-2fa"
-              className="block text-[11px] font-mono font-bold text-slate-300 mb-1 flex items-center gap-1.5"
+              className="block text-[11px] font-bold text-slate-300 mb-1 flex items-center justify-between"
             >
-              <ShieldCheck className="w-3.5 h-3.5 text-[#ff8800]" />
-              <span>2FA Code *</span>
+              <span className="flex items-center gap-1.5">
+                <Lock className="w-3.5 h-3.5 text-[#ff8800]" />
+                <span>6-Digit Verification Code *</span>
+              </span>
+              <span className="text-[10px] text-slate-500">{totpCode.length}/6 digits</span>
             </label>
             <input
               id="signin-2fa"
               data-testid="signin-2fa-input"
               type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              autoFocus
               required
               maxLength={6}
               value={totpCode}
-              onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, ''))}
+              onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
               placeholder="000000"
-              className="w-full px-3.5 py-2.5 bg-[#0a0a0a] border border-[#262c3a] rounded-lg text-white font-mono text-xs text-center tracking-[0.5em] focus:outline-none focus:border-[#ff8800]"
+              className="w-full px-4 py-3 bg-[#0a0a0a] border border-white/20 rounded-xl text-white text-center text-xl font-black tracking-[0.5em] focus:outline-none focus:border-[#ff8800]"
             />
           </div>
 
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            data-testid="signin-2fa-submit-btn"
-            className="w-full py-3.5 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] disabled:opacity-60 text-slate-950 font-black text-xs cursor-pointer transition-colors flex items-center justify-center gap-1.5 font-mono uppercase tracking-wider mt-2"
-          >
-            <span>{isSubmitting ? 'Verifying Code...' : 'Verify & Enter Dashboard'}</span>
-            <ArrowRight className="w-4 h-4 stroke-[2.5]" />
-          </button>
+          <div className="flex flex-col gap-2 pt-1">
+            <button
+              type="submit"
+              disabled={isSubmitting || totpCode.length !== 6}
+              data-testid="signin-2fa-submit-btn"
+              className="w-full py-3.5 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] disabled:opacity-50 text-slate-950 font-black text-xs cursor-pointer transition-colors flex items-center justify-center gap-2 uppercase tracking-wider"
+            >
+              <ShieldCheck className="w-4 h-4 stroke-[2.5]" />
+              <span>{isSubmitting ? 'Verifying Code...' : 'Verify & Enter Dashboard'}</span>
+            </button>
+
+            <button
+              type="button"
+              data-testid="signin-2fa-back-btn"
+              onClick={() => {
+                setIs2faRequired(false);
+                setTotpCode('');
+                setAuthError(null);
+              }}
+              className="w-full py-2.5 rounded-xl bg-transparent hover:bg-white/5 text-slate-400 hover:text-white text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span>Back to Email Sign-In</span>
+            </button>
+          </div>
         </form>
       )}
 

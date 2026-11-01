@@ -2178,6 +2178,10 @@ export function enableUser2fa(userId: string) {
   db.prepare(`UPDATE users SET is_2fa_enabled = 1 WHERE id = ?`).run(userId);
 }
 
+export function disableUser2fa(userId: string) {
+  db.prepare(`UPDATE users SET is_2fa_enabled = 0, totp_secret = NULL WHERE id = ?`).run(userId);
+}
+
 /**
  * Idempotent seed function to guarantee admin accounts, sample pending deposits,
  * pending withdrawals, and pending KYC requests are present.

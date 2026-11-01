@@ -29,6 +29,7 @@ import {
   deleteSessionToken,
   getAccountsForUser,
   getAccountById,
+  createAccount,
   ensurePersonalLiveAccountForUser,
   creditPersonalAccountDepositInDb,
   updateAccountStateInDb,
@@ -64,9 +65,9 @@ import {
   getUserTradesFromDb,
   cancelWithdrawalRequest,
   declineWithdrawalRequest,
-  createAccount,
   updateUser2faSecret,
   enableUser2fa,
+  disableUser2fa,
   db,
 } from './src/server/db.ts';
 import { BackendMarketEngine } from './src/server/marketEngine.ts';
@@ -324,11 +325,42 @@ async function startServer() {
         referralCodeInput: referralCode,
       });
 
+      // Synchronize 2FA status from Supabase profiles table if available
+      if (supabaseUrl && supabaseAnonKey) {
+        try {
+          const checkUrl = `${supabaseUrl}/rest/v1/profiles?email=eq.${encodeURIComponent(email)}&select=id,is_2fa_enabled,totp_secret`;
+          const sRes = await fetch(checkUrl, {
+            headers: {
+              apikey: supabaseAnonKey,
+              Authorization: `Bearer ${supabaseAnonKey}`,
+            },
+          });
+          const profiles = await sRes.json();
+          if (Array.isArray(profiles) && profiles.length > 0) {
+            const p = profiles[0];
+            if (p.is_2fa_enabled) {
+              if (p.totp_secret) {
+                updateUser2faSecret(user.id, p.totp_secret);
+                user.totp_secret = p.totp_secret;
+              }
+              enableUser2fa(user.id);
+              user.is_2fa_enabled = 1;
+            } else if (p.is_2fa_enabled === false) {
+              disableUser2fa(user.id);
+              user.is_2fa_enabled = 0;
+            }
+          }
+        } catch (supaErr) {
+          console.warn('Supabase profiles 2FA check warning:', supaErr);
+        }
+      }
+
       if (user.is_2fa_enabled) {
         return res.json({
           ok: true,
           is2faRequired: true,
           userId: user.id,
+          email: user.email,
         });
       }
 
@@ -360,21 +392,73 @@ async function startServer() {
   app.post('/api/auth/verify-2fa', async (req, res) => {
     try {
       const userId = String(req.body?.userId || '').trim();
-      const code = String(req.body?.code || '').trim();
+      const email = String(req.body?.email || '').trim().toLowerCase();
+      const rawCode = String(req.body?.code || '').trim();
+      const code = rawCode.replace(/\D/g, '');
       const rememberMe = req.body?.rememberMe !== false;
 
-      if (!userId || !code) {
-        return res.status(400).json({ ok: false, error: 'Missing userId or 2FA code.' });
+      if ((!userId && !email) || !code || code.length !== 6) {
+        return res.status(400).json({ ok: false, error: 'Please enter a valid 6-digit verification code.' });
       }
 
-      const user = getUserById(userId);
-      if (!user || !user.is_2fa_enabled || !user.totp_secret) {
-        return res.status(400).json({ ok: false, error: 'User 2FA is not enabled or invalid.' });
+      let user = userId ? getUserById(userId) : null;
+      if (!user && email) {
+        user = getUserByEmail(email);
       }
 
-      const isValid = (await verify({ token: code, secret: user.totp_secret })).valid;
+      let secret = user?.totp_secret;
+
+      // Also check Supabase profiles table for totp_secret if missing or outdated
+      if ((!secret || !user) && supabaseUrl && supabaseAnonKey) {
+        try {
+          const queryParam = email
+            ? `email=eq.${encodeURIComponent(email)}`
+            : `id=eq.${encodeURIComponent(userId)}`;
+          const sRes = await fetch(
+            `${supabaseUrl}/rest/v1/profiles?${queryParam}&select=id,email,full_name,is_2fa_enabled,totp_secret`,
+            {
+              headers: {
+                apikey: supabaseAnonKey,
+                Authorization: `Bearer ${supabaseAnonKey}`,
+              },
+            }
+          );
+          const profiles = await sRes.json();
+          if (Array.isArray(profiles) && profiles.length > 0) {
+            const p = profiles[0];
+            if (p.totp_secret) {
+              secret = p.totp_secret;
+            }
+            if (!user && p.email) {
+              user = createOrUpdateGoogleUser({
+                email: p.email,
+                fullName: p.full_name || p.email.split('@')[0],
+                googleId: p.id,
+              });
+            }
+            if (user && p.totp_secret) {
+              updateUser2faSecret(user.id, p.totp_secret);
+              if (p.is_2fa_enabled) enableUser2fa(user.id);
+            }
+          }
+        } catch (supaErr) {
+          console.warn('Supabase fetch totp_secret warning:', supaErr);
+        }
+      }
+
+      if (!user || !secret) {
+        return res.status(400).json({
+          ok: false,
+          error: 'Two-Factor Authentication is not configured or secret not found for this account.',
+        });
+      }
+
+      const isValid = (await verify({ token: code, secret })).valid;
       if (!isValid) {
-        return res.status(400).json({ ok: false, error: 'Invalid 2FA code.' });
+        return res.status(400).json({
+          ok: false,
+          error: 'Invalid 6-digit verification code. Please check your Google Authenticator app.',
+        });
       }
 
       const { token, expiresAt } = createSessionToken(user.id, rememberMe);

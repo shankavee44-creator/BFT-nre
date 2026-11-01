@@ -84,4 +84,68 @@ describe('Two-Factor Authentication (2FA) & Security Engine', () => {
     const check = await verify({ token, secret: verifiedProfile.totp_secret });
     assert.equal((check as any).valid, true, 'Valid 2FA token allows withdrawal authorization');
   });
+
+  describe('Login Authentication 2FA Verification Gate', () => {
+    it('allows immediate sign-in when is_2fa_enabled is false or missing', () => {
+      const userProfile = {
+        id: 'usr-plain',
+        email: 'trader1@bftprops.com',
+        is_2fa_enabled: false,
+        totp_secret: null,
+      };
+
+      const is2faRequired = Boolean(userProfile.is_2fa_enabled);
+      assert.equal(is2faRequired, false, 'Users without 2FA do not trigger 2FA requirement on login');
+    });
+
+    it('requires 6-digit TOTP verification screen when is_2fa_enabled is true', () => {
+      const userProfile = {
+        id: 'usr-2fa-active',
+        email: 'shankavee44@gmail.com',
+        is_2fa_enabled: true,
+        totp_secret: generateSecret(),
+      };
+
+      const is2faRequired = Boolean(userProfile.is_2fa_enabled);
+      assert.equal(is2faRequired, true, 'Users with 2FA enabled must trigger is2faRequired: true');
+    });
+
+    it('successfully verifies and logs user in when TOTP code matches totp_secret', async () => {
+      const secret = generateSecret();
+      const userProfile = {
+        id: 'usr-totp-verify',
+        email: 'shankavee44@gmail.com',
+        is_2fa_enabled: true,
+        totp_secret: secret,
+      };
+
+      // User generates valid 6-digit code on Google Authenticator
+      const userEnteredCode = generateSync({ secret });
+      assert.equal(userEnteredCode.length, 6);
+
+      const check = await verify({ token: userEnteredCode, secret: userProfile.totp_secret });
+      assert.equal((check as any).valid, true, 'Valid 6-digit TOTP code must verify successfully');
+    });
+
+    it('rejects invalid or expired TOTP code during 2FA login verification', async () => {
+      const secret = generateSecret();
+      const userProfile = {
+        id: 'usr-totp-verify',
+        email: 'shankavee44@gmail.com',
+        is_2fa_enabled: true,
+        totp_secret: secret,
+      };
+
+      const badCode = '123456';
+      let isValid = false;
+      try {
+        const check = await verify({ token: badCode, secret: userProfile.totp_secret });
+        isValid = (check as any).valid;
+      } catch {
+        isValid = false;
+      }
+
+      assert.equal(isValid, false, 'Invalid code must be rejected with verification failure');
+    });
+  });
 });

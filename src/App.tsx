@@ -661,6 +661,19 @@ export default function App() {
         // ignore read error
       }
 
+      // If 2FA is enabled for this profile, ensure 2FA verification was passed in this browser session
+      if (existingProfile?.is_2fa_enabled) {
+        const isVerified =
+          typeof window !== 'undefined' &&
+          (sessionStorage.getItem(`bft_2fa_verified_${sessionUser.id}`) === 'true' ||
+           localStorage.getItem(`bft_2fa_verified_${sessionUser.id}`) === 'true' ||
+           (sessionUser.email && sessionStorage.getItem(`bft_2fa_verified_${sessionUser.email}`) === 'true') ||
+           (sessionUser.email && localStorage.getItem(`bft_2fa_verified_${sessionUser.email}`) === 'true'));
+        if (!isVerified) {
+          return;
+        }
+      }
+
       const sponsorCode = getStoredReferralCode() || null;
       const { needsUpsert, upsertPayload, resolvedProfile } = resolveOrBuildUserProfile(
         sessionUser,

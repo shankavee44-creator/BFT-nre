@@ -954,15 +954,13 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             .from('profiles')
             .update({ totp_secret: data.secret })
             .eq('id', userProfile.id)
-            .then(() => {})
-            .catch((e) => console.warn('Supabase profile totp_secret sync warning:', e));
+            .then(undefined, (e: any) => console.warn('Supabase profile totp_secret sync warning:', e));
         } else if (userProfile.email) {
           supabase
             .from('profiles')
             .update({ totp_secret: data.secret })
             .eq('email', userProfile.email)
-            .then(() => {})
-            .catch((e) => console.warn('Supabase profile totp_secret sync warning:', e));
+            .then(undefined, (e: any) => console.warn('Supabase profile totp_secret sync warning:', e));
         }
       } else {
         setTwoFactorError(data.error || 'Failed to generate 2FA credentials. Please try again.');
@@ -1014,8 +1012,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               totp_secret: totpSecret,
             })
             .eq('id', userProfile.id)
-            .then(() => {})
-            .catch((e) => console.warn('Supabase is_2fa_enabled update warning:', e));
+            .then(undefined, (e: any) => console.warn('Supabase is_2fa_enabled update warning:', e));
         } else if (userProfile.email) {
           supabase
             .from('profiles')
@@ -1024,8 +1021,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               totp_secret: totpSecret,
             })
             .eq('email', userProfile.email)
-            .then(() => {})
-            .catch((e) => console.warn('Supabase is_2fa_enabled update warning:', e));
+            .then(undefined, (e: any) => console.warn('Supabase is_2fa_enabled update warning:', e));
         }
 
         setTwoFactor(true);
@@ -1076,15 +1072,13 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             .from('profiles')
             .update({ is_2fa_enabled: false })
             .eq('id', userProfile.id)
-            .then(() => {})
-            .catch(() => {});
+            .then(undefined, () => {});
         } else if (userProfile.email) {
           supabase
             .from('profiles')
             .update({ is_2fa_enabled: false })
             .eq('email', userProfile.email)
-            .then(() => {})
-            .catch(() => {});
+            .then(undefined, () => {});
         }
 
         setTwoFactor(false);
