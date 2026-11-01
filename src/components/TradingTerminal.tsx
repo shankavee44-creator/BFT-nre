@@ -155,6 +155,7 @@ import { AccountBreachModal } from './AccountBreachModal';
 import { QuotexAssetModal } from './QuotexAssetModal';
 import { QuotexSignalsDrawer } from './QuotexSignalsDrawer';
 import { QuotexLeaderboardModal } from './QuotexLeaderboardModal';
+import { CopyTradingModal } from './CopyTradingModal';
 import { QuotexMobileDock } from './QuotexMobileDock';
 import { QuotexMobileNav } from './QuotexMobileNav';
 import { PriceAlertModal, PriceAlert } from './PriceAlertModal';
@@ -204,6 +205,7 @@ interface TradingTerminalProps {
   onNavigateTab?: (tab: string) => void;
   userProfile?: UserProfile;
   onPassChallengePhase?: (account: TradingAccount) => void;
+  onNavigateToPricing?: () => void;
 }
 
 export type ChartType = 'candles' | 'heikin-ashi' | 'line' | 'bars';
@@ -382,6 +384,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   onNavigateTab,
   userProfile,
   onPassChallengePhase,
+  onNavigateToPricing,
 }) => {
   const [isLoadingAssets, setIsLoadingAssets] = useState(false);
   // Quotex Open OTC Asset Tabs across Forex, Crypto, Commodities & Stocks
@@ -602,6 +605,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   const [isAssetModalOpen, setIsAssetModalOpen] = useState(false);
   const [isSignalsDrawerOpen, setIsSignalsDrawerOpen] = useState(false);
   const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(false);
+  const [isCopyTradingOpen, setIsCopyTradingOpen] = useState(false);
   const [isRulesModalOpen, setIsRulesModalOpen] = useState(false);
   const [isBreachModalOpen, setIsBreachModalOpen] = useState(false);
   const [isIndicatorModalOpen, setIsIndicatorModalOpen] = useState(false);
@@ -3561,6 +3565,20 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               <Trophy className="w-5 h-5" />
             </button>
 
+            {/* Copy Trading */}
+            <button
+              type="button"
+              data-testid="desktop-copy-trading-btn"
+              onClick={() => {
+                soundEngine.playUiClick();
+                setIsCopyTradingOpen(true);
+              }}
+              className="w-10 h-10 rounded-xl hover:bg-[#252a37] flex items-center justify-center text-slate-400 hover:text-[#ff8800] transition-all cursor-pointer relative"
+              title="Copy Trading System"
+            >
+              <Users className="w-5 h-5 text-[#ff8800]" />
+            </button>
+
             {/* Market / Assets Catalog */}
             <button
               onClick={() => {
@@ -5511,6 +5529,14 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         userName={userProfile?.fullName || userProfile?.email || 'Trader'}
         userAccountId={effectiveAccount.id || 'UNRANKED'}
         activeAccount={effectiveAccount}
+      />
+
+      {/* Copy Trading Modal */}
+      <CopyTradingModal
+        isOpen={isCopyTradingOpen}
+        onClose={() => setIsCopyTradingOpen(false)}
+        accounts={accounts || []}
+        onNavigateToPricing={onNavigateToPricing}
       />
 
       {/* Indicator Settings Modal */}

@@ -1569,6 +1569,12 @@ export default function App() {
             onNavigateTab={handleNavigateTab}
             userProfile={userProfile}
             onPassChallengePhase={handlePassChallengePhase}
+            onNavigateToPricing={() => {
+              setCurrentTab('home');
+              setTimeout(() => {
+                document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' });
+              }, 100);
+            }}
           />
         )}
 

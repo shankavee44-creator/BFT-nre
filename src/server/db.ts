@@ -175,6 +175,42 @@ db.exec(`
     payout_time TEXT NOT NULL,
     updated_at INTEGER NOT NULL
   );
+
+  -- 8. Copy Trading Profiles Table
+  CREATE TABLE IF NOT EXISTS copy_trading_profiles (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    country TEXT NOT NULL,
+    flag TEXT NOT NULL,
+    avatar TEXT NOT NULL,
+    category TEXT NOT NULL,
+    strategy_name TEXT NOT NULL,
+    vip_level TEXT NOT NULL,
+    starting_capital REAL NOT NULL,
+    current_balance REAL NOT NULL,
+    lifetime_earnings REAL NOT NULL,
+    daily_profit_dollars REAL NOT NULL,
+    weekly_profit_pct REAL NOT NULL,
+    monthly_profit_pct REAL NOT NULL,
+    win_rate REAL NOT NULL,
+    total_trades INTEGER NOT NULL,
+    trading_turnover REAL NOT NULL,
+    total_copiers INTEGER DEFAULT 0,
+    max_copiers INTEGER DEFAULT 1000,
+    win_rate_3m REAL NOT NULL,
+    status TEXT DEFAULT 'approved',
+    created_at INTEGER NOT NULL
+  );
+
+  -- 9. Copy Trading Subscriptions Table
+  CREATE TABLE IF NOT EXISTS copy_trading_subscriptions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    provider_id TEXT NOT NULL,
+    status TEXT DEFAULT 'active',
+    created_at INTEGER NOT NULL
+  );
 `);
 
 // ============================================================================
