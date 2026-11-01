@@ -165,7 +165,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         // Fallback handled by backend /api/accounts/purchase
       }
 
-      // 2. Save record in backend user_purchases & crypto_deposits tables & provision challenge account
+      // 2. Save record in backend user_purchases & crypto_deposits tables. Account creation is deferred until verification.
       const res = await apiPurchaseAccount({
         userId: userProfile?.id,
         email: userProfile?.email,
@@ -181,18 +181,21 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         txHash: txHashInput.trim() || undefined,
       });
 
-      if (!res.ok || !res.account) {
+      if (!res.ok) {
         throw new Error(
           res.error || 'Direct payment confirmation failed. Please verify your transfer.'
         );
       }
 
-      // Persist purchased trading account and crypto deposit record into Supabase tables immediately
-      insertSupabaseTradingAccount({
-        account: res.account,
-        userId: userProfile?.id,
-        userEmail: userProfile?.email,
-      }).catch(() => {});
+      // Account creation is deferred - res.account may be null here
+      if (res.account) {
+        // Persist purchased trading account and crypto deposit record into Supabase tables immediately if verified
+        insertSupabaseTradingAccount({
+          account: res.account,
+          userId: userProfile?.id,
+          userEmail: userProfile?.email,
+        }).catch(() => {});
+      }
 
       insertSupabaseCryptoDeposit({
         userId: userProfile?.id,
@@ -202,47 +205,54 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         packageName,
         sku: packageSku,
         accountType,
-        status: 'completed',
+        status: res.status === 'completed' ? 'completed' : 'pending',
         txHash: txHashInput.trim() || null,
-        accountId: res.account.id,
+        accountId: res.account?.id || null,
       }).catch(() => {});
 
       const finalPurchaseRecord = mapPurchaseRecord(
         res.purchase ||
           supaPurchaseRow || {
             id: res.deposit?.id || `PUR-${Date.now().toString(36).toUpperCase()}`,
-            user_id: userProfile?.id || res.account.ownerId || 'usr_bft_001',
-            account_id: res.account.id,
+            user_id: userProfile?.id || res.account?.ownerId || 'usr_bft_001',
+            account_id: res.account?.id || null,
             package_id: packageSku,
             package_name: packageName,
             package_sku: packageSku,
             amount: finalPrice,
             package_amount: finalPrice,
             account_type: accountType,
-            status: 'completed',
+            status: res.status || 'pending',
             created_at: new Date().toISOString(),
           }
       );
 
-      setGeneratedAccount(res.account);
+      if (res.account) setGeneratedAccount(res.account);
       setSavedDepositRecord(
         res.deposit || {
           ...cryptoPayload,
           id: finalPurchaseRecord.id,
-          status: 'completed',
+          status: res.status || 'pending',
         }
       );
       onPurchaseRecorded?.(finalPurchaseRecord);
-      setStep('completed');
-      onCommissionsProcessed?.({
-        buyerUserId: res.account.id,
-        buyerName: userProfile?.fullName || `Trader ${res.account.id.slice(-4)}`,
-        buyerEmail: userProfile?.email || `trader.${res.account.id.toLowerCase()}@client-bft.com`,
-        packageTier: packageToBuy.tier,
-        packageName,
-        packagePrice: finalPrice,
-        referralCodeUsed: activeReferralCode,
-      });
+      
+      if (res.status === 'completed') {
+        setStep('completed');
+        if (res.account) {
+          onCommissionsProcessed?.({
+            buyerUserId: res.account.id,
+            buyerName: userProfile?.fullName || `Trader ${res.account.id.slice(-4)}`,
+            buyerEmail: userProfile?.email || `trader.${res.account.id.toLowerCase()}@client-bft.com`,
+            packageTier: packageToBuy.tier,
+            packageName,
+            packagePrice: finalPrice,
+            referralCodeUsed: activeReferralCode,
+          });
+        }
+      } else {
+        setTronGridStatusNote('Verification in progress. Your account will be activated once the payment is confirmed on the blockchain.');
+      }
     } catch (err: any) {
       setStep('checkout');
       setPaymentError(

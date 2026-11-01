@@ -393,7 +393,12 @@ export function saveAccounts(accounts: TradingAccount[]): void {
   try {
     localStorage.setItem(STORAGE_KEYS.ACCOUNTS, JSON.stringify(accounts));
   } catch (e) {
-    console.error('Failed to save accounts', e);
+    if (e instanceof DOMException && e.name === 'QuotaExceededError') {
+      console.warn('QuotaExceededError in saveAccounts');
+      // No truncation for accounts as it's critical data, just log and handle
+    } else {
+      console.error('Failed to save accounts', e);
+    }
   }
 }
 
@@ -447,7 +452,33 @@ export function saveTrades(trades: BinaryTrade[]): void {
   try {
     localStorage.setItem(STORAGE_KEYS.TRADES, JSON.stringify(trades));
   } catch (e) {
-    console.error('Failed to save trades', e);
+    if (e instanceof DOMException && e.name === 'QuotaExceededError') {
+      console.warn('QuotaExceededError in saveTrades, attempting aggressive truncation');
+      
+      // Try to save fewer and fewer trades until it fits
+      let truncated = trades;
+      let success = false;
+      const sizes = [200, 100, 50, 20, 10];
+      
+      for (const size of sizes) {
+        truncated = trades.slice(-size);
+        try {
+          localStorage.setItem(STORAGE_KEYS.TRADES, JSON.stringify(truncated));
+          success = true;
+          console.warn(`Successfully saved ${size} trades after truncation`);
+          break;
+        } catch (e2) {
+          continue;
+        }
+      }
+      
+      if (!success) {
+        console.error('Failed to save trades even after aggressive truncation');
+        localStorage.removeItem(STORAGE_KEYS.TRADES); // Last resort
+      }
+    } else {
+      console.error('Failed to save trades', e);
+    }
   }
 }
 

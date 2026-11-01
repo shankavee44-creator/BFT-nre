@@ -99,7 +99,8 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
     const fetchHistory = async () => {
       try {
         const token = localStorage.getItem('bft_jwt_session') || '';
-        const res = await fetch('/api/crypto-deposits', {
+        const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
+        const res = await fetch(`${API_BASE}/api/crypto-deposits`, {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
         if (res.ok) {

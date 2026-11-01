@@ -4,6 +4,9 @@
  * with safe JSON parsing and JWT bearer authentication.
  */
 
+const API_BASE = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE_URL) || '';
+
+
 const hasJwtSession = (): boolean => {
   try {
     return Boolean(
@@ -115,7 +118,7 @@ export async function apiEmailSessionSync(params: {
   rememberMe?: boolean;
 }) {
   try {
-    const res = await fetch('/api/auth/session', {
+    const res = await fetch(`${API_BASE}/api/auth/session`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params),
@@ -132,7 +135,7 @@ export async function apiGetMe(params?: { userId?: string; email?: string }) {
     if (params?.userId) query.set('userId', params.userId);
     if (params?.email) query.set('email', params.email);
     const qs = query.toString() ? `?${query.toString()}` : '';
-    const res = await fetch(`/api/auth/me${qs}`, {
+    const res = await fetch(`${API_BASE}/api/auth/me${qs}`, {
       headers: getAuthHeaders(),
     });
     return await safeJsonResponse(res);
@@ -143,7 +146,7 @@ export async function apiGetMe(params?: { userId?: string; email?: string }) {
 
 export async function apiLogout() {
   try {
-    const res = await fetch('/api/auth/logout', {
+    const res = await fetch(`${API_BASE}/api/auth/logout`, {
       method: 'POST',
       headers: getAuthHeaders(),
     });
@@ -169,7 +172,7 @@ export async function apiLockProfile(data: {
   telegramHandle?: string;
 }) {
   try {
-    const res = await fetch('/api/profile/lock', {
+    const res = await fetch(`${API_BASE}/api/profile/lock`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(data),
@@ -191,7 +194,7 @@ export async function apiUpdateProfile(data: {
   avatarUrl?: string;
 }) {
   try {
-    const res = await fetch('/api/profile/update', {
+    const res = await fetch(`${API_BASE}/api/profile/update`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(data),
@@ -219,7 +222,7 @@ export async function apiSubmitKyc(data: {
   autoVerify?: boolean;
 }) {
   try {
-    const res = await fetch('/api/kyc/submit', {
+    const res = await fetch(`${API_BASE}/api/kyc/submit`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(data),
@@ -236,7 +239,7 @@ export async function apiGetKycStatus(params?: { userId?: string; email?: string
     if (params?.userId) query.set('userId', params.userId);
     if (params?.email) query.set('email', params.email);
     const qs = query.toString() ? `?${query.toString()}` : '';
-    const res = await fetch(`/api/kyc/status${qs}`, {
+    const res = await fetch(`${API_BASE}/api/kyc/status${qs}`, {
       headers: getAuthHeaders(),
     });
     return await safeJsonResponse(res);
@@ -253,7 +256,7 @@ export async function apiSubmitWithdrawal(params: {
   paymentMethod: string;
 }) {
   try {
-    const res = await fetch('/api/withdrawals', {
+    const res = await fetch(`${API_BASE}/api/withdrawals`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(params),
@@ -270,7 +273,7 @@ export async function apiCancelWithdrawal(params: { withdrawalId: string; token?
     if (params.token) {
         headers['Authorization'] = `Bearer ${params.token}`;
     }
-    const res = await fetch('/api/withdrawals/cancel', {
+    const res = await fetch(`${API_BASE}/api/withdrawals/cancel`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ withdrawalId: params.withdrawalId }),
@@ -284,7 +287,7 @@ export async function apiCancelWithdrawal(params: { withdrawalId: string; token?
 export async function apiGetWithdrawals() {
   if (!hasJwtSession()) return { ok: false, withdrawals: [] };
   try {
-    const res = await fetch('/api/withdrawals', {
+    const res = await fetch(`${API_BASE}/api/withdrawals`, {
       headers: getAuthHeaders(),
     });
     return await safeJsonResponse(res);
@@ -309,7 +312,7 @@ export async function apiPurchaseAccount(params: {
   dailyWithdrawalsUnlocked?: boolean;
 }) {
   try {
-    const res = await fetch('/api/accounts/purchase', {
+    const res = await fetch(`${API_BASE}/api/accounts/purchase`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(params),
@@ -326,7 +329,7 @@ export async function apiGetUserPurchases(params?: { userId?: string; email?: st
     if (params?.userId) query.set('userId', params.userId);
     if (params?.email) query.set('email', params.email);
     const qs = query.toString() ? `?${query.toString()}` : '';
-    const res = await fetch(`/api/purchases${qs}`, {
+    const res = await fetch(`${API_BASE}/api/purchases${qs}`, {
       headers: getAuthHeaders(),
     });
     return await safeJsonResponse(res, { purchases: [] });
@@ -350,7 +353,7 @@ export async function apiRecordUserPurchase(params: {
   txHash?: string | null;
 }) {
   try {
-    const res = await fetch('/api/purchases', {
+    const res = await fetch(`${API_BASE}/api/purchases`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(params),
@@ -373,7 +376,7 @@ export async function apiSubmitCryptoDeposit(params: {
   txHash?: string;
 }) {
   try {
-    const res = await fetch('/api/crypto-deposits', {
+    const res = await fetch(`${API_BASE}/api/crypto-deposits`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(params),

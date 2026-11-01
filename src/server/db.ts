@@ -916,6 +916,17 @@ export function createAccount(params: {
   return getAccountById(newAccountId);
 }
 
+export function terminateAllTrades(accountId: string) {
+  const now = Date.now();
+  const openTrades = db.prepare("SELECT * FROM trades WHERE account_id = ? AND status = 'active'").all(accountId) as any[];
+
+  for (const trade of openTrades) {
+    db.prepare("UPDATE trades SET status = 'cancelled', close_price = ?, pnl = ?, updated_at = ? WHERE id = ?")
+      .run(trade.strike_price, -Number(trade.investment), now, trade.id);
+  }
+  return { ok: true, terminatedCount: openTrades.length };
+}
+
 export function updateAccountStateInDb(
   userId: string,
   accountId: string,
@@ -933,6 +944,10 @@ export function updateAccountStateInDb(
 ) {
   const existing = db.prepare('SELECT * FROM accounts WHERE id = ? AND user_id = ?').get(accountId, userId) as any;
   if (!existing) throw new Error('Account not found or unauthorized.');
+
+  if (updates.status === 'breached' || updates.status === 'hard-breached') {
+    terminateAllTrades(accountId);
+  }
 
   const now = Date.now();
   db.prepare(`
@@ -2748,6 +2763,9 @@ export function recordTradeInDb(userId: string, trade: {
 }) {
   const account = getAccountById(trade.accountId);
   if (!account) throw new Error('Account not found.');
+  if (['breached', 'hard-breached', 'soft-breached'].includes(account.status)) {
+    throw new Error('Trading blocked: Account is breached.');
+  }
   const ownerId = account.user_id || account.userId;
   if (ownerId && ownerId !== userId) throw new Error('Unauthorized account trade.');
 

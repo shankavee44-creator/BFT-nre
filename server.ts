@@ -1296,31 +1296,9 @@ async function startServer() {
       const now = Date.now();
       const nowIso = new Date(now).toISOString().split('T')[0];
 
-      db.prepare(`
-        INSERT INTO accounts (
-          id, user_id, tier, tier_name, size, initial_balance, current_balance, starting_day_equity, equity,
-          daily_loss_limit_percent, max_overall_loss_percent, max_risk_per_trade_percent, status, phase,
-          trading_days_completed, trades_count, win_rate, daily_withdrawals_unlocked, first_withdrawal_completed,
-          created_date, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 5, 'active', ?, 14, 0, 0, ?, 0, ?, ?, ?)
-      `).run(
-        accountId,
-        user.id,
-        limits.tier,
-        tierName,
-        size,
-        size,
-        size,
-        size,
-        size,
-        limits.dailyLossLimitPercent,
-        limits.maxOverallLossPercent,
-        limits.initialPhase,
-        dailyWithdrawalsUnlocked ? 1 : 0,
-        nowIso,
-        now,
-        now
-      );
+      // Account creation is deferred until payment verification completes
+      // db.prepare(`...`).run(...) removed
+
 
       // Save pending record into crypto_deposits table
       let cryptoDeposit: any = null;
@@ -1485,11 +1463,13 @@ async function startServer() {
 
       return res.json({
         ok: true,
-        account: newAccount,
+        account: null, // Account pending verification
         deposit: cryptoDeposit,
         purchase: normalizedPurchase,
         commissions,
         verification: verificationResult,
+        status: 'pending',
+        message: 'Transaction recorded. Verifying on blockchain...',
       });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err?.message || 'Failed to activate evaluation package.' });
