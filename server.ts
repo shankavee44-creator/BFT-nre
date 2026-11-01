@@ -6,17 +6,10 @@ import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { generateSecret, verify, generateURI } from 'otplib';
 import QRCode from 'qrcode';
-import type {
-  CryptomusDepositInvoice,
-  CryptomusWebhookPayload,
-} from './src/utils/cryptomusEngine.ts';
 import {
-  computeCryptomusSign,
-  validateDepositAmount,
-  createCryptomusInvoiceObject,
-  processCryptomusWebhookPayload,
-} from './src/utils/cryptomusEngine.ts';
-import { CRYPTOMUS_CONFIG } from './src/config/cryptomus.ts';
+  DIRECT_USDT_TRC20_CONFIG,
+  validateDirectDepositAmount,
+} from './src/config/directDeposit.ts';
 import {
   getUserById,
   getUserByEmail,
@@ -78,20 +71,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = 3000;
-const CRYPTOMUS_MERCHANT_ID =
-  process.env.CRYPTOMUS_MERCHANT_ID &&
-  process.env.CRYPTOMUS_MERCHANT_ID !== 'MY_CRYPTOMUS_MERCHANT_ID' &&
-  process.env.CRYPTOMUS_MERCHANT_ID !== 'T9ZCjY8LZET78sG3rpNB5DxmreQhDSx9ZC'
-    ? process.env.CRYPTOMUS_MERCHANT_ID
-    : CRYPTOMUS_CONFIG.merchantId;
-const CRYPTOMUS_API_KEY =
-  process.env.CRYPTOMUS_API_KEY || 'bft_cryptomus_webhook_signing_key_v1';
-const APP_URL = process.env.APP_URL || `http://localhost:${PORT}`;
+const DIRECT_USDT_WALLET_ADDRESS =
+  process.env.DIRECT_USDT_TRC20_WALLET_ADDRESS || DIRECT_USDT_TRC20_CONFIG.walletAddress;
 
-// Server-side persistent in-memory store for Cryptomus invoices & account deposit credits
-// Starts clean with zero pre-populated dummy deposit invoices
-const invoicesByUuid = new Map<string, CryptomusDepositInvoice>();
-const invoicesByOrderId = new Map<string, CryptomusDepositInvoice>();
+// Server-side in-memory store for account deposit credits
 const creditedBalancesByAccount = new Map<string, number>();
 
 async function startServer() {
@@ -862,23 +845,7 @@ async function startServer() {
       const price = Number(req.body?.price || 99.00);
       const referralCode = req.body?.referralCode ? String(req.body.referralCode).trim() : null;
       const dailyWithdrawalsUnlocked = Boolean(req.body?.dailyWithdrawalsUnlocked);
-      const invoiceUuid = req.body?.invoiceUuid ? String(req.body.invoiceUuid).trim() : '';
-
-      // Enforce Payment Verification: require a verified Cryptomus invoice before provisioning
-      if (!invoiceUuid) {
-        return res.status(402).json({
-          ok: false,
-          error: 'Payment verification required. Please complete your Cryptomus USDT transaction first.',
-        });
-      }
-
-      const invoice = invoicesByUuid.get(invoiceUuid) || invoicesByOrderId.get(invoiceUuid);
-      if (!invoice || invoice.status !== 'completed') {
-        return res.status(402).json({
-          ok: false,
-          error: 'Cryptomus payment has not been confirmed on the blockchain yet. Account will provision automatically upon payment verification.',
-        });
-      }
+      const txHash = req.body?.txHash ? String(req.body.txHash).trim() : undefined;
 
       const accountId = `BFT-${Math.floor(10000 + Math.random() * 89999)}`;
       const now = Date.now();
@@ -912,6 +879,19 @@ async function startServer() {
         now,
         now
       );
+
+      // Record direct USDT TRC-20 purchase deposit entry
+      try {
+        createDepositRequest({
+          userId: user.id,
+          accountId,
+          amount: price,
+          paymentMethod: 'USDT (TRC-20)',
+          txHash: txHash || `trc20_${Date.now().toString(16)}`,
+        });
+      } catch (depErr) {
+        console.warn('Purchase deposit record warning:', depErr);
+      }
 
       // Automatically distribute 3-Tier commissions (10% L1, 5% L2, 2% L3) in real-time
       const commissions = creditPurchaseCommissions(user.id, tierName, price, referralCode);
@@ -1066,16 +1046,28 @@ async function startServer() {
   };
 
   // ============================================================================
-  // 1. POST /api/cryptomus/create-invoice
-  // Generates a unique Cryptomus USDT (TRC-20) payment invoice & deposit address
+  // DIRECT USDT (TRC-20) DEPOSIT SYSTEM
   // ============================================================================
-  app.post('/api/cryptomus/create-invoice', async (req, res) => {
-    try {
-      const rawAmount = Number(req.body?.amount);
-      const accountId = String(req.body?.accountId || 'BFT-91823').trim();
-      const userId = String(req.body?.userId || 'usr_bft_001').trim();
+  app.get('/api/deposit/config', (_req, res) => {
+    return res.json({
+      ok: true,
+      walletAddress: DIRECT_USDT_WALLET_ADDRESS,
+      currency: DIRECT_USDT_TRC20_CONFIG.currency,
+      network: DIRECT_USDT_TRC20_CONFIG.network,
+      minDepositUsdt: DIRECT_USDT_TRC20_CONFIG.minDepositUsdt,
+      maxDepositUsdt: DIRECT_USDT_TRC20_CONFIG.maxDepositUsdt,
+    });
+  });
 
-      const validation = validateDepositAmount(rawAmount);
+  app.post('/api/deposit/submit', (req, res) => {
+    try {
+      const user = getAuthenticatedUser(req);
+      const rawAmount = Number(req.body?.amount);
+      const accountId = String(req.body?.accountId || 'BFT-PERS-001').trim();
+      const userId = String(user?.id || req.body?.userId || 'usr_bft_001').trim();
+      const txHash = req.body?.txHash ? String(req.body.txHash).trim() : undefined;
+
+      const validation = validateDirectDepositAmount(rawAmount);
       if (!validation.valid) {
         return res.status(400).json({
           ok: false,
@@ -1084,221 +1076,69 @@ async function startServer() {
       }
 
       const amount = Number(rawAmount.toFixed(2));
-      const orderId = `BFT-DEP-${accountId.replace(/[^A-Z0-9]/gi, '')}-${Date.now()
-        .toString(36)
-        .toUpperCase()}`;
-
-      const hasLiveCredentials =
-        Boolean(CRYPTOMUS_MERCHANT_ID) &&
-        CRYPTOMUS_MERCHANT_ID !== 'MY_CRYPTOMUS_MERCHANT_ID' &&
-        Boolean(process.env.CRYPTOMUS_API_KEY) &&
-        process.env.CRYPTOMUS_API_KEY !== 'MY_CRYPTOMUS_API_KEY';
-
-      if (hasLiveCredentials) {
-        try {
-          const cryptomusRequestPayload = {
-            amount: amount.toFixed(2),
-            currency: 'USDT',
-            network: 'tron',
-            order_id: orderId,
-            url_callback: `${APP_URL.replace(/\/$/, '')}/api/cryptomus/webhook`,
-            url_return: APP_URL,
-            is_payment_multiple: false,
-            lifetime: 3600,
-          };
-
-          const sign = computeCryptomusSign(cryptomusRequestPayload, CRYPTOMUS_API_KEY);
-          const apiRes = await fetch('https://api.cryptomus.com/v1/payment', {
-            method: 'POST',
-            headers: {
-              merchant: CRYPTOMUS_MERCHANT_ID,
-              sign,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(cryptomusRequestPayload),
-          });
-
-          if (apiRes.ok) {
-            const data = (await apiRes.json()) as {
-              state?: number;
-              result?: {
-                uuid?: string;
-                order_id?: string;
-                address?: string;
-                url?: string;
-              };
-            };
-
-            if (data?.result?.uuid) {
-              const liveInvoice = createCryptomusInvoiceObject({
-                amount,
-                accountId,
-                userId,
-                orderId: data.result.order_id || orderId,
-                uuid: data.result.uuid,
-                address: data.result.address,
-                paymentUrl: data.result.url,
-                isLiveApi: true,
-                merchantId: CRYPTOMUS_MERCHANT_ID,
-              });
-              invoicesByUuid.set(liveInvoice.uuid, liveInvoice);
-              invoicesByOrderId.set(liveInvoice.orderId, liveInvoice);
-              return res.json({ ok: true, invoice: liveInvoice });
-            }
-          }
-        } catch (liveErr) {
-          console.warn('Cryptomus live API fallback triggered:', liveErr);
-        }
-      }
-
-      // Deterministic Cryptomus TRC-20 Invoice Generation
-      const invoice = createCryptomusInvoiceObject({
-        amount,
-        accountId,
+      const deposit = createDepositRequest({
         userId,
-        orderId,
-        isLiveApi: false,
-        merchantId: CRYPTOMUS_MERCHANT_ID,
+        accountId,
+        amount,
+        paymentMethod: 'USDT (TRC-20)',
+        txHash: txHash || `trc20_${Date.now().toString(16)}`,
       });
 
-      invoicesByUuid.set(invoice.uuid, invoice);
-      invoicesByOrderId.set(invoice.orderId, invoice);
-
-      return res.json({
-        ok: true,
-        invoice,
-      });
-    } catch (err: any) {
-      return res.status(500).json({
-        ok: false,
-        error: err?.message || 'Failed to generate Cryptomus USDT (TRC-20) invoice.',
-      });
-    }
-  });
-
-  // ============================================================================
-  // 2. GET /api/cryptomus/invoice/:uuid
-  // Retrieves live invoice status for frontend polling & confirmation
-  // ============================================================================
-  app.get('/api/cryptomus/invoice/:uuid', (req, res) => {
-    const uuid = String(req.params.uuid || '').trim();
-    const invoice = invoicesByUuid.get(uuid) || invoicesByOrderId.get(uuid);
-    if (!invoice) {
-      return res.status(404).json({
-        ok: false,
-        error: 'Cryptomus invoice not found.',
-      });
-    }
-    return res.json({
-      ok: true,
-      invoice,
-    });
-  });
-
-  // ============================================================================
-  // 3. GET /api/cryptomus/config
-  // Returns active Cryptomus Gateway merchant configuration
-  // ============================================================================
-  app.get('/api/cryptomus/config', (_req, res) => {
-    return res.json({
-      ok: true,
-      merchantId: CRYPTOMUS_MERCHANT_ID,
-      currency: 'USDT',
-      network: 'tron',
-      networkLabel: 'TRC-20 (TRON Network)',
-      domainVerificationTag: '9b16fe05',
-      minDepositUsdt: 10,
-      maxDepositUsdt: 100000,
-    });
-  });
-
-  // ============================================================================
-  // 4. GET /api/cryptomus/invoices
-  // Lists all Cryptomus deposit invoices (optionally filtered by accountId)
-  // ============================================================================
-  app.get('/api/cryptomus/invoices', (req, res) => {
-    const accountId = typeof req.query.accountId === 'string' ? req.query.accountId.trim() : '';
-    const all = Array.from(invoicesByUuid.values()).sort((a, b) => b.createdAt - a.createdAt);
-    const filtered = accountId ? all.filter((inv) => inv.accountId === accountId) : all;
-    return res.json({
-      ok: true,
-      invoices: filtered,
-      totalCreditedUsdt: accountId ? creditedBalancesByAccount.get(accountId) || 0 : 0,
-    });
-  });
-
-  // ============================================================================
-  // 4. POST /api/cryptomus/webhook
-  // Official Cryptomus Webhook Listener (Verifies MD5 signature & credits account)
-  // ============================================================================
-  app.post('/api/cryptomus/webhook', (req, res) => {
-    try {
-      const payload = req.body as CryptomusWebhookPayload;
-      if (!payload || (!payload.uuid && !payload.order_id)) {
-        return res.status(400).json({
-          ok: false,
-          error: 'Missing uuid or order_id in Cryptomus webhook payload.',
-        });
-      }
-
-      const invoice =
-        invoicesByUuid.get(payload.uuid) || invoicesByOrderId.get(payload.order_id);
-      if (!invoice) {
-        return res.status(404).json({
-          ok: false,
-          error: `Invoice not found for uuid=${payload.uuid} / order_id=${payload.order_id}`,
-        });
-      }
-
-      const result = processCryptomusWebhookPayload(invoice, payload, CRYPTOMUS_API_KEY);
-      if (!result.ok) {
-        return res.status(401).json({
-          ok: false,
-          error: result.error || 'Webhook signature verification failed.',
-        });
-      }
-
-      invoicesByUuid.set(result.updatedInvoice.uuid, result.updatedInvoice);
-      invoicesByOrderId.set(result.updatedInvoice.orderId, result.updatedInvoice);
+      const prevCredited = creditedBalancesByAccount.get(accountId) || 0;
+      creditedBalancesByAccount.set(
+        accountId,
+        Number((prevCredited + amount).toFixed(2))
+      );
 
       let updatedAccount: any = null;
-      if (result.creditedAmountUsdt > 0 && !result.alreadyCompleted) {
-        const prevCredited = creditedBalancesByAccount.get(invoice.accountId) || 0;
-        creditedBalancesByAccount.set(
-          invoice.accountId,
-          Number((prevCredited + result.creditedAmountUsdt).toFixed(2))
-        );
-        try {
-          const existingAcc = getAccountById(invoice.accountId);
-          const ownerUserId = existingAcc?.user_id || invoice.userId || 'usr_bft_001';
-          if (
-            !existingAcc ||
-            existingAcc.tier === 'personal' ||
-            existingAcc.accountCategory === 'personal_live' ||
-            invoice.accountId.includes('PERS')
-          ) {
-            updatedAccount = creditPersonalAccountDepositInDb({
-              userId: ownerUserId,
-              accountId: invoice.accountId,
-              amountUsdt: result.creditedAmountUsdt,
-            });
-          }
-        } catch (dbErr) {
-          console.warn('Webhook DB personal deposit sync warning:', dbErr);
-        }
+      try {
+        ensurePersonalLiveAccountForUser(userId);
+        updatedAccount = creditPersonalAccountDepositInDb({
+          userId,
+          accountId,
+          amountUsdt: amount,
+        });
+      } catch (dbErr) {
+        console.warn('Direct deposit DB personal balance sync warning:', dbErr);
       }
 
       return res.json({
         ok: true,
-        alreadyCompleted: Boolean(result.alreadyCompleted),
-        creditedAmountUsdt: result.creditedAmountUsdt,
-        invoice: result.updatedInvoice,
+        deposit,
+        creditedAmountUsdt: amount,
         updatedAccount,
       });
     } catch (err: any) {
       return res.status(500).json({
         ok: false,
-        error: err?.message || 'Webhook processing error.',
+        error: err?.message || 'Failed to process direct USDT (TRC-20) deposit.',
+      });
+    }
+  });
+
+  app.get('/api/deposit/history', (req, res) => {
+    try {
+      const user = getAuthenticatedUser(req);
+      const accountId = typeof req.query.accountId === 'string' ? req.query.accountId.trim() : '';
+      let deposits: any[] = [];
+      if (user?.id) {
+        deposits = db
+          .prepare('SELECT * FROM deposits WHERE user_id = ? ORDER BY created_at DESC LIMIT 50')
+          .all(user.id);
+      } else if (accountId) {
+        deposits = db
+          .prepare('SELECT * FROM deposits WHERE account_id = ? ORDER BY created_at DESC LIMIT 50')
+          .all(accountId);
+      }
+      return res.json({
+        ok: true,
+        deposits,
+        totalCreditedUsdt: accountId ? creditedBalancesByAccount.get(accountId) || 0 : 0,
+      });
+    } catch (err: any) {
+      return res.status(500).json({
+        ok: false,
+        error: err?.message || 'Failed to load deposit history.',
       });
     }
   });
@@ -1429,101 +1269,6 @@ async function startServer() {
     }
   });
 
-  // ============================================================================
-  // 5. POST /api/cryptomus/simulate-webhook
-  // Signs an authentic Cryptomus webhook payload with MD5(base64(json) + apiKey)
-  // and dispatches it through the webhook verification & account crediting pipeline
-  // ============================================================================
-  app.post('/api/cryptomus/simulate-webhook', (req, res) => {
-    try {
-      const uuid = String(req.body?.uuid || '').trim();
-      const targetStatus = (req.body?.status || 'paid') as CryptomusWebhookPayload['status'];
-      const invoice = invoicesByUuid.get(uuid) || invoicesByOrderId.get(uuid);
-
-      if (!invoice) {
-        return res.status(404).json({
-          ok: false,
-          error: 'Cannot simulate webhook: Cryptomus invoice not found.',
-        });
-      }
-
-      const unsignedWebhook = {
-        type: 'payment' as const,
-        uuid: invoice.uuid,
-        order_id: invoice.orderId,
-        amount: invoice.amount.toFixed(2),
-        payment_amount: invoice.amount.toFixed(2),
-        payment_amount_usd: invoice.amount.toFixed(2),
-        merchant_amount: (invoice.amount * 0.99).toFixed(2),
-        commission: (invoice.amount * 0.01).toFixed(2),
-        is_final: targetStatus === 'paid' || targetStatus === 'paid_over' || targetStatus === 'fail',
-        status: targetStatus,
-        from: 'TQn9Y2khEsLJW1ChVWFMSMeRDow5KcbLSE',
-        network: 'tron',
-        currency: 'USDT',
-        payer_currency: 'USDT',
-        txid: `tron_trc20_${Date.now().toString(16)}${invoice.uuid.replace(/-/g, '').slice(0, 24)}`,
-      };
-
-      const sign = computeCryptomusSign(unsignedWebhook, CRYPTOMUS_API_KEY);
-      const signedWebhook: CryptomusWebhookPayload = {
-        ...unsignedWebhook,
-        sign,
-      };
-
-      const result = processCryptomusWebhookPayload(invoice, signedWebhook, CRYPTOMUS_API_KEY);
-      if (!result.ok) {
-        return res.status(401).json({
-          ok: false,
-          error: result.error,
-        });
-      }
-
-      invoicesByUuid.set(result.updatedInvoice.uuid, result.updatedInvoice);
-      invoicesByOrderId.set(result.updatedInvoice.orderId, result.updatedInvoice);
-
-      let updatedAccount: any = null;
-      if (result.creditedAmountUsdt > 0 && !result.alreadyCompleted) {
-        const prevCredited = creditedBalancesByAccount.get(invoice.accountId) || 0;
-        creditedBalancesByAccount.set(
-          invoice.accountId,
-          Number((prevCredited + result.creditedAmountUsdt).toFixed(2))
-        );
-        try {
-          const existingAcc = getAccountById(invoice.accountId);
-          const ownerUserId = existingAcc?.user_id || invoice.userId || 'usr_bft_001';
-          if (
-            !existingAcc ||
-            existingAcc.tier === 'personal' ||
-            existingAcc.accountCategory === 'personal_live' ||
-            invoice.accountId.includes('PERS')
-          ) {
-            updatedAccount = creditPersonalAccountDepositInDb({
-              userId: ownerUserId,
-              accountId: invoice.accountId,
-              amountUsdt: result.creditedAmountUsdt,
-            });
-          }
-        } catch (dbErr) {
-          console.warn('Simulate webhook DB personal deposit sync warning:', dbErr);
-        }
-      }
-
-      return res.json({
-        ok: true,
-        alreadyCompleted: Boolean(result.alreadyCompleted),
-        creditedAmountUsdt: result.creditedAmountUsdt,
-        invoice: result.updatedInvoice,
-        updatedAccount,
-        webhookPayloadSent: signedWebhook,
-      });
-    } catch (err: any) {
-      return res.status(500).json({
-        ok: false,
-        error: err?.message || 'Failed to simulate Cryptomus webhook.',
-      });
-    }
-  });
 
   // ============================================================================
   // SECURE ADMIN DASHBOARD & BACKEND API (STRICT RBAC ENFORCED)
@@ -2050,7 +1795,7 @@ async function startServer() {
   }
 
   const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`BFT Server & Cryptomus Gateway running on http://0.0.0.0:${PORT} (mode: ${isProduction ? 'production' : 'development'})`);
+    console.log(`BFT Server & Direct USDT (TRC-20) Gateway running on http://0.0.0.0:${PORT} (mode: ${isProduction ? 'production' : 'development'})`);
   });
 
   process.on('SIGTERM', () => {

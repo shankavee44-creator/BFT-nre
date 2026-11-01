@@ -250,7 +250,7 @@ export const Header: React.FC<HeaderProps> = ({
             {soundActive ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
           </button>
 
-          {/* Cryptomus USDT (TRC-20) Deposit Button (Only visible when user is authenticated) */}
+          {/* Direct USDT (TRC-20) Deposit Button (Only visible when user is authenticated) */}
           {userProfile.isLoggedIn && onOpenDepositModal && (
             <button
               type="button"

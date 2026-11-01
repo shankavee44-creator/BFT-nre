@@ -245,7 +245,8 @@ export async function apiPurchaseAccount(params: {
   size: number;
   sku?: string;
   price: number;
-  invoiceUuid: string;
+  invoiceUuid?: string;
+  txHash?: string;
   referralCode?: string | null;
   dailyWithdrawalsUnlocked?: boolean;
 }) {
@@ -265,6 +266,7 @@ export async function apiDepositPersonalAccount(params: {
   amount: number;
   accountId?: string;
   invoiceUuid?: string;
+  txHash?: string;
 }) {
   try {
     const res = await fetch('/api/accounts/deposit-personal', {

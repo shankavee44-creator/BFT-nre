@@ -7,7 +7,7 @@ import { PricingTiers } from './components/PricingTiers';
 import { TradingRules } from './components/TradingRules';
 import { TradingTerminal } from './components/TradingTerminal';
 import { PaymentModal } from './components/PaymentModal';
-import { CryptomusDepositModal } from './components/CryptomusDepositModal';
+import { DirectDepositModal } from './components/DirectDepositModal';
 import { WithdrawalModal } from './components/WithdrawalModal';
 import { UserDashboard } from './components/UserDashboard';
 import { AuthModal } from './components/AuthModal';
@@ -1562,7 +1562,7 @@ export default function App() {
         />
       )}
 
-      <CryptomusDepositModal
+      <DirectDepositModal
         isOpen={isDepositModalOpen}
         onClose={() => setIsDepositModalOpen(false)}
         activeAccount={activeAccount || null}

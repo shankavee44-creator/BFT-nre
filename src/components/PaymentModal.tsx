@@ -13,13 +13,13 @@ import {
   CalendarClock,
   ShieldCheck,
   AlertCircle,
+  ExternalLink,
 } from 'lucide-react';
 import { EvaluationPackage, TradingAccount, PromoCodeType } from '../types';
 import { calculateDiscountedPrice } from '../utils/propRules';
 import { getStoredReferralCode } from '../utils/affiliateEngine';
-import { CRYPTOMUS_CONFIG } from '../config/cryptomus';
+import { DIRECT_USDT_TRC20_CONFIG } from '../config/directDeposit';
 import { apiPurchaseAccount } from '../utils/apiClient';
-import { CryptomusDepositInvoice } from '../utils/cryptomusEngine';
 
 interface PaymentModalProps {
   packageToBuy: EvaluationPackage | null;
@@ -56,7 +56,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   const [copiedCredentials, setCopiedCredentials] = useState(false);
   const [generatedAccount, setGeneratedAccount] = useState<TradingAccount | null>(null);
   const [activeReferralCode, setActiveReferralCode] = useState<string | null>(null);
-  const [activeInvoice, setActiveInvoice] = useState<CryptomusDepositInvoice | null>(null);
+  const [txHashInput, setTxHashInput] = useState<string>('');
   const [paymentError, setPaymentError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -80,31 +80,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     : 0;
   const finalPrice = Number((pricing.totalFinalPrice - courtesyAmount).toFixed(2));
 
-  // Automatically create a real Cryptomus invoice for this checkout price
-  useEffect(() => {
-    let cancelled = false;
-    setPaymentError(null);
-    fetch('/api/cryptomus/create-invoice', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        amount: finalPrice,
-        accountId: `EVAL-${packageToBuy.tier.toUpperCase()}-${packageToBuy.size}`,
-      }),
-    })
-      .then((r) => r.json())
-      .then((data) => {
-        if (!cancelled && data?.ok && data?.invoice) {
-          setActiveInvoice(data.invoice);
-        }
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [finalPrice, packageToBuy.tier, packageToBuy.size]);
-
-  const trc20Address = activeInvoice?.address || 'TKs4g9Ew7XyM8Vp3Q5ZbnR2L1Hd6AcF9Jq';
+  const trc20Address = DIRECT_USDT_TRC20_CONFIG.walletAddress;
 
   const handleCopyAddress = () => {
     navigator.clipboard.writeText(trc20Address);
@@ -117,49 +93,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     setStep('verifying');
 
     try {
-      // 1. Ensure a valid Cryptomus invoice exists
-      let invoiceToVerify = activeInvoice;
-      if (!invoiceToVerify) {
-        const invRes = await fetch('/api/cryptomus/create-invoice', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            amount: finalPrice,
-            accountId: `EVAL-${packageToBuy.tier.toUpperCase()}-${packageToBuy.size}`,
-          }),
-        });
-        const invData = await invRes.json();
-        if (!invRes.ok || !invData?.ok || !invData?.invoice) {
-          throw new Error(invData?.error || 'Failed to initialize Cryptomus payment invoice.');
-        }
-        invoiceToVerify = invData.invoice;
-        setActiveInvoice(invoiceToVerify);
-      }
-
-      // 2. Verify blockchain payment via Cryptomus HMAC-signed webhook endpoint
-      const webhookRes = await fetch('/api/cryptomus/simulate-webhook', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          uuid: invoiceToVerify!.uuid,
-          status: 'paid',
-        }),
-      });
-      const webhookData = await webhookRes.json();
-      if (
-        !webhookRes.ok ||
-        !webhookData?.ok ||
-        webhookData?.invoice?.status !== 'completed'
-      ) {
-        throw new Error(
-          webhookData?.error ||
-            'Cryptomus payment verification failed. Account cannot be provisioned without confirmed payment.'
-        );
-      }
-
-      const verifiedInvoiceUuid: string = webhookData.invoice.uuid;
-
-      // 3. Provision the challenge/funded account in SQLite ONLY with the verified invoiceUuid
+      // Provision challenge/funded account via Direct USDT TRC-20 deposit confirmation
       const res = await apiPurchaseAccount({
         tier: packageToBuy.tier,
         tierName: packageToBuy.tierName,
@@ -168,12 +102,12 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         price: finalPrice,
         referralCode: activeReferralCode,
         dailyWithdrawalsUnlocked: unlockDailyWithdrawals,
-        invoiceUuid: verifiedInvoiceUuid,
+        txHash: txHashInput.trim() || undefined,
       });
 
       if (!res.ok || !res.account) {
         throw new Error(
-          res.error || 'Payment verification required before provisioning trading account.'
+          res.error || 'Direct payment confirmation failed. Please verify your transfer.'
         );
       }
 
@@ -192,7 +126,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       setStep('checkout');
       setPaymentError(
         err?.message ||
-          'Payment could not be verified. Please ensure you are signed in and your Cryptomus transfer is confirmed.'
+          'Payment could not be verified. Please ensure you have sent USDT (TRC-20) to the depository wallet.'
       );
     }
   };
@@ -218,20 +152,19 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         {step === 'checkout' && (
           <div>
             <div className="flex items-center gap-3 mb-5">
-              <div className="w-12 h-12 rounded-xl bg-[#ff8800]/15 border border-[#ff8800]/40 flex items-center justify-center text-[#ff8800]">
-                <Zap className="w-6 h-6 fill-[#ff8800]" />
+              <div className="w-12 h-12 rounded-xl bg-[#00e676]/15 border border-[#00e676]/40 flex items-center justify-center text-[#00e676]">
+                <Zap className="w-6 h-6 fill-[#00e676]" />
               </div>
               <div>
                 <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-[#ff8800] bg-[#ff8800]/15 border border-[#ff8800]/30 px-2 py-0.5 rounded-full font-mono">
-                    CRYPTOMUS GATEWAY • TRC-20
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-[#00e676] bg-[#00e676]/15 border border-[#00e676]/30 px-2 py-0.5 rounded-full font-mono">
+                    DIRECT USDT DEPOSIT • TRC-20
                   </span>
                   <span
-                    title={`Cryptomus Merchant UUID: ${CRYPTOMUS_CONFIG.merchantId}`}
                     className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center gap-1"
                   >
                     <ShieldCheck className="w-3 h-3" />
-                    Merchant: {CRYPTOMUS_CONFIG.merchantId.slice(0, 8)}...{CRYPTOMUS_CONFIG.merchantId.slice(-4)}
+                    TRON Network
                   </span>
                 </div>
                 <h3 className="text-xl font-black text-white mt-1">Activate Funded Evaluation</h3>
@@ -248,115 +181,61 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
               </div>
             )}
 
-            {/* Promo Code Toggle Inside Checkout */}
-            <div className="mb-4 p-3 rounded-xl bg-[#111115] border border-[#ff8800]/30 flex items-center justify-between gap-2 font-mono text-xs">
-              <span className="flex items-center gap-1.5 text-[#ff8800] font-bold">
-                <Tag className="w-3.5 h-3.5" /> Promo Code:
-              </span>
-              <div className="flex gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => setPromoCode('SPOOKY40')}
-                  className={`px-2.5 py-1 rounded-lg font-black cursor-pointer ${
-                    promoCode === 'SPOOKY40' || promoCode === 'BFT40'
-                      ? 'bg-[#ff8800] text-slate-950'
-                      : 'bg-black/40 text-slate-400 border border-white/10'
-                  }`}
-                >
-                  SPOOKY40 (40% OFF)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPromoCode('SPOOKY20')}
-                  className={`px-2.5 py-1 rounded-lg font-black cursor-pointer ${
-                    promoCode === 'SPOOKY20' || promoCode === 'BFT20'
-                      ? 'bg-[#ff8800] text-slate-950'
-                      : 'bg-black/40 text-slate-400 border border-white/10'
-                  }`}
-                >
-                  SPOOKY20 (20% OFF)
-                </button>
-              </div>
-            </div>
-
-            {/* Order Summary */}
-            <div className="p-4 rounded-xl bg-[#111115] border border-white/10 mb-5 space-y-2 font-mono">
-              <div className="flex justify-between text-xs">
-                <span className="text-slate-400 font-sans">Selected Package:</span>
-                <span className="text-white font-bold">
-                  {packageToBuy.tierName} (${packageToBuy.size.toLocaleString()})
+            {/* Plan Details Card */}
+            <div className="p-4 rounded-2xl bg-[#141418] border border-white/10 mb-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-bold text-white">{packageToBuy.tierName}</span>
+                <span className="text-xs font-mono font-bold text-[#ff8800] uppercase">
+                  {packageToBuy.tier}
                 </span>
               </div>
-              <div className="flex justify-between text-xs">
-                <span className="text-slate-400 font-sans">Account Type:</span>
-                <span className="text-[#ff8800] font-bold">
-                  {packageToBuy.tier === 'instant'
-                    ? 'Instant Live Funded (Immediate Withdrawals)'
-                    : 'Evaluation Challenge (Pass Target to Unlock Withdrawals)'}
-                </span>
+              <div className="flex items-center justify-between text-xs text-slate-400 font-mono">
+                <span>Account Capital</span>
+                <span className="text-white font-bold">${packageToBuy.size.toLocaleString()}</span>
               </div>
-              <div className="flex justify-between text-xs">
-                <span className="text-slate-400 font-sans">Profit Split & Scaling:</span>
-                <span className="text-emerald-400 font-bold">80% Net Profit Split</span>
+              <div className="flex items-center justify-between text-xs text-slate-400 font-mono">
+                <span>Base Fee</span>
+                <span className="text-white">${packageToBuy.price.toFixed(2)}</span>
               </div>
 
-              <div className="flex justify-between text-xs pt-2 border-t border-white/10">
-                <span className="text-slate-400 font-sans">Standard Package Price:</span>
-                <span className="text-slate-400 line-through">${pricing.originalPrice.toFixed(2)} USDT</span>
-              </div>
-              <div className="flex justify-between text-xs text-emerald-400">
-                <span className="font-sans">Promo Discount ({promoCode}):</span>
-                <span className="font-bold">-${pricing.discountSaved.toFixed(2)} USDT</span>
-              </div>
-
-              {/* Daily Withdrawals Optional Checkbox */}
-              <div className="pt-2 border-t border-white/10">
-                <label className="flex items-center justify-between text-xs cursor-pointer p-2.5 rounded-lg bg-[#16120c] border border-[#ff8800]/40">
-                  <span className="flex items-center gap-2 text-[#ff8800] font-sans font-bold">
-                    <input
-                      type="checkbox"
-                      checked={unlockDailyWithdrawals}
-                      onChange={(e) => setUnlockDailyWithdrawals(e.target.checked)}
-                      className="rounded accent-[#ff8800] cursor-pointer"
-                    />
-                    <CalendarClock className="w-3.5 h-3.5 shrink-0" />
-                    <span>Pay an extra 15% fee to unlock Daily Withdrawals</span>
+              {pricing.promoDiscountAmount > 0 && (
+                <div className="flex items-center justify-between text-xs text-emerald-400 font-mono font-bold">
+                  <span className="flex items-center gap-1">
+                    <Tag className="w-3 h-3" /> Promo ({promoCode})
                   </span>
-                  <span className="text-white font-bold">
-                    +${(pricing.discountedBasePrice * 0.15).toFixed(2)}
-                  </span>
-                </label>
-              </div>
+                  <span>-${pricing.promoDiscountAmount.toFixed(2)}</span>
+                </div>
+              )}
 
-              {/* Reset Courtesy 10% Discount */}
-              <div className="pt-1">
-                <label className="flex items-center justify-between text-xs cursor-pointer p-2 rounded-lg bg-white/5 border border-white/10">
-                  <span className="flex items-center gap-2 text-slate-300 font-sans font-semibold">
-                    <input
-                      type="checkbox"
-                      checked={courtesyDiscountActive}
-                      onChange={(e) => setCourtesyDiscountActive(e.target.checked)}
-                      className="rounded accent-[#ff8800] cursor-pointer"
-                    />
-                    <span>Hard Breach Reset Courtesy (10% Off)</span>
+              {courtesyAmount > 0 && (
+                <div className="flex items-center justify-between text-xs text-purple-400 font-mono font-bold">
+                  <span className="flex items-center gap-1">
+                    <Gift className="w-3 h-3" /> Retest Courtesy (10%)
                   </span>
-                  {courtesyDiscountActive && (
-                    <span className="text-emerald-400 font-bold">-${courtesyAmount.toFixed(2)}</span>
-                  )}
-                </label>
-              </div>
+                  <span>-${courtesyAmount.toFixed(2)}</span>
+                </div>
+              )}
 
-              <div className="border-t border-white/10 pt-2 flex justify-between items-baseline">
-                <span className="text-xs font-bold text-slate-200 font-sans">Final Total Due:</span>
-                <span className="text-2xl font-black text-[#ff8800] font-mono">
+              {unlockDailyWithdrawals && (
+                <div className="flex items-center justify-between text-xs text-[#ff8800] font-mono font-bold">
+                  <span className="flex items-center gap-1">
+                    <CalendarClock className="w-3 h-3" /> Daily Payouts Add-On (+15%)
+                  </span>
+                  <span>+${pricing.dailyWithdrawalAddOnFee.toFixed(2)}</span>
+                </div>
+              )}
+
+              <div className="pt-2 border-t border-white/10 flex items-center justify-between">
+                <span className="text-xs font-mono font-bold text-slate-300">Total Deposit Due</span>
+                <span className="text-lg font-mono font-black text-emerald-400">
                   ${finalPrice.toFixed(2)} USDT
                 </span>
               </div>
             </div>
 
-            {/* QR & Depository Address */}
-            <div className="flex flex-col items-center justify-center p-4 rounded-xl bg-[#111115] border border-white/10 mb-5">
-              <div className="w-32 h-32 bg-white p-2 rounded-xl mb-3 flex items-center justify-center">
+            {/* QR Code and TRC-20 Address */}
+            <div className="p-4 rounded-2xl bg-[#12141c] border border-white/10 mb-4 flex flex-col items-center gap-3">
+              <div className="w-28 h-28 rounded-xl bg-white p-2 flex items-center justify-center shadow-lg border border-white/20">
                 <svg viewBox="0 0 100 100" className="w-full h-full">
                   <rect x="5" y="5" width="26" height="26" fill="#000" />
                   <rect x="9" y="9" width="18" height="18" fill="#fff" />
@@ -378,7 +257,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
 
               <div className="w-full text-center">
                 <span className="text-[10px] uppercase text-slate-400 font-semibold tracking-wider block mb-1 font-mono">
-                  Cryptomus TRC-20 Depository Address {activeInvoice ? `• Order ${activeInvoice.orderId}` : ''}
+                  Official BFT USDT (TRC-20) Depository Address
                 </span>
                 <div className="flex items-center justify-between gap-2 p-2 rounded-lg bg-[#0a0a0a] border border-white/15 font-mono text-xs text-slate-200">
                   <span className="truncate">{trc20Address}</span>
@@ -390,6 +269,20 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                   </button>
                 </div>
               </div>
+            </div>
+
+            {/* Optional TxHash Input */}
+            <div className="mb-4">
+              <label className="block text-[11px] font-mono text-slate-400 mb-1">
+                TRON Transaction Hash (TxID) - Optional:
+              </label>
+              <input
+                type="text"
+                value={txHashInput}
+                onChange={(e) => setTxHashInput(e.target.value)}
+                placeholder="Paste TRON TxHash (e.g. 8f7d6a5e4c3b...)"
+                className="w-full px-3.5 py-2.5 bg-[#0a0a0a] border border-white/15 rounded-xl text-white font-mono text-xs focus:outline-none focus:border-[#ff8800]"
+              />
             </div>
 
             {activeReferralCode && (
@@ -409,7 +302,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
             <button
               data-testid="confirm-challenge-payment-btn"
               onClick={handleExecutePayment}
-              className="w-full py-4 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] text-slate-950 font-black text-sm flex items-center justify-center gap-2 cursor-pointer transition-colors font-mono uppercase"
+              className="w-full py-4 rounded-xl bg-[#00e676] hover:bg-[#00c853] text-slate-950 font-black text-sm flex items-center justify-center gap-2 cursor-pointer transition-colors font-mono uppercase tracking-wider"
             >
               <span>I Have Sent ${finalPrice.toFixed(2)} USDT (Verify & Provision Account)</span>
               <ArrowRight className="w-4 h-4 stroke-[2.5]" />
@@ -419,12 +312,12 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
 
         {step === 'verifying' && (
           <div className="py-12 text-center">
-            <div className="w-16 h-16 rounded-2xl bg-[#ff8800]/15 border border-[#ff8800]/40 flex items-center justify-center mx-auto mb-6">
-              <RefreshCw className="w-8 h-8 text-[#ff8800] animate-spin" />
+            <div className="w-16 h-16 rounded-2xl bg-[#00e676]/15 border border-[#00e676]/40 flex items-center justify-center mx-auto mb-6">
+              <RefreshCw className="w-8 h-8 text-[#00e676] animate-spin" />
             </div>
-            <h3 className="text-xl font-bold text-white mb-2 font-mono">Verifying Cryptomus Webhook...</h3>
+            <h3 className="text-xl font-bold text-white mb-2 font-mono">Verifying USDT (TRC-20) Transfer...</h3>
             <p className="text-xs text-slate-300 max-w-xs mx-auto leading-relaxed mb-6 font-mono">
-              Confirming ${finalPrice.toFixed(2)} USDT TRC-20 transaction on Merchant {CRYPTOMUS_CONFIG.merchantId.slice(0, 8)}...
+              Confirming ${finalPrice.toFixed(2)} USDT TRC-20 deposit on the TRON Blockchain...
             </p>
           </div>
         )}
@@ -436,7 +329,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                 <CheckCircle2 className="w-8 h-8 text-emerald-400" />
               </div>
               <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-400 bg-emerald-950/80 px-2.5 py-1 rounded-full border border-emerald-500/30 font-mono">
-                CRYPTOMUS WEBHOOK VERIFIED • ACCOUNT DEPLOYED
+                USDT (TRC-20) VERIFIED • ACCOUNT DEPLOYED
               </span>
               <h3 className="text-2xl font-black text-white mt-2">Welcome to BFT Prime</h3>
               <p className="text-xs text-slate-300">
@@ -449,44 +342,52 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                 <span className="text-xs text-slate-400 flex items-center gap-1.5 font-sans">
                   <KeyRound className="w-3.5 h-3.5 text-[#ff8800]" /> Account ID
                 </span>
-                <span className="text-sm font-black text-white bg-white/10 px-2.5 py-0.5 rounded">
-                  {generatedAccount.loginId}
-                </span>
+                <span className="text-sm font-bold text-white">{generatedAccount.loginId}</span>
               </div>
               <div className="flex items-center justify-between pb-2 border-b border-white/10">
-                <span className="text-xs text-slate-400 font-sans">Trading Password</span>
-                <span className="text-sm font-black text-[#ff8800] bg-white/10 px-2.5 py-0.5 rounded">
-                  {generatedAccount.passwordHash}
+                <span className="text-xs text-slate-400 font-sans">Server</span>
+                <span className="text-xs text-slate-200">BFT-Live-TRC</span>
+              </div>
+              <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                <span className="text-xs text-slate-400 font-sans">Phase</span>
+                <span className="text-xs text-[#ff8800] font-bold uppercase">
+                  {generatedAccount.phase}
                 </span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-xs text-slate-400 font-sans">Account Phase</span>
-                <span className="text-xs font-bold text-emerald-400 uppercase">
-                  {generatedAccount.phase === 'funded'
-                    ? 'Live Funded Account'
-                    : 'Challenge Phase 1 (Hit Profit Target to Unlock Live Account)'}
+                <span className="text-xs text-slate-400 font-sans">Capital</span>
+                <span className="text-xs text-emerald-400 font-bold">
+                  ${generatedAccount.size.toLocaleString()}
                 </span>
               </div>
             </div>
 
-            <div className="space-y-3">
+            <div className="flex flex-col gap-2">
               <button
                 onClick={handleCopyCredentials}
-                className="w-full py-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/15 text-[#ff8800] font-bold text-xs flex items-center justify-center gap-2 cursor-pointer font-mono"
+                className="w-full py-3 rounded-xl bg-white/10 hover:bg-white/15 text-white font-mono text-xs font-bold flex items-center justify-center gap-2 cursor-pointer transition-colors"
               >
-                {copiedCredentials ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-                <span>{copiedCredentials ? 'Credentials Copied!' : 'Copy Account Credentials'}</span>
+                {copiedCredentials ? (
+                  <>
+                    <Check className="w-4 h-4 text-emerald-400" />
+                    <span>Credentials Copied to Clipboard</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-4 h-4 text-[#ff8800]" />
+                    <span>Copy Account Credentials</span>
+                  </>
+                )}
               </button>
 
               <button
-                data-testid="launch-terminal-after-payment-btn"
                 onClick={() => {
                   onSuccess(generatedAccount);
                   onClose();
                 }}
-                className="w-full py-4 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] text-slate-950 font-black text-sm flex items-center justify-center gap-2 cursor-pointer font-mono uppercase"
+                className="w-full py-3.5 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] text-slate-950 font-mono text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer transition-colors"
               >
-                <span>Launch Trading Terminal Now</span>
+                <span>Launch Trading Terminal</span>
                 <ArrowRight className="w-4 h-4 stroke-[2.5]" />
               </button>
             </div>

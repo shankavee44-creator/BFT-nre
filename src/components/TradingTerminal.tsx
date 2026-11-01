@@ -3427,7 +3427,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             )}
           </div>
 
-          {/* Green "Deposit" Button (Cryptomus USDT TRC-20 Automated Gateway) */}
+          {/* Green "Deposit" Button (Direct USDT TRC-20 Depository) */}
           <button
             type="button"
             data-testid="terminal-deposit-btn"
