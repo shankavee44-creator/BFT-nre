@@ -191,6 +191,218 @@ export function buildSupabaseCryptoDepositRow(input: CryptoDepositRecordInput) {
   };
 }
 
+export interface UserPurchaseRecordInput {
+  id?: string;
+  userId: string;
+  packageId?: string;
+  packageName: string;
+  packageSku?: string;
+  amount: number;
+  packageAmount?: number;
+  accountType?: CryptoDepositAccountType | string;
+  status?: 'pending' | 'completed' | 'approved' | 'declined' | string;
+  txHash?: string | null;
+  accountId?: string | null;
+}
+
+export interface NormalizedPurchaseRecord {
+  id: string;
+  user_id: string;
+  package_id: string;
+  package_name: string;
+  package_sku: string;
+  amount: number;
+  package_amount: number;
+  account_type: CryptoDepositAccountType;
+  status: 'pending' | 'completed' | 'approved' | 'declined';
+  tx_hash: string | null;
+  account_id: string | null;
+  created_at: string;
+}
+
+/**
+ * Pure helper: builds both the full Supabase `user_purchases` insert payload
+ * (including `user_id`, `package_id`, `amount`, `status`, `package_name`, `package_sku`, `package_amount`)
+ * and the minimal fallback payload (`user_id`, `package_name`, `package_amount`) in case optional columns
+ * have not yet been migrated on the remote database.
+ */
+export function buildSupabaseUserPurchasePayload(input: UserPurchaseRecordInput) {
+  const cleanAmount = Number(Math.max(0.01, Number(input.amount || input.packageAmount || 0)).toFixed(2));
+  const cleanPackageAmount = Number(
+    Math.max(0.01, Number(input.packageAmount ?? input.amount ?? 0)).toFixed(2)
+  );
+  const accountType: CryptoDepositAccountType =
+    resolveDepositAccountType(input.accountType);
+  const packageName =
+    String(input.packageName || '').trim() ||
+    (accountType === 'self_funded'
+      ? `Self-Funded Live Deposit ($${cleanAmount.toFixed(2)} USDT)`
+      : 'Funded Challenge Package');
+  const packageSku =
+    String(input.packageSku || input.packageId || '').trim().toUpperCase() ||
+    buildPackageSku({ accountType, sizeOrAmount: cleanPackageAmount });
+  const packageId = String(input.packageId || packageSku).trim();
+  const rawStatus = String(input.status || 'completed').trim().toLowerCase();
+  const status: 'pending' | 'completed' | 'approved' | 'declined' =
+    rawStatus === 'pending'
+      ? 'pending'
+      : rawStatus === 'approved'
+      ? 'approved'
+      : rawStatus === 'declined' || rawStatus === 'rejected'
+      ? 'declined'
+      : 'completed';
+
+  return {
+    fullPayload: {
+      user_id: String(input.userId || '').trim(),
+      package_id: packageId,
+      package_name: packageName,
+      package_sku: packageSku,
+      amount: cleanAmount,
+      package_amount: cleanPackageAmount,
+      account_type: accountType,
+      status,
+      ...(input.txHash ? { tx_hash: String(input.txHash).trim() } : {}),
+    },
+    corePayload: {
+      user_id: String(input.userId || '').trim(),
+      package_name: packageName,
+      package_amount: cleanAmount,
+    },
+  };
+}
+
+/**
+ * Pure helper: normalizes a raw row from `user_purchases`, `crypto_deposits`, or `/api/purchases`
+ * into a unified `NormalizedPurchaseRecord` for real-time UI rendering.
+ */
+export function mapPurchaseRecord(row: Record<string, any> | null | undefined): NormalizedPurchaseRecord {
+  const r = row && typeof row === 'object' ? row : {};
+  const rawAmount = Number(r.amount ?? r.package_amount ?? r.price ?? 0);
+  const amount = Number.isFinite(rawAmount) && rawAmount > 0 ? Number(rawAmount.toFixed(2)) : 0;
+  const rawPkgAmount = Number(r.package_amount ?? r.size ?? r.amount ?? 0);
+  const packageAmount =
+    Number.isFinite(rawPkgAmount) && rawPkgAmount > 0 ? Number(rawPkgAmount.toFixed(2)) : amount;
+
+  const accountType: CryptoDepositAccountType = resolveDepositAccountType(
+    r.account_type ?? r.accountType ?? (r.is_self_funded ? 'self_funded' : 'challenge')
+  );
+
+  const packageName =
+    String(r.package_name ?? r.packageName ?? r.tier_name ?? '').trim() ||
+    (accountType === 'self_funded'
+      ? `Self-Funded Live Deposit ($${amount.toFixed(2)} USDT)`
+      : 'Challenge Package');
+
+  let inferredSku = String(r.package_sku ?? r.sku ?? r.package_id ?? r.packageId ?? '').trim().toUpperCase();
+  if (!inferredSku) {
+    const parsed = parseChallengePackageFromDeposit({
+      package_name: packageName,
+      amount: packageAmount || amount,
+    });
+    inferredSku =
+      accountType === 'self_funded'
+        ? buildPackageSku({ accountType: 'self_funded', sizeOrAmount: amount || packageAmount })
+        : buildPackageSku({ accountType: 'challenge', tier: parsed.tier, sizeOrAmount: parsed.size });
+  }
+
+  const packageId = String(r.package_id ?? r.packageId ?? inferredSku).trim();
+  const rawStatus = String(r.status || 'completed').trim().toLowerCase();
+  const status: 'pending' | 'completed' | 'approved' | 'declined' =
+    rawStatus === 'pending'
+      ? 'pending'
+      : rawStatus === 'approved'
+      ? 'approved'
+      : rawStatus === 'declined' || rawStatus === 'rejected'
+      ? 'declined'
+      : 'completed';
+
+  let createdIso = new Date().toISOString();
+  if (typeof r.created_at === 'number' && Number.isFinite(r.created_at)) {
+    createdIso = new Date(r.created_at).toISOString();
+  } else if (typeof r.created_at === 'string' && r.created_at.trim()) {
+    const parsedTs = Date.parse(r.created_at);
+    createdIso = Number.isFinite(parsedTs) ? new Date(parsedTs).toISOString() : r.created_at;
+  } else if (typeof r.createdAt === 'number' && Number.isFinite(r.createdAt)) {
+    createdIso = new Date(r.createdAt).toISOString();
+  }
+
+  return {
+    id: String(r.id || `PUR-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`),
+    user_id: String(r.user_id ?? r.userId ?? 'usr_bft_001'),
+    package_id: packageId,
+    package_name: packageName,
+    package_sku: inferredSku,
+    amount: amount || packageAmount,
+    package_amount: packageAmount || amount,
+    account_type: accountType,
+    status,
+    tx_hash: r.tx_hash || r.txHash ? String(r.tx_hash || r.txHash) : null,
+    account_id: r.account_id || r.accountId ? String(r.account_id || r.accountId) : null,
+    created_at: createdIso,
+  };
+}
+
+/**
+ * Pure helper: merges a purchase row (`INSERT`, `UPDATE`, `DELETE`) into an existing list of purchases,
+ * deduplicating by `id` (or matching `package_sku` + `amount` within 10 seconds for optimistic records)
+ * and sorting newest first.
+ */
+export function mergeRealtimePurchase(
+  existing: NormalizedPurchaseRecord[],
+  incomingRow: Record<string, any> | null | undefined,
+  eventType: 'INSERT' | 'UPDATE' | 'DELETE' | string = 'INSERT',
+  oldRow?: Record<string, any> | null
+): NormalizedPurchaseRecord[] {
+  const list = Array.isArray(existing) ? existing.map(mapPurchaseRecord) : [];
+
+  if (eventType === 'DELETE') {
+    const targetId = String(oldRow?.id ?? incomingRow?.id ?? '');
+    if (!targetId) return list;
+    return list.filter((item) => String(item.id) !== targetId);
+  }
+
+  if (!incomingRow || typeof incomingRow !== 'object') return list;
+  const mapped = mapPurchaseRecord(incomingRow);
+
+  const exactIdx = list.findIndex((item) => String(item.id) === String(mapped.id));
+  if (exactIdx >= 0) {
+    const updated = [...list];
+    updated[exactIdx] = {
+      ...updated[exactIdx],
+      ...mapped,
+    };
+    return updated.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+  }
+
+  // Deduplicate optimistic or cross-table (user_purchases vs crypto_deposits) records for the same purchase within 15s
+  const mappedTs = Date.parse(mapped.created_at) || Date.now();
+  const nearDuplicateIdx = list.findIndex((item) => {
+    const itemTs = Date.parse(item.created_at) || 0;
+    const withinWindow = Math.abs(mappedTs - itemTs) <= 15000;
+    const sameSkuOrName =
+      item.package_sku === mapped.package_sku || item.package_name === mapped.package_name;
+    const sameAmount = Math.abs(item.amount - mapped.amount) < 0.01;
+    return withinWindow && sameSkuOrName && sameAmount;
+  });
+
+  if (nearDuplicateIdx >= 0) {
+    const updated = [...list];
+    const curr = updated[nearDuplicateIdx];
+    updated[nearDuplicateIdx] = {
+      ...curr,
+      ...mapped,
+      status:
+        curr.status === 'completed' || mapped.status === 'completed'
+          ? 'completed'
+          : mapped.status,
+    };
+    return updated.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+  }
+
+  return [mapped, ...list].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+}
+
 export function validateDirectDepositAmount(amount: number): {
   valid: boolean;
   error?: string;

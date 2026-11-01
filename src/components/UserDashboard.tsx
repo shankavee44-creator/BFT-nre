@@ -80,6 +80,7 @@ import {
   apiGetKycStatus,
   apiUpdateProfile,
   apiGetAdminUsers,
+  apiGetUserPurchases,
   safeJsonResponse,
   generateFallbackBase32Secret,
 } from '../utils/apiClient';
@@ -90,6 +91,9 @@ import {
   cancelSupabaseWithdrawal,
   computeWithdrawalRefund,
   commitProfileBalanceToSupabase,
+  mapPurchaseRecord,
+  mergeRealtimePurchase,
+  NormalizedPurchaseRecord,
 } from '../utils/supabaseRealtimeSync';
 
 interface UserDashboardProps {
@@ -219,12 +223,26 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     }
   }, [userProfile.profileLocked]);
 
-  // Live Supabase state for Deposits & Withdrawals Ledger
+  // Live Supabase state for Purchases, Deposits & Withdrawals Ledger
+  const [livePurchases, setLivePurchases] = useState<NormalizedPurchaseRecord[]>([]);
   const [supabaseDeposits, setSupabaseDeposits] = useState<any[]>([]);
   const [supabaseWithdrawals, setSupabaseWithdrawals] = useState<any[]>([]);
   const [adminUsersList, setAdminUsersList] = useState<any[]>([]);
   const [nowTick, setNowTick] = useState<number>(() => Date.now());
   const [cancellingWdId, setCancellingWdId] = useState<string | null>(null);
+
+  const displayPurchases = React.useMemo(() => {
+    let combined: NormalizedPurchaseRecord[] = [];
+    if (Array.isArray(purchases)) {
+      for (const p of purchases) {
+        combined = mergeRealtimePurchase(combined, p, 'INSERT');
+      }
+    }
+    for (const lp of livePurchases) {
+      combined = mergeRealtimePurchase(combined, lp, 'INSERT');
+    }
+    return combined;
+  }, [purchases, livePurchases]);
 
   useEffect(() => {
     const t = setInterval(() => setNowTick(Date.now()), 1000);
@@ -470,24 +488,78 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         const effectiveUserUuid =
           targetUuid || (supaProfile?.id && isUuid(String(supaProfile.id)) ? String(supaProfile.id) : undefined);
 
-        if (effectiveUserUuid) {
-          // Query deposits table
-          const depsRes = await supabase
-            .from('deposits')
-            .select('*')
-            .eq('user_id', effectiveUserUuid)
-            .order('created_at', { ascending: false });
+        let mergedPurchases: NormalizedPurchaseRecord[] = [];
+        let mergedDeposits: any[] = [];
 
-          // Query withdrawals table
-          const wdsRes = await supabase
-            .from('withdrawals')
-            .select('*')
-            .eq('user_id', effectiveUserUuid)
-            .order('created_at', { ascending: false });
+        // Fetch from backend /api/purchases and /api/crypto-deposits
+        try {
+          const [apiPurchasesRes, apiCryptoRes] = await Promise.all([
+            apiGetUserPurchases({ userId: targetUserId, email: targetEmail }),
+            fetch(`/api/crypto-deposits${targetUserId ? `?userId=${encodeURIComponent(targetUserId)}` : ''}`).then(
+              (r) => safeJsonResponse(r, { deposits: [] })
+            ),
+          ]);
+          if (Array.isArray(apiPurchasesRes?.purchases)) {
+            for (const row of apiPurchasesRes.purchases) {
+              mergedPurchases = mergeRealtimePurchase(mergedPurchases, row, 'INSERT');
+            }
+          }
+          if (Array.isArray(apiCryptoRes?.deposits)) {
+            mergedDeposits = [...apiCryptoRes.deposits];
+            for (const row of apiCryptoRes.deposits) {
+              mergedPurchases = mergeRealtimePurchase(mergedPurchases, row, 'INSERT');
+            }
+          }
+        } catch {
+          // ignore offline error
+        }
+
+        if (effectiveUserUuid) {
+          // Query Supabase user_purchases, crypto_deposits, and withdrawals tables
+          const [purchasesRes, cryptoDepsRes, wdsRes] = await Promise.all([
+            supabase
+              .from('user_purchases')
+              .select('*')
+              .eq('user_id', effectiveUserUuid)
+              .order('created_at', { ascending: false }),
+            supabase
+              .from('crypto_deposits')
+              .select('*')
+              .eq('user_id', effectiveUserUuid)
+              .order('created_at', { ascending: false }),
+            supabase
+              .from('withdrawals')
+              .select('*')
+              .eq('user_id', effectiveUserUuid)
+              .order('created_at', { ascending: false }),
+          ]);
+
+          if (Array.isArray(purchasesRes.data)) {
+            for (const row of purchasesRes.data) {
+              mergedPurchases = mergeRealtimePurchase(mergedPurchases, row, 'INSERT');
+            }
+          }
+
+          if (Array.isArray(cryptoDepsRes.data)) {
+            for (const row of cryptoDepsRes.data) {
+              mergedPurchases = mergeRealtimePurchase(mergedPurchases, row, 'INSERT');
+              if (!mergedDeposits.some((d) => String(d.id) === String(row.id))) {
+                mergedDeposits.unshift(row);
+              }
+            }
+          }
 
           if (isMounted) {
-            if (depsRes.data) setSupabaseDeposits(depsRes.data);
             if (wdsRes.data) setSupabaseWithdrawals(wdsRes.data);
+          }
+        }
+
+        if (isMounted) {
+          setLivePurchases(mergedPurchases);
+          if (mergedDeposits.length > 0) {
+            setSupabaseDeposits(mergedDeposits);
+          } else if (mergedPurchases.length > 0) {
+            setSupabaseDeposits(mergedPurchases);
           }
         }
       } catch (err) {
@@ -515,7 +587,14 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'deposits' },
+        { event: '*', schema: 'public', table: 'user_purchases' },
+        () => {
+          if (isMounted) syncLiveSupabaseData();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'crypto_deposits' },
         () => {
           if (isMounted) syncLiveSupabaseData();
         }
@@ -532,6 +611,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
   // Fetch all registered users for Admin User Management
   useEffect(() => {
+    if (!isUserAdmin) return;
     let isMounted = true;
     async function loadAdminUsers() {
       try {
@@ -544,7 +624,10 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
       }
     }
     loadAdminUsers();
-  }, []);
+    return () => {
+      isMounted = false;
+    };
+  }, [isUserAdmin]);
 
   // Sync local form fields when userProfile identity or lock status updates
   useEffect(() => {
@@ -1758,41 +1841,96 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             </div>
           )}
 
-          {/* Active Challenge Purchases Section */}
-          <div className="mt-8 p-6 rounded-3xl bg-[#0a0a0a] border border-[#ff8800]/40 font-mono">
+          {/* Active Challenge Purchases & Order History Section */}
+          <div
+            data-testid="user-purchase-history-section"
+            className="mt-8 p-6 rounded-3xl bg-[#0a0a0a] border border-[#ff8800]/40 font-mono"
+          >
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-6 pb-4 border-b border-white/10">
               <div>
                 <span className="text-[10px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded bg-[#ff8800]/15 text-[#ff8800] border border-[#ff8800]/40">
-                  CHALLENGE PURCHASES
+                  CHALLENGE PURCHASES & ORDERS
                 </span>
                 <h3 className="text-lg font-black text-white mt-1">
-                  Active Challenge Accounts
+                  Active Challenge Accounts & Purchase History ({displayPurchases.length})
                 </h3>
               </div>
+              <span className="text-xs text-slate-400">
+                Real-Time Sync (<code className="text-[#ff8800]">user_purchases</code> & <code className="text-[#ff8800]">crypto_deposits</code>)
+              </span>
             </div>
 
-            {purchases.length === 0 ? (
-              <div className="p-4 rounded-xl bg-[#16161b] text-center text-xs text-slate-500">
+            {displayPurchases.length === 0 ? (
+              <div
+                data-testid="empty-purchase-history"
+                className="p-4 rounded-xl bg-[#16161b] text-center text-xs text-slate-500"
+              >
                 No active challenge purchases found.
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {purchases.map((purchase) => {
-                  const accountForPurchase = accounts.find((a) => getPackageSku(a) === purchase.package_sku);
+                {displayPurchases.map((rawPurchase) => {
+                  const purchase = mapPurchaseRecord(rawPurchase);
+                  const accountForPurchase =
+                    accounts.find(
+                      (a) =>
+                        (purchase.account_id && a.id === purchase.account_id) ||
+                        getPackageSku(a) === purchase.package_sku
+                    ) ||
+                    (purchase.account_type === 'self_funded'
+                      ? accounts.find((a) => isPersonalLiveAccount(a))
+                      : accounts.find((a) => !isPersonalLiveAccount(a) && !isDemoAccount(a)));
+                  const isCompleted =
+                    purchase.status === 'completed' || purchase.status === 'approved';
                   return (
                     <div
                       key={purchase.id}
-                      className="p-4 rounded-xl bg-[#111115] border border-white/10 flex items-center justify-between gap-4"
+                      data-testid={`user-purchase-row-${purchase.id}`}
+                      className="p-4 rounded-xl bg-[#111115] border border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
                     >
-                      <div>
-                        <div className="text-sm font-bold text-white">
-                          {purchase.package_sku || purchase.package_name || 'Challenge Account'}
+                      <div className="space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-sm font-bold text-white">
+                            {purchase.package_name || purchase.package_sku || 'Challenge Account'}
+                          </span>
+                          <span className="px-2 py-0.5 rounded bg-[#ff8800]/15 text-[#ff8800] border border-[#ff8800]/30 text-[10px] font-black uppercase">
+                            {purchase.package_sku || purchase.package_id}
+                          </span>
+                          <span
+                            data-testid={`purchase-status-badge-${purchase.id}`}
+                            className={`px-2 py-0.5 rounded text-[9px] font-black uppercase border ${
+                              isCompleted
+                                ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                                : purchase.status === 'declined'
+                                ? 'bg-rose-500/20 text-rose-400 border-rose-500/40'
+                                : 'bg-[#ff8800] text-slate-950 border-amber-300 font-extrabold'
+                            }`}
+                          >
+                            {purchase.status}
+                          </span>
                         </div>
-                        <div className="text-xs text-slate-400">Amount: ${Number(purchase.package_amount).toFixed(2)}</div>
+                        <div className="text-xs text-slate-400 flex flex-wrap items-center gap-2">
+                          <span>
+                            Amount:{' '}
+                            <strong className="text-emerald-400">
+                              ${Number(purchase.amount || purchase.package_amount).toFixed(2)} USDT
+                            </strong>
+                          </span>
+                          <span>•</span>
+                          <span className="uppercase text-[10px] text-slate-500">
+                            {purchase.account_type === 'self_funded' ? 'Self-Funded' : 'Challenge'}
+                          </span>
+                          <span>•</span>
+                          <span className="text-[10px] text-slate-500">
+                            ID: {String(purchase.id).slice(0, 10)}
+                          </span>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0">
                         <div className="text-xs text-slate-400 text-right">
-                          {new Date(purchase.created_at).toLocaleDateString()}
+                          {purchase.created_at
+                            ? new Date(purchase.created_at).toLocaleDateString()
+                            : 'Today'}
                         </div>
                         {accountForPurchase && (
                           <button
@@ -1801,7 +1939,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                               onSelectAccount(accountForPurchase.id);
                               onOpenTerminal();
                             }}
-                            className="px-3 py-2 rounded-xl bg-[#ff8800] text-slate-950 font-black text-[10px] hover:bg-[#ff9900] transition-colors"
+                            className="px-3 py-2 rounded-xl bg-[#ff8800] text-slate-950 font-black text-[10px] hover:bg-[#ff9900] transition-colors cursor-pointer"
                           >
                             Launch Terminal
                           </button>

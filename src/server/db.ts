@@ -6,7 +6,7 @@ import {
   matchPendingDepositToTronGridTx,
   parseChallengePackageFromDeposit,
   TronGridTrc20Transaction,
-} from '../config/directDeposit';
+} from '../config/directDeposit.ts';
 
 function openResilientDatabase(): DatabaseSync {
   const candidates = [
@@ -872,7 +872,7 @@ export function getAccountById(accountId: string) {
 
 export function createAccount(params: {
   userId: string;
-  tier: 'two-step' | 'one-step' | 'instant';
+  tier: string;
   tierName: string;
   size: number;
   dailyWithdrawalsUnlocked?: boolean;
@@ -880,9 +880,7 @@ export function createAccount(params: {
   const now = Date.now();
   const nowIso = new Date(now).toISOString().split('T')[0];
   const newAccountId = `BFT-${Math.floor(10000 + Math.random() * 89999)}`;
-  const phase = params.tier === 'instant' ? 'funded' : 'phase_1';
-  const dailyLossLimit = params.tier === 'two-step' ? 8 : params.tier === 'one-step' ? 6 : 5;
-  const maxOverallLoss = params.tier === 'two-step' ? 20 : params.tier === 'one-step' ? 12 : 10;
+  const limits = getDynamicAccountLimits(params.tier, params.tier === 'instant' ? 'funded' : 'phase_1');
 
   db.prepare(`
     INSERT INTO accounts (
@@ -894,16 +892,16 @@ export function createAccount(params: {
   `).run(
     newAccountId,
     params.userId,
-    params.tier,
+    limits.tier,
     params.tierName,
     params.size,
     params.size,
     params.size,
     params.size,
     params.size,
-    dailyLossLimit,
-    maxOverallLoss,
-    phase,
+    limits.dailyLossLimitPercent,
+    limits.maxOverallLossPercent,
+    limits.initialPhase,
     params.dailyWithdrawalsUnlocked ? 1 : 0,
     nowIso,
     now,
@@ -984,10 +982,16 @@ export function passChallengePhaseInDb(
     WHERE id = ? AND user_id = ?
   `).run(certId, now, accountId, userId);
 
-  const isToPhase2 = !provisionLiveDirectly && existing.tier === 'two-step' && existing.phase === 'phase_1';
+  const normType = normalizeChallengeAccountType(existing.tier || existing.account_type);
+  const isToPhase2 = !provisionLiveDirectly && normType === 'two_step' && (existing.phase === 'phase_1' || existing.challenge_phase === 'phase_1');
+  const nextPhase = isToPhase2 ? 'phase_2' : 'funded';
+  const nextLimits = getDynamicAccountLimits(normType, nextPhase, {
+    dailyDrawdown: existing.daily_loss_limit_percent,
+    maxDrawdown: existing.max_overall_loss_percent,
+  });
+
   const nextPrefix = isToPhase2 ? 'BFT-P2' : 'BFT-LIVE';
   const nextAccountId = `${nextPrefix}-${Math.floor(10000 + Math.random() * 89999)}`;
-  const nextPhase = isToPhase2 ? 'phase_2' : 'funded';
   const baseTierName = String(existing.tier_name || '').replace(/\s*\(Phase \d\)/i, '');
   const nextTierName = isToPhase2
     ? `${baseTierName} (Phase 2)`
@@ -1006,15 +1010,15 @@ export function passChallengePhaseInDb(
   `).run(
     nextAccountId,
     userId,
-    existing.tier,
+    nextLimits.tier,
     nextTierName,
     existing.size,
     existing.size,
     nextBalance,
     nextBalance,
     nextBalance,
-    existing.daily_loss_limit_percent,
-    existing.max_overall_loss_percent,
+    nextLimits.dailyLossLimitPercent,
+    nextLimits.maxOverallLossPercent,
     existing.max_risk_per_trade_percent || 5,
     nextPhase,
     existing.daily_withdrawals_unlocked || 0,
@@ -1709,6 +1713,20 @@ const depositAlterColumns = [
   `ALTER TABLE crypto_deposits ADD COLUMN package_sku TEXT;`,
   `ALTER TABLE crypto_deposits ADD COLUMN is_fulfilled INTEGER DEFAULT 0;`,
   `ALTER TABLE crypto_deposits ADD COLUMN processed_at INTEGER;`,
+  `CREATE TABLE IF NOT EXISTS user_purchases (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    account_id TEXT,
+    package_id TEXT NOT NULL,
+    package_name TEXT NOT NULL,
+    package_sku TEXT NOT NULL,
+    amount REAL NOT NULL,
+    package_amount REAL NOT NULL,
+    account_type TEXT NOT NULL DEFAULT 'challenge',
+    status TEXT NOT NULL DEFAULT 'completed',
+    tx_hash TEXT,
+    created_at INTEGER NOT NULL
+  );`,
 ];
 for (const stmt of depositAlterColumns) {
   try {
@@ -1716,6 +1734,69 @@ for (const stmt of depositAlterColumns) {
   } catch {
     // Column already exists
   }
+}
+
+export function createUserPurchaseRecord(params: {
+  id?: string;
+  userId: string;
+  accountId?: string | null;
+  packageId?: string;
+  packageName: string;
+  packageSku: string;
+  amount: number;
+  packageAmount?: number;
+  accountType?: 'challenge' | 'self_funded';
+  status?: 'pending' | 'completed' | 'approved' | 'declined';
+  txHash?: string | null;
+}) {
+  const now = Date.now();
+  const id =
+    params.id ||
+    `PUR-${now.toString(36).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`;
+  const cleanAmount = Number(Math.max(0.01, Number(params.amount || 0)).toFixed(2));
+  const cleanPkgAmount = Number(
+    Math.max(0.01, Number(params.packageAmount ?? params.amount ?? 0)).toFixed(2)
+  );
+  const accountType = params.accountType === 'self_funded' ? 'self_funded' : 'challenge';
+  const sku = String(params.packageSku || params.packageId || 'BFT-2S-10K')
+    .trim()
+    .toUpperCase();
+  const packageId = String(params.packageId || sku).trim();
+  const packageName = String(params.packageName || 'Challenge Package').trim();
+  const status = params.status || 'completed';
+
+  db.prepare(`
+    INSERT OR REPLACE INTO user_purchases (
+      id, user_id, account_id, package_id, package_name, package_sku,
+      amount, package_amount, account_type, status, tx_hash, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    params.userId,
+    params.accountId || null,
+    packageId,
+    packageName,
+    sku,
+    cleanAmount,
+    cleanPkgAmount,
+    accountType,
+    status,
+    params.txHash || null,
+    now
+  );
+
+  return db.prepare('SELECT * FROM user_purchases WHERE id = ?').get(id) as any;
+}
+
+export function getUserPurchases(params?: { userId?: string }) {
+  if (params?.userId) {
+    return db
+      .prepare('SELECT * FROM user_purchases WHERE user_id = ? ORDER BY created_at DESC LIMIT 100')
+      .all(params.userId) as any[];
+  }
+  return db
+    .prepare('SELECT * FROM user_purchases ORDER BY created_at DESC LIMIT 100')
+    .all() as any[];
 }
 
 export function createDepositRequest(params: {
@@ -1796,6 +1877,25 @@ export function createDepositRequest(params: {
     params.txHash || null,
     now
   );
+
+  // Also save record into user_purchases table
+  try {
+    createUserPurchaseRecord({
+      id,
+      userId: params.userId,
+      accountId: params.accountId || null,
+      packageId: sku,
+      packageName,
+      packageSku: sku,
+      amount: cleanAmount,
+      packageAmount: cleanAmount,
+      accountType,
+      status: accountType === 'challenge' ? 'completed' : 'pending',
+      txHash: params.txHash || null,
+    });
+  } catch {
+    // ignore
+  }
 
   return db.prepare('SELECT * FROM crypto_deposits WHERE id = ?').get(id) as any;
 }

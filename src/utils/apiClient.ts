@@ -294,6 +294,8 @@ export async function apiGetWithdrawals() {
 }
 
 export async function apiPurchaseAccount(params: {
+  userId?: string;
+  email?: string;
   tier: string;
   tierName: string;
   packageName?: string;
@@ -318,7 +320,50 @@ export async function apiPurchaseAccount(params: {
   }
 }
 
+export async function apiGetUserPurchases(params?: { userId?: string; email?: string }) {
+  try {
+    const query = new URLSearchParams();
+    if (params?.userId) query.set('userId', params.userId);
+    if (params?.email) query.set('email', params.email);
+    const qs = query.toString() ? `?${query.toString()}` : '';
+    const res = await fetch(`/api/purchases${qs}`, {
+      headers: getAuthHeaders(),
+    });
+    return await safeJsonResponse(res, { purchases: [] });
+  } catch (e: any) {
+    return { ok: false, purchases: [], error: e?.message || 'Failed to fetch purchases' };
+  }
+}
+
+export async function apiRecordUserPurchase(params: {
+  id?: string;
+  userId?: string;
+  email?: string;
+  accountId?: string | null;
+  packageId: string;
+  packageName: string;
+  packageSku: string;
+  amount: number;
+  packageAmount?: number;
+  accountType?: 'challenge' | 'self_funded';
+  status?: 'pending' | 'completed' | 'approved' | 'declined';
+  txHash?: string | null;
+}) {
+  try {
+    const res = await fetch('/api/purchases', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(params),
+    });
+    return await safeJsonResponse(res);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Failed to record purchase' };
+  }
+}
+
 export async function apiSubmitCryptoDeposit(params: {
+  userId?: string;
+  email?: string;
   amount: number;
   packageName: string;
   sku: string;

@@ -1,4 +1,4 @@
-import { EvaluationPackage, TradingAccount, BinaryTrade, WithdrawalRequest, RuleViolationLog, BinaryOptionDirection, PromoCodeType } from '../types';
+import { EvaluationPackage, TradingAccount, BinaryTrade, WithdrawalRequest, RuleViolationLog, BinaryOptionDirection, PromoCodeType } from '../types/index.ts';
 
 export const PROMO_CODES: Record<PromoCodeType, { code: PromoCodeType; discountPercent: number; label: string; audience: string }> = {
   SPOOKY40: {
@@ -510,7 +510,7 @@ export function isDemoAccount(account?: TradingAccount | null): boolean {
     account.tier === 'demo' ||
     account.accountCategory === 'demo' ||
     account.phase === 'demo' ||
-    account.id.startsWith('BFT-DEMO')
+    Boolean(account.id && typeof account.id === 'string' && account.id.startsWith('BFT-DEMO'))
   );
 }
 
@@ -734,6 +734,184 @@ export interface RuleValidationResult {
   code?: string;
 }
 
+export function normalizeChallengeAccountType(
+  input?: string | null
+): 'instant' | 'one_step' | 'two_step' | 'personal' | 'demo' {
+  if (!input) return 'two_step';
+  const clean = String(input).toLowerCase().trim().replace(/[^a-z0-9_]/g, '_');
+  if (clean.includes('instant')) return 'instant';
+  if (clean.includes('one') || clean.includes('1step') || clean === 'one_step') return 'one_step';
+  if (clean.includes('personal') || clean.includes('self')) return 'personal';
+  if (clean.includes('demo')) return 'demo';
+  return 'two_step';
+}
+
+export function normalizeChallengeTier(input?: string | null): ChallengeTier {
+  const normType = normalizeChallengeAccountType(input);
+  if (normType === 'one_step') return 'one-step';
+  if (normType === 'two_step') return 'two-step';
+  if (normType === 'instant') return 'instant';
+  if (normType === 'personal') return 'personal';
+  return 'demo';
+}
+
+export function getDynamicAccountLimits(
+  accountTypeOrTier?: string | null,
+  phase?: string | null,
+  overrides?: {
+    dailyDrawdown?: number;
+    maxDrawdown?: number;
+    profitTarget?: number | null;
+  }
+): {
+  accountType: 'instant' | 'one_step' | 'two_step' | 'personal' | 'demo';
+  tier: ChallengeTier;
+  profitTargetPercent: number;
+  step2TargetPercent: number;
+  dailyLossLimitPercent: number;
+  maxOverallLossPercent: number;
+  initialPhase: 'phase_1' | 'phase_2' | 'funded' | 'personal_live' | 'demo';
+} {
+  const accountType = normalizeChallengeAccountType(accountTypeOrTier);
+  const tier = normalizeChallengeTier(accountTypeOrTier);
+  const currentPhase = String(phase || '').toLowerCase().trim();
+
+  let defaultDaily = 8;
+  let defaultMax = 20;
+  let defaultTarget = 25;
+  let step2Target = 15;
+  let initialPhase: 'phase_1' | 'phase_2' | 'funded' | 'personal_live' | 'demo' = 'phase_1';
+
+  if (accountType === 'one_step') {
+    defaultDaily = 10;
+    defaultMax = 15;
+    defaultTarget = currentPhase === 'funded' ? 0 : 30;
+    step2Target = 0;
+    initialPhase = 'phase_1';
+  } else if (accountType === 'two_step') {
+    defaultDaily = 8;
+    defaultMax = 20;
+    defaultTarget = currentPhase === 'funded' ? 0 : currentPhase === 'phase_2' ? 15 : 25;
+    step2Target = 15;
+    initialPhase = 'phase_1';
+  } else if (accountType === 'instant') {
+    defaultDaily = 6;
+    defaultMax = 12;
+    defaultTarget = 0;
+    step2Target = 0;
+    initialPhase = 'funded';
+  } else if (accountType === 'personal') {
+    defaultDaily = 0;
+    defaultMax = 0;
+    defaultTarget = 0;
+    step2Target = 0;
+    initialPhase = 'personal_live';
+  } else {
+    defaultDaily = 0;
+    defaultMax = 0;
+    defaultTarget = 0;
+    step2Target = 0;
+    initialPhase = 'demo';
+  }
+
+  const dailyLossLimitPercent =
+    overrides?.dailyDrawdown !== undefined && overrides.dailyDrawdown > 0
+      ? overrides.dailyDrawdown
+      : defaultDaily;
+
+  const maxOverallLossPercent =
+    overrides?.maxDrawdown !== undefined && overrides.maxDrawdown > 0
+      ? overrides.maxDrawdown
+      : defaultMax;
+
+  const profitTargetPercent =
+    overrides?.profitTarget !== undefined && overrides.profitTarget !== null
+      ? overrides.profitTarget
+      : defaultTarget;
+
+  return {
+    accountType,
+    tier,
+    profitTargetPercent,
+    step2TargetPercent: step2Target,
+    dailyLossLimitPercent,
+    maxOverallLossPercent,
+    initialPhase,
+  };
+}
+
+/**
+ * Sanitizes trading account parameters to guarantee anti-breach initialization.
+ * Prevents false auto-breaches upon creation, page refresh, or account switching.
+ */
+export function sanitizeAccountForAntiBreach(account: TradingAccount): TradingAccount {
+  if (!account) return account;
+
+  const dynamicLimits = getDynamicAccountLimits(
+    account.accountType || account.tier,
+    account.phase || account.challengePhase,
+    {
+      dailyDrawdown: account.dailyLossLimitPercent,
+      maxDrawdown: account.maxOverallLossPercent,
+      profitTarget: account.profitTargetPercent,
+    }
+  );
+
+  const isPersonal = isPersonalLiveAccount(account);
+  const isDemo = isDemoAccount(account);
+
+  const baseSize = Math.max(
+    0,
+    Number(account.size || account.initialBalance || account.currentBalance || 10000)
+  );
+
+  let curBal = Number(account.currentBalance);
+  if (!Number.isFinite(curBal) || (curBal <= 0 && account.tradesCount === 0 && !isPersonal)) {
+    curBal = baseSize;
+  }
+
+  let initBal = Number(account.initialBalance);
+  if (!Number.isFinite(initBal) || initBal <= 0) {
+    initBal = isPersonal ? curBal : baseSize;
+  }
+
+  let eq = Number(account.equity);
+  if (!Number.isFinite(eq) || (eq <= 0 && account.tradesCount === 0 && !isPersonal)) {
+    eq = curBal;
+  }
+
+  let startEq = Number(account.startingDayEquity);
+  if (!Number.isFinite(startEq) || (startEq <= 0 && account.tradesCount === 0)) {
+    startEq = curBal > 0 ? curBal : baseSize;
+  }
+
+  const isPassedOrFunded =
+    account.status === 'passed' ||
+    account.phase === 'funded' ||
+    isPersonal ||
+    isDemo;
+
+  const status =
+    isPassedOrFunded && (account.status === 'soft-breached' || account.status === 'hard-breached')
+      ? 'active'
+      : account.status || 'active';
+
+  return {
+    ...account,
+    tier: dynamicLimits.tier,
+    accountType: dynamicLimits.accountType,
+    size: baseSize,
+    initialBalance: initBal,
+    currentBalance: curBal,
+    equity: eq,
+    startingDayEquity: startEq,
+    dailyLossLimitPercent: dynamicLimits.dailyLossLimitPercent,
+    maxOverallLossPercent: dynamicLimits.maxOverallLossPercent,
+    profitTargetPercent: dynamicLimits.profitTargetPercent,
+    status,
+  };
+}
+
 export function getChallengeProfitTarget(account?: TradingAccount | null): {
   isChallenge: boolean;
   targetPercent: number;
@@ -752,18 +930,22 @@ export function getChallengeProfitTarget(account?: TradingAccount | null): {
       isTargetMet: false,
     };
   }
-  const targetPercent =
-    account.tier === 'one-step'
-      ? 30
-      : account.phase === 'phase_2'
-      ? 15
-      : 25;
-  const targetAmount = Number(((account.initialBalance * targetPercent) / 100).toFixed(2));
-  const currentProfit = Number((account.currentBalance - account.initialBalance).toFixed(2));
+
+  const limits = getDynamicAccountLimits(
+    account.accountType || account.tier,
+    account.phase || account.challengePhase,
+    { profitTarget: account.profitTargetPercent }
+  );
+
+  const targetPercent = limits.profitTargetPercent;
+  const initBal = Math.max(1, account.initialBalance || account.size || 10000);
+  const targetAmount = Number(((initBal * targetPercent) / 100).toFixed(2));
+  const currentProfit = Number((account.currentBalance - initBal).toFixed(2));
   const progressPercent =
     targetAmount > 0
       ? Math.min(100, Math.max(0, Number(((currentProfit / targetAmount) * 100).toFixed(1))))
       : 0;
+
   return {
     isChallenge: true,
     targetPercent,
@@ -1242,32 +1424,43 @@ export function advanceChallengeAccountPhase(account: TradingAccount): {
   const nowDate = new Date().toISOString().split('T')[0];
   const certId = `CERT-${account.id}-${Math.floor(1000 + Math.random() * 9000)}`;
 
+  const normType = normalizeChallengeAccountType(account.accountType || account.tier);
+  const isToPhase2 = normType === 'two_step' && (account.phase === 'phase_1' || account.challengePhase === 'phase_1');
+  const nextPhase: 'phase_2' | 'funded' = isToPhase2 ? 'phase_2' : 'funded';
+
   const lockedAccount: TradingAccount = {
     ...account,
-    status: 'passed',
+    status: isToPhase2 ? 'passed_phase_1' : 'passed',
     certificateId: certId,
     passedAt: nowDate,
   };
 
-  const isToPhase2 = account.tier === 'two-step' && account.phase === 'phase_1';
+  const nextLimits = getDynamicAccountLimits(normType, nextPhase, {
+    dailyDrawdown: account.dailyLossLimitPercent,
+    maxDrawdown: account.maxOverallLossPercent,
+  });
+
   const creds = generateAccountCredentials(isToPhase2 ? 'BFT-P2' : 'BFT-LIVE');
   const nextBalance = Math.max(account.initialBalance, account.currentBalance);
+  const cleanBaseName = String(account.tierName || '').replace(/\s*\(Phase \d\)/i, '');
 
   const deployedAccount: TradingAccount = {
     id: creds.loginId,
     loginId: creds.loginId,
     passwordHash: creds.password,
-    tier: account.tier,
+    tier: nextLimits.tier,
+    accountType: nextLimits.accountType,
     tierName: isToPhase2
-      ? `${account.tierName} (Phase 2)`
-      : `Real Funded (${account.tierName})`,
+      ? `${cleanBaseName} (Phase 2)`
+      : `Real Funded (${cleanBaseName})`,
     size: account.size,
     initialBalance: account.size,
     currentBalance: isToPhase2 ? account.size : nextBalance,
     startingDayEquity: isToPhase2 ? account.size : nextBalance,
     equity: isToPhase2 ? account.size : nextBalance,
-    dailyLossLimitPercent: account.dailyLossLimitPercent,
-    maxOverallLossPercent: account.maxOverallLossPercent,
+    dailyLossLimitPercent: nextLimits.dailyLossLimitPercent,
+    maxOverallLossPercent: nextLimits.maxOverallLossPercent,
+    profitTargetPercent: nextLimits.profitTargetPercent,
     maxRiskPerTradePercent: account.maxRiskPerTradePercent || 5,
     dailyWithdrawalsUnlocked: account.dailyWithdrawalsUnlocked,
     monthsCompleted: 1,
@@ -1275,7 +1468,8 @@ export function advanceChallengeAccountPhase(account: TradingAccount): {
     status: 'active',
     createdDate: nowDate,
     lastActiveDate: nowDate,
-    phase: isToPhase2 ? 'phase_2' : 'funded',
+    phase: nextPhase,
+    challengePhase: nextPhase,
     tradingDaysCompleted: 0,
     tradesCount: 0,
     winRate: 0,

@@ -4,7 +4,7 @@ import {
   AffiliatePayout,
   AffiliateStats,
   ChallengeTier,
-} from '../types';
+} from '../types/index.ts';
 
 export type { UserAccount, ReferralRecord, AffiliatePayout, AffiliateStats };
 

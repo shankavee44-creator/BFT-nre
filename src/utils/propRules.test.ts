@@ -21,6 +21,10 @@ import {
   createDefaultPersonalLiveAccount,
   isPersonalLiveAccount,
   getAccountStatusBadgeLabel,
+  getDynamicAccountLimits,
+  normalizeChallengeAccountType,
+  getChallengeProfitTarget,
+  sanitizeAccountForAntiBreach,
   MIN_WITHDRAWAL_PROFIT,
   FIRST_WITHDRAWAL_WAITING_DAYS,
   WITHDRAWAL_GUARANTEE_NOTICE,
@@ -493,5 +497,145 @@ test('Personal Live account bypasses prop drawdown locks and allows 100% capital
   assert.equal(breakdown.profitSplitPercent, 100);
   assert.equal(breakdown.withdrawalFeeAmount, 12);
   assert.equal(breakdown.netPayoutToReceive, 388);
+});
+
+test('dynamic account limits and normalization for instant, one_step, and two_step challenges', () => {
+  // Normalize string variations
+  assert.equal(normalizeChallengeAccountType('one-step'), 'one_step');
+  assert.equal(normalizeChallengeAccountType('one_step'), 'one_step');
+  assert.equal(normalizeChallengeAccountType('two-step'), 'two_step');
+  assert.equal(normalizeChallengeAccountType('two_step'), 'two_step');
+  assert.equal(normalizeChallengeAccountType('instant'), 'instant');
+
+  // One-Step limits (30% Profit Target, 10% Daily DD, 15% Max DD, initial phase_1)
+  const osLimits = getDynamicAccountLimits('one_step', 10000);
+  assert.equal(osLimits.accountType, 'one_step');
+  assert.equal(osLimits.profitTargetPercent, 30);
+  assert.equal(osLimits.dailyLossLimitPercent, 10);
+  assert.equal(osLimits.maxOverallLossPercent, 15);
+  assert.equal(osLimits.initialPhase, 'phase_1');
+  assert.equal(getChallengeProfitTarget({ accountType: 'one_step', phase: 'phase_1', initialBalance: 10000, currentBalance: 10000 } as any).targetAmount, 3000);
+
+  // Two-Step Phase 1 limits (25% Profit Target, 8% Daily DD, 20% Max DD)
+  const tsPhase1Limits = getDynamicAccountLimits('two_step', 'phase_1');
+  assert.equal(tsPhase1Limits.accountType, 'two_step');
+  assert.equal(tsPhase1Limits.profitTargetPercent, 25);
+  assert.equal(tsPhase1Limits.dailyLossLimitPercent, 8);
+  assert.equal(tsPhase1Limits.maxOverallLossPercent, 20);
+  assert.equal(tsPhase1Limits.initialPhase, 'phase_1');
+  assert.equal(getChallengeProfitTarget({ accountType: 'two_step', phase: 'phase_1', initialBalance: 10000, currentBalance: 10000 } as any).targetAmount, 2500);
+
+  // Two-Step Phase 2 limits (15% Profit Target)
+  const tsPhase2Limits = getDynamicAccountLimits('two_step', 'phase_2');
+  assert.equal(tsPhase2Limits.profitTargetPercent, 15);
+  assert.equal(getChallengeProfitTarget({ accountType: 'two_step', phase: 'phase_2', initialBalance: 10000, currentBalance: 10000 } as any).targetAmount, 1500);
+
+  // Instant Funded limits (0% Profit Target, 6% Daily DD, 12% Max DD, phase funded)
+  const instLimits = getDynamicAccountLimits('instant', 10000);
+  assert.equal(instLimits.accountType, 'instant');
+  assert.equal(instLimits.profitTargetPercent, 0);
+  assert.equal(instLimits.dailyLossLimitPercent, 6);
+  assert.equal(instLimits.maxOverallLossPercent, 12);
+  assert.equal(instLimits.initialPhase, 'funded');
+  assert.equal(getChallengeProfitTarget({ accountType: 'instant', phase: 'funded', initialBalance: 10000, currentBalance: 10000 } as any).targetAmount, 0);
+});
+
+test('phase progression for 1-step and 2-step challenges', () => {
+  // 1-Step: phase_1 -> funded
+  const osAccount: TradingAccount = {
+    id: 'ACC-OS1',
+    loginId: 'BFT-1001',
+    passwordHash: 'pass',
+    tier: 'one-step',
+    accountType: 'one_step',
+    tierName: 'One-Step Challenge',
+    size: 10000,
+    initialBalance: 10000,
+    currentBalance: 13000,
+    startingDayEquity: 13000,
+    equity: 13000,
+    dailyLossLimitPercent: 10,
+    maxOverallLossPercent: 15,
+    profitTargetPercent: 30,
+    status: 'active',
+    phase: 'phase_1',
+    tradingDaysCompleted: 5,
+    tradesCount: 15,
+    winRate: 70,
+    createdDate: '2026-10-01',
+    lastActiveDate: '2026-10-24',
+  };
+
+  const osProgression = advanceChallengeAccountPhase(osAccount);
+  assert.equal(osProgression.lockedAccount.status, 'passed');
+  assert.ok(osProgression.deployedAccount);
+  assert.equal(osProgression.deployedAccount.phase, 'funded');
+
+  // 2-Step Phase 1: phase_1 -> phase_2
+  const tsAccount: TradingAccount = {
+    ...osAccount,
+    id: 'ACC-TS1',
+    tier: 'two-step',
+    accountType: 'two_step',
+    currentBalance: 12500,
+    equity: 12500,
+    profitTargetPercent: 25,
+    dailyLossLimitPercent: 8,
+    maxOverallLossPercent: 20,
+    phase: 'phase_1',
+  };
+
+  const tsProgression1 = advanceChallengeAccountPhase(tsAccount);
+  assert.equal(tsProgression1.lockedAccount.status, 'passed_phase_1');
+  assert.ok(tsProgression1.deployedAccount);
+  assert.equal(tsProgression1.deployedAccount.phase, 'phase_2');
+  assert.equal(tsProgression1.deployedAccount.profitTargetPercent, 15);
+
+  // 2-Step Phase 2: phase_2 -> funded
+  const tsAccountPhase2: TradingAccount = {
+    ...tsProgression1.deployedAccount,
+    currentBalance: 11500,
+    equity: 11500,
+  };
+
+  const tsProgression2 = advanceChallengeAccountPhase(tsAccountPhase2);
+  assert.equal(tsProgression2.lockedAccount.status, 'passed');
+  assert.ok(tsProgression2.deployedAccount);
+  assert.equal(tsProgression2.deployedAccount.phase, 'funded');
+});
+
+test('anti-breach sanitization prevents false auto-breaches on zero or uninitialized balance rows', () => {
+  const zeroBalanceAcc: TradingAccount = {
+    id: 'ACC-ZERO',
+    loginId: 'BFT-9999',
+    passwordHash: 'pass',
+    tier: 'two-step',
+    accountType: 'two_step',
+    tierName: 'Two-Step Challenge',
+    size: 10000,
+    initialBalance: 10000,
+    currentBalance: 0, // Uninitialized zero balance
+    startingDayEquity: 0,
+    equity: 0,
+    dailyLossLimitPercent: 8,
+    maxOverallLossPercent: 20,
+    profitTargetPercent: 25,
+    status: 'active',
+    phase: 'phase_1',
+    tradingDaysCompleted: 0,
+    tradesCount: 0,
+    winRate: 0,
+    createdDate: '2026-10-01',
+    lastActiveDate: '2026-10-24',
+  };
+
+  const sanitized = sanitizeAccountForAntiBreach(zeroBalanceAcc);
+  assert.equal(sanitized.currentBalance, 10000);
+  assert.equal(sanitized.equity, 10000);
+  assert.equal(sanitized.startingDayEquity, 10000);
+
+  // Breach evaluation on sanitized account passes safely
+  const breachCheck = evaluateAccountBreach(sanitized);
+  assert.equal(breachCheck.isBreached, false);
 });
 

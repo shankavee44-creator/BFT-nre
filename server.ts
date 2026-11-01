@@ -15,11 +15,18 @@ import {
   resolveDepositAccountType,
   buildCryptoDepositPayload,
   buildSupabaseCryptoDepositRow,
+  buildSupabaseUserPurchasePayload,
+  mapPurchaseRecord,
+  mergeRealtimePurchase,
   fetchTronGridTrc20Transfers,
   matchPendingDepositToTronGridTx,
   parseChallengePackageFromDeposit,
   TronGridTrc20Transaction,
 } from './src/config/directDeposit.ts';
+import {
+  getDynamicAccountLimits,
+  normalizeChallengeAccountType,
+} from './src/utils/propRules.ts';
 import {
   getUserById,
   getUserByEmail,
@@ -50,6 +57,8 @@ import {
   adminSetUserRole,
   createDepositRequest,
   createCryptoDepositRecord,
+  createUserPurchaseRecord,
+  getUserPurchases,
   getCryptoDeposits,
   getPendingCryptoDeposits,
   getCompletedCryptoDepositTxHashes,
@@ -326,54 +335,75 @@ async function startServer() {
     });
   }, 15000);
 
+  const provisionedSupaPurchaseIds = new Set<string>();
   if (supabaseUrl && supabaseAnonKey) {
     setInterval(async () => {
       try {
-        const url = `${supabaseUrl}/rest/v1/user_purchases?is_provisioned=eq.false`;
-        const res = await fetch(url, {
+        let res = await fetch(`${supabaseUrl}/rest/v1/user_purchases?is_provisioned=eq.false`, {
           headers: {
-            'apikey': supabaseAnonKey,
-            'Authorization': `Bearer ${supabaseAnonKey}`,
-            'Prefer': 'return=representation'
-          }
+            apikey: supabaseAnonKey,
+            Authorization: `Bearer ${supabaseAnonKey}`,
+            Prefer: 'return=representation',
+          },
         });
+        if (!res.ok) {
+          // Fallback if is_provisioned column is not present on the live table
+          res = await fetch(`${supabaseUrl}/rest/v1/user_purchases?select=*&order=created_at.desc&limit=25`, {
+            headers: {
+              apikey: supabaseAnonKey,
+              Authorization: `Bearer ${supabaseAnonKey}`,
+            },
+          });
+        }
+        if (!res.ok) return;
         const purchases = await safeParseFetchJson(res, []);
         if (!Array.isArray(purchases)) return;
-  
+
         for (const p of purchases) {
-          // Map sku to tier, tierName, size
-          let tier = 'two-step';
-          let tierName = p.package_name;
-          let size = Number(p.package_amount);
-          
-          if (p.package_sku?.includes('1S')) tier = 'one-step';
-          else if (p.package_sku?.includes('INF')) tier = 'instant';
-          else if (p.package_sku?.includes('2S')) tier = 'two-step';
-  
-          const acc = createAccount({
-            userId: p.user_id,
-            tier: tier as any,
-            tierName: tierName,
-            size: size,
-            dailyWithdrawalsUnlocked: false
+          const pid = String(p?.id || '');
+          if (!pid || provisionedSupaPurchaseIds.has(pid) || p?.is_provisioned === true) continue;
+          provisionedSupaPurchaseIds.add(pid);
+
+          const parsedPkg = parseChallengePackageFromDeposit({
+            sku: p.package_sku || p.package_id,
+            package_sku: p.package_sku || p.package_id,
+            package_name: p.package_name,
+            amount: Number(p.package_amount || p.amount || 0),
           });
-  
-          if (acc) {
-            await fetch(`${supabaseUrl}/rest/v1/user_purchases?id=eq.${p.id}`, {
+
+          ensureUserInDb({
+            id: String(p.user_id || 'usr_bft_001'),
+            email: `${String(p.user_id || 'trader').slice(0, 8)}@client-bft.com`,
+            fullName: `Trader ${String(p.user_id || '0001').slice(-4)}`,
+          });
+
+          const existingAccounts = getAccountsForUser(String(p.user_id || 'usr_bft_001'));
+          if (existingAccounts.length <= 1) {
+            createAccount({
+              userId: String(p.user_id || 'usr_bft_001'),
+              tier: parsedPkg.tier,
+              tierName: parsedPkg.tierName,
+              size: parsedPkg.size,
+              dailyWithdrawalsUnlocked: false,
+            });
+          }
+
+          if (p.is_provisioned === false) {
+            await fetch(`${supabaseUrl}/rest/v1/user_purchases?id=eq.${encodeURIComponent(pid)}`, {
               method: 'PATCH',
               headers: {
-                'apikey': supabaseAnonKey,
-                'Authorization': `Bearer ${supabaseAnonKey}`,
-                'Content-Type': 'application/json'
+                apikey: supabaseAnonKey,
+                Authorization: `Bearer ${supabaseAnonKey}`,
+                'Content-Type': 'application/json',
               },
-              body: JSON.stringify({ is_provisioned: true })
-            });
+              body: JSON.stringify({ is_provisioned: true }),
+            }).catch(() => {});
           }
         }
       } catch (e) {
         console.error('Polling for manual purchases failed:', e);
       }
-    }, 10000);
+    }, 15000);
   } else {
     console.warn('Supabase polling disabled: VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY missing.');
   }
@@ -1096,12 +1126,11 @@ async function startServer() {
         customSku: req.body?.sku ? String(req.body.sku) : undefined,
       });
 
+      const limits = getDynamicAccountLimits(tier, size);
+
       const accountId = `BFT-${Math.floor(10000 + Math.random() * 89999)}`;
       const now = Date.now();
       const nowIso = new Date(now).toISOString().split('T')[0];
-
-      const dailyLossLimit = tier === 'instant' ? 6 : tier === 'two-step' ? 8 : 10;
-      const maxOverallLoss = tier === 'instant' ? 12 : tier === 'two-step' ? 20 : 15;
 
       db.prepare(`
         INSERT INTO accounts (
@@ -1113,16 +1142,16 @@ async function startServer() {
       `).run(
         accountId,
         user.id,
-        tier,
+        limits.tier,
         tierName,
         size,
         size,
         size,
         size,
         size,
-        dailyLossLimit,
-        maxOverallLoss,
-        tier === 'instant' ? 'funded' : 'phase_1',
+        limits.dailyLossLimitPercent,
+        limits.maxOverallLossPercent,
+        limits.initialPhase,
         dailyWithdrawalsUnlocked ? 1 : 0,
         nowIso,
         now,
@@ -1146,6 +1175,26 @@ async function startServer() {
         console.warn('Purchase crypto_deposits record warning:', depErr);
       }
 
+      // Save record into user_purchases table
+      let purchaseRecord: any = null;
+      try {
+        purchaseRecord = createUserPurchaseRecord({
+          id: cryptoDeposit?.id || `PUR-${now.toString(36).toUpperCase()}`,
+          userId: user.id,
+          accountId,
+          packageId: sku,
+          packageName,
+          packageSku: sku,
+          amount: price,
+          packageAmount: price,
+          accountType,
+          status: 'completed',
+          txHash: txHash || null,
+        });
+      } catch (purErr) {
+        console.warn('Purchase user_purchases record warning:', purErr);
+      }
+
       if (supabaseUrl && supabaseAnonKey && isValidUuid(user.id)) {
         const supaPayload = buildSupabaseCryptoDepositRow({
           userId: user.id,
@@ -1165,6 +1214,43 @@ async function startServer() {
           },
           body: JSON.stringify(supaPayload),
         }).catch(() => {});
+
+        const { fullPayload, corePayload } = buildSupabaseUserPurchasePayload({
+          userId: user.id,
+          packageId: sku,
+          packageName,
+          packageSku: sku,
+          amount: price,
+          packageAmount: price,
+          accountType,
+          status: 'completed',
+          txHash: txHash || null,
+        });
+        fetch(`${supabaseUrl}/rest/v1/user_purchases`, {
+          method: 'POST',
+          headers: {
+            apikey: supabaseAnonKey,
+            Authorization: `Bearer ${supabaseAnonKey}`,
+            'Content-Type': 'application/json',
+            Prefer: 'return=minimal',
+          },
+          body: JSON.stringify(fullPayload),
+        })
+          .then((r) => {
+            if (!r.ok) {
+              return fetch(`${supabaseUrl}/rest/v1/user_purchases`, {
+                method: 'POST',
+                headers: {
+                  apikey: supabaseAnonKey,
+                  Authorization: `Bearer ${supabaseAnonKey}`,
+                  'Content-Type': 'application/json',
+                  Prefer: 'return=minimal',
+                },
+                body: JSON.stringify(corePayload),
+              });
+            }
+          })
+          .catch(() => {});
       }
 
       // Trigger immediate TronGrid TRC-20 verification pass
@@ -1187,15 +1273,113 @@ async function startServer() {
       const commissions = creditPurchaseCommissions(user.id, tierName, price, referralCode);
 
       const newAccount = getAccountById(accountId);
+      const normalizedPurchase = mapPurchaseRecord(
+        purchaseRecord || {
+          id: cryptoDeposit?.id || `PUR-${now.toString(36).toUpperCase()}`,
+          user_id: user.id,
+          account_id: accountId,
+          package_id: sku,
+          package_name: packageName,
+          package_sku: sku,
+          amount: price,
+          package_amount: price,
+          account_type: accountType,
+          status: 'completed',
+          created_at: now,
+        }
+      );
+
       return res.json({
         ok: true,
         account: newAccount,
         deposit: cryptoDeposit,
+        purchase: normalizedPurchase,
         commissions,
         verification: verificationResult,
       });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err?.message || 'Failed to activate evaluation package.' });
+    }
+  });
+
+  // GET /api/purchases - Fetch user's purchase & order history in real-time
+  app.get(['/api/purchases', '/api/orders'], (req, res) => {
+    try {
+      const user = getAuthenticatedUser(req);
+      const userId = String(user?.id || req.query.userId || '').trim();
+      const rawPurchases = getUserPurchases(userId ? { userId } : undefined);
+      const rawDeposits = getCryptoDeposits(userId ? { userId } : undefined);
+
+      let merged: ReturnType<typeof mapPurchaseRecord>[] = [];
+      for (const p of rawPurchases) {
+        merged = mergeRealtimePurchase(merged, p, 'INSERT');
+      }
+      for (const d of rawDeposits) {
+        merged = mergeRealtimePurchase(merged, d, 'INSERT');
+      }
+
+      return res.json({
+        ok: true,
+        purchases: merged,
+      });
+    } catch (err: any) {
+      return res.status(500).json({
+        ok: false,
+        error: err?.message || 'Failed to load purchase history.',
+      });
+    }
+  });
+
+  // POST /api/purchases - Record a user purchase/order directly
+  app.post(['/api/purchases', '/api/orders'], async (req, res) => {
+    try {
+      const user = getAuthenticatedUser(req);
+      const userId = String(user?.id || req.body?.userId || req.body?.user_id || 'usr_bft_001').trim();
+      const amount = Number(req.body?.amount ?? req.body?.package_amount ?? req.body?.price ?? 0);
+      const packageAmount = Number(req.body?.packageAmount ?? req.body?.package_amount ?? amount);
+      const accountType = resolveDepositAccountType(
+        req.body?.accountType || req.body?.account_type || 'challenge'
+      );
+      const packageName = String(
+        req.body?.packageName || req.body?.package_name || 'Challenge Package'
+      ).trim();
+      const packageSku = buildPackageSku({
+        accountType,
+        sizeOrAmount: packageAmount || amount,
+        customSku: req.body?.packageSku || req.body?.package_sku || req.body?.packageId || req.body?.package_id,
+      });
+      const packageId = String(req.body?.packageId || req.body?.package_id || packageSku).trim();
+      const status = req.body?.status || 'completed';
+
+      ensureUserInDb({
+        id: userId,
+        email: user?.email || `${userId.toLowerCase().replace(/[^a-z0-9]/g, '')}@client-bft.com`,
+        fullName: user?.full_name || `Trader ${userId.slice(-4)}`,
+      });
+
+      const saved = createUserPurchaseRecord({
+        id: req.body?.id ? String(req.body.id) : undefined,
+        userId,
+        accountId: req.body?.accountId || req.body?.account_id || null,
+        packageId,
+        packageName,
+        packageSku,
+        amount: Math.max(0.01, amount),
+        packageAmount: Math.max(0.01, packageAmount),
+        accountType,
+        status,
+        txHash: req.body?.txHash || req.body?.tx_hash || null,
+      });
+
+      return res.json({
+        ok: true,
+        purchase: mapPurchaseRecord(saved),
+      });
+    } catch (err: any) {
+      return res.status(400).json({
+        ok: false,
+        error: err?.message || 'Failed to record purchase.',
+      });
     }
   });
 

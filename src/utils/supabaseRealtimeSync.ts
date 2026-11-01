@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { supabase } from './supabase.ts';
 import {
   TradingAccount,
   UserProfile,
@@ -6,8 +6,24 @@ import {
   ReferralRecord,
   ReferralLevel,
   KYCStatus,
-} from '../types';
-import { isPersonalLiveAccount, isDemoAccount } from './propRules';
+} from '../types/index.ts';
+import { isPersonalLiveAccount, isDemoAccount } from './propRules.ts';
+import {
+  DIRECT_USDT_TRC20_CONFIG,
+  UserPurchaseRecordInput,
+  NormalizedPurchaseRecord,
+  buildSupabaseUserPurchasePayload,
+  buildSupabaseCryptoDepositRow,
+  mapPurchaseRecord,
+  mergeRealtimePurchase,
+} from '../config/directDeposit.ts';
+
+export {
+  mapPurchaseRecord,
+  mergeRealtimePurchase,
+  buildSupabaseUserPurchasePayload,
+};
+export type { NormalizedPurchaseRecord, UserPurchaseRecordInput };
 
 export type ProfileBalanceColumn = 'self_balance' | 'demo_balance' | 'funded_balance';
 
@@ -864,7 +880,7 @@ export function applyRealtimeProfileUpdate(
       return acc;
     }
 
-    if (acc.phase === 'funded' && !isPersonalLiveAccount(acc) && !isDemoAccount(acc) && newFunded !== undefined) {
+    if (acc.phase === 'funded' && !isPersonalLiveAccount(acc) && !isDemoAccount(acc) && newFunded !== undefined && newFunded > 0) {
       if (acc.currentBalance !== newFunded || acc.equity !== newFunded) {
         accountsChanged = true;
         return {
@@ -1252,6 +1268,156 @@ export async function fetchSupabaseWithdrawalsForUser(params: {
 }
 
 /**
+ * Inserts a user purchase/order record into Supabase (`user_purchases` and optionally `crypto_deposits`)
+ * with automatic schema fallback if optional columns (`package_id`, `amount`, `status`, `package_sku`)
+ * have not yet been migrated on the live `user_purchases` table.
+ */
+export async function insertSupabaseUserPurchase(
+  input: Omit<UserPurchaseRecordInput, 'userId'> & {
+    userId?: string;
+    userEmail?: string;
+    walletAddress?: string;
+    skipCryptoDepositInsert?: boolean;
+  }
+): Promise<{ ok: boolean; row: NormalizedPurchaseRecord; error?: string }> {
+  const resolvedUuid = await resolveSupabaseWithdrawalUserUuid({
+    userId: input.userId,
+    userEmail: input.userEmail,
+  });
+
+  const effectiveUserId = resolvedUuid || String(input.userId || 'usr_bft_001').trim();
+  const { fullPayload, corePayload } = buildSupabaseUserPurchasePayload({
+    ...input,
+    userId: effectiveUserId,
+  });
+
+  const optimisticRow = mapPurchaseRecord({
+    ...fullPayload,
+    id: input.id || `PUR-${Date.now().toString(36).toUpperCase()}`,
+    account_id: input.accountId || null,
+    created_at: new Date().toISOString(),
+  });
+
+  if (!resolvedUuid) {
+    return {
+      ok: true,
+      row: optimisticRow,
+    };
+  }
+
+  let savedRow: Record<string, any> | null = null;
+
+  try {
+    // 1. Attempt full insert into user_purchases (with package_id, package_sku, amount, status)
+    const { data, error } = await supabase
+      .from('user_purchases')
+      .insert([fullPayload])
+      .select('*')
+      .maybeSingle();
+
+    if (!error && data) {
+      savedRow = { ...fullPayload, ...data };
+    } else if (error) {
+      // 2. Fallback to core columns (user_id, package_name, package_amount) if remote schema is unmigrated
+      const { data: coreData, error: coreErr } = await supabase
+        .from('user_purchases')
+        .insert([corePayload])
+        .select('*')
+        .maybeSingle();
+
+      if (!coreErr && coreData) {
+        savedRow = { ...fullPayload, ...coreData };
+      } else {
+        const { error: plainCoreErr } = await supabase
+          .from('user_purchases')
+          .insert([corePayload]);
+        if (!plainCoreErr) {
+          savedRow = { ...fullPayload, created_at: new Date().toISOString() };
+        }
+      }
+    }
+  } catch {
+    // Continue to crypto_deposits insert fallback
+  }
+
+  if (!input.skipCryptoDepositInsert) {
+    try {
+      const cryptoRow = buildSupabaseCryptoDepositRow({
+        userId: resolvedUuid,
+        walletAddress: input.walletAddress || DIRECT_USDT_TRC20_CONFIG.walletAddress,
+        amount: fullPayload.amount,
+        packageName: fullPayload.package_name,
+        sku: fullPayload.package_sku,
+        accountType: fullPayload.account_type,
+        status: fullPayload.status,
+      });
+      const { data: depData, error: depErr } = await supabase
+        .from('crypto_deposits')
+        .insert([cryptoRow])
+        .select('*')
+        .maybeSingle();
+
+      if (!depErr && depData && !savedRow) {
+        savedRow = { ...fullPayload, ...depData };
+      } else if (depErr) {
+        await supabase.from('crypto_deposits').insert([cryptoRow]);
+      }
+    } catch {
+      // Ignore network/RLS warning if backend also persists
+    }
+  }
+
+  return {
+    ok: true,
+    row: savedRow ? mapPurchaseRecord(savedRow) : optimisticRow,
+  };
+}
+
+/**
+ * Fetches all user purchases/orders from Supabase (`user_purchases` and `crypto_deposits`)
+ * for the authenticated user and normalizes them into `NormalizedPurchaseRecord[]`.
+ */
+export async function fetchSupabasePurchasesForUser(params: {
+  userId?: string;
+  userEmail?: string;
+}): Promise<NormalizedPurchaseRecord[]> {
+  const resolvedUuid = await resolveSupabaseWithdrawalUserUuid(params);
+  if (!resolvedUuid) return [];
+
+  let merged: NormalizedPurchaseRecord[] = [];
+
+  try {
+    const [purchasesRes, depositsRes] = await Promise.all([
+      supabase
+        .from('user_purchases')
+        .select('*')
+        .eq('user_id', resolvedUuid)
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('crypto_deposits')
+        .select('*')
+        .eq('user_id', resolvedUuid)
+        .order('created_at', { ascending: false }),
+    ]);
+
+    if (Array.isArray(purchasesRes.data)) {
+      for (const r of purchasesRes.data) {
+        merged = mergeRealtimePurchase(merged, r, 'INSERT');
+      }
+    }
+    if (Array.isArray(depositsRes.data)) {
+      for (const r of depositsRes.data) {
+        merged = mergeRealtimePurchase(merged, r, 'INSERT');
+      }
+    }
+  } catch {
+    // Ignore network error
+  }
+
+  return merged;
+}
+
+/**
  * Pure helper: maps a Supabase `withdrawals` row into a frontend `WithdrawalRequest`.
  */
 export function mapSupabaseWithdrawalToRequest(row: Record<string, any>): WithdrawalRequest {
@@ -1622,6 +1788,145 @@ export interface UserRealtimeSubscriptionCallbacks {
     newRow: Record<string, any> | null,
     oldRow: Record<string, any> | null
   ) => void;
+  onAccountsInitial?: (accounts: TradingAccount[]) => void;
+  onAccountEvent?: (
+    eventType: 'INSERT' | 'UPDATE' | 'DELETE' | string,
+    account: TradingAccount | null
+  ) => void;
+}
+
+export function buildSupabaseTradingAccountPayload(account: TradingAccount, userId: string) {
+  const limits = getDynamicAccountLimits(
+    account.accountType || account.tier,
+    account.phase || account.challengePhase,
+    {
+      dailyDrawdown: account.dailyLossLimitPercent,
+      maxDrawdown: account.maxOverallLossPercent,
+      profitTarget: account.profitTargetPercent,
+    }
+  );
+
+  return {
+    user_id: userId,
+    account_type: limits.accountType,
+    starting_balance: Number(account.initialBalance || account.size || 10000),
+    current_balance: Number(account.currentBalance || account.initialBalance || 10000),
+    equity: Number(account.equity || account.currentBalance || 10000),
+    daily_drawdown: limits.dailyLossLimitPercent,
+    max_drawdown: limits.maxOverallLossPercent,
+    profit_target: limits.profitTargetPercent,
+    challenge_phase: account.phase || account.challengePhase || limits.initialPhase,
+    status: account.status || 'active',
+  };
+}
+
+export function mapSupabaseTradingAccountRow(row: Record<string, any>): TradingAccount {
+  const limits = getDynamicAccountLimits(
+    row.account_type || row.tier,
+    row.challenge_phase || row.phase,
+    {
+      dailyDrawdown: Number(row.daily_drawdown || row.daily_loss_limit_percent || 8),
+      maxDrawdown: Number(row.max_drawdown || row.max_overall_loss_percent || 20),
+      profitTarget: row.profit_target !== undefined && row.profit_target !== null ? Number(row.profit_target) : null,
+    }
+  );
+
+  const startBal = Number(row.starting_balance ?? row.initial_balance ?? row.size ?? 10000);
+  const curBal = Number(row.current_balance ?? startBal);
+  const eq = Number(row.equity ?? curBal);
+  const phase = (row.challenge_phase || row.phase || limits.initialPhase) as any;
+  const status = row.status || 'active';
+
+  const rawAcc: TradingAccount = {
+    id: String(row.id || `ACC-${Date.now()}`),
+    supabaseAccountId: String(row.id || ''),
+    ownerId: row.user_id ? String(row.user_id) : undefined,
+    loginId: String(row.login_id || row.id || `BFT-${Math.floor(10000 + Math.random() * 89999)}`),
+    passwordHash: 'bft_live_' + String(row.id || 'acc').slice(0, 8),
+    tier: limits.tier,
+    accountType: limits.accountType,
+    tierName:
+      limits.accountType === 'one_step'
+        ? 'One-Step Challenge'
+        : limits.accountType === 'two_step'
+        ? `Two-Step Challenge${phase === 'phase_2' ? ' (Phase 2)' : ''}`
+        : limits.accountType === 'instant'
+        ? 'Instant Funded'
+        : limits.accountType === 'personal'
+        ? 'Personal Live Balance (Self-Funded)'
+        : 'Demo Practice',
+    size: startBal,
+    initialBalance: startBal,
+    currentBalance: curBal,
+    startingDayEquity: curBal > 0 ? curBal : startBal,
+    equity: eq,
+    dailyLossLimitPercent: limits.dailyLossLimitPercent,
+    maxOverallLossPercent: limits.maxOverallLossPercent,
+    profitTargetPercent: limits.profitTargetPercent,
+    status,
+    phase,
+    challengePhase: phase,
+    tradingDaysCompleted: Number(row.trading_days_completed || 0),
+    tradesCount: Number(row.trades_count || 0),
+    winRate: Number(row.win_rate || 0),
+    createdDate: row.created_at ? String(row.created_at).split('T')[0] : new Date().toISOString().split('T')[0],
+    lastActiveDate: row.updated_at ? String(row.updated_at).split('T')[0] : new Date().toISOString().split('T')[0],
+  };
+
+  return sanitizeAccountForAntiBreach(rawAcc);
+}
+
+export async function insertSupabaseTradingAccount(params: {
+  account: TradingAccount;
+  userId?: string;
+  userEmail?: string;
+}): Promise<{ ok: boolean; account?: TradingAccount; error?: string }> {
+  const resolvedUuid = await resolveSupabaseWithdrawalUserUuid({
+    userId: params.userId,
+    userEmail: params.userEmail,
+  });
+
+  if (!resolvedUuid) {
+    return { ok: false, error: 'User UUID could not be resolved for Supabase.' };
+  }
+
+  const payload = buildSupabaseTradingAccountPayload(params.account, resolvedUuid);
+
+  try {
+    const { data, error } = await supabase
+      .from('trading_accounts')
+      .insert(payload)
+      .select('*')
+      .maybeSingle();
+
+    if (!error && data) {
+      return { ok: true, account: mapSupabaseTradingAccountRow(data) };
+    }
+    return { ok: false, error: error?.message || 'Failed to insert trading account.' };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Error inserting trading account.' };
+  }
+}
+
+export async function fetchSupabaseTradingAccountsForUser(params: {
+  userId?: string;
+  userEmail?: string;
+}): Promise<TradingAccount[]> {
+  const resolvedUuid = await resolveSupabaseWithdrawalUserUuid(params);
+  if (!resolvedUuid) return [];
+
+  try {
+    const { data, error } = await supabase
+      .from('trading_accounts')
+      .select('*')
+      .eq('user_id', resolvedUuid)
+      .order('created_at', { ascending: false });
+
+    if (error || !Array.isArray(data)) return [];
+    return data.map(mapSupabaseTradingAccountRow);
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -1659,12 +1964,13 @@ export function getAuthoritativeAccountBalance(
     account.phase === 'funded' &&
     userProfile?.fundedBalance !== undefined &&
     userProfile?.fundedBalance !== null &&
-    Number.isFinite(Number(userProfile.fundedBalance))
+    Number.isFinite(Number(userProfile.fundedBalance)) &&
+    Number(userProfile.fundedBalance) > 0
   ) {
     return Number(userProfile.fundedBalance);
   }
 
-  return Number(account.currentBalance ?? 0);
+  return Number(account.currentBalance ?? account.initialBalance ?? account.size ?? 10000);
 }
 
 /**
@@ -1949,17 +2255,51 @@ export function subscribeUserRealtimeChannels(callbacks: UserRealtimeSubscriptio
         }
       }
 
-      // 4. Fetch initial purchases from Supabase (only query with valid UUIDs)
+      // 4. Fetch initial purchases & crypto_deposits from Supabase (only query with valid UUIDs)
       if (onPurchasesInitial) {
         const uuidIds = Array.from(candidateIds).filter((id) => UUID_REGEX.test(id));
         if (uuidIds.length > 0) {
-          const { data: pRows } = await supabase
-            .from('user_purchases')
+          const [pRes, cdRes] = await Promise.all([
+            supabase
+              .from('user_purchases')
+              .select('*')
+              .in('user_id', uuidIds)
+              .order('created_at', { ascending: false }),
+            supabase
+              .from('crypto_deposits')
+              .select('*')
+              .in('user_id', uuidIds)
+              .order('created_at', { ascending: false }),
+          ]);
+
+          let combined: NormalizedPurchaseRecord[] = [];
+          if (Array.isArray(pRes.data)) {
+            for (const row of pRes.data) {
+              combined = mergeRealtimePurchase(combined, row, 'INSERT');
+            }
+          }
+          if (Array.isArray(cdRes.data)) {
+            for (const row of cdRes.data) {
+              combined = mergeRealtimePurchase(combined, row, 'INSERT');
+            }
+          }
+          if (!isDisposed && combined.length > 0) {
+            onPurchasesInitial(combined);
+          }
+        }
+      }
+
+      // 5. Fetch initial trading_accounts from Supabase (only query with valid UUIDs)
+      if (callbacks.onAccountsInitial) {
+        const uuidIds = Array.from(candidateIds).filter((id) => UUID_REGEX.test(id));
+        if (uuidIds.length > 0) {
+          const { data: accRows } = await supabase
+            .from('trading_accounts')
             .select('*')
             .in('user_id', uuidIds)
             .order('created_at', { ascending: false });
-          if (!isDisposed && Array.isArray(pRows) && pRows.length > 0) {
-            onPurchasesInitial(pRows);
+          if (!isDisposed && Array.isArray(accRows) && accRows.length > 0) {
+            callbacks.onAccountsInitial(accRows.map(mapSupabaseTradingAccountRow));
           }
         }
       }
@@ -2054,7 +2394,50 @@ export function subscribeUserRealtimeChannels(callbacks: UserRealtimeSubscriptio
         const newRow = (payload.new as Record<string, any>) || null;
         const oldRow = (payload.old as Record<string, any>) || null;
         if (matchesUserPurchase(newRow) || matchesUserPurchase(oldRow)) {
-          onPurchaseEvent(payload.eventType, newRow, oldRow);
+          onPurchaseEvent(
+            payload.eventType,
+            newRow ? mapPurchaseRecord(newRow) : null,
+            oldRow ? mapPurchaseRecord(oldRow) : null
+          );
+        }
+      }
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'crypto_deposits',
+      },
+      (payload) => {
+        if (isDisposed || !onPurchaseEvent) return;
+        const newRow = (payload.new as Record<string, any>) || null;
+        const oldRow = (payload.old as Record<string, any>) || null;
+        if (matchesUserPurchase(newRow) || matchesUserPurchase(oldRow)) {
+          onPurchaseEvent(
+            payload.eventType,
+            newRow ? mapPurchaseRecord(newRow) : null,
+            oldRow ? mapPurchaseRecord(oldRow) : null
+          );
+        }
+      }
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'trading_accounts',
+      },
+      (payload) => {
+        if (isDisposed || !callbacks.onAccountEvent) return;
+        const newRow = (payload.new as Record<string, any>) || null;
+        const oldRow = (payload.old as Record<string, any>) || null;
+        if (matchesUserPurchase(newRow) || matchesUserPurchase(oldRow)) {
+          callbacks.onAccountEvent(
+            payload.eventType,
+            newRow ? mapSupabaseTradingAccountRow(newRow) : oldRow ? mapSupabaseTradingAccountRow(oldRow) : null
+          );
         }
       }
     )

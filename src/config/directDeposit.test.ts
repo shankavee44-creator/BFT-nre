@@ -17,6 +17,9 @@ import {
   parseChallengePackageFromDeposit,
   fetchTronGridTrc20Transfers,
   TronGridTrc20Transaction,
+  buildSupabaseUserPurchasePayload,
+  mapPurchaseRecord,
+  mergeRealtimePurchase,
 } from './directDeposit';
 import {
   createCryptoDepositRecord,
@@ -25,6 +28,8 @@ import {
   verifyAndCompletePendingCryptoDepositsInDb,
   getAccountById,
   ensurePersonalLiveAccountForUser,
+  createUserPurchaseRecord,
+  getUserPurchases,
 } from '../server/db';
 
 test('Static USDT TRC-20 wallet address, TronGrid API key, and endpoint match official configuration', () => {
@@ -294,5 +299,71 @@ test('validateDirectDepositAmount enforces $10 - $100,000 USDT bounds', () => {
   assert.equal(validateDirectDepositAmount(5).valid, false);
   assert.equal(validateDirectDepositAmount(250).valid, true);
   assert.equal(validateDirectDepositAmount(150000).valid, false);
+});
+
+test('buildSupabaseUserPurchasePayload, mapPurchaseRecord, mergeRealtimePurchase, and createUserPurchaseRecord persist and normalize user purchases', () => {
+  const { fullPayload, corePayload } = buildSupabaseUserPurchasePayload({
+    userId: '00000000-0000-0000-0000-000000000001',
+    packageId: 'BFT-1S-25K',
+    packageName: '1-Step Blitz ($25,000)',
+    amount: 149.25,
+    status: 'completed',
+    accountType: 'challenge',
+  });
+
+  assert.equal(fullPayload.user_id, '00000000-0000-0000-0000-000000000001');
+  assert.equal(fullPayload.package_id, 'BFT-1S-25K');
+  assert.equal(fullPayload.package_sku, 'BFT-1S-25K');
+  assert.equal(fullPayload.package_name, '1-Step Blitz ($25,000)');
+  assert.equal(fullPayload.amount, 149.25);
+  assert.equal(fullPayload.package_amount, 149.25);
+  assert.equal(fullPayload.status, 'completed');
+  assert.deepEqual(corePayload, {
+    user_id: '00000000-0000-0000-0000-000000000001',
+    package_name: '1-Step Blitz ($25,000)',
+    package_amount: 149.25,
+  });
+
+  // Verify SQLite persistence and retrieval
+  const created = createUserPurchaseRecord({
+    userId: 'usr_bft_001',
+    packageId: 'BFT-2S-50K',
+    packageName: '2-Step Pro ($50,000)',
+    packageSku: 'BFT-2S-50K',
+    amount: 249.5,
+    accountType: 'challenge',
+    status: 'completed',
+  });
+
+  assert.equal(created.package_id, 'BFT-2S-50K');
+  assert.equal(created.amount, 249.5);
+  assert.equal(created.status, 'completed');
+
+  const userPurchases = getUserPurchases('usr_bft_001');
+  assert.ok(userPurchases.some((p) => p.id === created.id));
+
+  // Verify real-time merge deduplicates and updates status
+  const mappedPending = mapPurchaseRecord({
+    id: 'PUR-RT-01',
+    user_id: 'usr_bft_001',
+    package_id: 'BFT-1S-10K',
+    package_name: '1-Step Blitz ($10,000)',
+    amount: 89.4,
+    status: 'pending',
+    created_at: '2026-11-01T12:00:00.000Z',
+  });
+  const mappedCompleted = mapPurchaseRecord({
+    id: 'PUR-RT-01',
+    user_id: 'usr_bft_001',
+    package_id: 'BFT-1S-10K',
+    package_name: '1-Step Blitz ($10,000)',
+    amount: 89.4,
+    status: 'completed',
+    created_at: '2026-11-01T12:00:00.000Z',
+  });
+
+  const merged = mergeRealtimePurchase([mappedPending], mappedCompleted);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].status, 'completed');
 });
 

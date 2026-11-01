@@ -148,25 +148,85 @@ CREATE TABLE IF NOT EXISTS public.referral_commissions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- USER PURCHASES TABLE
+-- USER PURCHASES / ORDERS TABLE
 CREATE TABLE IF NOT EXISTS public.user_purchases (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  package_id TEXT,
   package_name TEXT NOT NULL,
   package_sku TEXT,
+  amount NUMERIC(15, 2) NOT NULL DEFAULT 0 CHECK (amount >= 0),
   package_amount NUMERIC(15, 2) NOT NULL CHECK (package_amount > 0),
+  account_type TEXT NOT NULL DEFAULT 'challenge',
+  status TEXT NOT NULL DEFAULT 'completed' CHECK (status IN ('pending', 'completed', 'approved', 'declined', 'rejected')),
+  tx_hash TEXT,
   is_self_funded BOOLEAN NOT NULL DEFAULT FALSE,
   is_provisioned BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE public.user_purchases ADD COLUMN IF NOT EXISTS package_id TEXT;
 ALTER TABLE public.user_purchases ADD COLUMN IF NOT EXISTS package_sku TEXT;
+ALTER TABLE public.user_purchases ADD COLUMN IF NOT EXISTS amount NUMERIC(15, 2) DEFAULT 0;
+ALTER TABLE public.user_purchases ADD COLUMN IF NOT EXISTS account_type TEXT DEFAULT 'challenge';
+ALTER TABLE public.user_purchases ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'completed';
+ALTER TABLE public.user_purchases ADD COLUMN IF NOT EXISTS tx_hash TEXT;
+ALTER TABLE public.user_purchases ADD COLUMN IF NOT EXISTS is_self_funded BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE public.user_purchases ADD COLUMN IF NOT EXISTS is_provisioned BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- CRYPTO DEPOSITS TABLE (Direct USDT TRC-20 Depository & Package Orders)
+CREATE TABLE IF NOT EXISTS public.crypto_deposits (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  wallet_address TEXT NOT NULL DEFAULT 'TWr3rLWrWGBcfwix5osJwAwMXmpcu4PNSp',
+  amount NUMERIC(15, 2) NOT NULL CHECK (amount > 0),
+  package_id TEXT,
+  package_name TEXT NOT NULL,
+  package_sku TEXT,
+  account_type TEXT NOT NULL DEFAULT 'challenge' CHECK (account_type IN ('challenge', 'self_funded')),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'approved', 'declined', 'rejected')),
+  tx_hash TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE public.crypto_deposits ADD COLUMN IF NOT EXISTS package_id TEXT;
+ALTER TABLE public.crypto_deposits ADD COLUMN IF NOT EXISTS package_sku TEXT;
+ALTER TABLE public.crypto_deposits ADD COLUMN IF NOT EXISTS tx_hash TEXT;
+
+-- TRADING ACCOUNTS TABLE (Instant, One-Step, and Two-Step Challenge Accounts)
+CREATE TABLE IF NOT EXISTS public.trading_accounts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  account_type TEXT NOT NULL CHECK (account_type IN ('instant', 'one_step', 'two_step', 'one-step', 'two-step', 'personal', 'demo')),
+  starting_balance NUMERIC(15, 2) NOT NULL CHECK (starting_balance >= 0),
+  current_balance NUMERIC(15, 2) NOT NULL CHECK (current_balance >= 0),
+  equity NUMERIC(15, 2) NOT NULL CHECK (equity >= 0),
+  daily_drawdown NUMERIC(5, 2) NOT NULL DEFAULT 8.00,
+  max_drawdown NUMERIC(5, 2) NOT NULL DEFAULT 20.00,
+  profit_target NUMERIC(5, 2) DEFAULT 0.00,
+  challenge_phase TEXT NOT NULL DEFAULT 'phase_1',
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE public.trading_accounts ADD COLUMN IF NOT EXISTS account_type TEXT NOT NULL DEFAULT 'two_step';
+ALTER TABLE public.trading_accounts ADD COLUMN IF NOT EXISTS starting_balance NUMERIC(15, 2) NOT NULL DEFAULT 10000.00;
+ALTER TABLE public.trading_accounts ADD COLUMN IF NOT EXISTS current_balance NUMERIC(15, 2) NOT NULL DEFAULT 10000.00;
+ALTER TABLE public.trading_accounts ADD COLUMN IF NOT EXISTS equity NUMERIC(15, 2) NOT NULL DEFAULT 10000.00;
+ALTER TABLE public.trading_accounts ADD COLUMN IF NOT EXISTS daily_drawdown NUMERIC(5, 2) NOT NULL DEFAULT 8.00;
+ALTER TABLE public.trading_accounts ADD COLUMN IF NOT EXISTS max_drawdown NUMERIC(5, 2) NOT NULL DEFAULT 20.00;
+ALTER TABLE public.trading_accounts ADD COLUMN IF NOT EXISTS profit_target NUMERIC(5, 2) DEFAULT 0.00;
+ALTER TABLE public.trading_accounts ADD COLUMN IF NOT EXISTS challenge_phase TEXT NOT NULL DEFAULT 'phase_1';
+ALTER TABLE public.trading_accounts ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE public.trading_accounts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
 -- Enable Realtime
 ALTER PUBLICATION supabase_realtime ADD TABLE public.referral_commissions;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.profiles;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.user_purchases;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.crypto_deposits;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.trading_accounts;
 
 -- AFFILIATE COMMISSIONS TABLE (User requested)
 CREATE TABLE IF NOT EXISTS public.affiliate_commissions (
@@ -496,6 +556,8 @@ ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.kyc_submissions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.kyc_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.deposits ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.crypto_deposits ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.user_purchases ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.withdrawals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.referral_commissions ENABLE ROW LEVEL SECURITY;
 
@@ -535,6 +597,77 @@ CREATE POLICY "Users can view own deposits" ON public.deposits FOR SELECT USING 
 
 DROP POLICY IF EXISTS "Users can submit deposits" ON public.deposits;
 CREATE POLICY "Users can submit deposits" ON public.deposits FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+-- User Purchases / Orders: Authenticated users can INSERT and SELECT/VIEW their own purchase history
+DROP POLICY IF EXISTS "Users can view own purchases" ON public.user_purchases;
+CREATE POLICY "Users can view own purchases"
+  ON public.user_purchases
+  FOR SELECT
+  TO authenticated
+  USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can insert own purchases" ON public.user_purchases;
+CREATE POLICY "Users can insert own purchases"
+  ON public.user_purchases
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can update own purchases" ON public.user_purchases;
+CREATE POLICY "Users can update own purchases"
+  ON public.user_purchases
+  FOR UPDATE
+  TO authenticated
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+
+-- Crypto Deposits: Authenticated users can INSERT, SELECT/VIEW, and UPDATE their own crypto deposits
+DROP POLICY IF EXISTS "Users can view own crypto deposits" ON public.crypto_deposits;
+CREATE POLICY "Users can view own crypto deposits"
+  ON public.crypto_deposits
+  FOR SELECT
+  TO authenticated
+  USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can insert own crypto deposits" ON public.crypto_deposits;
+CREATE POLICY "Users can insert own crypto deposits"
+  ON public.crypto_deposits
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can update own crypto deposits" ON public.crypto_deposits;
+CREATE POLICY "Users can update own crypto deposits"
+  ON public.crypto_deposits
+  FOR UPDATE
+  TO authenticated
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+
+-- Trading Accounts: Authenticated users can SELECT, INSERT, and UPDATE their own trading accounts
+ALTER TABLE public.trading_accounts ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view own trading accounts" ON public.trading_accounts;
+CREATE POLICY "Users can view own trading accounts"
+  ON public.trading_accounts
+  FOR SELECT
+  TO authenticated
+  USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can insert own trading accounts" ON public.trading_accounts;
+CREATE POLICY "Users can insert own trading accounts"
+  ON public.trading_accounts
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can update own trading accounts" ON public.trading_accounts;
+CREATE POLICY "Users can update own trading accounts"
+  ON public.trading_accounts
+  FOR UPDATE
+  TO authenticated
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
 
 -- Withdrawals: Authenticated users can INSERT, SELECT, and UPDATE (for cancellation) their own requests; Admins can view & manage all withdrawal rows
 CREATE OR REPLACE FUNCTION public.is_bft_admin()

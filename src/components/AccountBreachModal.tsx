@@ -35,30 +35,18 @@ export const AccountBreachModal: React.FC<AccountBreachModalProps> = ({
   onOpenChallengeModal,
   onResetSoftBreach,
 }) => {
-  if (!isOpen) return null;
+  const isSoft = Boolean(
+    account && (account.status === 'soft-breached' || account.breachType === 'soft')
+  );
 
-  const isSoft = account.status === 'soft-breached' || account.breachType === 'soft';
-  const logs = account.violationLogs || [];
-  const latestLog = logs[logs.length - 1];
-
-  const dailyDrawdownAmount = Math.max(0, account.startingDayEquity - account.equity);
-  const dailyDrawdownPercent = account.startingDayEquity > 0
-    ? ((dailyDrawdownAmount / account.startingDayEquity) * 100).toFixed(2)
-    : '0.00';
-
-  const overallLossAmount = Math.max(0, account.initialBalance - account.equity);
-  const overallLossPercent = account.initialBalance > 0
-    ? ((overallLossAmount / account.initialBalance) * 100).toFixed(2)
-    : '0.00';
-
-  // Live countdown timer for soft breach reset
+  // Live countdown timer for soft breach reset (all hooks must execute unconditionally before early return)
   const [secondsRemaining, setSecondsRemaining] = useState<number>(() => {
-    const target = account.softBreachResetTime || Date.now() + 5 * 3600 * 1000;
+    const target = account?.softBreachResetTime || Date.now() + 5 * 3600 * 1000;
     return Math.max(0, Math.floor((target - Date.now()) / 1000));
   });
 
   useEffect(() => {
-    if (!isSoft) return;
+    if (!isOpen || !isSoft || !account) return;
     const interval = setInterval(() => {
       const target = account.softBreachResetTime || Date.now() + 5 * 3600 * 1000;
       const left = Math.max(0, Math.floor((target - Date.now()) / 1000));
@@ -71,7 +59,22 @@ export const AccountBreachModal: React.FC<AccountBreachModalProps> = ({
       }
     }, 1000);
     return () => clearInterval(interval);
-  }, [isSoft, account, onResetSoftBreach, onClose]);
+  }, [isOpen, isSoft, account, onResetSoftBreach, onClose]);
+
+  if (!isOpen || !account) return null;
+
+  const logs = account.violationLogs || [];
+  const latestLog = logs[logs.length - 1];
+
+  const dailyDrawdownAmount = Math.max(0, account.startingDayEquity - account.equity);
+  const dailyDrawdownPercent = account.startingDayEquity > 0
+    ? ((dailyDrawdownAmount / account.startingDayEquity) * 100).toFixed(2)
+    : '0.00';
+
+  const overallLossAmount = Math.max(0, account.initialBalance - account.equity);
+  const overallLossPercent = account.initialBalance > 0
+    ? ((overallLossAmount / account.initialBalance) * 100).toFixed(2)
+    : '0.00';
 
   const formatCountdown = (secs: number) => {
     const h = Math.floor(secs / 3600);

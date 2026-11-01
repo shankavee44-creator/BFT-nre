@@ -11,9 +11,9 @@
  * - Smooth, continuous candle progression with zero artificial price jumps
  */
 
-import { OTC_ASSETS_CATALOG } from './otcAssetsCatalog';
-import { computeSynchronizedTickAtTime } from './priceFeedEngine';
-import { findAssetBySymbol, normalizeAssetSymbol } from './storage';
+import { OTC_ASSETS_CATALOG } from './otcAssetsCatalog.ts';
+import { computeSynchronizedTickAtTime } from './priceFeedEngine.ts';
+import { findAssetBySymbol, normalizeAssetSymbol } from './storage.ts';
 
 export interface LiveMarketTick {
   symbol: string;

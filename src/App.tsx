@@ -89,6 +89,8 @@ import {
   mapSupabaseWithdrawalToRequest,
   mergeRealtimeCommission,
   mapSupabaseCommissionToReferralRecord,
+  mergeRealtimePurchase,
+  NormalizedPurchaseRecord,
 } from './utils/supabaseRealtimeSync';
 import {
   PACKAGES,
@@ -106,6 +108,7 @@ import {
   apiDepositPersonalAccount,
   apiUpdateAccountState,
   apiGetWithdrawals,
+  apiGetUserPurchases,
   apiPlaceTrade,
   apiSettleTrade,
   apiGetUserTrades,
@@ -390,6 +393,20 @@ export default function App() {
             }
           })
           .catch(() => {});
+
+        apiGetUserPurchases({ userId: res.user.id, email: res.user.email })
+          .then((pRes) => {
+            if (pRes && pRes.ok && Array.isArray(pRes.purchases) && pRes.purchases.length > 0) {
+              setPurchases((prev) => {
+                let next = [...prev];
+                for (const row of pRes.purchases) {
+                  next = mergeRealtimePurchase(next, row, 'INSERT');
+                }
+                return next;
+              });
+            }
+          })
+          .catch(() => {});
       }
     }).catch(() => {
       // offline or storage fallback
@@ -556,15 +573,46 @@ export default function App() {
         });
       },
       onPurchasesInitial: (rows) => {
-        setPurchases(rows);
+        setPurchases((prev) => {
+          let next = [...prev];
+          for (const row of rows) {
+            next = mergeRealtimePurchase(next, row, 'INSERT');
+          }
+          return next;
+        });
       },
       onPurchaseEvent: (eventType, newRow, oldRow) => {
-        setPurchases((prev) => {
-          if (eventType === 'DELETE' && oldRow) return prev.filter((p) => String(p.id) !== String(oldRow.id));
-          if (eventType === 'INSERT' && newRow) return [newRow, ...prev];
-          if (eventType === 'UPDATE' && newRow)
-            return prev.map((p) => (String(p.id) === String(newRow.id) ? newRow : p));
-          return prev;
+        setPurchases((prev) => mergeRealtimePurchase(prev, newRow, eventType, oldRow));
+      },
+      onAccountsInitial: (supaAccounts) => {
+        setAccounts((prev) => {
+          let updated = [...prev];
+          for (const sa of supaAccounts) {
+            const idx = updated.findIndex((a) => a.id === sa.id || a.loginId === sa.loginId);
+            if (idx >= 0) {
+              updated[idx] = { ...updated[idx], ...sa };
+            } else {
+              updated.push(sa);
+            }
+          }
+          saveAccounts(updated);
+          return updated;
+        });
+      },
+      onAccountEvent: (eventType, account) => {
+        if (!account) return;
+        setAccounts((prev) => {
+          let updated = [...prev];
+          const idx = updated.findIndex((a) => a.id === account.id || a.loginId === account.loginId);
+          if (eventType === 'DELETE') {
+            if (idx >= 0) updated.splice(idx, 1);
+          } else if (idx >= 0) {
+            updated[idx] = { ...updated[idx], ...account };
+          } else {
+            updated.push(account);
+          }
+          saveAccounts(updated);
+          return updated;
         });
       },
     });
@@ -1162,7 +1210,17 @@ export default function App() {
     });
   };
 
-  const handleNewAccountPurchased = (newAccount: TradingAccount) => {
+  const handlePurchaseRecorded = React.useCallback((purchase: NormalizedPurchaseRecord) => {
+    setPurchases((prev) => mergeRealtimePurchase(prev, purchase, 'INSERT'));
+  }, []);
+
+  const handleNewAccountPurchased = (
+    newAccount: TradingAccount,
+    purchaseRecord?: NormalizedPurchaseRecord
+  ) => {
+    if (purchaseRecord) {
+      handlePurchaseRecorded(purchaseRecord);
+    }
     const ownedAccount: TradingAccount = {
       ...newAccount,
       ownerId: userProfile.id,
@@ -1551,6 +1609,7 @@ export default function App() {
       {selectedPackageToBuy && (
         <PaymentModal
           packageToBuy={selectedPackageToBuy}
+          userProfile={userProfile}
           activePromoCode={activePromoCode}
           initialDailyWithdrawals={dailyWithdrawalsAddOn}
           applyBreachDiscount={Boolean(
@@ -1558,6 +1617,7 @@ export default function App() {
           )}
           onClose={() => setSelectedPackageToBuy(null)}
           onSuccess={handleNewAccountPurchased}
+          onPurchaseRecorded={handlePurchaseRecorded}
           onCommissionsProcessed={handleProcessCommissions}
         />
       )}
@@ -1565,10 +1625,12 @@ export default function App() {
       <DirectDepositModal
         isOpen={isDepositModalOpen}
         onClose={() => setIsDepositModalOpen(false)}
+        userProfile={userProfile}
         activeAccount={activeAccount || null}
         accounts={userAccounts}
         onSelectAccount={handleSelectAccount}
         onCreditAccountDeposit={handleCreditAccountDeposit}
+        onPurchaseRecorded={handlePurchaseRecorded}
       />
 
       {isWithdrawalModalOpen && currentTab !== 'withdrawals' && (

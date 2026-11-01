@@ -16,26 +16,30 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
-import { EvaluationPackage, TradingAccount, PromoCodeType } from '../types';
+import { EvaluationPackage, TradingAccount, PromoCodeType, UserProfile } from '../types';
 import { calculateDiscountedPrice } from '../utils/propRules';
 import { getStoredReferralCode } from '../utils/affiliateEngine';
 import {
   DIRECT_USDT_TRC20_CONFIG,
   buildPackageSku,
   buildCryptoDepositPayload,
-  buildSupabaseCryptoDepositRow,
   fetchTronGridTrc20Transfers,
   matchPendingDepositToTronGridTx,
+  mapPurchaseRecord,
+  NormalizedPurchaseRecord,
 } from '../config/directDeposit';
 import { apiPurchaseAccount, apiVerifyCryptoDeposits } from '../utils/apiClient';
 import { supabase } from '../utils/supabase';
+import { insertSupabaseUserPurchase } from '../utils/supabaseRealtimeSync';
 
 interface PaymentModalProps {
   packageToBuy: EvaluationPackage | null;
+  userProfile?: UserProfile | null;
   activePromoCode?: PromoCodeType;
   initialDailyWithdrawals?: boolean;
   onClose: () => void;
-  onSuccess: (newAccount: TradingAccount) => void;
+  onSuccess: (newAccount: TradingAccount, purchaseRecord?: NormalizedPurchaseRecord) => void;
+  onPurchaseRecorded?: (purchase: NormalizedPurchaseRecord) => void;
   onCommissionsProcessed?: (params: {
     buyerUserId: string;
     buyerName: string;
@@ -50,10 +54,12 @@ interface PaymentModalProps {
 
 export const PaymentModal: React.FC<PaymentModalProps> = ({
   packageToBuy,
+  userProfile,
   activePromoCode = 'SPOOKY40',
   initialDailyWithdrawals = false,
   onClose,
   onSuccess,
+  onPurchaseRecorded,
   onCommissionsProcessed,
   applyBreachDiscount = false,
 }) => {
@@ -122,8 +128,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     setStep('verifying');
 
     try {
-      // 1. Insert pending record into Supabase crypto_deposits table if session available
       const cryptoPayload = buildCryptoDepositPayload({
+        userId: userProfile?.id || undefined,
         walletAddress: trc20Address,
         amount: finalPrice,
         packageName,
@@ -132,27 +138,33 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         txHash: txHashInput.trim() || undefined,
       });
 
+      // 1. Insert transaction details (user_id, package_id, amount, status) into Supabase user_purchases & crypto_deposits
+      let supaPurchaseRow: NormalizedPurchaseRecord | null = null;
       try {
-        const { data: sessionData } = await supabase.auth.getSession();
-        const supaUserId = sessionData?.session?.user?.id;
-        if (supaUserId) {
-          await supabase.from('crypto_deposits').insert([
-            buildSupabaseCryptoDepositRow({
-              userId: supaUserId,
-              walletAddress: trc20Address,
-              amount: finalPrice,
-              packageName,
-              sku: packageSku,
-              accountType,
-            }),
-          ]);
+        const supaInsertRes = await insertSupabaseUserPurchase({
+          userId: userProfile?.id,
+          userEmail: userProfile?.email,
+          walletAddress: trc20Address,
+          packageId: packageSku,
+          packageName,
+          packageSku,
+          amount: finalPrice,
+          packageAmount: finalPrice,
+          accountType,
+          status: 'completed',
+          txHash: txHashInput.trim() || null,
+        });
+        if (supaInsertRes.ok && supaInsertRes.row) {
+          supaPurchaseRow = supaInsertRes.row;
         }
       } catch {
         // Fallback handled by backend /api/accounts/purchase
       }
 
-      // 2. Save pending record in backend crypto_deposits table & provision challenge account
+      // 2. Save record in backend user_purchases & crypto_deposits tables & provision challenge account
       const res = await apiPurchaseAccount({
+        userId: userProfile?.id,
+        email: userProfile?.email,
         tier: packageToBuy.tier,
         tierName: packageToBuy.tierName,
         packageName,
@@ -171,19 +183,37 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         );
       }
 
+      const finalPurchaseRecord = mapPurchaseRecord(
+        res.purchase ||
+          supaPurchaseRow || {
+            id: res.deposit?.id || `PUR-${Date.now().toString(36).toUpperCase()}`,
+            user_id: userProfile?.id || res.account.ownerId || 'usr_bft_001',
+            account_id: res.account.id,
+            package_id: packageSku,
+            package_name: packageName,
+            package_sku: packageSku,
+            amount: finalPrice,
+            package_amount: finalPrice,
+            account_type: accountType,
+            status: 'completed',
+            created_at: new Date().toISOString(),
+          }
+      );
+
       setGeneratedAccount(res.account);
       setSavedDepositRecord(
         res.deposit || {
           ...cryptoPayload,
-          id: `DEP-${Date.now().toString(36).toUpperCase()}`,
-          status: 'pending',
+          id: finalPurchaseRecord.id,
+          status: 'completed',
         }
       );
+      onPurchaseRecorded?.(finalPurchaseRecord);
       setStep('completed');
       onCommissionsProcessed?.({
         buyerUserId: res.account.id,
-        buyerName: `Trader ${res.account.id.slice(-4)}`,
-        buyerEmail: `trader.${res.account.id.toLowerCase()}@client-bft.com`,
+        buyerName: userProfile?.fullName || `Trader ${res.account.id.slice(-4)}`,
+        buyerEmail: userProfile?.email || `trader.${res.account.id.toLowerCase()}@client-bft.com`,
         packageTier: packageToBuy.tier,
         packageName,
         packagePrice: finalPrice,

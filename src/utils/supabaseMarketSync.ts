@@ -1,8 +1,8 @@
-import { supabase } from './supabase';
-import { Candle, AssetInfo, AssetCategory } from '../types';
-import { normalizeAssetSymbol, findAssetBySymbol, DEFAULT_ASSETS } from './storage';
-import { getOrCreateMasterHistory, setMarketBroadcastListener, appendLiveTick } from './priceFeedEngine';
-import { safeJsonResponse } from './apiClient';
+import { supabase } from './supabase.ts';
+import { Candle, AssetInfo, AssetCategory } from '../types/index.ts';
+import { normalizeAssetSymbol, findAssetBySymbol, DEFAULT_ASSETS } from './storage.ts';
+import { getOrCreateMasterHistory, setMarketBroadcastListener, appendLiveTick } from './priceFeedEngine.ts';
+import { safeJsonResponse } from './apiClient.ts';
 
 export interface MarketTickPayload {
   symbol: string;

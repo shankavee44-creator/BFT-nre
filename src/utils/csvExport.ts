@@ -1,4 +1,4 @@
-import { BinaryTrade } from '../types';
+import { BinaryTrade } from '../types/index.ts';
 
 export function exportTradesToCSV(trades: BinaryTrade[], accountId?: string): void {
   const filtered = accountId ? trades.filter((t) => t.accountId === accountId) : trades;

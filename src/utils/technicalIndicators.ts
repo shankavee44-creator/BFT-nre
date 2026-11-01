@@ -1,4 +1,4 @@
-import type { Candle } from '../types';
+import type { Candle } from '../types/index.ts';
 
 export interface IndicatorSettings {
   showSma: boolean;

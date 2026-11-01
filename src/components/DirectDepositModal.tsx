@@ -14,28 +14,32 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
-import { TradingAccount } from '../types';
+import { TradingAccount, UserProfile } from '../types';
 import { isPersonalLiveAccount } from '../utils/propRules';
 import {
   DIRECT_USDT_TRC20_CONFIG,
   CryptoDepositAccountType,
   buildPackageSku,
   buildCryptoDepositPayload,
-  buildSupabaseCryptoDepositRow,
   validateDirectDepositAmount,
   fetchTronGridTrc20Transfers,
   matchPendingDepositToTronGridTx,
+  mapPurchaseRecord,
+  NormalizedPurchaseRecord,
 } from '../config/directDeposit';
 import { apiSubmitCryptoDeposit, apiVerifyCryptoDeposits, safeJsonResponse } from '../utils/apiClient';
 import { supabase } from '../utils/supabase';
+import { insertSupabaseUserPurchase } from '../utils/supabaseRealtimeSync';
 
 interface DirectDepositModalProps {
   isOpen: boolean;
   onClose: () => void;
+  userProfile?: UserProfile | null;
   activeAccount: TradingAccount | null;
   accounts: TradingAccount[];
   onSelectAccount?: (accountId: string) => void;
   onCreditAccountDeposit: (accountId: string, amountUsdt: number, details?: any) => void;
+  onPurchaseRecorded?: (purchase: NormalizedPurchaseRecord) => void;
 }
 
 const PRESET_AMOUNTS = [50, 100, 250, 500, 1000, 2500];
@@ -43,9 +47,11 @@ const PRESET_AMOUNTS = [50, 100, 250, 500, 1000, 2500];
 export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
   isOpen,
   onClose,
+  userProfile,
   activeAccount,
   accounts,
   onCreditAccountDeposit,
+  onPurchaseRecorded,
 }) => {
   const [amountInput, setAmountInput] = useState<string>('250');
   const [accountType, setAccountType] = useState<CryptoDepositAccountType>('self_funded');
@@ -146,6 +152,7 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
     try {
       const cleanAmount = Number(numAmount.toFixed(2));
       const cryptoPayload = buildCryptoDepositPayload({
+        userId: userProfile?.id || undefined,
         accountId: targetAccount?.id || null,
         walletAddress: depositoryAddress,
         amount: cleanAmount,
@@ -155,21 +162,25 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
         txHash: txHashInput.trim() || undefined,
       });
 
-      // 1. Insert pending record into Supabase crypto_deposits table if authenticated session available
+      // 1. Insert transaction details (user_id, package_id, amount, status) into Supabase user_purchases & crypto_deposits
+      let supaPurchaseRow: NormalizedPurchaseRecord | null = null;
       try {
-        const { data: sessionData } = await supabase.auth.getSession();
-        const supaUserId = sessionData?.session?.user?.id;
-        if (supaUserId) {
-          await supabase.from('crypto_deposits').insert([
-            buildSupabaseCryptoDepositRow({
-              userId: supaUserId,
-              walletAddress: depositoryAddress,
-              amount: cleanAmount,
-              packageName: computedPackageName,
-              sku: computedSku,
-              accountType,
-            }),
-          ]);
+        const supaInsertRes = await insertSupabaseUserPurchase({
+          userId: userProfile?.id,
+          userEmail: userProfile?.email,
+          accountId: targetAccount?.id || null,
+          walletAddress: depositoryAddress,
+          packageId: computedSku,
+          packageName: computedPackageName,
+          packageSku: computedSku,
+          amount: cleanAmount,
+          packageAmount: cleanAmount,
+          accountType,
+          status: 'pending',
+          txHash: txHashInput.trim() || null,
+        });
+        if (supaInsertRes.ok && supaInsertRes.row) {
+          supaPurchaseRow = supaInsertRes.row;
         }
       } catch {
         // Backend /api/crypto-deposits persists into SQLite & Supabase REST
@@ -177,6 +188,8 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
 
       // 2. Submit to backend /api/crypto-deposits
       const data = await apiSubmitCryptoDeposit({
+        userId: userProfile?.id,
+        email: userProfile?.email,
         amount: cleanAmount,
         packageName: computedPackageName,
         sku: computedSku,
@@ -192,12 +205,25 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
 
       const savedRecord = data.deposit || {
         ...cryptoPayload,
-        id: `DEP-${Date.now().toString(36).toUpperCase()}`,
+        id: supaPurchaseRow?.id || `DEP-${Date.now().toString(36).toUpperCase()}`,
         status: 'pending',
         created_at: Date.now(),
       };
 
       const statusLabel = savedRecord.status || 'pending';
+      const normalizedPurchase = mapPurchaseRecord({
+        ...(supaPurchaseRow || {}),
+        ...savedRecord,
+        package_id: computedSku,
+        package_sku: computedSku,
+        package_name: computedPackageName,
+        amount: cleanAmount,
+        package_amount: cleanAmount,
+        account_type: accountType,
+        status: statusLabel,
+      });
+      onPurchaseRecorded?.(normalizedPurchase);
+
       setSuccessMessage(
         statusLabel === 'completed'
           ? `TronGrid TRC-20 transfer verified! Deposit ${savedRecord.id} marked completed (${savedRecord.sku} • ${savedRecord.account_type} • $${cleanAmount.toFixed(2)} USDT).`

@@ -85,6 +85,7 @@ import {
   isDemoAccount,
   getAccountStatusBadgeLabel,
   getChallengeProfitTarget,
+  sanitizeAccountForAntiBreach,
 } from '../utils/propRules';
 import {
   getAuthoritativeAccountBalance,
@@ -741,11 +742,22 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
   // Auto-Breach check on equity fluctuation
   useEffect(() => {
-    if (!account || account.status === 'breached' || account.status === 'hard-breached' || account.status === 'soft-breached') return;
-    const evaluatedAccount: TradingAccount = {
+    if (
+      !account ||
+      account.status === 'breached' ||
+      account.status === 'hard-breached' ||
+      account.status === 'soft-breached' ||
+      account.status === 'passed' ||
+      account.phase === 'funded' ||
+      account.phase === 'personal_live' ||
+      account.tier === 'personal' ||
+      account.tier === 'demo'
+    )
+      return;
+    const evaluatedAccount = sanitizeAccountForAntiBreach({
       ...account,
       equity: liveEquity,
-    };
+    });
     const breachEval = evaluateAccountBreach(evaluatedAccount);
     if (breachEval.isBreached) {
       soundEngine.playTradeLoss();
