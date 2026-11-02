@@ -9,8 +9,15 @@ import { UserProfile, TradingAccount } from '../types';
 export const MIN_DEMO_BALANCE = 1;
 export const MAX_DEMO_BALANCE = 10000;
 
+export const DEMO_BALANCE_LIMITS = {
+  min: MIN_DEMO_BALANCE,
+  max: MAX_DEMO_BALANCE,
+};
+
 export interface ValidationResult {
+  valid: boolean;
   isValid: boolean;
+  normalized: number;
   normalizedBalance: number;
   error?: string;
 }
@@ -23,7 +30,9 @@ export function validateDemoBalance(rawInput: number | string): ValidationResult
 
   if (isNaN(parsed) || !isFinite(parsed)) {
     return {
+      valid: false,
       isValid: false,
+      normalized: 10000,
       normalizedBalance: 10000,
       error: 'Please enter a valid numeric balance.',
     };
@@ -31,7 +40,9 @@ export function validateDemoBalance(rawInput: number | string): ValidationResult
 
   if (parsed < MIN_DEMO_BALANCE) {
     return {
+      valid: false,
       isValid: false,
+      normalized: MIN_DEMO_BALANCE,
       normalizedBalance: MIN_DEMO_BALANCE,
       error: `Minimum demo balance allowed is $${MIN_DEMO_BALANCE.toFixed(2)}.`,
     };
@@ -39,7 +50,9 @@ export function validateDemoBalance(rawInput: number | string): ValidationResult
 
   if (parsed > MAX_DEMO_BALANCE) {
     return {
+      valid: false,
       isValid: false,
+      normalized: MAX_DEMO_BALANCE,
       normalizedBalance: MAX_DEMO_BALANCE,
       error: `Maximum demo balance allowed is $${MAX_DEMO_BALANCE.toLocaleString('en-US', { minimumFractionDigits: 2 })}.`,
     };
@@ -48,7 +61,9 @@ export function validateDemoBalance(rawInput: number | string): ValidationResult
   // Rounded to 2 decimal places
   const normalized = Math.round(parsed * 100) / 100;
   return {
+    valid: true,
     isValid: true,
+    normalized: normalized,
     normalizedBalance: normalized,
   };
 }
@@ -71,13 +86,20 @@ export function getNumericTraderId(userIdentifier: string | undefined | null): s
 }
 
 /**
- * Formats account balance with privacy toggle support.
+ * Formats account balance with currency and privacy toggle support.
  */
-export function formatAccountBalance(balance: number, hideBalance: boolean = false): string {
-  if (hideBalance) {
+export function formatAccountBalance(
+  balance: number,
+  currencyOrHide?: string | boolean,
+  maybeHide?: boolean
+): string {
+  const isHidden = typeof currencyOrHide === 'boolean' ? currencyOrHide : (maybeHide ?? false);
+  const currencySymbol = typeof currencyOrHide === 'string' && currencyOrHide === 'EUR' ? '€' : '$';
+
+  if (isHidden) {
     return '••••••';
   }
-  return '$' + balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return currencySymbol + balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 export interface PersistDemoBalanceParams {
@@ -112,7 +134,8 @@ export async function persistCustomDemoBalance(params: PersistDemoBalanceParams)
 
   // 2. Direct Supabase client-side update on profiles table under demo_balance
   try {
-    if (params.userId) {
+    const isUuid = params.userId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(params.userId);
+    if (isUuid) {
       await supabase
         .from('profiles')
         .update({ demo_balance: normalized })

@@ -72,7 +72,12 @@ export function generateLocalFallbackReply(userMessage: string): string {
   return `Welcome to BFT Prime Prop Capital support! I can help you with prop trading rules (1-Step, 2-Step, Instant Funded), drawdown limits, our 3-minute TRC-20 payout SLA, active discount codes (SPOOKY40 / SPOOKY20), and account setup. How can I assist your trading today?`;
 }
 
-export async function generateSupportChatReply(userMessage: string, chatHistory: Array<{ role: 'user' | 'model'; text: string }> = []): Promise<string> {
+export async function generateSupportChatReply(
+  input: string | { message: string; history?: Array<{ role: 'user' | 'model'; text: string }> },
+  optionalHistory: Array<{ role: 'user' | 'model'; text: string }> = []
+): Promise<string> {
+  const userMessage = typeof input === 'string' ? input : input.message;
+  const chatHistory = typeof input === 'string' ? (optionalHistory || []) : (input.history || []);
   const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
 
   if (!apiKey) {

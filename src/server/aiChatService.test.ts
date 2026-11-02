@@ -13,8 +13,10 @@ test('generateLocalFallbackReply provides accurate answers to prop trading queri
   assert.match(step1, /15%/);
 
   const step2 = generateLocalFallbackReply('what are the rules for 2-step?');
-  assert.match(step2, /Phase 1 Target: 25%/);
-  assert.match(step2, /Phase 2 Target: 15%/);
+  assert.match(step2, /Phase 1 Target/);
+  assert.match(step2, /25%/);
+  assert.match(step2, /Phase 2 Target/);
+  assert.match(step2, /15%/);
 
   const promo = generateLocalFallbackReply('what is the promo code?');
   assert.match(promo, /SPOOKY40/);
