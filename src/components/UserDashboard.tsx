@@ -58,6 +58,7 @@ import { BUILTIN_AVATARS, SUPPORTED_COUNTRIES, getFlagForCountry } from '../util
 import { soundEngine } from '../utils/soundEffects';
 import { CountryFlagIcon } from './CountryFlagIcon';
 import { AffiliateDashboard } from './AffiliateDashboard';
+import { BftLogo } from './BftLogo';
 import {
   canUserWithdraw,
   validateAndLockProfileDetails,
@@ -1227,6 +1228,11 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
             <div>
               <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2.5">
+                <BftLogo
+                  imgClassName="h-8 sm:h-9 w-auto"
+                  testId="dashboard-header-bft-logo"
+                  alt="BFT Bull Logo"
+                />
                 <h1 className="text-xl sm:text-2xl font-black text-white">
                   {userProfile.fullName || 'New BFT Trader'}
                 </h1>
@@ -1454,8 +1460,12 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               data-testid="no-active-account-state"
               className="p-8 sm:p-12 rounded-3xl bg-[#0a0a0a] border border-[#ff8800]/40 text-center max-w-3xl mx-auto my-4"
             >
-              <div className="w-16 h-16 rounded-2xl bg-[#141418] border border-[#ff8800] flex items-center justify-center text-[#ff8800] mx-auto mb-4">
-                <ShoppingBag className="w-8 h-8" />
+              <div className="flex items-center justify-center mx-auto mb-4">
+                <BftLogo
+                  imgClassName="h-16 sm:h-20 w-auto"
+                  testId="dashboard-empty-bft-logo"
+                  alt="BFT Bull Logo"
+                />
               </div>
 
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#ff8800]/15 border border-[#ff8800]/40 text-[#ff8800] text-[11px] font-mono font-black uppercase tracking-wider mb-3">
@@ -1653,15 +1663,15 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                         <span className="text-[10px] text-slate-400 block uppercase">Limits (DD/Max)</span>
                         <span className="font-bold text-[#ff8800]">
                           {isPersonal || isDemo
-                            ? 'None'
+                            ? 'NONE'
                             : `${acc.dailyLossLimitPercent}% / ${acc.maxOverallLossPercent}%`}
                         </span>
                       </div>
                       <div>
                         <span className="text-[10px] text-slate-400 block uppercase">Profit Target</span>
                         <span className="font-bold text-emerald-400">
-                          {isPersonal || isDemo
-                            ? 'N/A'
+                          {isPersonal || isDemo || acc.tier === 'instant' || acc.accountType === 'instant' || acc.phase === 'funded'
+                            ? 'NONE'
                             : `${acc.profitTargetPercent ?? 0}%`}
                         </span>
                       </div>

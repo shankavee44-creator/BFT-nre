@@ -187,28 +187,14 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         );
       }
 
-      // Account creation is deferred - res.account may be null here
-      if (res.account) {
-        // Persist purchased trading account and crypto deposit record into Supabase tables immediately if verified
+      if (res.account && !res.account.supabaseAccountId) {
+        // Persist purchased trading account into Supabase tables if not already persisted
         insertSupabaseTradingAccount({
           account: res.account,
           userId: userProfile?.id,
           userEmail: userProfile?.email,
         }).catch(() => {});
       }
-
-      insertSupabaseCryptoDeposit({
-        userId: userProfile?.id,
-        userEmail: userProfile?.email,
-        walletAddress: trc20Address,
-        amount: finalPrice,
-        packageName,
-        sku: packageSku,
-        accountType,
-        status: res.status === 'completed' ? 'completed' : 'pending',
-        txHash: txHashInput.trim() || null,
-        accountId: res.account?.id || null,
-      }).catch(() => {});
 
       const finalPurchaseRecord = mapPurchaseRecord(
         res.purchase ||

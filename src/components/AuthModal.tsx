@@ -23,6 +23,7 @@ import {
 import { apiEmailSessionSync, apiValidate2fa } from '../utils/apiClient';
 import { supabase } from '../utils/supabase';
 import { resolveOrBuildUserProfile } from '../utils/authOtpLogic';
+import { BftLogo } from './BftLogo';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -623,8 +624,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         </div>
       )}
 
-      {/* Header Badge & Title */}
+      {/* Header Logo, Badge & Title */}
       <div className="text-center mb-5">
+        <div className="flex justify-center mb-3">
+          <BftLogo
+            imgClassName="h-12 sm:h-14 w-auto"
+            testId="auth-bft-logo"
+            alt="Binary Funded Trader (BFT) Bull Logo"
+          />
+        </div>
         <span
           data-testid="bft-auth-badge"
           className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded bg-[#141720] border border-[#262c3a] text-[#ff8800] text-[10px] font-mono font-bold uppercase tracking-wider mb-1.5"

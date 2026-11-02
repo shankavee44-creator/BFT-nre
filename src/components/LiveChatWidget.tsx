@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { MessageSquare, X, Send, Sparkles, Headset } from 'lucide-react';
+import { MessageSquare, X, Send, Sparkles } from 'lucide-react';
+import { BftLogo } from './BftLogo';
 
 interface ChatMessage {
   id: string;
@@ -66,8 +67,12 @@ export const LiveChatWidget: React.FC = () => {
           {/* Header */}
           <div className="p-4 bg-gradient-to-r from-[#ff8800] to-[#ffaa00] text-slate-950 flex items-center justify-between">
             <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-xl bg-black/15 flex items-center justify-center">
-                <Headset className="w-5 h-5 text-slate-950" />
+              <div className="w-9 h-9 rounded-xl bg-black/80 flex items-center justify-center p-1">
+                <BftLogo
+                  imgClassName="h-7 w-auto"
+                  testId="chat-widget-bft-logo"
+                  alt="BFT Bull Logo"
+                />
               </div>
               <div>
                 <div className="text-xs font-black uppercase tracking-wider flex items-center gap-1">

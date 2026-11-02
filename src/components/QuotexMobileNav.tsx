@@ -18,6 +18,7 @@ import {
   Users,
 } from 'lucide-react';
 import { soundEngine } from '../utils/soundEffects';
+import { BftLogo } from './BftLogo';
 
 interface QuotexMobileNavProps {
   activeTab: 'chart' | 'signals' | 'chat' | 'hub';
@@ -192,6 +193,11 @@ export const QuotexMobileNav: React.FC<QuotexMobileNavProps> = ({
 
             <div className="flex items-center justify-between pb-3 border-b border-[#1e222d] mb-3">
               <div className="flex items-center gap-2">
+                <BftLogo
+                  imgClassName="h-7 w-auto"
+                  testId="mobile-sheet-bft-logo"
+                  alt="BFT Bull Logo"
+                />
                 <span className="text-sm font-bold text-white tracking-wide">Terminal Controls & Tools</span>
                 <span className="text-[10px] bg-[#ff8800]/20 text-[#ff8800] px-2 py-0.5 rounded font-mono font-semibold">BFT OTC</span>
               </div>

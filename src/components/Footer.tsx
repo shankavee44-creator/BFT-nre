@@ -1,5 +1,6 @@
 import React from 'react';
 import { Zap, AlertTriangle, ArrowUp } from 'lucide-react';
+import { BftLogo } from './BftLogo';
 
 interface FooterProps {
   onNavigate: (tab: string) => void;
@@ -17,11 +18,20 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenAdminDashboard
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
           {/* Brand Info */}
           <div className="space-y-4">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-[#ff8800] flex items-center justify-center text-slate-950 font-mono font-black text-sm">
-                BFT
+            <div className="flex items-center gap-3">
+              <BftLogo
+                imgClassName="h-10 w-auto"
+                testId="footer-bft-logo"
+                alt="Binary Funded Trader (BFT) Bull Logo"
+              />
+              <div>
+                <span className="text-base font-black text-white font-mono block leading-tight">
+                  Binary Funded Trader
+                </span>
+                <span className="text-[10px] font-mono text-[#ff8800] font-bold uppercase tracking-wider">
+                  BFT Prime Prop Capital
+                </span>
               </div>
-              <span className="text-base font-black text-white font-mono">Binary Funded Trader</span>
             </div>
             <p className="text-slate-400 text-xs leading-relaxed">
               Institutional proprietary trading firm specializing in binary options risk evaluation, funded capital allocation, and 3-minute guaranteed instant USDT payouts.

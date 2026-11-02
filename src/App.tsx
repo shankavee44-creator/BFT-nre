@@ -99,6 +99,7 @@ import {
   createDefaultPersonalLiveAccount,
   isPersonalLiveAccount,
   isDemoAccount,
+  sanitizeAccountForAntiBreach,
 } from './utils/propRules';
 import {
   apiGetMe,
@@ -589,11 +590,54 @@ export default function App() {
         setAccounts((prev) => {
           let updated = [...prev];
           for (const sa of supaAccounts) {
-            const idx = updated.findIndex((a) => a.id === sa.id || a.loginId === sa.loginId);
+            const idx = updated.findIndex(
+              (a) =>
+                a.id === sa.id ||
+                (a.supabaseAccountId && a.supabaseAccountId === sa.id) ||
+                a.loginId === sa.loginId ||
+                (!a.supabaseAccountId &&
+                  !isPersonalLiveAccount(a) &&
+                  !isDemoAccount(a) &&
+                  a.accountType === sa.accountType &&
+                  a.size === sa.size)
+            );
             if (idx >= 0) {
-              updated[idx] = { ...updated[idx], ...sa };
+              const localAcc = updated[idx];
+              const localHasPostTradeMutation =
+                (localAcc.tradesCount || 0) > (sa.tradesCount || 0) &&
+                Math.abs(localAcc.currentBalance - localAcc.initialBalance) > 0.01 &&
+                Math.abs(sa.currentBalance - sa.initialBalance) < 0.01;
+
+              const mergedBalance = localHasPostTradeMutation
+                ? localAcc.currentBalance
+                : sa.currentBalance;
+              const mergedEquity = localHasPostTradeMutation
+                ? localAcc.equity
+                : sa.equity;
+
+              updated[idx] = sanitizeAccountForAntiBreach({
+                ...localAcc,
+                ...sa,
+                id: localAcc.id || sa.id,
+                supabaseAccountId: sa.supabaseAccountId || sa.id || localAcc.supabaseAccountId,
+                loginId: localAcc.loginId || sa.loginId,
+                currentBalance: mergedBalance,
+                equity: mergedEquity,
+                startingDayEquity:
+                  localAcc.status === 'soft-breached' || localHasPostTradeMutation
+                    ? localAcc.startingDayEquity
+                    : sa.startingDayEquity,
+                status:
+                  localAcc.status === 'soft-breached' || localAcc.status === 'hard-breached'
+                    ? localAcc.status
+                    : sa.status,
+                breachType: localAcc.breachType || sa.breachType,
+                softBreachResetTime: localAcc.softBreachResetTime,
+                tradesCount: Math.max(localAcc.tradesCount || 0, sa.tradesCount || 0),
+                winRate: localAcc.winRate || sa.winRate,
+              });
             } else {
-              updated.push(sa);
+              updated.push(sanitizeAccountForAntiBreach(sa));
             }
           }
           saveAccounts(updated);
@@ -604,13 +648,27 @@ export default function App() {
         if (!account) return;
         setAccounts((prev) => {
           let updated = [...prev];
-          const idx = updated.findIndex((a) => a.id === account.id || a.loginId === account.loginId);
+          const idx = updated.findIndex(
+            (a) =>
+              a.id === account.id ||
+              (a.supabaseAccountId && a.supabaseAccountId === account.id) ||
+              a.loginId === account.loginId
+          );
           if (eventType === 'DELETE') {
             if (idx >= 0) updated.splice(idx, 1);
           } else if (idx >= 0) {
-            updated[idx] = { ...updated[idx], ...account };
+            const localAcc = updated[idx];
+            updated[idx] = sanitizeAccountForAntiBreach({
+              ...localAcc,
+              ...account,
+              id: localAcc.id || account.id,
+              supabaseAccountId: account.supabaseAccountId || account.id || localAcc.supabaseAccountId,
+              loginId: localAcc.loginId || account.loginId,
+              tradesCount: Math.max(localAcc.tradesCount || 0, account.tradesCount || 0),
+              winRate: localAcc.winRate || account.winRate,
+            });
           } else {
-            updated.push(account);
+            updated.push(sanitizeAccountForAntiBreach(account));
           }
           saveAccounts(updated);
           return updated;
@@ -844,8 +902,13 @@ export default function App() {
     });
 
     broadcastSyncEvent('ACCOUNT_UPDATED', updated);
-    if (!isDemoAccount(updated)) {
+    if (!isDemoAccount(updated) && !isPersonalLiveAccount(updated)) {
       apiUpdateAccountState(updated.id, {
+        supabaseAccountId: updated.supabaseAccountId,
+        userId: userProfileRef.current.id || updated.ownerId,
+        userEmail: userProfileRef.current.email || updated.ownerEmail,
+        accountType: updated.accountType || updated.tier,
+        startingBalance: updated.initialBalance || updated.size,
         currentBalance: updated.currentBalance,
         equity: updated.equity,
         startingDayEquity: updated.startingDayEquity,
@@ -1332,13 +1395,17 @@ export default function App() {
   const userAccounts: TradingAccount[] = React.useMemo(() => {
     if (!userProfile?.isLoggedIn) return [];
     
-    // Ensure every authenticated user's Personal Live accounts reflect the dynamic selfBalance from Supabase/Profile
+    // Ensure every authenticated user's Personal Live and Demo accounts reflect profile balances,
+    // while Prop (1-Step, 2-Step, Instant Funded) accounts preserve their own trading_accounts balance & rules.
     const list = baseOwnedAccounts.map((acc) => {
       if (isPersonalLiveAccount(acc) && userProfile.selfBalance !== undefined) {
         return {
           ...acc,
           currentBalance: userProfile.selfBalance,
           equity: userProfile.selfBalance,
+          dailyLossLimitPercent: 0,
+          maxOverallLossPercent: 0,
+          profitTargetPercent: 0,
         };
       }
       if (isDemoAccount(acc) && userProfile.demoBalance !== undefined) {
@@ -1348,14 +1415,7 @@ export default function App() {
           equity: userProfile.demoBalance,
         };
       }
-      if (acc.phase === 'funded' && userProfile.fundedBalance !== undefined) {
-        return {
-          ...acc,
-          currentBalance: userProfile.fundedBalance,
-          equity: userProfile.fundedBalance,
-        };
-      }
-      return acc;
+      return sanitizeAccountForAntiBreach(acc);
     });
 
     // Ensure every authenticated user has a Personal Live (Self-Funded) account alongside Prop accounts

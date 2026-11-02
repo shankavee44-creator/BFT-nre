@@ -428,41 +428,60 @@ function getDynamicAccountLimits(accountTypeOrTier, phase, overrides) {
   let defaultMax = 20;
   let defaultTarget = 25;
   let step2Target = 15;
+  let maxRiskPerTradePercent = 5;
+  let minProfitableDays = 5;
+  let minProfitableDayPercent = 0.5;
   let initialPhase = "phase_1";
   if (accountType === "one_step") {
     defaultDaily = 10;
     defaultMax = 15;
     defaultTarget = currentPhase === "funded" ? 0 : 30;
     step2Target = 0;
+    maxRiskPerTradePercent = 5;
+    minProfitableDays = currentPhase === "funded" ? 0 : 5;
+    minProfitableDayPercent = currentPhase === "funded" ? 0 : 0.5;
     initialPhase = "phase_1";
   } else if (accountType === "two_step") {
     defaultDaily = 8;
     defaultMax = 20;
     defaultTarget = currentPhase === "funded" ? 0 : currentPhase === "phase_2" ? 15 : 25;
     step2Target = 15;
+    maxRiskPerTradePercent = 5;
+    minProfitableDays = currentPhase === "funded" ? 0 : 5;
+    minProfitableDayPercent = currentPhase === "funded" ? 0 : 0.5;
     initialPhase = "phase_1";
   } else if (accountType === "instant") {
     defaultDaily = 6;
     defaultMax = 12;
     defaultTarget = 0;
     step2Target = 0;
+    maxRiskPerTradePercent = 5;
+    minProfitableDays = 0;
+    minProfitableDayPercent = 0;
     initialPhase = "funded";
   } else if (accountType === "personal") {
     defaultDaily = 0;
     defaultMax = 0;
     defaultTarget = 0;
     step2Target = 0;
+    maxRiskPerTradePercent = 0;
+    minProfitableDays = 0;
+    minProfitableDayPercent = 0;
     initialPhase = "personal_live";
   } else {
     defaultDaily = 0;
     defaultMax = 0;
     defaultTarget = 0;
     step2Target = 0;
+    maxRiskPerTradePercent = 0;
+    minProfitableDays = 0;
+    minProfitableDayPercent = 0;
     initialPhase = "demo";
   }
-  const dailyLossLimitPercent = overrides?.dailyDrawdown !== void 0 && overrides.dailyDrawdown > 0 ? overrides.dailyDrawdown : defaultDaily;
-  const maxOverallLossPercent = overrides?.maxDrawdown !== void 0 && overrides.maxDrawdown > 0 ? overrides.maxDrawdown : defaultMax;
-  const profitTargetPercent = overrides?.profitTarget !== void 0 && overrides.profitTarget !== null ? overrides.profitTarget : defaultTarget;
+  const isUnrestricted = accountType === "personal" || accountType === "demo";
+  const dailyLossLimitPercent = isUnrestricted ? 0 : overrides?.dailyDrawdown !== void 0 && overrides.dailyDrawdown > 0 ? overrides.dailyDrawdown : defaultDaily;
+  const maxOverallLossPercent = isUnrestricted ? 0 : overrides?.maxDrawdown !== void 0 && overrides.maxDrawdown > 0 ? overrides.maxDrawdown : defaultMax;
+  const profitTargetPercent = isUnrestricted || accountType === "instant" || currentPhase === "funded" ? 0 : overrides?.profitTarget !== void 0 && overrides.profitTarget !== null && overrides.profitTarget > 0 ? overrides.profitTarget : defaultTarget;
   return {
     accountType,
     tier,
@@ -470,6 +489,9 @@ function getDynamicAccountLimits(accountTypeOrTier, phase, overrides) {
     step2TargetPercent: step2Target,
     dailyLossLimitPercent,
     maxOverallLossPercent,
+    maxRiskPerTradePercent,
+    minProfitableDays,
+    minProfitableDayPercent,
     initialPhase
   };
 }

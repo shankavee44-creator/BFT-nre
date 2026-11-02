@@ -25,6 +25,9 @@ import {
   normalizeChallengeAccountType,
   getChallengeProfitTarget,
   sanitizeAccountForAntiBreach,
+  calculateLiveAccountEquity,
+  validateZeroToleranceTradeExecution,
+  liquidateActiveTradesOnSoftBreach,
   MIN_WITHDRAWAL_PROFIT,
   FIRST_WITHDRAWAL_WAITING_DAYS,
   WITHDRAWAL_GUARANTEE_NOTICE,
@@ -637,5 +640,205 @@ test('anti-breach sanitization prevents false auto-breaches on zero or uninitial
   // Breach evaluation on sanitized account passes safely
   const breachCheck = evaluateAccountBreach(sanitized);
   assert.equal(breachCheck.isBreached, false);
+
+  // Instant Funded $50,000 account with 0 balance or erroneous 'breached' status when tradesCount === 0 is restored to $50,000 and 'active'
+  const instant50k: TradingAccount = {
+    id: 'ACC-INST-50K',
+    loginId: 'BFT-50000',
+    passwordHash: 'pass',
+    tier: 'instant',
+    accountType: 'instant',
+    tierName: 'Instant Funded',
+    size: 50000,
+    initialBalance: 50000,
+    currentBalance: 0,
+    startingDayEquity: 0,
+    equity: 0,
+    dailyLossLimitPercent: 6,
+    maxOverallLossPercent: 12,
+    profitTargetPercent: 0,
+    status: 'breached',
+    phase: 'funded',
+    tradingDaysCompleted: 0,
+    tradesCount: 0,
+    winRate: 0,
+    createdDate: '2026-10-01',
+    lastActiveDate: '2026-10-24',
+  };
+
+  const sanitizedInstant = sanitizeAccountForAntiBreach(instant50k);
+  assert.equal(sanitizedInstant.currentBalance, 50000);
+  assert.equal(sanitizedInstant.equity, 50000);
+  assert.equal(sanitizedInstant.startingDayEquity, 50000);
+  assert.equal(sanitizedInstant.status, 'active');
+  assert.equal(sanitizedInstant.dailyLossLimitPercent, 6);
+  assert.equal(sanitizedInstant.maxOverallLossPercent, 12);
+  assert.equal(sanitizedInstant.profitTargetPercent, 0);
 });
+
+test('Soft Breach auto-liquidation closes active floating trades, realizes PnL, sets next-day starting balance, and shrinks cumulative overall drawdown buffer', () => {
+  // $5,000 1-Step Challenge account (10% Daily DD = $500, 15% Max Overall DD = $750)
+  const acc5k: TradingAccount = {
+    id: 'ACC-5K-1STEP',
+    loginId: 'BFT-5001',
+    passwordHash: 'pass',
+    tier: 'one-step',
+    accountType: 'one_step',
+    tierName: 'One-Step Challenge',
+    size: 5000,
+    initialBalance: 5000,
+    startingDayEquity: 5000,
+    // Trader had $4,500 after closed losses, then opened 2 trades:
+    // Trade 1: $100 stake (losing at close), Trade 2: $100 stake (winning +$90 at close -> $190 payout)
+    // Wait: let's test hitting exact $500 daily loss ($4,500 equity):
+    // Suppose currentBalance (after deducting $200 for two $100 active trades) is $4,310,
+    // and Trade 1 ($100) is ITM returning $190, Trade 2 ($100) is OTM returning $0 -> live equity = $4,310 + $190 = $4,500!
+    currentBalance: 4310,
+    equity: 4500,
+    dailyLossLimitPercent: 10,
+    maxOverallLossPercent: 15,
+    profitTargetPercent: 30,
+    status: 'active',
+    phase: 'phase_1',
+    tradingDaysCompleted: 1,
+    tradesCount: 3,
+    winRate: 33,
+    createdDate: '2026-10-01',
+    lastActiveDate: '2026-10-25',
+  };
+
+  const activeTrades: BinaryTrade[] = [
+    {
+      id: 't-active-win',
+      accountId: 'ACC-5K-1STEP',
+      asset: 'EUR/USD',
+      direction: 'CALL',
+      strikePrice: 1.0800,
+      currentPrice: 1.0850, // In-the-money!
+      investment: 100,
+      payoutPercentage: 90,
+      potentialPayout: 90,
+      startTime: 1000,
+      durationSeconds: 60,
+      endTime: 61000,
+      status: 'active',
+    },
+    {
+      id: 't-active-loss',
+      accountId: 'ACC-5K-1STEP',
+      asset: 'BTC/USD',
+      direction: 'PUT',
+      strikePrice: 65000,
+      currentPrice: 65200, // Out-of-the-money!
+      investment: 100,
+      payoutPercentage: 90,
+      potentialPayout: 90,
+      startTime: 1000,
+      durationSeconds: 60,
+      endTime: 61000,
+      status: 'active',
+    },
+  ];
+
+  const priceLookup: Record<string, number> = {
+    'EUR/USD': 1.0850,
+    'BTC/USD': 65200,
+  };
+  const getLivePrice = (symbol: string, fallback: number) => priceLookup[symbol] ?? fallback;
+
+  const liveEq = calculateLiveAccountEquity(acc5k.currentBalance, activeTrades, getLivePrice, true);
+  assert.equal(liveEq.liveEquity, 4500);
+  assert.equal(liveEq.floatingReturn, 190);
+  assert.equal(liveEq.netFloatingPnL, -10);
+
+  // Trigger Soft Breach auto-liquidation
+  const liq = liquidateActiveTradesOnSoftBreach({
+    account: acc5k,
+    activeTrades,
+    getLivePrice,
+    nowMs: 1700000000000,
+    stakesAlreadyDeducted: true,
+  });
+  assert.equal(liq.liquidatedTrades.length, 2);
+  assert.equal(liq.liquidatedTrades[0].status, 'won');
+  assert.equal(liq.liquidatedTrades[0].pnl, 90);
+  assert.equal(liq.liquidatedTrades[1].status, 'lost');
+  assert.equal(liq.liquidatedTrades[1].pnl, -100);
+
+  // Remaining balance and next-day startingDayEquity are set to $4,500
+  assert.equal(liq.nextDayStartingBalance, 4500);
+  assert.equal(liq.updatedAccount.currentBalance, 4500);
+  assert.equal(liq.updatedAccount.equity, 4500);
+  assert.equal(liq.updatedAccount.startingDayEquity, 4500);
+  assert.equal(liq.updatedAccount.status, 'soft-breached');
+  assert.equal(liq.updatedAccount.breachType, 'soft');
+  assert.equal(liq.remainingOverallBuffer, 250);
+
+  // Verify cumulative overall drawdown buffer on the next trading day when unlocked at $4,500:
+  const nextDayAccount = resetSoftBreachedAccount(liq.updatedAccount);
+  assert.equal(nextDayAccount.status, 'active');
+  assert.equal(nextDayAccount.startingDayEquity, 4500);
+  assert.equal(nextDayAccount.currentBalance, 4500);
+
+  const nextDayMetrics = calculateDrawdownMetrics(nextDayAccount);
+  // 15% of $5,000 = $750 max overall loss -> $500 already lost -> only $250 remaining buffer before Hard Breach!
+  assert.equal(nextDayMetrics.maxOverallLossAmount, 750);
+  assert.equal(nextDayMetrics.overallLossAmount, 500);
+  assert.equal(nextDayMetrics.remainingOverallBuffer, 250);
+  assert.equal(nextDayMetrics.effectiveRemainingBuffer, 250);
+  assert.equal(nextDayMetrics.hardBreachFloor, 4250);
+});
+
+test('Zero-Tolerance Execution blocks trades exceeding remaining drawdown buffer or 5% max risk per trade', () => {
+  // $5,000 1-Step account currently at $4,500 (so $250 remaining overall drawdown buffer before Hard Breach at $4,250)
+  const accAt4500: TradingAccount = {
+    id: 'ACC-5K-NEXTDAY',
+    loginId: 'BFT-5002',
+    passwordHash: 'pass',
+    tier: 'one-step',
+    accountType: 'one_step',
+    tierName: 'One-Step Challenge',
+    size: 5000,
+    initialBalance: 5000,
+    startingDayEquity: 4500,
+    currentBalance: 4500,
+    equity: 4500,
+    dailyLossLimitPercent: 10,
+    maxOverallLossPercent: 15,
+    profitTargetPercent: 30,
+    status: 'active',
+    phase: 'phase_1',
+    tradingDaysCompleted: 2,
+    tradesCount: 5,
+    winRate: 40,
+    createdDate: '2026-10-01',
+    lastActiveDate: '2026-10-26',
+  };
+
+  // Placing a $200 trade is within the $250 remaining overall buffer and 5% max risk ($250) -> ALLOWED
+  const ok200 = validateZeroToleranceTradeExecution({ account: accAt4500, stake: 200 });
+  assert.equal(ok200.allowed, true);
+
+  // Placing a $300 trade exceeds 5% max risk ($250) -> BLOCKED
+  const blockedRisk = validateZeroToleranceTradeExecution({ account: accAt4500, stake: 300 });
+  assert.equal(blockedRisk.allowed, false);
+  assert.equal(blockedRisk.code, 'MAX_RISK_PER_TRADE_EXCEEDED');
+
+  // Suppose balance drops to $4,350 ($150 remaining overall buffer before $4,250 Hard Breach)
+  const accAt4350: TradingAccount = {
+    ...accAt4500,
+    currentBalance: 4350,
+    equity: 4350,
+  };
+  // Placing a $200 trade is <= $250 (5% max risk), but exceeds the $150 remaining overall drawdown buffer -> BLOCKED!
+  const blockedOverall = validateZeroToleranceTradeExecution({ account: accAt4350, stake: 200 });
+  assert.equal(blockedOverall.allowed, false);
+  assert.equal(blockedOverall.code, 'OVERALL_DRAWDOWN_BUFFER_EXCEEDED');
+
+  // Self-Funded account has no drawdown or max risk limits -> unrestricted
+  const selfFunded = createDefaultPersonalLiveAccount('usr-1', 'user@test.com', 5000);
+  const okSelf = validateZeroToleranceTradeExecution({ account: selfFunded, stake: 2500 });
+  assert.equal(okSelf.allowed, true);
+});
+
 

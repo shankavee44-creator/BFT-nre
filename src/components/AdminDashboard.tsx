@@ -54,6 +54,7 @@ import {
 } from '../utils/apiClient';
 import { soundEngine } from '../utils/soundEffects';
 import { supabase } from '../utils/supabase';
+import { BftLogo } from './BftLogo';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -822,7 +823,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     return (
       <div className="fixed inset-0 z-50 bg-[#070709] flex items-center justify-center p-4">
         <div className="text-center font-mono space-y-3">
-          <RefreshCw className="w-8 h-8 text-[#ff8800] animate-spin mx-auto" />
+          <div className="flex justify-center mb-2">
+            <BftLogo
+              imgClassName="h-14 w-auto animate-pulse"
+              testId="admin-loading-bft-logo"
+              alt="BFT Bull Logo"
+            />
+          </div>
+          <RefreshCw className="w-6 h-6 text-[#ff8800] animate-spin mx-auto" />
           <p className="text-sm text-slate-300 font-bold">Verifying Administrative RBAC Permissions...</p>
         </div>
       </div>
@@ -840,8 +848,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             <X className="w-5 h-5" />
           </button>
 
-          <div className="w-14 h-14 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-rose-400 mx-auto mb-4">
-            <Lock className="w-7 h-7" />
+          <div className="flex justify-center mb-4">
+            <BftLogo
+              imgClassName="h-14 w-auto"
+              testId="admin-auth-bft-logo"
+              alt="BFT Bull Logo"
+            />
           </div>
 
           <h2 className="text-xl font-black text-center text-white uppercase tracking-wider mb-2">
@@ -913,9 +925,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       {/* Top Admin App Header */}
       <header className="h-16 border-b border-white/10 bg-[#0a0a0f] px-4 sm:px-6 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-[#ff8800] flex items-center justify-center text-slate-950 font-black">
-            <ShieldCheck className="w-5 h-5 fill-current" />
-          </div>
+          <BftLogo
+            imgClassName="h-9 sm:h-10 w-auto"
+            testId="admin-header-bft-logo"
+            alt="BFT Bull Logo"
+          />
           <div>
             <div className="flex items-center gap-2">
               <span className="text-sm font-black text-white tracking-wider">

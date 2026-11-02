@@ -770,6 +770,9 @@ export function getDynamicAccountLimits(
   step2TargetPercent: number;
   dailyLossLimitPercent: number;
   maxOverallLossPercent: number;
+  maxRiskPerTradePercent: number;
+  minProfitableDays: number;
+  minProfitableDayPercent: number;
   initialPhase: 'phase_1' | 'phase_2' | 'funded' | 'personal_live' | 'demo';
 } {
   const accountType = normalizeChallengeAccountType(accountTypeOrTier);
@@ -780,6 +783,9 @@ export function getDynamicAccountLimits(
   let defaultMax = 20;
   let defaultTarget = 25;
   let step2Target = 15;
+  let maxRiskPerTradePercent = 5;
+  let minProfitableDays = 5;
+  let minProfitableDayPercent = 0.5;
   let initialPhase: 'phase_1' | 'phase_2' | 'funded' | 'personal_live' | 'demo' = 'phase_1';
 
   if (accountType === 'one_step') {
@@ -787,45 +793,66 @@ export function getDynamicAccountLimits(
     defaultMax = 15;
     defaultTarget = currentPhase === 'funded' ? 0 : 30;
     step2Target = 0;
+    maxRiskPerTradePercent = 5;
+    minProfitableDays = currentPhase === 'funded' ? 0 : 5;
+    minProfitableDayPercent = currentPhase === 'funded' ? 0 : 0.5;
     initialPhase = 'phase_1';
   } else if (accountType === 'two_step') {
     defaultDaily = 8;
     defaultMax = 20;
     defaultTarget = currentPhase === 'funded' ? 0 : currentPhase === 'phase_2' ? 15 : 25;
     step2Target = 15;
+    maxRiskPerTradePercent = 5;
+    minProfitableDays = currentPhase === 'funded' ? 0 : 5;
+    minProfitableDayPercent = currentPhase === 'funded' ? 0 : 0.5;
     initialPhase = 'phase_1';
   } else if (accountType === 'instant') {
     defaultDaily = 6;
     defaultMax = 12;
     defaultTarget = 0;
     step2Target = 0;
+    maxRiskPerTradePercent = 5;
+    minProfitableDays = 0;
+    minProfitableDayPercent = 0;
     initialPhase = 'funded';
   } else if (accountType === 'personal') {
     defaultDaily = 0;
     defaultMax = 0;
     defaultTarget = 0;
     step2Target = 0;
+    maxRiskPerTradePercent = 0;
+    minProfitableDays = 0;
+    minProfitableDayPercent = 0;
     initialPhase = 'personal_live';
   } else {
     defaultDaily = 0;
     defaultMax = 0;
     defaultTarget = 0;
     step2Target = 0;
+    maxRiskPerTradePercent = 0;
+    minProfitableDays = 0;
+    minProfitableDayPercent = 0;
     initialPhase = 'demo';
   }
 
-  const dailyLossLimitPercent =
-    overrides?.dailyDrawdown !== undefined && overrides.dailyDrawdown > 0
-      ? overrides.dailyDrawdown
-      : defaultDaily;
+  const isUnrestricted = accountType === 'personal' || accountType === 'demo';
 
-  const maxOverallLossPercent =
-    overrides?.maxDrawdown !== undefined && overrides.maxDrawdown > 0
-      ? overrides.maxDrawdown
-      : defaultMax;
+  const dailyLossLimitPercent = isUnrestricted
+    ? 0
+    : overrides?.dailyDrawdown !== undefined && overrides.dailyDrawdown > 0
+    ? overrides.dailyDrawdown
+    : defaultDaily;
+
+  const maxOverallLossPercent = isUnrestricted
+    ? 0
+    : overrides?.maxDrawdown !== undefined && overrides.maxDrawdown > 0
+    ? overrides.maxDrawdown
+    : defaultMax;
 
   const profitTargetPercent =
-    overrides?.profitTarget !== undefined && overrides.profitTarget !== null
+    isUnrestricted || accountType === 'instant' || currentPhase === 'funded'
+      ? 0
+      : overrides?.profitTarget !== undefined && overrides.profitTarget !== null && overrides.profitTarget > 0
       ? overrides.profitTarget
       : defaultTarget;
 
@@ -836,25 +863,24 @@ export function getDynamicAccountLimits(
     step2TargetPercent: step2Target,
     dailyLossLimitPercent,
     maxOverallLossPercent,
+    maxRiskPerTradePercent,
+    minProfitableDays,
+    minProfitableDayPercent,
     initialPhase,
   };
 }
 
 /**
  * Sanitizes trading account parameters to guarantee anti-breach initialization.
- * Prevents false auto-breaches upon creation, page refresh, or account switching.
+ * Prevents false auto-breaches upon creation, page refresh, or account switching,
+ * and ensures Instant Funded accounts initialize with their full starting capital and active status.
  */
 export function sanitizeAccountForAntiBreach(account: TradingAccount): TradingAccount {
   if (!account) return account;
 
   const dynamicLimits = getDynamicAccountLimits(
     account.accountType || account.tier,
-    account.phase || account.challengePhase,
-    {
-      dailyDrawdown: account.dailyLossLimitPercent,
-      maxDrawdown: account.maxOverallLossPercent,
-      profitTarget: account.profitTargetPercent,
-    }
+    account.phase || account.challengePhase
   );
 
   const isPersonal = isPersonalLiveAccount(account);
@@ -862,45 +888,54 @@ export function sanitizeAccountForAntiBreach(account: TradingAccount): TradingAc
 
   const baseSize = Math.max(
     0,
-    Number(account.size || account.initialBalance || account.currentBalance || 10000)
+    Number(account.size || account.initialBalance || account.currentBalance || (isPersonal ? 0 : 10000))
   );
 
-  let curBal = Number(account.currentBalance);
-  if (!Number.isFinite(curBal) || (curBal <= 0 && account.tradesCount === 0 && !isPersonal)) {
-    curBal = baseSize;
-  }
+  const hasNoTradesYet = !account.tradesCount || account.tradesCount <= 0;
 
   let initBal = Number(account.initialBalance);
-  if (!Number.isFinite(initBal) || initBal <= 0) {
-    initBal = isPersonal ? curBal : baseSize;
+  if (!Number.isFinite(initBal) || (initBal <= 0 && !isPersonal)) {
+    initBal = isPersonal ? Math.max(0, Number(account.currentBalance || 0)) : baseSize;
+  }
+
+  let curBal = Number(account.currentBalance);
+  if (!Number.isFinite(curBal) || (curBal <= 0 && hasNoTradesYet && !isPersonal)) {
+    curBal = initBal > 0 ? initBal : baseSize;
   }
 
   let eq = Number(account.equity);
-  if (!Number.isFinite(eq) || (eq <= 0 && account.tradesCount === 0 && !isPersonal)) {
+  if (!Number.isFinite(eq) || (eq <= 0 && hasNoTradesYet && !isPersonal) || (hasNoTradesYet && eq < curBal)) {
     eq = curBal;
   }
 
   let startEq = Number(account.startingDayEquity);
-  if (!Number.isFinite(startEq) || (startEq <= 0 && account.tradesCount === 0)) {
-    startEq = curBal > 0 ? curBal : baseSize;
+  if (!Number.isFinite(startEq) || (startEq <= 0 && hasNoTradesYet && !isPersonal)) {
+    startEq = curBal > 0 ? curBal : initBal;
   }
 
-  const isPassedOrFunded =
-    account.status === 'passed' ||
-    account.phase === 'funded' ||
-    isPersonal ||
-    isDemo;
+  let status = account.status || 'active';
+  let breachType = account.breachType || 'none';
 
-  const status =
-    isPassedOrFunded && (account.status === 'soft-breached' || account.status === 'hard-breached')
-      ? 'active'
-      : account.status || 'active';
+  // Personal Live, Demo, Passed accounts, or newly purchased accounts with 0 trades and full balance must never be marked breached
+  if (isPersonal || isDemo || status === 'passed' || status === 'passed_phase_1') {
+    if (status === 'soft-breached' || status === 'hard-breached' || status === 'breached') {
+      status = 'active';
+      breachType = 'none';
+    }
+  } else if (hasNoTradesYet && curBal >= initBal) {
+    if (status === 'soft-breached' || status === 'hard-breached' || status === 'breached' || (status as string) === 'failed') {
+      status = 'active';
+      breachType = 'none';
+    }
+  }
 
   return {
     ...account,
     tier: dynamicLimits.tier,
     accountType: dynamicLimits.accountType,
-    size: baseSize,
+    phase: account.phase || dynamicLimits.initialPhase,
+    challengePhase: account.challengePhase || account.phase || dynamicLimits.initialPhase,
+    size: baseSize > 0 ? baseSize : initBal,
     initialBalance: initBal,
     currentBalance: curBal,
     equity: eq,
@@ -908,7 +943,9 @@ export function sanitizeAccountForAntiBreach(account: TradingAccount): TradingAc
     dailyLossLimitPercent: dynamicLimits.dailyLossLimitPercent,
     maxOverallLossPercent: dynamicLimits.maxOverallLossPercent,
     profitTargetPercent: dynamicLimits.profitTargetPercent,
+    maxRiskPerTradePercent: isPersonal || isDemo ? 100 : dynamicLimits.maxRiskPerTradePercent,
     status,
+    breachType,
   };
 }
 
@@ -919,8 +956,10 @@ export function getChallengeProfitTarget(account?: TradingAccount | null): {
   currentProfit: number;
   progressPercent: number;
   isTargetMet: boolean;
+  minProfitableDays: number;
+  minProfitableDayPercent: number;
 } {
-  if (!account || isLiveFundedAccount(account)) {
+  if (!account || isLiveFundedAccount(account) || isDemoAccount(account)) {
     return {
       isChallenge: false,
       targetPercent: 0,
@@ -928,6 +967,8 @@ export function getChallengeProfitTarget(account?: TradingAccount | null): {
       currentProfit: account ? Math.max(0, account.currentBalance - account.initialBalance) : 0,
       progressPercent: 100,
       isTargetMet: false,
+      minProfitableDays: 0,
+      minProfitableDayPercent: 0,
     };
   }
 
@@ -947,12 +988,14 @@ export function getChallengeProfitTarget(account?: TradingAccount | null): {
       : 0;
 
   return {
-    isChallenge: true,
+    isChallenge: targetPercent > 0,
     targetPercent,
     targetAmount,
     currentProfit,
     progressPercent,
     isTargetMet: currentProfit >= targetAmount && targetAmount > 0,
+    minProfitableDays: limits.minProfitableDays,
+    minProfitableDayPercent: limits.minProfitableDayPercent,
   };
 }
 
@@ -1198,41 +1241,158 @@ export function isDuringRestrictedNewsWindow(
 }
 
 /**
- * Calculates current daily drawdown and overall drawdown percentages.
+ * Calculates live mark-to-market equity for an account given its current balance
+ * (which already has active trade stakes deducted) and its currently active trades.
+ */
+export function calculateLiveAccountEquity(
+  currentBalance: number,
+  activeTrades: BinaryTrade[],
+  getPriceForAsset: (symbol: string, fallbackStrike: number) => number,
+  stakesAlreadyDeducted: boolean = true
+): {
+  liveEquity: number;
+  floatingReturn: number;
+  netFloatingPnL: number;
+} {
+  let floatingReturn = 0;
+  let netFloatingPnL = 0;
+
+  for (const t of activeTrades) {
+    if (!t || t.status !== 'active') continue;
+    const livePrice = getPriceForAsset(t.asset, t.strikePrice);
+    const diff = livePrice - t.strikePrice;
+    const isTie = Math.abs(diff) < 1e-7;
+    const isWin =
+      !isTie &&
+      ((t.direction === 'CALL' && diff > 0) || (t.direction === 'PUT' && diff < 0));
+
+    const stake = Number(t.investment || 0);
+    const profit = Number(((stake * Number(t.payoutPercentage || 85)) / 100).toFixed(2));
+
+    if (isTie) {
+      floatingReturn += stake;
+      netFloatingPnL += 0;
+    } else if (isWin) {
+      floatingReturn += stake + profit;
+      netFloatingPnL += profit;
+    } else {
+      floatingReturn += 0;
+      netFloatingPnL -= stake;
+    }
+  }
+
+  const baseBal = Number(currentBalance || 0);
+  const liveEquity = stakesAlreadyDeducted
+    ? Number(Math.max(0, baseBal + floatingReturn).toFixed(2))
+    : Number(Math.max(0, baseBal + netFloatingPnL).toFixed(2));
+
+  return {
+    liveEquity,
+    floatingReturn: Number(floatingReturn.toFixed(2)),
+    netFloatingPnL: Number(netFloatingPnL.toFixed(2)),
+  };
+}
+
+/**
+ * Calculates current daily drawdown, cumulative overall drawdown, and exact remaining buffers.
+ * If a daily loss brings a $5,000 1-Step account (10% Daily DD = $500, 15% Overall DD = $750)
+ * down to $4,500, the remaining overall drawdown buffer shrinks to $250 ($750 - $500).
  */
 export function calculateDrawdownMetrics(account: TradingAccount) {
-  if (isPersonalLiveAccount(account) || isDemoAccount(account)) {
+  if (!account || isPersonalLiveAccount(account) || isDemoAccount(account)) {
     return {
       dailyDrawdownAmount: 0,
       dailyDrawdownPercent: 0,
+      dailyLimitAmount: 0,
+      remainingDailyBuffer: Infinity,
       overallLossAmount: 0,
       overallLossPercent: 0,
+      maxOverallLossAmount: 0,
+      remainingOverallBuffer: Infinity,
+      effectiveRemainingBuffer: Infinity,
+      hardBreachFloor: 0,
+      dailySoftBreachFloor: 0,
       isDailyBreached: false,
       isOverallBreached: false,
       isBreached: false,
     };
   }
 
-  const dailyDrawdownAmount = Math.max(0, account.startingDayEquity - account.equity);
-  const dailyDrawdownPercent = account.startingDayEquity > 0
-    ? Number(((dailyDrawdownAmount / account.startingDayEquity) * 100).toFixed(2))
-    : 0;
+  const referenceBalance = Math.max(
+    Number(account.initialBalance || 0),
+    Number(account.size || 0)
+  );
+  const startDayEq =
+    Number(account.startingDayEquity || 0) > 0
+      ? Number(account.startingDayEquity)
+      : referenceBalance;
+  const currentEq = Number.isFinite(Number(account.equity))
+    ? Number(account.equity)
+    : Number(account.currentBalance ?? referenceBalance);
 
-  const overallLossAmount = Math.max(0, account.initialBalance - account.equity);
-  const overallLossPercent = account.initialBalance > 0
-    ? Number(((overallLossAmount / account.initialBalance) * 100).toFixed(2))
-    : 0;
+  const dailyLimitPercent = Number(account.dailyLossLimitPercent ?? 0);
+  const overallLimitPercent = Number(account.maxOverallLossPercent ?? 0);
+
+  const dailyLimitAmount = Number(((startDayEq * dailyLimitPercent) / 100).toFixed(2));
+  const maxOverallLossAmount = Number(((referenceBalance * overallLimitPercent) / 100).toFixed(2));
+  const hardBreachFloor = Number(Math.max(0, referenceBalance - maxOverallLossAmount).toFixed(2));
+
+  const overallLossAmount = Number(Math.max(0, referenceBalance - currentEq).toFixed(2));
+  const overallLossPercent =
+    referenceBalance > 0
+      ? Number(((overallLossAmount / referenceBalance) * 100).toFixed(2))
+      : 0;
+
+  const remainingOverallBuffer =
+    overallLimitPercent > 0
+      ? Number(Math.max(0, maxOverallLossAmount - overallLossAmount).toFixed(2))
+      : Infinity;
+
+  const dailyDrawdownAmount = Number(Math.max(0, startDayEq - currentEq).toFixed(2));
+  const dailyDrawdownPercent =
+    startDayEq > 0
+      ? Number(((dailyDrawdownAmount / startDayEq) * 100).toFixed(2))
+      : 0;
+
+  const rawRemainingDailyBuffer =
+    dailyLimitPercent > 0
+      ? Number(Math.max(0, dailyLimitAmount - dailyDrawdownAmount).toFixed(2))
+      : Infinity;
+
+  const remainingDailyBuffer =
+    overallLimitPercent > 0 && Number.isFinite(remainingOverallBuffer)
+      ? Number(Math.min(rawRemainingDailyBuffer, remainingOverallBuffer).toFixed(2))
+      : rawRemainingDailyBuffer;
+
+  const dailySoftBreachFloor = Number(
+    Math.max(hardBreachFloor, startDayEq - dailyLimitAmount).toFixed(2)
+  );
+
+  const effectiveRemainingBuffer = Number(
+    Math.min(remainingDailyBuffer, remainingOverallBuffer).toFixed(2)
+  );
 
   const isDailyBreached =
-    account.dailyLossLimitPercent > 0 && dailyDrawdownPercent >= account.dailyLossLimitPercent;
+    dailyLimitPercent > 0 &&
+    (dailyDrawdownPercent >= dailyLimitPercent ||
+      (dailyLimitAmount > 0 && dailyDrawdownAmount >= dailyLimitAmount));
   const isOverallBreached =
-    account.maxOverallLossPercent > 0 && overallLossPercent >= account.maxOverallLossPercent;
+    overallLimitPercent > 0 &&
+    (overallLossPercent >= overallLimitPercent ||
+      (maxOverallLossAmount > 0 && overallLossAmount >= maxOverallLossAmount));
 
   return {
     dailyDrawdownAmount,
     dailyDrawdownPercent,
+    dailyLimitAmount,
+    remainingDailyBuffer,
     overallLossAmount,
     overallLossPercent,
+    maxOverallLossAmount,
+    remainingOverallBuffer,
+    effectiveRemainingBuffer,
+    hardBreachFloor,
+    dailySoftBreachFloor,
     isDailyBreached,
     isOverallBreached,
     isBreached: isDailyBreached || isOverallBreached,
@@ -1240,8 +1400,309 @@ export function calculateDrawdownMetrics(account: TradingAccount) {
 }
 
 /**
+ * Zero-Tolerance Execution Guard:
+ * Prevents users from placing any trade that breaches the exact remaining daily or cumulative overall
+ * drawdown threshold, or exceeds the 5% Max Risk per Trade rule.
+ * Personal Live (Self-Funded) and Demo accounts are unrestricted.
+ */
+export function validateZeroToleranceTradeExecution(params: {
+  account: TradingAccount;
+  stake: number;
+  liveEquity?: number;
+}): {
+  allowed: boolean;
+  reason?: string;
+  code?:
+    | 'ACCOUNT_HARD_BREACHED'
+    | 'ACCOUNT_SOFT_BREACHED'
+    | 'INVALID_STAKE'
+    | 'INSUFFICIENT_BALANCE'
+    | 'MAX_RISK_PER_TRADE_EXCEEDED'
+    | 'DAILY_DRAWDOWN_BUFFER_EXCEEDED'
+    | 'OVERALL_DRAWDOWN_BUFFER_EXCEEDED';
+  remainingDailyBuffer: number;
+  remainingOverallBuffer: number;
+  maxAllowedStake: number;
+} {
+  const { account } = params;
+  const stake = Number(params.stake);
+  const currentBalance = Number(account?.currentBalance ?? 0);
+
+  if (!Number.isFinite(stake) || stake <= 0) {
+    return {
+      allowed: false,
+      code: 'INVALID_STAKE',
+      reason: 'Please enter a valid investment stake ($1+).',
+      remainingDailyBuffer: 0,
+      remainingOverallBuffer: 0,
+      maxAllowedStake: 0,
+    };
+  }
+
+  if (stake > currentBalance) {
+    return {
+      allowed: false,
+      code: 'INSUFFICIENT_BALANCE',
+      reason: `Insufficient balance. Available capital: $${currentBalance.toFixed(2)}`,
+      remainingDailyBuffer: currentBalance,
+      remainingOverallBuffer: currentBalance,
+      maxAllowedStake: currentBalance,
+    };
+  }
+
+  if (isPersonalLiveAccount(account) || isDemoAccount(account)) {
+    return {
+      allowed: true,
+      remainingDailyBuffer: Infinity,
+      remainingOverallBuffer: Infinity,
+      maxAllowedStake: currentBalance,
+    };
+  }
+
+  if (
+    account.status === 'hard-breached' ||
+    account.status === 'breached' ||
+    account.breachType === 'hard'
+  ) {
+    return {
+      allowed: false,
+      code: 'ACCOUNT_HARD_BREACHED',
+      reason: 'Account is permanently locked due to a Hard Breach (Max Overall Drawdown exceeded).',
+      remainingDailyBuffer: 0,
+      remainingOverallBuffer: 0,
+      maxAllowedStake: 0,
+    };
+  }
+
+  if (account.status === 'soft-breached' || account.breachType === 'soft') {
+    return {
+      allowed: false,
+      code: 'ACCOUNT_SOFT_BREACHED',
+      reason:
+        'Soft Breach Active: Daily drawdown limit reached. Account is locked from opening new trades for the rest of the calendar day.',
+      remainingDailyBuffer: 0,
+      remainingOverallBuffer: 0,
+      maxAllowedStake: 0,
+    };
+  }
+
+  const eq =
+    params.liveEquity !== undefined && Number.isFinite(params.liveEquity)
+      ? params.liveEquity
+      : Number(account.equity ?? account.currentBalance);
+
+  const metrics = calculateDrawdownMetrics({
+    ...account,
+    equity: eq,
+  });
+
+  if (metrics.isOverallBreached) {
+    return {
+      allowed: false,
+      code: 'ACCOUNT_HARD_BREACHED',
+      reason: 'Max Overall Drawdown limit reached. Trading is permanently locked.',
+      remainingDailyBuffer: 0,
+      remainingOverallBuffer: 0,
+      maxAllowedStake: 0,
+    };
+  }
+
+  if (metrics.isDailyBreached) {
+    return {
+      allowed: false,
+      code: 'ACCOUNT_SOFT_BREACHED',
+      reason:
+        'Daily Drawdown limit reached. Account is locked from opening new trades for the rest of the calendar day.',
+      remainingDailyBuffer: 0,
+      remainingOverallBuffer: metrics.remainingOverallBuffer,
+      maxAllowedStake: 0,
+    };
+  }
+
+  const baseInit = Math.max(Number(account.initialBalance || 0), Number(account.size || 0));
+  const riskPct = Number(account.maxRiskPerTradePercent || MAX_RISK_PER_TRADE_PERCENT);
+  const maxRiskCheck = checkMaxRiskPerTradeViolation(stake, baseInit, riskPct);
+
+  const maxAllowedByDrawdown = Math.min(
+    metrics.remainingDailyBuffer,
+    metrics.remainingOverallBuffer
+  );
+  const maxAllowedStake = Number(
+    Math.min(currentBalance, maxRiskCheck.maxAllowedStake, maxAllowedByDrawdown).toFixed(2)
+  );
+
+  if (maxRiskCheck.violated) {
+    return {
+      allowed: false,
+      code: 'MAX_RISK_PER_TRADE_EXCEEDED',
+      reason: `Max Risk Per Trade Violated: Stake of $${stake.toFixed(2)} (${maxRiskCheck.riskPercent}%) exceeds the strict ${riskPct}% per-trade limit ($${maxRiskCheck.maxAllowedStake.toFixed(2)}).`,
+      remainingDailyBuffer: metrics.remainingDailyBuffer,
+      remainingOverallBuffer: metrics.remainingOverallBuffer,
+      maxAllowedStake,
+    };
+  }
+
+  if (stake > metrics.remainingOverallBuffer) {
+    return {
+      allowed: false,
+      code: 'OVERALL_DRAWDOWN_BUFFER_EXCEEDED',
+      reason: `Zero-Tolerance Drawdown Guard: Trade stake ($${stake.toFixed(2)}) exceeds your exact remaining Max Overall Drawdown buffer ($${metrics.remainingOverallBuffer.toFixed(2)}).`,
+      remainingDailyBuffer: metrics.remainingDailyBuffer,
+      remainingOverallBuffer: metrics.remainingOverallBuffer,
+      maxAllowedStake,
+    };
+  }
+
+  if (stake > metrics.remainingDailyBuffer) {
+    return {
+      allowed: false,
+      code: 'DAILY_DRAWDOWN_BUFFER_EXCEEDED',
+      reason: `Zero-Tolerance Drawdown Guard: Trade stake ($${stake.toFixed(2)}) exceeds your exact remaining Daily Drawdown buffer ($${metrics.remainingDailyBuffer.toFixed(2)}).`,
+      remainingDailyBuffer: metrics.remainingDailyBuffer,
+      remainingOverallBuffer: metrics.remainingOverallBuffer,
+      maxAllowedStake,
+    };
+  }
+
+  return {
+    allowed: true,
+    remainingDailyBuffer: metrics.remainingDailyBuffer,
+    remainingOverallBuffer: metrics.remainingOverallBuffer,
+    maxAllowedStake,
+  };
+}
+
+/**
+ * Executes an instant Soft Breach & Active Trade Auto-Liquidation when an account hits its Daily Drawdown limit:
+ * - Immediately closes/cancels all active floating trades at their current live market price.
+ * - Realizes each trade's PnL (win, loss, or tie) and updates `currentBalance` and `equity`.
+ * - Sets `startingDayEquity` for the next trading day precisely to the remaining balance (e.g., $4,500).
+ * - Locks the account (`status: 'soft-breached'`, `breachType: 'soft'`) for the rest of the calendar day.
+ */
+export function liquidateActiveTradesOnSoftBreach(params: {
+  account: TradingAccount;
+  activeTrades: BinaryTrade[];
+  getLivePrice: (assetSymbol: string, strikePrice: number) => number;
+  nowMs?: number;
+  stakesAlreadyDeducted?: boolean;
+  breachReason?: string;
+}): {
+  updatedAccount: TradingAccount;
+  liquidatedTrades: BinaryTrade[];
+  realizedPnL: number;
+  totalCreditedBack: number;
+  nextDayStartingBalance: number;
+  remainingOverallBuffer: number;
+} {
+  const nowMs = params.nowMs ?? Date.now();
+  const stakesAlreadyDeducted = params.stakesAlreadyDeducted ?? true;
+  const { account, activeTrades, getLivePrice } = params;
+
+  const liquidatedTrades: BinaryTrade[] = [];
+  let totalCreditedBack = 0;
+  let totalDeltaIfNotDeducted = 0;
+  let realizedPnL = 0;
+
+  for (const t of activeTrades) {
+    if (!t || t.status !== 'active') continue;
+    const closePrice = getLivePrice(t.asset, t.strikePrice);
+    const diff = closePrice - t.strikePrice;
+    const isTie = Math.abs(diff) < 1e-7;
+    const isWin =
+      !isTie &&
+      ((t.direction === 'CALL' && diff > 0) || (t.direction === 'PUT' && diff < 0));
+
+    const stake = Number(t.investment || 0);
+    const profit = Number(((stake * Number(t.payoutPercentage || 85)) / 100).toFixed(2));
+
+    let status: 'won' | 'lost' | 'tie' = 'lost';
+    let pnl = -stake;
+
+    if (isTie) {
+      status = 'tie';
+      pnl = 0;
+      totalCreditedBack += stake;
+      totalDeltaIfNotDeducted += 0;
+    } else if (isWin) {
+      status = 'won';
+      pnl = profit;
+      totalCreditedBack += Number((stake + profit).toFixed(2));
+      totalDeltaIfNotDeducted += profit;
+    } else {
+      status = 'lost';
+      pnl = -stake;
+      totalCreditedBack += 0;
+      totalDeltaIfNotDeducted -= stake;
+    }
+
+    realizedPnL += pnl;
+    liquidatedTrades.push({
+      ...t,
+      status,
+      closePrice,
+      currentPrice: closePrice,
+      endTime: nowMs,
+      pnl: Number(pnl.toFixed(2)),
+    });
+  }
+
+  const baseBalance = Number(account.currentBalance || 0);
+  const finalBalance = stakesAlreadyDeducted
+    ? Number(Math.max(0, baseBalance + totalCreditedBack).toFixed(2))
+    : Number(Math.max(0, baseBalance + totalDeltaIfNotDeducted).toFixed(2));
+
+  const nextReset = getNextDailyResetTimestamp(nowMs);
+  const reason =
+    params.breachReason ||
+    `Daily Drawdown Limit Reached (${account.dailyLossLimitPercent}%): All active floating trades were auto-liquidated and trading is locked until the next trading day. Next day starting balance set to $${finalBalance.toFixed(2)}.`;
+
+  const breachLog: RuleViolationLog = {
+    id: `VIO-DAILY-${nowMs}`,
+    rule: 'DAILY_LOSS',
+    ruleName: 'Daily Loss Limit (Soft Breach & Auto-Liquidation)',
+    severity: 'warning',
+    message: reason,
+    timestamp: nowMs,
+    details: `Auto-liquidated ${liquidatedTrades.length} trade(s). Remaining Balance & Next Day Starting Equity: $${finalBalance.toFixed(2)}`,
+  };
+
+  const postMetrics = calculateDrawdownMetrics({
+    ...account,
+    currentBalance: finalBalance,
+    equity: finalBalance,
+    startingDayEquity: finalBalance,
+  });
+
+  const isAlsoHardBreached = postMetrics.isOverallBreached;
+
+  const updatedAccount: TradingAccount = {
+    ...account,
+    currentBalance: finalBalance,
+    equity: finalBalance,
+    startingDayEquity: finalBalance,
+    status: isAlsoHardBreached ? 'hard-breached' : 'soft-breached',
+    breachType: isAlsoHardBreached ? 'hard' : 'soft',
+    discountEligible: isAlsoHardBreached ? true : account.discountEligible,
+    softBreachResetTime: isAlsoHardBreached ? undefined : nextReset,
+    breachReason: reason,
+    breachedAt: nowMs,
+    tradesCount: (account.tradesCount || 0) + liquidatedTrades.length,
+    violationLogs: [...(account.violationLogs || []), breachLog],
+  };
+
+  return {
+    updatedAccount,
+    liquidatedTrades,
+    realizedPnL: Number(realizedPnL.toFixed(2)),
+    totalCreditedBack: Number(totalCreditedBack.toFixed(2)),
+    nextDayStartingBalance: finalBalance,
+    remainingOverallBuffer: postMetrics.remainingOverallBuffer,
+  };
+}
+
+/**
  * Live Risk Barricade Engine:
- * Prevents any new trades once 80% of the Daily Loss Limit or Max Overall Loss is consumed.
+ * Kept for backwards compatibility; default thresholdRatio can be configured.
  */
 export function isRiskBarricadeActive(
   dailyDrawdownPercent: number,
@@ -1291,16 +1752,19 @@ export function getNextDailyResetTimestamp(now: number = Date.now()): number {
 }
 
 /**
- * Resets a soft-breached account when the daily reset cycle finishes.
+ * Resets a soft-breached account when the daily reset cycle finishes,
+ * setting the new day's startingDayEquity to the remaining post-breach balance.
  */
 export function resetSoftBreachedAccount(account: TradingAccount): TradingAccount {
+  const remainingBalance = Number((account.currentBalance || account.equity || 0).toFixed(2));
   return {
     ...account,
     status: 'active',
     breachType: 'none',
     breachReason: undefined,
     softBreachResetTime: undefined,
-    startingDayEquity: account.equity || account.currentBalance,
+    equity: remainingBalance,
+    startingDayEquity: remainingBalance,
   };
 }
 
@@ -1320,7 +1784,7 @@ export function evaluateAccountBreach(
   violationLog?: RuleViolationLog;
   autoUnlockTimestamp?: number;
 } {
-  if (isPersonalLiveAccount(account) || isDemoAccount(account)) {
+  if (!account || isPersonalLiveAccount(account) || isDemoAccount(account)) {
     return { isBreached: false };
   }
 

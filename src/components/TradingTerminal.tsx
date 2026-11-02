@@ -86,7 +86,11 @@ import {
   getAccountStatusBadgeLabel,
   getChallengeProfitTarget,
   sanitizeAccountForAntiBreach,
+  calculateLiveAccountEquity,
+  liquidateActiveTradesOnSoftBreach,
+  validateZeroToleranceTradeExecution,
 } from '../utils/propRules';
+import { BftLogo } from './BftLogo';
 import {
   getAuthoritativeAccountBalance,
   resolveAccountBalanceColumn,
@@ -679,20 +683,20 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       ? Math.max(1, Number(((effectiveAccount.currentBalance * investment) / 100).toFixed(2)))
       : investment;
 
-  // Calculate live unrealized P&L on every tick with isolated asset pricing
-  const liveUnrealizedPnL = activeTrades.reduce((sum, t) => {
-    let inTheMoney = false;
-    const tradeMarket = getAssetMarketState(t.asset);
-    const assetPrice = t.asset === selectedAsset.symbol ? currentPrice : (tradeMarket?.lastPrice ?? t.strikePrice);
-    if (t.direction === 'CALL' && assetPrice > t.strikePrice) inTheMoney = true;
-    if (t.direction === 'PUT' && assetPrice < t.strikePrice) inTheMoney = true;
-    const itemPnL = inTheMoney ? (t.investment * t.payoutPercentage) / 100 : -t.investment;
-    return sum + itemPnL;
-  }, 0);
+  // Calculate live mark-to-market equity on every tick without double-deducting active stakes
+  const { liveEquity, netFloatingPnL: liveUnrealizedPnL } = calculateLiveAccountEquity(
+    effectiveAccount?.currentBalance || 0,
+    activeTrades,
+    (sym, strike) => {
+      if (sym === selectedAsset.symbol) return currentPrice;
+      const feedPrice = liveMarketFeed.getLatestPrice(sym);
+      const tradeMarket = getAssetMarketState(sym);
+      return feedPrice ?? tradeMarket?.lastPrice ?? strike;
+    },
+    true
+  );
 
-  const liveEquity = Number(((effectiveAccount?.currentBalance || 0) + liveUnrealizedPnL).toFixed(2));
-
-  // Real-time drawdown & barricade calculations synchronized with liveEquity on every tick
+  // Real-time drawdown & cumulative buffer calculations synchronized with liveEquity on every tick
   const metrics = calculateDrawdownMetrics({
     ...effectiveAccount,
     equity: liveEquity,
@@ -705,7 +709,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     account &&
       (account.status === 'hard-breached' ||
         account.status === 'breached' ||
-        (!isSoftBreached && account.status !== 'active' && account.status !== 'passed'))
+        (!isSoftBreached && account.status !== 'active' && account.status !== 'passed' && account.status !== 'passed_phase_1'))
   );
   const isBreached = isSoftBreached || isHardBreached;
   const otherActiveAccounts = accounts.filter((a) => a.id !== account?.id && a.status === 'active');
@@ -738,13 +742,13 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
   const riskBarricade = isRiskBarricadeActive(
     metrics.dailyDrawdownPercent,
-    account?.dailyLossLimitPercent || 6,
+    effectiveAccount?.dailyLossLimitPercent || 6,
     metrics.overallLossPercent,
-    account?.maxOverallLossPercent || 12,
-    0.8
+    effectiveAccount?.maxOverallLossPercent || 12,
+    1.0
   );
 
-  // Auto-Breach check on equity fluctuation
+  // Real-time Drawdown, Soft Breach, and Active Trade Auto-Liquidation Engine (1-Step, 2-Step, and Instant Funded)
   useEffect(() => {
     if (
       !account ||
@@ -752,67 +756,80 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       account.status === 'hard-breached' ||
       account.status === 'soft-breached' ||
       account.status === 'passed' ||
-      account.phase === 'funded' ||
-      account.phase === 'personal_live' ||
-      account.tier === 'personal' ||
-      account.tier === 'demo'
-    )
+      account.status === 'passed_phase_1' ||
+      isPersonalLiveAccount(account) ||
+      isDemoAccount(account)
+    ) {
       return;
+    }
+
     const evaluatedAccount = sanitizeAccountForAntiBreach({
       ...account,
       equity: liveEquity,
     });
     const breachEval = evaluateAccountBreach(evaluatedAccount);
+
     if (breachEval.isBreached) {
       soundEngine.playTradeLoss();
-      if (breachEval.breachCategory === 'soft') {
-        const nextReset = breachEval.autoUnlockTimestamp || getNextDailyResetTimestamp();
+      const nowMs = Date.now();
+      const getLivePriceForAsset = (sym: string, strike: number) => {
+        if (sym === selectedAssetRef.current.symbol) return currentPriceRef.current;
+        const feedPrice = liveMarketFeed.getLatestPrice(sym);
+        const tradeMarket = getAssetMarketState(sym);
+        return feedPrice ?? tradeMarket?.lastPrice ?? strike;
+      };
+
+      const liquidation = liquidateActiveTradesOnSoftBreach({
+        account: evaluatedAccount,
+        activeTrades: activeTradesRef.current,
+        getLivePrice: getLivePriceForAsset,
+        nowMs,
+        stakesAlreadyDeducted: true,
+        breachReason: breachEval.reason,
+      });
+
+      const balanceCol = resolveAccountBalanceColumn(evaluatedAccount);
+      for (const closedTrade of liquidation.liquidatedTrades) {
+        recordAtomicTradeSettlement({
+          tradeId: closedTrade.id,
+          accountId: evaluatedAccount.id,
+          column: balanceCol,
+          finalBalance: liquidation.updatedAccount.currentBalance,
+          nowMs,
+        });
+        onUpdateTrade(closedTrade);
+      }
+
+      if (breachEval.breachCategory === 'hard' || liquidation.updatedAccount.status === 'hard-breached') {
+        const hardReason =
+          breachEval.reason ||
+          `Maximum Overall Loss Exceeded (${evaluatedAccount.maxOverallLossPercent}%). Permanent Hard Breach enforced.`;
         const breachLog = {
-          id: `VIO-DAILY-${Date.now()}`,
-          rule: 'DAILY_LOSS' as const,
-          ruleName: 'Daily Loss Limit (Soft Breach)',
-          severity: 'warning' as const,
-          message: breachEval.reason || 'Daily drawdown threshold reached.',
-          timestamp: Date.now(),
-          details: `Equity dropped to $${liveEquity.toFixed(2)} (Auto-resets next trading day)`,
-        };
-        const updated: TradingAccount = {
-          ...account,
-          status: 'soft-breached',
-          breachType: 'soft',
-          softBreachResetTime: nextReset,
-          equity: liveEquity,
-          breachReason: breachEval.reason,
-          breachedAt: Date.now(),
-          violationLogs: [...(account.violationLogs || []), breachLog],
-        };
-        onUpdateAccount(updated);
-        setIsBreachModalOpen(true);
-      } else {
-        const breachLog = {
-          id: `VIO-OVERALL-${Date.now()}`,
+          id: `VIO-OVERALL-${nowMs}`,
           rule: 'OVERALL_LOSS' as const,
           ruleName: 'Max Overall Loss (Hard Breach)',
           severity: 'critical' as const,
-          message: breachEval.reason || 'Maximum overall loss limit breached.',
-          timestamp: Date.now(),
-          details: `Equity dropped to $${liveEquity.toFixed(2)} (Permanent Hard Breach)`,
+          message: hardReason,
+          timestamp: nowMs,
+          details: `Final Equity: $${liquidation.updatedAccount.equity.toFixed(2)} (Permanent Hard Breach)`,
         };
-        const updated: TradingAccount = {
-          ...account,
+        const hardUpdated: TradingAccount = {
+          ...liquidation.updatedAccount,
           status: 'hard-breached',
           breachType: 'hard',
           discountEligible: true,
-          equity: liveEquity,
-          breachReason: breachEval.reason,
-          breachedAt: Date.now(),
+          breachReason: hardReason,
+          breachedAt: nowMs,
           violationLogs: [...(account.violationLogs || []), breachLog],
         };
-        onUpdateAccount(updated);
+        onUpdateAccount(hardUpdated);
+        setIsBreachModalOpen(true);
+      } else {
+        onUpdateAccount(liquidation.updatedAccount);
         setIsBreachModalOpen(true);
       }
     }
-  }, [liveEquity, account, onUpdateAccount]);
+  }, [liveEquity, account, onUpdateAccount, onUpdateTrade]);
 
   // Sound toggle handler
   const handleToggleSound = () => {
@@ -1407,68 +1424,36 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     const isUnrestrictedPersonalOrDemo =
       isPersonalLiveAccount(activeAcc) || isDemoAccount(activeAcc);
 
-    if (!isUnrestrictedPersonalOrDemo && riskBarricade.barricaded) {
-      soundEngine.playTradeLoss();
-      setTradeError('Risk Barricade Active: Account is within 80% of max loss limit. Orders locked to protect capital.');
-      return;
-    }
-
     if (!isValidTradeDuration(durationToUse)) {
       soundEngine.playTradeLoss();
       setTradeError('Rule Violation: Minimum trade duration is 30 seconds to prevent tick scalping.');
       return;
     }
 
-    if (stakeToUse <= 0) {
-      setTradeError('Please enter a valid investment stake ($1+).');
-      return;
-    }
+    // Zero-Tolerance Drawdown & 5% Max Risk Per Trade Execution Guard
+    const zeroToleranceCheck = validateZeroToleranceTradeExecution({
+      account: activeAcc,
+      stake: stakeToUse,
+      liveEquity,
+    });
 
-    if (stakeToUse > activeAcc.currentBalance) {
-      setTradeError(`Insufficient balance. Available capital: $${activeAcc.currentBalance.toFixed(2)}`);
-      return;
-    }
-
-    // Strict Prop Guardrails apply ONLY to Prop Trading Accounts (Challenge & Funded)
-    // Personal Live (Self-Funded) and Demo accounts trade without prop drawdown or risk-per-trade locks
-    if (!isUnrestrictedPersonalOrDemo) {
-      // Strict 5% Max Risk Per Trade Check (Hard Breach if violated)
-      const maxRiskCheck = checkMaxRiskPerTradeViolation(
-        stakeToUse,
-        activeAcc.initialBalance || activeAcc.size,
-        activeAcc.maxRiskPerTradePercent || 5
+    if (!zeroToleranceCheck.allowed) {
+      soundEngine.playTradeLoss();
+      setTradeError(
+        zeroToleranceCheck.reason ||
+          'Trade blocked by Zero-Tolerance Prop Risk Guard.'
       );
-      if (maxRiskCheck.violated) {
-        soundEngine.playTradeLoss();
-        const breachReason = `Max Risk Per Trade Violated: Stake of $${stakeToUse.toFixed(2)} (${maxRiskCheck.riskPercent}%) exceeds the strict ${activeAcc.maxRiskPerTradePercent || 5}% ($${maxRiskCheck.maxAllowedStake.toFixed(2)}) per-trade risk limit. Permanent Hard Breach enforced.`;
-        const breachLog = {
-          id: `VIO-RISK5-${Date.now()}`,
-          rule: 'MAX_RISK_PER_TRADE' as const,
-          ruleName: '5% Max Risk Per Trade (Hard Breach)',
-          severity: 'critical' as const,
-          message: breachReason,
-          timestamp: Date.now(),
-          details: `Stake: $${stakeToUse} / Max Allowed: $${maxRiskCheck.maxAllowedStake} (5% Rule)`,
-        };
-        const breachedUpdate: TradingAccount = {
-          ...activeAcc,
-          status: 'hard-breached',
-          breachType: 'hard',
-          discountEligible: true,
-          breachReason,
-          breachedAt: Date.now(),
-          violationLogs: [...(activeAcc.violationLogs || []), breachLog],
-        };
-        if (account) {
-          onUpdateAccount(breachedUpdate);
-        } else {
-          setDemoPracticeAccount(breachedUpdate);
-        }
-        setTradeError(breachReason);
+      if (
+        zeroToleranceCheck.code === 'ACCOUNT_HARD_BREACHED' ||
+        zeroToleranceCheck.code === 'ACCOUNT_SOFT_BREACHED'
+      ) {
         setIsBreachModalOpen(true);
-        return;
       }
+      return;
+    }
 
+    // Additional Prop Guardrails apply ONLY to Prop Trading Accounts (Challenge & Instant Funded)
+    if (!isUnrestrictedPersonalOrDemo) {
       const hedgingCheck = isHedgingViolation(direction, assetToTrade.symbol, activeTrades);
       if (hedgingCheck.detected) {
         soundEngine.playTradeLoss();
@@ -3009,9 +2994,15 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       {/* Global Assets Loading Overlay */}
       {isLoadingAssets && (
         <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-[#0a0a0a]/98 backdrop-blur-md pointer-events-auto font-mono text-center px-6">
-          <div className="relative mb-8">
-            <div className="w-20 h-20 rounded-full border-2 border-white/5 border-t-[#ff8800] animate-spin" />
-            <Activity className="w-8 h-8 text-[#ff8800] absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 animate-pulse" />
+          <div className="relative mb-8 flex items-center justify-center">
+            <div className="w-24 h-24 rounded-full border-2 border-white/10 border-t-[#ff8800] animate-spin" />
+            <div className="absolute inset-0 flex items-center justify-center">
+              <BftLogo
+                imgClassName="h-14 w-auto"
+                testId="terminal-loading-bft-logo"
+                alt="BFT Bull Logo"
+              />
+            </div>
           </div>
           <div className="space-y-3">
             <h2 className="text-lg font-black text-white uppercase tracking-[0.3em] ml-1">
@@ -3031,19 +3022,24 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       {/* 0. COMPACT MOBILE TOP NAVIGATION HEADER (Quotex Mobile View) */}
       <div
         data-testid="quotex-mobile-top-header"
-        className="flex md:hidden h-10 bg-[#0a0a0a] border-b border-white/10 items-center justify-between px-2.5 shrink-0 relative z-50"
+        className="flex md:hidden h-11 bg-[#0a0a0a] border-b border-white/10 items-center justify-between px-2.5 shrink-0 relative z-50"
       >
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 min-w-0">
           <button
             onClick={() => {
               soundEngine.playUiClick();
               onNavigateTab?.('home');
             }}
-            className="flex items-center gap-1 px-2 py-1 rounded-lg bg-[#141720] border border-white/10 text-xs font-mono font-bold text-slate-300"
+            className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[#141720] border border-white/10 text-xs font-mono font-bold text-slate-300 shrink-0"
             title="Return to BFT Portal"
           >
-            <span className="font-black text-[#ff8800]">BFT</span>
-            <span className="text-[9px] px-1 py-0.2 rounded bg-[#ff8800]/20 text-[#ff8800] font-bold">OTC</span>
+            <BftLogo
+              imgClassName="h-6 w-auto"
+              testId="terminal-mobile-bft-logo"
+              alt="BFT Bull Logo"
+            />
+            <span className="font-black text-white text-[11px]">BFT</span>
+            <span className="text-[8px] px-1 py-0.2 rounded bg-[#ff8800]/20 text-[#ff8800] font-bold">OTC</span>
           </button>
 
           {/* Mobile Account Switcher Dropdown */}
@@ -3241,17 +3237,22 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       {/* 1. MAIN NAVIGATION HEADER */}
       <div className="hidden md:flex h-12 bg-[#1e222d] border-b border-[#2a2e39] flex items-center justify-between px-3 shrink-0 relative z-50">
         {/* Left: Brand / Portal Button */}
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-2">
           <button
             onClick={() => {
               soundEngine.playUiClick();
               onNavigateTab?.('home');
             }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#161923] hover:bg-[#252a37] border border-[#2a2e39] text-xs font-mono font-bold cursor-pointer transition-colors text-slate-300 hover:text-white"
+            className="flex items-center gap-2 px-2.5 py-1 rounded-lg bg-[#161923] hover:bg-[#252a37] border border-[#2a2e39] text-xs font-mono font-bold cursor-pointer transition-colors text-slate-300 hover:text-white"
             title="Return to BFT Portal"
           >
-            <span className="font-black text-[#ff8800]">BFT</span>
-            <span className="text-[9px] px-1 py-0.2 rounded bg-[#ff8800]/20 text-[#ff8800] font-bold">
+            <BftLogo
+              imgClassName="h-7 w-auto"
+              testId="terminal-desktop-bft-logo"
+              alt="BFT Bull Logo"
+            />
+            <span className="font-black text-white tracking-wider">BFT</span>
+            <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#ff8800]/20 text-[#ff8800] font-bold">
               TRADING TERMINAL
             </span>
           </button>
@@ -3510,6 +3511,22 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         {/* 2. LEFT-SIDE ICON NAVIGATION BAR */}
         <div className="hidden md:flex w-14 bg-[#1e222d] border-r border-[#2a2e39] flex flex-col items-center justify-between py-3 shrink-0 z-10">
           <div className="flex flex-col items-center gap-3">
+            {/* BFT Bull Emblem / Home */}
+            <button
+              onClick={() => {
+                soundEngine.playUiClick();
+                onNavigateTab?.('home');
+              }}
+              className="w-10 h-10 rounded-xl bg-[#141720] hover:bg-[#252a37] border border-[#ff8800]/40 flex items-center justify-center shadow-md cursor-pointer transition-transform hover:scale-105"
+              title="BFT Institutional Portal"
+            >
+              <BftLogo
+                imgClassName="h-7 w-auto"
+                testId="terminal-sidebar-bft-logo"
+                alt="BFT Bull Logo"
+              />
+            </button>
+
             {/* Trade / Terminal Icon (Active) */}
             <button
               className="w-10 h-10 rounded-xl bg-cyan-500/15 border border-cyan-400/50 flex items-center justify-center text-cyan-400 shadow-md cursor-pointer"
@@ -5351,67 +5368,102 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
       {/* 5. LIVE BOTTOM STATUS BAR (Drawdown & Capital Metrics - Desktop Only) */}
       <div className="hidden md:flex h-10 bg-[#0e1015] border-t border-white/10 px-4 items-center justify-between font-mono text-[11px] shrink-0 z-20">
-        {/* Left: Capital & Drawdown Metrics */}
+        {/* Left: Capital, Profit Target & Drawdown Metrics */}
         <div className="flex items-center gap-5 overflow-x-auto no-scrollbar">
           {/* Current Capital / Balance */}
-          <div className="flex items-center gap-1.5 shrink-0">
+          <div className="flex items-center gap-1.5 shrink-0" data-testid="terminal-bottom-capital">
             <span className="text-slate-400 uppercase text-[10px]">Capital:</span>
             <span className="text-white font-black text-xs">
-              ${(account?.currentBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              ${(effectiveAccount?.currentBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
             </span>
             <span className="text-slate-500 text-[10px]">
               (${liveEquity.toFixed(2)} Eq)
             </span>
           </div>
 
+          {/* Profit Target */}
+          <div className="flex items-center gap-1.5 shrink-0" data-testid="terminal-bottom-profit-target">
+            <span className="text-slate-400 uppercase text-[10px]">Profit Target:</span>
+            {isPersonalLiveAccount(effectiveAccount) ||
+            isDemoAccount(effectiveAccount) ||
+            effectiveAccount?.tier === 'instant' ||
+            effectiveAccount?.accountType === 'instant' ||
+            effectiveAccount?.phase === 'funded' ||
+            !effectiveAccount?.profitTargetPercent ? (
+              <span className="font-black text-slate-300">NONE</span>
+            ) : (
+              <span className="font-black text-[#ff8800]">
+                {effectiveAccount.profitTargetPercent}% ($
+                {(
+                  ((effectiveAccount.initialBalance || effectiveAccount.size || 10000) *
+                    effectiveAccount.profitTargetPercent) /
+                  100
+                ).toLocaleString()}
+                )
+              </span>
+            )}
+          </div>
+
           {/* Live Daily Drawdown (Used % and remaining $ limit) */}
-          <div className="flex items-center gap-1.5 shrink-0">
+          <div className="flex items-center gap-1.5 shrink-0" data-testid="terminal-bottom-daily-dd">
             <span className="text-slate-400 uppercase text-[10px]">Daily DD:</span>
-            <span
-              className={`font-black ${
-                metrics.dailyDrawdownPercent >= (account?.dailyLossLimitPercent || 4)
-                  ? 'text-rose-400'
-                  : metrics.dailyDrawdownPercent >= (account?.dailyLossLimitPercent || 4) * 0.8
-                  ? 'text-amber-400'
-                  : 'text-[#00e676]'
-              }`}
-            >
-              {metrics.dailyDrawdownPercent.toFixed(2)}% / {account?.dailyLossLimitPercent || 4}%
-            </span>
-            <span className="text-slate-500 text-[10px] hidden sm:inline">
-              (Rem: $
-              {Math.max(
-                0,
-                ((account?.startingDayEquity || 10000) * (account?.dailyLossLimitPercent || 4)) / 100 -
-                  ((account?.startingDayEquity || 10000) - liveEquity)
-              ).toFixed(0)}
-              )
-            </span>
+            {isPersonalLiveAccount(effectiveAccount) ||
+            isDemoAccount(effectiveAccount) ||
+            !effectiveAccount?.dailyLossLimitPercent ? (
+              <span className="font-black text-slate-300">NONE</span>
+            ) : (
+              <>
+                <span
+                  className={`font-black ${
+                    metrics.dailyDrawdownPercent >= effectiveAccount.dailyLossLimitPercent
+                      ? 'text-rose-400'
+                      : metrics.dailyDrawdownPercent >= effectiveAccount.dailyLossLimitPercent * 0.8
+                      ? 'text-amber-400'
+                      : 'text-[#00e676]'
+                  }`}
+                >
+                  {metrics.dailyDrawdownPercent.toFixed(2)}% / {effectiveAccount.dailyLossLimitPercent}%
+                </span>
+                <span className="text-slate-500 text-[10px] hidden sm:inline">
+                  (Rem: $
+                  {Number.isFinite(metrics.remainingDailyBuffer)
+                    ? metrics.remainingDailyBuffer.toFixed(0)
+                    : '0'}
+                  )
+                </span>
+              </>
+            )}
           </div>
 
           {/* Live Overall Max Drawdown (Used % and remaining $ limit) */}
-          <div className="flex items-center gap-1.5 shrink-0 hidden md:flex">
+          <div className="flex items-center gap-1.5 shrink-0 hidden md:flex" data-testid="terminal-bottom-max-dd">
             <span className="text-slate-400 uppercase text-[10px]">Max DD:</span>
-            <span
-              className={`font-black ${
-                metrics.overallLossPercent >= (account?.maxOverallLossPercent || 8)
-                  ? 'text-rose-400'
-                  : metrics.overallLossPercent >= (account?.maxOverallLossPercent || 8) * 0.8
-                  ? 'text-amber-400'
-                  : 'text-slate-200'
-              }`}
-            >
-              {metrics.overallLossPercent.toFixed(2)}% / {account?.maxOverallLossPercent || 8}%
-            </span>
-            <span className="text-slate-500 text-[10px]">
-              (Rem: $
-              {Math.max(
-                0,
-                ((account?.initialBalance || 10000) * (account?.maxOverallLossPercent || 8)) / 100 -
-                  ((account?.initialBalance || 10000) - liveEquity)
-              ).toFixed(0)}
-              )
-            </span>
+            {isPersonalLiveAccount(effectiveAccount) ||
+            isDemoAccount(effectiveAccount) ||
+            !effectiveAccount?.maxOverallLossPercent ? (
+              <span className="font-black text-slate-300">NONE</span>
+            ) : (
+              <>
+                <span
+                  className={`font-black ${
+                    metrics.overallLossPercent >= effectiveAccount.maxOverallLossPercent
+                      ? 'text-rose-400'
+                      : metrics.overallLossPercent >= effectiveAccount.maxOverallLossPercent * 0.8
+                      ? 'text-amber-400'
+                      : 'text-slate-200'
+                  }`}
+                >
+                  {metrics.overallLossPercent.toFixed(2)}% / {effectiveAccount.maxOverallLossPercent}%
+                </span>
+                <span className="text-slate-500 text-[10px]">
+                  (Rem: $
+                  {Number.isFinite(metrics.remainingOverallBuffer)
+                    ? metrics.remainingOverallBuffer.toFixed(0)
+                    : '0'}
+                  )
+                </span>
+              </>
+            )}
           </div>
         </div>
 
@@ -5427,7 +5479,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
           <div className="flex items-center gap-1">
             <span
               className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider ${
-                account?.status === 'active'
+                effectiveAccount?.status === 'active'
                   ? 'bg-emerald-950 text-[#00e676] border border-[#00e676]/40'
                   : isSoftBreached
                   ? 'bg-amber-950 text-amber-400 border border-amber-500/40 animate-pulse'
@@ -5438,7 +5490,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                 ? 'SOFT BREACH (DAILY PAUSE)'
                 : isHardBreached
                 ? 'HARD BREACH (PERMANENT)'
-                : account?.status || 'LOCKED'}
+                : effectiveAccount?.status || 'ACTIVE'}
             </span>
           </div>
 

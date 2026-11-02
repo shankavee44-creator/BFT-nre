@@ -1835,20 +1835,27 @@ export interface UserRealtimeSubscriptionCallbacks {
 export function buildSupabaseTradingAccountPayload(account: TradingAccount, userId: string) {
   const limits = getDynamicAccountLimits(
     account.accountType || account.tier,
-    account.phase || account.challengePhase,
-    {
-      dailyDrawdown: account.dailyLossLimitPercent,
-      maxDrawdown: account.maxOverallLossPercent,
-      profitTarget: account.profitTargetPercent,
-    }
+    account.phase || account.challengePhase
   );
+
+  const startBal = Number(account.initialBalance || account.size || 10000);
+  const curBal =
+    Number.isFinite(Number(account.currentBalance)) &&
+    (Number(account.currentBalance) > 0 || (account.tradesCount || 0) > 0)
+      ? Number(account.currentBalance)
+      : startBal;
+  const eq =
+    Number.isFinite(Number(account.equity)) &&
+    (Number(account.equity) > 0 || (account.tradesCount || 0) > 0)
+      ? Number(account.equity)
+      : curBal;
 
   return {
     user_id: userId,
     account_type: limits.accountType,
-    starting_balance: Number(account.initialBalance || account.size || 10000),
-    current_balance: Number(account.currentBalance || account.initialBalance || 10000),
-    equity: Number(account.equity || account.currentBalance || 10000),
+    starting_balance: startBal,
+    current_balance: curBal,
+    equity: eq,
     daily_drawdown: limits.dailyLossLimitPercent,
     max_drawdown: limits.maxOverallLossPercent,
     profit_target: limits.profitTargetPercent,
@@ -1860,20 +1867,22 @@ export function buildSupabaseTradingAccountPayload(account: TradingAccount, user
 export function mapSupabaseTradingAccountRow(row: Record<string, any>): TradingAccount {
   const limits = getDynamicAccountLimits(
     row.account_type || row.tier,
-    row.challenge_phase || row.phase,
-    {
-      dailyDrawdown: Number(row.daily_drawdown || row.daily_loss_limit_percent || 8),
-      maxDrawdown: Number(row.max_drawdown || row.max_overall_loss_percent || 20),
-      profitTarget: row.profit_target !== undefined && row.profit_target !== null ? Number(row.profit_target) : null,
-    }
+    row.challenge_phase || row.phase
   );
 
   const rawStartBal = Number(row.starting_balance ?? row.initial_balance ?? row.size ?? 10000);
   const startBal = Number.isFinite(rawStartBal) && rawStartBal > 0 ? rawStartBal : 10000;
-  const rawCurBal = Number(row.current_balance ?? startBal);
-  const curBal = Number.isFinite(rawCurBal) && rawCurBal > 0 ? rawCurBal : startBal;
-  const rawEq = Number(row.equity ?? curBal);
-  const eq = Number.isFinite(rawEq) && rawEq > 0 ? rawEq : curBal;
+  const tradesCount = Number(row.trades_count || 0);
+  const rawCurBal = Number(row.current_balance);
+  const curBal =
+    Number.isFinite(rawCurBal) && (rawCurBal > 0 || tradesCount > 0)
+      ? rawCurBal
+      : startBal;
+  const rawEq = Number(row.equity);
+  const eq =
+    Number.isFinite(rawEq) && (rawEq > 0 || tradesCount > 0)
+      ? rawEq
+      : curBal;
   const phase = (row.challenge_phase || row.phase || limits.initialPhase) as any;
   const status = row.status || 'active';
 
@@ -1898,16 +1907,17 @@ export function mapSupabaseTradingAccountRow(row: Record<string, any>): TradingA
     size: startBal,
     initialBalance: startBal,
     currentBalance: curBal,
-    startingDayEquity: curBal > 0 ? curBal : startBal,
+    startingDayEquity: Number(row.starting_day_equity || curBal || startBal),
     equity: eq,
     dailyLossLimitPercent: limits.dailyLossLimitPercent,
     maxOverallLossPercent: limits.maxOverallLossPercent,
     profitTargetPercent: limits.profitTargetPercent,
+    maxRiskPerTradePercent: limits.maxRiskPerTradePercent || 5,
     status,
     phase,
     challengePhase: phase,
     tradingDaysCompleted: Number(row.trading_days_completed || 0),
-    tradesCount: Number(row.trades_count || 0),
+    tradesCount,
     winRate: Number(row.win_rate || 0),
     createdDate: row.created_at ? String(row.created_at).split('T')[0] : new Date().toISOString().split('T')[0],
     lastActiveDate: row.updated_at ? String(row.updated_at).split('T')[0] : new Date().toISOString().split('T')[0],
@@ -2002,6 +2012,115 @@ export async function insertSupabaseTradingAccount(params: {
   }
 }
 
+/**
+ * Updates `current_balance`, `equity`, `status`, and `challenge_phase` directly in the
+ * Supabase `trading_accounts` table so closed trades and drawdown breaches persist across refreshes.
+ */
+export async function updateSupabaseTradingAccountState(params: {
+  accountId: string;
+  supabaseAccountId?: string;
+  userId?: string;
+  userEmail?: string;
+  accountType?: string;
+  startingBalance?: number;
+  currentBalance?: number;
+  equity?: number;
+  startingDayEquity?: number;
+  status?: string;
+  phase?: string;
+  tradesCount?: number;
+  winRate?: number;
+  tradingDaysCompleted?: number;
+}): Promise<{ ok: boolean; row?: Record<string, any>; error?: string }> {
+  if (!params.accountId || params.accountId.startsWith('BFT-DEMO') || params.accountId.startsWith('BFT-PERS')) {
+    return { ok: true };
+  }
+
+  const updatePayload: Record<string, any> = {};
+  if (params.currentBalance !== undefined && Number.isFinite(params.currentBalance)) {
+    updatePayload.current_balance = Number(params.currentBalance.toFixed(2));
+  }
+  if (params.equity !== undefined && Number.isFinite(params.equity)) {
+    updatePayload.equity = Number(params.equity.toFixed(2));
+  } else if (updatePayload.current_balance !== undefined) {
+    updatePayload.equity = updatePayload.current_balance;
+  }
+  if (params.status) {
+    updatePayload.status = params.status;
+  }
+  if (params.phase) {
+    updatePayload.challenge_phase = params.phase;
+  }
+
+  if (Object.keys(updatePayload).length === 0) {
+    return { ok: true };
+  }
+
+  const candidateAccUuid =
+    params.supabaseAccountId && UUID_REGEX.test(params.supabaseAccountId)
+      ? params.supabaseAccountId
+      : UUID_REGEX.test(params.accountId)
+      ? params.accountId
+      : null;
+
+  try {
+    if (candidateAccUuid) {
+      const { data, error } = await supabase
+        .from('trading_accounts')
+        .update(updatePayload)
+        .eq('id', candidateAccUuid)
+        .select('*')
+        .maybeSingle();
+      if (!error) {
+        return { ok: true, row: data || undefined };
+      }
+    }
+
+    // Fallback: match by user_id and account_type / starting_balance when local ID is BFT-XXXXXX
+    const effectiveUserUuid = await resolveSupabaseWithdrawalUserUuid({
+      userId: params.userId,
+      userEmail: params.userEmail,
+    });
+    if (effectiveUserUuid && UUID_REGEX.test(effectiveUserUuid)) {
+      const { data: userAccounts } = await supabase
+        .from('trading_accounts')
+        .select('id, account_type, starting_balance, current_balance, created_at')
+        .eq('user_id', effectiveUserUuid)
+        .order('created_at', { ascending: false });
+
+      if (Array.isArray(userAccounts) && userAccounts.length > 0) {
+        const normType = params.accountType
+          ? getDynamicAccountLimits(params.accountType).accountType
+          : undefined;
+        const matchedRow =
+          userAccounts.find(
+            (r) =>
+              (!normType || r.account_type === normType) &&
+              (!params.startingBalance || Number(r.starting_balance) === Number(params.startingBalance))
+          ) ||
+          userAccounts.find((r) => !normType || r.account_type === normType) ||
+          userAccounts[0];
+
+        if (matchedRow?.id) {
+          const { data, error } = await supabase
+            .from('trading_accounts')
+            .update(updatePayload)
+            .eq('id', matchedRow.id)
+            .select('*')
+            .maybeSingle();
+          if (!error) {
+            return { ok: true, row: data || undefined };
+          }
+        }
+      }
+    }
+
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Failed to update trading_accounts row' };
+  }
+}
+
 export async function fetchSupabaseTradingAccountsForUser(params: {
   userId?: string;
   userEmail?: string;
@@ -2025,8 +2144,8 @@ export async function fetchSupabaseTradingAccountsForUser(params: {
 
 /**
  * Resolves the authoritative balance for a given account mode directly from the synchronized
- * UserProfile state (`selfBalance` for Personal Live / Self-Capital mode, `demoBalance` for Demo mode,
- * `fundedBalance` for Funded mode), falling back to the account's own `currentBalance`.
+ * UserProfile state (`selfBalance` for Personal Live / Self-Capital mode, `demoBalance` for Demo mode),
+ * and uses the account's own `currentBalance` for Prop Evaluation & Instant Funded accounts.
  */
 export function getAuthoritativeAccountBalance(
   account: TradingAccount | null | undefined,
@@ -2054,6 +2173,16 @@ export function getAuthoritativeAccountBalance(
     return Number(account.currentBalance ?? 0);
   }
 
+  // For Prop Evaluation (1-Step, 2-Step) and Instant Funded accounts:
+  // If the account already has a valid positive currentBalance (or has executed trades),
+  // its own currentBalance from `trading_accounts` is authoritative.
+  if (
+    Number.isFinite(Number(account.currentBalance)) &&
+    (Number(account.currentBalance) > 0 || (account.tradesCount || 0) > 0)
+  ) {
+    return Number(account.currentBalance);
+  }
+
   if (
     account.phase === 'funded' &&
     userProfile?.fundedBalance !== undefined &&
@@ -2064,7 +2193,7 @@ export function getAuthoritativeAccountBalance(
     return Number(userProfile.fundedBalance);
   }
 
-  return Number(account.currentBalance ?? account.initialBalance ?? account.size ?? 10000);
+  return Number(account.initialBalance || account.size || 10000);
 }
 
 /**

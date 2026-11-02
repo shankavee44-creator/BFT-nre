@@ -532,7 +532,7 @@ test('buildSupabaseWithdrawalInsertPayload maps exact withdrawals table columns 
   assert.equal(cryptoPayload.countdown_ends_at, expectedCountdown);
   assert.equal(cryptoPayload.payout_method, 'crypto');
   assert.equal(cryptoPayload.wallet_address, '0x71C94F8B92E1048A3B99D2E54C1A82F901D3E84A');
-  assert.equal(cryptoPayload.network_type, 'BSC (BEP20)');
+  assert.equal(cryptoPayload.network_type, 'BEP20');
   assert.equal(cryptoPayload.bank_name, null);
   assert.equal(cryptoPayload.account_holder_name, null);
   assert.equal(cryptoPayload.bank_account_number, null);
@@ -740,7 +740,7 @@ test('hasActivePendingWithdrawal enforces single active withdrawal constraint pe
     trc20Address: 'Barclays Bank UK PLC • GB29NWBK60161331926819',
     referenceNumber: 'REF-002',
     requestedAt: Date.now(),
-    status: 'processing',
+    status: 'pending',
     isDoublePayoutEligible: false,
     timeElapsedSeconds: 0,
   };

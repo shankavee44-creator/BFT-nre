@@ -1,6 +1,7 @@
 import React from 'react';
 import { Award, CheckCircle2, ShieldCheck, Sparkles, X, ArrowRight, Download } from 'lucide-react';
 import { TradingAccount } from '../types';
+import { BftLogo } from './BftLogo';
 
 interface CertificateModalProps {
   isOpen: boolean;
@@ -40,9 +41,11 @@ export const CertificateModal: React.FC<CertificateModalProps> = ({
           <div className="absolute -top-20 -right-20 w-56 h-56 bg-[#ff8800]/15 rounded-full blur-3xl pointer-events-none" />
           <div className="flex items-center justify-between border-b border-[#ff8800]/30 pb-4 mb-6">
             <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-[#ff8800] to-[#ffaa00] flex items-center justify-center text-slate-950 font-black shadow-lg">
-                <Award className="w-7 h-7 stroke-[2.5]" />
-              </div>
+              <BftLogo
+                imgClassName="h-12 sm:h-14 w-auto"
+                testId="certificate-bft-logo"
+                alt="BFT Bull Logo"
+              />
               <div>
                 <div className="text-[10px] font-mono uppercase tracking-widest text-[#ffaa00] font-bold">
                   BINARY FUNDED TRADER • OFFICIAL VERIFICATION

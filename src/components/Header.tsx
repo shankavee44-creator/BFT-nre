@@ -29,6 +29,7 @@ import {
 import { getAuthoritativeAccountBalance } from '../utils/supabaseRealtimeSync';
 import { isRouteProtected } from '../utils/authRouting';
 import { BUILTIN_AVATARS } from '../utils/storage';
+import { BftLogo } from './BftLogo';
 
 interface HeaderProps {
   currentTab: string;
@@ -171,34 +172,31 @@ export const Header: React.FC<HeaderProps> = ({
       <CryptoTickerBar onSelectPair={() => setCurrentTab('terminal')} />
 
       {/* Main Navigation Bar */}
-      <div className="max-w-[1440px] mx-auto px-4 sm:px-6 h-18 flex items-center justify-between gap-2">
+      <div className="max-w-[1440px] mx-auto px-3 sm:px-6 h-16 sm:h-18 flex items-center justify-between gap-2">
         {/* Brand Logo & Name */}
         <div
           onClick={() => setCurrentTab('home')}
-          className="flex items-center gap-2.5 cursor-pointer group select-none shrink-0"
+          data-testid="header-brand-lockup"
+          className="flex items-center gap-2 sm:gap-3 cursor-pointer group select-none shrink-0 py-1"
         >
-          <div className="relative w-10 h-10 rounded-xl bg-[#ff8800] p-[1.5px] transition-transform group-hover:scale-105 duration-200">
-            <div className="w-full h-full bg-[#0a0a0a] rounded-[10px] flex items-center justify-center relative overflow-hidden">
-              <svg viewBox="0 0 100 100" className="w-6 h-6" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <line x1="30" y1="20" x2="30" y2="80" stroke="#10b981" strokeWidth="3" strokeLinecap="round" opacity="0.85" />
-                <rect x="22" y="34" width="16" height="32" rx="2" fill="#10b981" />
-                <path d="M46 22H78V31H63V78H49V22Z" fill="#ff8800" />
-                <path d="M48 42H70C74 42 77.5 45.4 77.5 49.5C77.5 53.6 74 57 70 57H48" stroke="#ff8800" strokeWidth="6" strokeLinecap="round" />
-                <path d="M48 60H68C72 60 75.5 63.4 75.5 67.5C75.5 71.6 72 75 68 75H48" stroke="#ff8800" strokeWidth="6" strokeLinecap="round" />
-                <path d="M18 72L44 46L58 60L84 24" stroke="#10b981" strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" />
-                <path d="M70 24H84V38" stroke="#10b981" strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </div>
+          <div className="relative flex items-center justify-center transition-transform group-hover:scale-105 duration-200">
+            <BftLogo
+              imgClassName="h-9 sm:h-10 md:h-11 w-auto"
+              testId="header-bft-logo"
+              alt="BFT Bull Logo"
+            />
           </div>
 
-          <div>
+          <div className="min-w-0">
             <div className="flex items-center gap-1.5">
-              <span className="text-xl font-black tracking-wider text-white font-mono">BFT</span>
-              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-[#ff8800]/15 text-[#ff8800] border border-[#ff8800]/40 uppercase tracking-widest font-mono">
+              <span className="text-base sm:text-xl font-black tracking-wider text-white font-mono leading-none">
+                BFT
+              </span>
+              <span className="hidden xs:inline-block sm:inline-block text-[9px] font-bold px-1.5 py-0.5 rounded bg-[#ff8800]/15 text-[#ff8800] border border-[#ff8800]/40 uppercase tracking-widest font-mono whitespace-nowrap">
                 PRIME PROP
               </span>
             </div>
-            <p className="text-[10px] font-bold text-slate-300 tracking-wide uppercase whitespace-nowrap">
+            <p className="hidden sm:block text-[10px] font-bold text-slate-300 tracking-wide uppercase whitespace-nowrap mt-0.5">
               Binary Funded Trader
             </p>
           </div>
@@ -329,21 +327,21 @@ export const Header: React.FC<HeaderProps> = ({
               )}
             </div>
           ) : (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 sm:gap-2">
               <button
                 type="button"
                 data-testid="header-login-btn"
                 onClick={() => onOpenAuthModal('login')}
-                className="px-3.5 py-1.5 rounded-xl bg-[#141418] hover:bg-white/10 border border-white/15 text-xs font-bold text-white flex items-center gap-1.5 cursor-pointer font-mono whitespace-nowrap transition-colors"
+                className="px-2.5 sm:px-3.5 py-1.5 rounded-xl bg-[#141418] hover:bg-white/10 border border-white/15 text-xs font-bold text-white flex items-center gap-1.5 cursor-pointer font-mono whitespace-nowrap transition-colors"
               >
-                <LogIn className="w-3.5 h-3.5 text-[#ff8800]" />
+                <LogIn className="w-3.5 h-3.5 text-[#ff8800] shrink-0" />
                 <span>Sign In</span>
               </button>
               <button
                 type="button"
                 data-testid="header-register-btn"
                 onClick={() => onOpenAuthModal('register')}
-                className="px-4 py-1.5 rounded-xl bg-[#ff8800] hover:bg-[#ffaa00] text-slate-950 text-xs font-black flex items-center gap-1.5 cursor-pointer font-mono whitespace-nowrap transition-colors"
+                className="hidden sm:flex px-4 py-1.5 rounded-xl bg-[#ff8800] hover:bg-[#ffaa00] text-slate-950 text-xs font-black items-center gap-1.5 cursor-pointer font-mono whitespace-nowrap transition-colors"
               >
                 <UserPlus className="w-3.5 h-3.5 stroke-[2.5]" />
                 <span>Register</span>
@@ -369,6 +367,38 @@ export const Header: React.FC<HeaderProps> = ({
       {/* Slide-Down Mobile Drawer Menu */}
       {mobileMenuOpen && (
         <div className="lg:hidden border-t border-white/10 bg-[#0d0d12]/98 backdrop-blur-2xl px-4 py-4 space-y-4 animate-in slide-in-from-top-4 duration-200">
+          {/* Mobile Drawer Brand Header */}
+          <div className="flex items-center justify-between pb-3 border-b border-white/10">
+            <div className="flex items-center gap-2.5">
+              <BftLogo
+                imgClassName="h-9 w-auto"
+                testId="mobile-drawer-bft-logo"
+                alt="BFT Bull Logo"
+              />
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-sm font-black text-white font-mono tracking-wider">
+                    BINARY FUNDED TRADER
+                  </span>
+                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-[#ff8800]/15 text-[#ff8800] border border-[#ff8800]/40 uppercase font-mono">
+                    BFT
+                  </span>
+                </div>
+                <p className="text-[10px] text-slate-400 font-mono">
+                  Institutional Binary Options Prop Firm
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setMobileMenuOpen(false)}
+              className="p-1.5 rounded-lg bg-white/5 text-slate-400 hover:text-white"
+              aria-label="Close Menu"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
           {/* User Status / Auth Quick Actions */}
           {userProfile.isLoggedIn ? (
             <div className="p-3 rounded-2xl bg-[#14141a] border border-white/10 flex items-center justify-between">

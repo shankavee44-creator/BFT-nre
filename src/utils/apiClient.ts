@@ -9,8 +9,8 @@ import {
   buildSupabaseUserPurchasePayload,
   buildSupabaseCryptoDepositRow,
 } from '../config/directDeposit';
-import { getDynamicAccountLimits } from './propRules';
-import { toValidUuid } from './supabaseRealtimeSync';
+import { getDynamicAccountLimits, sanitizeAccountForAntiBreach } from './propRules';
+import { toValidUuid, updateSupabaseTradingAccountState } from './supabaseRealtimeSync';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const API_BASE = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE_URL) || '';
@@ -414,42 +414,73 @@ export async function apiPurchaseAccount(params: {
     await supabase.from('crypto_deposits').insert([cryptoRow]).then(undefined, () => {});
 
     // Direct write to trading_accounts
-    const limits = getDynamicAccountLimits(params.tier, 'phase_1');
+    const initialCapital = Math.max(100, Number(params.size || 10000));
+    const limits = getDynamicAccountLimits(params.tier);
     const supaAccountPayload = {
       user_id: targetUuid,
       account_type: limits.accountType,
-      starting_balance: params.size,
-      current_balance: params.size,
-      equity: params.size,
+      starting_balance: initialCapital,
+      current_balance: initialCapital,
+      equity: initialCapital,
       daily_drawdown: limits.dailyLossLimitPercent,
       max_drawdown: limits.maxOverallLossPercent,
       profit_target: limits.profitTargetPercent,
       challenge_phase: limits.initialPhase,
       status: 'active',
     };
-    await supabase.from('trading_accounts').insert(supaAccountPayload).then(undefined, () => {});
 
-    const accountId = `BFT-${Math.floor(100000 + Math.random() * 900000)}`;
-    const fullTradingAccount = {
-      ...supaAccountPayload,
+    let insertedRow: any = null;
+    try {
+      const { data: insData, error: insErr } = await supabase
+        .from('trading_accounts')
+        .insert(supaAccountPayload)
+        .select('*')
+        .maybeSingle();
+      if (!insErr && insData) {
+        insertedRow = insData;
+      } else {
+        await supabase.from('trading_accounts').insert(supaAccountPayload).then(undefined, () => {});
+      }
+    } catch {
+      await supabase.from('trading_accounts').insert(supaAccountPayload).then(undefined, () => {});
+    }
+
+    const accountId = insertedRow?.id
+      ? String(insertedRow.id)
+      : `BFT-${Math.floor(100000 + Math.random() * 900000)}`;
+    const loginId = `BFT-${Math.floor(100000 + Math.random() * 900000)}`;
+    const today = new Date().toISOString().split('T')[0];
+
+    const fullTradingAccount = sanitizeAccountForAntiBreach({
       id: accountId,
-      loginId: accountId,
+      supabaseAccountId: insertedRow?.id ? String(insertedRow.id) : undefined,
+      loginId,
       passwordHash: Math.random().toString(36).slice(2, 10),
-      tier: params.tier,
+      tier: limits.tier,
+      accountType: limits.accountType,
       tierName: params.tierName || packageName,
-      size: params.size,
-      price: params.price,
-      currentBalance: params.size,
-      equity: params.size,
-      startingDayEquity: params.size,
+      size: initialCapital,
+      initialBalance: initialCapital,
+      currentBalance: initialCapital,
+      equity: initialCapital,
+      startingDayEquity: initialCapital,
       dailyLossLimitPercent: limits.dailyLossLimitPercent,
       maxOverallLossPercent: limits.maxOverallLossPercent,
       profitTargetPercent: limits.profitTargetPercent,
+      maxRiskPerTradePercent: limits.maxRiskPerTradePercent || 5,
+      dailyWithdrawalsUnlocked: Boolean(params.dailyWithdrawalsUnlocked),
       phase: limits.initialPhase,
+      challengePhase: limits.initialPhase,
       status: 'active',
+      breachType: 'none',
       ownerId: targetUuid,
-      createdAt: Date.now(),
-    };
+      ownerEmail: params.email,
+      tradingDaysCompleted: 0,
+      tradesCount: 0,
+      winRate: 0,
+      createdDate: today,
+      lastActiveDate: today,
+    });
 
     return {
       ok: true,
@@ -634,6 +665,11 @@ export async function apiPassChallenge(params: {
 export async function apiUpdateAccountState(
   accountId: string,
   updates: {
+    supabaseAccountId?: string;
+    userId?: string;
+    userEmail?: string;
+    accountType?: string;
+    startingBalance?: number;
     currentBalance?: number;
     equity?: number;
     startingDayEquity?: number;
@@ -646,20 +682,30 @@ export async function apiUpdateAccountState(
   }
 ) {
   if (
-    !hasJwtSession() ||
     !accountId ||
     accountId.startsWith('BFT-DEMO') ||
+    accountId.startsWith('BFT-PERS') ||
     accountId === 'BFT-10000'
   ) {
     return { ok: true, localOnly: true };
   }
   try {
-    const res = await fetch(`${API_BASE}/api/accounts/${encodeURIComponent(accountId)}`, {
-      method: 'PUT',
-      headers: getAuthHeaders(),
-      body: JSON.stringify(updates),
+    return await updateSupabaseTradingAccountState({
+      accountId,
+      supabaseAccountId: updates.supabaseAccountId,
+      userId: updates.userId,
+      userEmail: updates.userEmail,
+      accountType: updates.accountType,
+      startingBalance: updates.startingBalance,
+      currentBalance: updates.currentBalance,
+      equity: updates.equity,
+      startingDayEquity: updates.startingDayEquity,
+      status: updates.status,
+      phase: updates.phase,
+      tradesCount: updates.tradesCount,
+      winRate: updates.winRate,
+      tradingDaysCompleted: updates.tradingDaysCompleted,
     });
-    return await safeJsonResponse(res);
   } catch (e: any) {
     return { ok: false, error: e?.message || 'Failed to update account state' };
   }
