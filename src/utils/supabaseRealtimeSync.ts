@@ -1355,32 +1355,21 @@ export async function insertSupabaseUserPurchase(
   let savedRow: Record<string, any> | null = null;
 
   try {
-    // 1. Attempt full insert into user_purchases (with package_id, package_sku, amount, status)
-    const { data, error } = await supabase
+    // Insert core columns (user_id, package_name, package_amount) matching live Supabase schema
+    const { data: coreData, error: coreErr } = await supabase
       .from('user_purchases')
-      .insert([fullPayload])
+      .insert([corePayload])
       .select('*')
       .maybeSingle();
 
-    if (!error && data) {
-      savedRow = { ...fullPayload, ...data };
-    } else if (error) {
-      // 2. Fallback to core columns (user_id, package_name, package_amount) if remote schema is unmigrated
-      const { data: coreData, error: coreErr } = await supabase
+    if (!coreErr && coreData) {
+      savedRow = { ...fullPayload, ...coreData };
+    } else {
+      const { error: plainCoreErr } = await supabase
         .from('user_purchases')
-        .insert([corePayload])
-        .select('*')
-        .maybeSingle();
-
-      if (!coreErr && coreData) {
-        savedRow = { ...fullPayload, ...coreData };
-      } else {
-        const { error: plainCoreErr } = await supabase
-          .from('user_purchases')
-          .insert([corePayload]);
-        if (!plainCoreErr) {
-          savedRow = { ...fullPayload, created_at: new Date().toISOString() };
-        }
+        .insert([corePayload]);
+      if (!plainCoreErr) {
+        savedRow = { ...fullPayload, created_at: new Date().toISOString() };
       }
     }
   } catch {
@@ -1733,7 +1722,7 @@ export function mapSupabaseCommissionToReferralRecord(row: Record<string, any>):
   const levelNum = Number(row.level);
   const validLevel: ReferralLevel = levelNum === 2 ? 2 : levelNum === 3 ? 3 : 1;
   const amount = Number(row.amount ?? row.commission_amount ?? 0);
-  const rawType = String(row.commission_type || 'package').toLowerCase();
+  const rawType = String(row.source_type || row.commission_type || 'package').toLowerCase();
   const isWithdrawalBonus =
     rawType.includes('withdrawal') || rawType.includes('payout') || rawType.includes('royalty');
 
@@ -1746,10 +1735,10 @@ export function mapSupabaseCommissionToReferralRecord(row: Record<string, any>):
     : 0.02;
   const rate = Number(row.commission_rate ?? defaultRate);
   const basePrice = Number(
-    row.package_price ?? (rate > 0 ? Number((amount / rate).toFixed(2)) : amount)
+    row.package_amount ?? row.package_price ?? (rate > 0 ? Number((amount / rate).toFixed(2)) : amount)
   );
 
-  const sourceId = String(row.source_user_id || row.referred_user_id || 'usr_referred');
+  const sourceId = String(row.referred_user_id || row.source_user_id || 'usr_referred');
   const createdAt =
     typeof row.created_at === 'string' && row.created_at
       ? row.created_at.split('T')[0]
@@ -1757,7 +1746,7 @@ export function mapSupabaseCommissionToReferralRecord(row: Record<string, any>):
 
   return {
     id: String(row.id || `COM-${Date.now()}`),
-    referrerId: String(row.earner_id || row.referrer_id || ''),
+    referrerId: String(row.referrer_id || row.earner_id || ''),
     referredUserId: sourceId,
     referredUserName: String(
       row.source_name || row.referred_user_name || `Trader #${sourceId.slice(0, 6)}`
@@ -1769,7 +1758,8 @@ export function mapSupabaseCommissionToReferralRecord(row: Record<string, any>):
     commissionType: isWithdrawalBonus ? 'withdrawal' : 'package',
     packageTier: (row.package_tier as any) || 'two-step',
     packageName: String(
-      row.package_name ||
+      row.description ||
+        row.package_name ||
         (isWithdrawalBonus ? '8% Lifetime Payout Royalty' : `Level ${validLevel} Referral Commission`)
     ),
     packagePrice: basePrice,
@@ -2344,16 +2334,17 @@ export function subscribeUserRealtimeChannels(callbacks: UserRealtimeSubscriptio
         }
       }
 
-      // 3. Fetch initial referral commissions from Supabase (only query with valid UUIDs)
+      // 3. Fetch initial referral commissions from Supabase using exact referrer_id column
       if (onCommissionsInitial) {
         const uuidIds = Array.from(candidateIds).filter((id) => UUID_REGEX.test(id));
         if (uuidIds.length > 0) {
-          const { data: cRows } = await supabase
+          const { data: cRows, error: cErr } = await supabase
             .from('referral_commissions')
             .select('*')
-            .in('earner_id', uuidIds)
+            .in('referrer_id', uuidIds)
             .order('created_at', { ascending: false });
-          if (!isDisposed && Array.isArray(cRows) && cRows.length > 0) {
+
+          if (!isDisposed && !cErr && Array.isArray(cRows) && cRows.length > 0) {
             onCommissionsInitial(cRows);
           }
         }

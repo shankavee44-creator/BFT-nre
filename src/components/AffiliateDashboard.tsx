@@ -71,57 +71,127 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
   useEffect(() => {
     let isMounted = true;
     const targetUserId = userProfile.id;
-    if (!targetUserId) return;
+    if (!targetUserId && !userProfile.email) return;
+
+    const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
     const mapCommissionRow = (c: any): ReferralRecord => {
+      const earnerId = String(c.referrer_id || c.earner_id || userProfile.id);
+      const sourceId = String(c.referred_user_id || c.source_user_id || 'trader');
+      const rawType = String(c.source_type || c.commission_type || 'package').toLowerCase();
       return {
         id: String(c.id),
-        referrerId: String(c.earner_id),
-        referredUserId: String(c.source_user_id),
-        referredUserName: `Trader ${String(c.source_user_id).slice(0, 6)}`,
+        referrerId: earnerId,
+        referredUserId: sourceId,
+        referredUserName: `Trader ${sourceId.slice(0, 6)}`,
         referredUserEmail: `trader@bft.io`,
-        level: c.level as 1 | 2 | 3,
+        level: (c.level || 1) as 1 | 2 | 3,
         packageTier: 'one-step',
-        packageName: c.description || 'Commission',
-        packagePrice: Number(c.package_amount || 0),
+        packageName: c.description || c.package_name || 'Challenge Commission',
+        packagePrice: Number(c.package_amount || c.amount || 0),
         commissionRate: c.level === 1 ? 0.10 : c.level === 2 ? 0.05 : 0.02,
-        commissionAmount: Number(c.amount || 0),
-        commissionType: c.source_type,
+        commissionAmount: Number(c.amount || c.commission_amount || 0),
+        commissionType: rawType.includes('withdrawal') ? 'withdrawal' : 'package',
         status: 'paid',
-        createdAt: c.created_at,
+        createdAt: c.created_at || new Date().toISOString(),
       };
     };
 
     async function fetchAffiliateData() {
-      // 1. Fetch Commissions
-      const { data: comms } = await supabase
-        .from('referral_commissions')
-        .select('*')
-        .eq('earner_id', targetUserId)
-        .order('created_at', { ascending: false });
+      try {
+        let validUuid: string | null = null;
+        if (targetUserId && UUID_REGEX.test(targetUserId)) {
+          validUuid = targetUserId;
+        } else {
+          // Resolve UUID from auth user or profile lookup
+          const { data: authData } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
+          if (authData?.user?.id && UUID_REGEX.test(authData.user.id)) {
+            validUuid = authData.user.id;
+          } else if (userProfile.email) {
+            const { data: pData } = await supabase
+              .from('profiles')
+              .select('id')
+              .eq('email', userProfile.email)
+              .maybeSingle();
+            if (pData?.id && UUID_REGEX.test(pData.id)) {
+              validUuid = pData.id;
+            }
+          }
+        }
 
-      // 2. Fetch Referred Network Count (Direct + Indirect)
-      const { count } = await supabase
-        .from('profiles')
-        .select('*', { count: 'exact', head: true })
-        .eq('referred_by', targetUserId);
+        let rawComms: any[] = [];
+        let networkCount: number | null = null;
 
-      if (isMounted) {
-        if (comms) setSupabaseCommissions(comms.map(mapCommissionRow));
-        if (count !== null) setReferredNetworkCount(count);
+        // 1. Fetch Commissions from Supabase using exact referrer_id column
+        if (validUuid) {
+          const { data: commsData, error: commsErr } = await supabase
+            .from('referral_commissions')
+            .select('*')
+            .eq('referrer_id', validUuid)
+            .order('created_at', { ascending: false });
+
+          if (!commsErr && Array.isArray(commsData)) {
+            rawComms = commsData;
+          }
+
+          // 2. Fetch Referred Network Count (Direct + Indirect)
+          const { count, error: countErr } = await supabase
+            .from('profiles')
+            .select('*', { count: 'exact', head: true })
+            .eq('referred_by', validUuid);
+          if (!countErr && count !== null) {
+            networkCount = count;
+          }
+        }
+
+        // 3. Resilient fallback to backend affiliate dashboard API if Supabase returns 0 records
+        if (rawComms.length === 0) {
+          try {
+            const dashRes = await apiGetAffiliateDashboard();
+            if (dashRes?.ok && Array.isArray(dashRes?.stats?.referrals)) {
+              rawComms = dashRes.stats.referrals.map((r: any) => ({
+                id: String(r.id || Math.random()),
+                referrer_id: validUuid || targetUserId,
+                referred_user_id: r.referred_user_id || 'usr_sub',
+                description: r.package_name || 'Commission',
+                package_amount: Number(r.package_price || 0),
+                amount: Number(r.commission_amount || 0),
+                level: Number(r.tier_level || 1),
+                source_type: r.commission_type || 'package',
+                created_at: r.created_at || new Date().toISOString(),
+              }));
+              if (networkCount === null && typeof dashRes.stats.teamSize === 'number') {
+                networkCount = dashRes.stats.teamSize;
+              }
+            }
+          } catch {
+            // ignore
+          }
+        }
+
+        if (isMounted) {
+          if (rawComms.length > 0) {
+            setSupabaseCommissions(rawComms.map(mapCommissionRow));
+          }
+          if (networkCount !== null) {
+            setReferredNetworkCount(networkCount);
+          }
+        }
+      } catch (err) {
+        console.warn('Affiliate data sync notice:', err);
       }
     }
 
     fetchAffiliateData();
 
-    // Subscribe to Realtime
+    // Subscribe to Realtime only with valid channel names
     const commChannel = supabase
-      .channel('realtime:referral_commissions')
+      .channel(`realtime:referral_commissions:${targetUserId || 'session'}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'referral_commissions' }, fetchAffiliateData)
       .subscribe();
 
     const profileChannel = supabase
-      .channel('realtime:profiles')
+      .channel(`realtime:profiles:${targetUserId || 'session'}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'profiles' }, fetchAffiliateData)
       .subscribe();
 
@@ -130,7 +200,7 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
       supabase.removeChannel(commChannel);
       supabase.removeChannel(profileChannel);
     };
-  }, [userProfile.id]);
+  }, [userProfile.id, userProfile.email]);
 
   const totalPaid = payouts
     .filter((p) => p.status === 'completed' || p.status === 'processing')

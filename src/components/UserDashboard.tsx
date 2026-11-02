@@ -81,6 +81,9 @@ import {
   apiUpdateProfile,
   apiGetAdminUsers,
   apiGetUserPurchases,
+  apiGenerate2fa,
+  apiVerify2fa,
+  apiDisable2fa,
   safeJsonResponse,
   generateFallbackBase32Secret,
 } from '../utils/apiClient';
@@ -1013,26 +1016,13 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     soundEngine.playUiClick();
 
     try {
-      const token =
-        localStorage.getItem('bft_jwt_session') ||
-        sessionStorage.getItem('bft_jwt_session') ||
-        '';
-      const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
-      const res = await fetch(`${API_BASE}/api/2fa/setup`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          userId: userProfile.id,
-          email: userProfile.email,
-        }),
+      const data = await apiGenerate2fa({
+        userId: userProfile.id,
+        email: userProfile.email,
       });
 
-      const data = await safeJsonResponse(res);
       const resolvedSecret =
-        data.secret || (res.ok && data.emptyBody ? generateFallbackBase32Secret(32) : '');
+        data.secret || (data.ok ? generateFallbackBase32Secret(32) : '');
 
       if (data.ok && resolvedSecret) {
         setTotpSecret(resolvedSecret);
@@ -1045,22 +1035,6 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
         setVerificationCode('');
         setTwoFactorSetupState('verifying');
-
-        // Safe async Supabase profile update (supports UUID id or email)
-        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userProfile.id || '');
-        if (isUuid) {
-          supabase
-            .from('profiles')
-            .update({ totp_secret: resolvedSecret })
-            .eq('id', userProfile.id)
-            .then(undefined, (e: any) => console.warn('Supabase profile totp_secret sync warning:', e));
-        } else if (userProfile.email) {
-          supabase
-            .from('profiles')
-            .update({ totp_secret: resolvedSecret })
-            .eq('email', userProfile.email)
-            .then(undefined, (e: any) => console.warn('Supabase profile totp_secret sync warning:', e));
-        }
       } else {
         setTwoFactorError(data.error || 'Failed to generate 2FA credentials. Please try again.');
         setTwoFactorSetupState('idle');
@@ -1084,52 +1058,14 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     soundEngine.playUiClick();
 
     try {
-      const token =
-        localStorage.getItem('bft_jwt_session') ||
-        sessionStorage.getItem('bft_jwt_session') ||
-        '';
-      const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
-      const res = await fetch(`${API_BASE}/api/2fa/verify`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          userId: userProfile.id,
-          email: userProfile.email,
-          code: cleanCode,
-          secret: totpSecret,
-        }),
+      const data = await apiVerify2fa({
+        userId: userProfile.id,
+        email: userProfile.email,
+        code: cleanCode,
+        secret: totpSecret,
       });
 
-      const data = await safeJsonResponse(res, {
-        message: res.ok ? '2FA enabled successfully' : undefined,
-        is2faEnabled: res.ok ? true : undefined,
-      });
       if (data.ok) {
-        // Officially update is_2fa_enabled in Supabase profiles table
-        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userProfile.id || '');
-        if (isUuid) {
-          supabase
-            .from('profiles')
-            .update({
-              is_2fa_enabled: true,
-              totp_secret: totpSecret,
-            })
-            .eq('id', userProfile.id)
-            .then(undefined, (e: any) => console.warn('Supabase is_2fa_enabled update warning:', e));
-        } else if (userProfile.email) {
-          supabase
-            .from('profiles')
-            .update({
-              is_2fa_enabled: true,
-              totp_secret: totpSecret,
-            })
-            .eq('email', userProfile.email)
-            .then(undefined, (e: any) => console.warn('Supabase is_2fa_enabled update warning:', e));
-        }
-
         setTwoFactor(true);
         setTwoFactorSetupState('idle');
         setVerificationCode('');
@@ -1157,43 +1093,12 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     soundEngine.playUiClick();
 
     try {
-      const token =
-        localStorage.getItem('bft_jwt_session') ||
-        sessionStorage.getItem('bft_jwt_session') ||
-        '';
-      const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
-      const res = await fetch(`${API_BASE}/api/2fa/disable`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          userId: userProfile.id,
-          email: userProfile.email,
-        }),
+      const data = await apiDisable2fa({
+        userId: userProfile.id,
+        email: userProfile.email,
       });
 
-      const data = await safeJsonResponse(res, {
-        message: res.ok ? '2FA disabled successfully' : undefined,
-        is2faEnabled: res.ok ? false : undefined,
-      });
       if (data.ok) {
-        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userProfile.id || '');
-        if (isUuid) {
-          supabase
-            .from('profiles')
-            .update({ is_2fa_enabled: false })
-            .eq('id', userProfile.id)
-            .then(undefined, () => {});
-        } else if (userProfile.email) {
-          supabase
-            .from('profiles')
-            .update({ is_2fa_enabled: false })
-            .eq('email', userProfile.email)
-            .then(undefined, () => {});
-        }
-
         setTwoFactor(false);
         setTwoFactorSetupState('idle');
         setTotpSecret('');

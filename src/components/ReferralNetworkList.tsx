@@ -7,38 +7,98 @@ interface ReferralNetworkListProps {
   userId: string;
 }
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export const ReferralNetworkList: React.FC<ReferralNetworkListProps> = ({ userId }) => {
   const [network, setNetwork] = useState<ReferredUser[]>([]);
 
   async function fetchNetwork() {
-    // L1
-    const { data: l1 } = await supabase.from('profiles').select('id, full_name').eq('referred_by', userId);
-    const l1Users = (l1 || []).map(u => ({ id: u.id, fullName: u.full_name || 'Trader', level: 1 as const }));
+    try {
+      let targetUuid: string | null = null;
+      if (userId && UUID_REGEX.test(userId)) {
+        targetUuid = userId;
+      } else {
+        const { data: authData } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
+        if (authData?.user?.id && UUID_REGEX.test(authData.user.id)) {
+          targetUuid = authData.user.id;
+        }
+      }
 
-    // L2
-    const l1Ids = l1Users.map(u => u.id);
-    const { data: l2 } = await supabase.from('profiles').select('id, full_name, referred_by').in('referred_by', l1Ids);
-    const l2Users = (l2 || []).map(u => ({ id: u.id, fullName: u.full_name || 'Trader', level: 2 as const }));
+      if (!targetUuid) {
+        setNetwork([]);
+        return;
+      }
 
-    // L3
-    const l2Ids = l2Users.map(u => u.id);
-    const { data: l3 } = await supabase.from('profiles').select('id, full_name, referred_by').in('referred_by', l2Ids);
-    const l3Users = (l3 || []).map(u => ({ id: u.id, fullName: u.full_name || 'Trader', level: 3 as const }));
+      // L1
+      const { data: l1, error: l1Err } = await supabase
+        .from('profiles')
+        .select('id, full_name')
+        .eq('referred_by', targetUuid);
 
-    const allUsers = [...l1Users, ...l2Users, ...l3Users];
-    const allIds = allUsers.map(u => u.id);
+      if (l1Err || !Array.isArray(l1) || l1.length === 0) {
+        setNetwork([]);
+        return;
+      }
 
-    // Purchases
-    const { data: purchases } = await supabase.from('user_purchases').select('user_id, package_name, package_sku, package_amount').in('user_id', allIds);
+      const l1Users = l1.map(u => ({ id: u.id, fullName: u.full_name || 'Trader', level: 1 as const }));
 
-    const networkWithPurchases = allUsers.map(u => {
-      const purchase = (purchases || []).find(p => p.user_id === u.id);
-      return {
-        ...u,
-        latestPurchase: purchase ? { name: purchase.package_name, sku: purchase.package_sku, amount: purchase.package_amount } : undefined
-      };
-    });
-    setNetwork(networkWithPurchases);
+      // L2
+      const l1Ids = l1Users.map(u => u.id).filter(id => UUID_REGEX.test(id));
+      let l2Users: ReferredUser[] = [];
+      if (l1Ids.length > 0) {
+        const { data: l2 } = await supabase
+          .from('profiles')
+          .select('id, full_name, referred_by')
+          .in('referred_by', l1Ids);
+        if (Array.isArray(l2) && l2.length > 0) {
+          l2Users = l2.map(u => ({ id: u.id, fullName: u.full_name || 'Trader', level: 2 as const }));
+        }
+      }
+
+      // L3
+      const l3Users: ReferredUser[] = [];
+      const l2Ids = l2Users.map(u => u.id).filter(id => UUID_REGEX.test(id));
+      if (l2Ids.length > 0) {
+        const { data: l3 } = await supabase
+          .from('profiles')
+          .select('id, full_name, referred_by')
+          .in('referred_by', l2Ids);
+        if (Array.isArray(l3) && l3.length > 0) {
+          l3Users.push(...l3.map(u => ({ id: u.id, fullName: u.full_name || 'Trader', level: 3 as const })));
+        }
+      }
+
+      const allUsers = [...l1Users, ...l2Users, ...l3Users];
+      const allIds = allUsers.map(u => u.id).filter(id => UUID_REGEX.test(id));
+
+      if (allIds.length === 0) {
+        setNetwork(allUsers);
+        return;
+      }
+
+      // Purchases
+      const { data: purchases } = await supabase
+        .from('user_purchases')
+        .select('*')
+        .in('user_id', allIds);
+
+      const networkWithPurchases = allUsers.map(u => {
+        const purchase = (purchases || []).find((p: any) => p.user_id === u.id);
+        return {
+          ...u,
+          latestPurchase: purchase
+            ? {
+                name: purchase.package_name || 'Challenge Package',
+                sku: purchase.package_sku || 'BFT-PKG',
+                amount: Number(purchase.package_amount ?? purchase.amount ?? 0),
+              }
+            : undefined
+        };
+      });
+      setNetwork(networkWithPurchases);
+    } catch (err) {
+      console.warn('fetchNetwork notice:', err);
+    }
   }
 
   useEffect(() => {

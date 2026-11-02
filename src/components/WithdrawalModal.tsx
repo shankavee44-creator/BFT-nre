@@ -52,7 +52,7 @@ import {
   validateQuotexPurseAddress,
 } from '../utils/quotexWithdrawalPortal';
 import { soundEngine } from '../utils/soundEffects';
-import { apiSubmitWithdrawal, apiCancelWithdrawal, safeJsonResponse } from '../utils/apiClient';
+import { apiSubmitWithdrawal, apiCancelWithdrawal, apiValidate2fa, safeJsonResponse } from '../utils/apiClient';
 import { supabase } from '../utils/supabase';
 import {
   insertSupabaseWithdrawal,
@@ -519,21 +519,13 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
     setTotpError(null);
 
     try {
-      const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
-      const res = await fetch(`${API_BASE}/api/2fa/validate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: userProfile?.id || account?.ownerId,
-          email: userProfile?.email,
-          code: cleanCode,
-          secret: (userProfile as any)?.totp_secret || (userProfile as any)?.totpSecret,
-        }),
+      const data = await apiValidate2fa({
+        userId: userProfile?.id || account?.ownerId,
+        email: userProfile?.email,
+        code: cleanCode,
+        secret: (userProfile as any)?.totp_secret || (userProfile as any)?.totpSecret,
       });
 
-      const data = await safeJsonResponse(res, {
-        isValid: res.ok ? true : false,
-      });
       if (!data.isValid) {
         setTotpError(data.error || 'Invalid 6-digit verification code. Please check your Google Authenticator app and try again.');
         soundEngine.playErrorAlert();

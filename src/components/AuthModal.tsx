@@ -20,7 +20,7 @@ import {
   validateSponsorReferralCode,
   resolve3TierUplineChain,
 } from '../utils/affiliateEngine';
-import { apiEmailSessionSync, safeJsonResponse } from '../utils/apiClient';
+import { apiEmailSessionSync, apiValidate2fa } from '../utils/apiClient';
 import { supabase } from '../utils/supabase';
 import { resolveOrBuildUserProfile } from '../utils/authOtpLogic';
 
@@ -87,6 +87,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [fullName, setFullName] = useState('');
   const [is2faRequired, setIs2faRequired] = useState(false);
   const [tempUserId, setTempUserId] = useState('');
+  const [pendingAuthUser, setPendingAuthUser] = useState<any>(null);
   const [totpCode, setTotpCode] = useState('');
 
   const [referralCodeInput, setReferralCodeInput] = useState('');
@@ -257,22 +258,46 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
 
     try {
-      const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
-      const response = await fetch(`${API_BASE}/api/auth/session`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: cleanEmail, password, rememberMe }),
+      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+        email: cleanEmail,
+        password,
       });
-      const data = await safeJsonResponse(response);
 
-      if (!data.ok) {
-        setAuthError(data.error || 'Invalid email or password.');
+      if (signInError || !signInData?.user) {
+        setAuthError(signInError?.message || 'Invalid email or password.');
         setIsSubmitting(false);
         return;
       }
 
-      if (data.is2faRequired) {
-        setTempUserId(data.userId);
+      const authUser = signInData.user;
+      let profileRow: any = null;
+      try {
+        const { data: pById } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', authUser.id)
+          .maybeSingle();
+        profileRow = pById;
+        if (!profileRow) {
+          const { data: pByEmail } = await supabase
+            .from('profiles')
+            .select('*')
+            .ilike('email', cleanEmail)
+            .maybeSingle();
+          profileRow = pByEmail;
+        }
+      } catch {
+        // ignore profile lookup error
+      }
+
+      const userHas2fa = Boolean(
+        profileRow?.is_2fa_enabled ||
+        authUser.user_metadata?.is_2fa_enabled
+      );
+
+      if (userHas2fa) {
+        setTempUserId(profileRow?.id || authUser.id);
+        setPendingAuthUser(authUser);
         setIs2faRequired(true);
         setTotpCode('');
         setAuthError(null);
@@ -281,27 +306,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       }
 
       try {
-        sessionStorage.setItem(`bft_2fa_verified_${data.user.id}`, 'true');
+        sessionStorage.setItem(`bft_2fa_verified_${authUser.id}`, 'true');
         if (rememberMe) {
-          localStorage.setItem(`bft_2fa_verified_${data.user.id}`, 'true');
+          localStorage.setItem(`bft_2fa_verified_${authUser.id}`, 'true');
         }
       } catch {
         // ignore
       }
 
-      onAuthSuccess({
-        userId: data.user.id,
-        email: data.user.email,
-        fullName: data.user.fullName,
-        referralCode: data.user.referralCode,
-        referredBy: data.user.referredBy,
-        rememberMe,
-        jwtToken: data.token,
-        isNewRegistration: false,
-        serverUser: data.user,
-        serverAccounts: data.accounts,
-      });
-      onClose();
+      await ensureSupabaseUserProfileAndLogin(authUser);
     } catch {
       setAuthError('An error occurred during sign-in.');
     } finally {
@@ -322,47 +335,34 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setIsSubmitting(true);
 
     try {
-      const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
-      const response = await fetch(`${API_BASE}/api/auth/verify-2fa`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: tempUserId,
-          email: email.trim().toLowerCase(),
-          code: cleanCode,
-          rememberMe,
-        }),
+      const cleanEmail = email.trim().toLowerCase();
+      const validation = await apiValidate2fa({
+        userId: tempUserId,
+        email: cleanEmail,
+        code: cleanCode,
       });
-      const data = await safeJsonResponse(response);
 
-      if (!data.ok) {
-        setAuthError(data.error || 'Invalid 6-digit verification code.');
+      if (!validation.isValid) {
+        setAuthError(validation.error || 'Invalid 6-digit verification code.');
         setIsSubmitting(false);
         return;
       }
 
+      const resolvedUser = pendingAuthUser || {
+        id: tempUserId || 'usr_bft_001',
+        email: cleanEmail,
+      };
+
       try {
-        sessionStorage.setItem(`bft_2fa_verified_${data.user.id}`, 'true');
+        sessionStorage.setItem(`bft_2fa_verified_${resolvedUser.id}`, 'true');
         if (rememberMe) {
-          localStorage.setItem(`bft_2fa_verified_${data.user.id}`, 'true');
+          localStorage.setItem(`bft_2fa_verified_${resolvedUser.id}`, 'true');
         }
       } catch {
         // ignore
       }
 
-      onAuthSuccess({
-        userId: data.user.id,
-        email: data.user.email,
-        fullName: data.user.fullName,
-        referralCode: data.user.referralCode,
-        referredBy: data.user.referredBy,
-        rememberMe,
-        jwtToken: data.token,
-        isNewRegistration: false,
-        serverUser: data.user,
-        serverAccounts: data.accounts,
-      });
-      onClose();
+      await ensureSupabaseUserProfileAndLogin(resolvedUser);
     } catch {
       setAuthError('An error occurred during 2FA verification.');
     } finally {
