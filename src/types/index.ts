@@ -66,7 +66,17 @@ export interface TradingAccount {
   profitTargetPercent?: number | null; // e.g. 30 for one_step, 25 for two_step phase_1, 15 for two_step phase_2, 0/null for instant/funded
   step2ProfitTargetPercent?: number; // 15 for two_step phase_2
   maxRiskPerTradePercent?: number; // default 5%
-  status: 'active' | 'passed' | 'passed_phase_1' | 'soft-breached' | 'hard-breached' | 'breached' | 'suspended';
+  status:
+    | 'active'
+    | 'passed'
+    | 'passed_phase_1'
+    | 'soft_breached'
+    | 'hard_breached'
+    | 'failed'
+    | 'soft-breached'
+    | 'hard-breached'
+    | 'breached'
+    | 'suspended';
   breachType?: BreachType;
   softBreachResetTime?: number; // ms timestamp of next daily reset
   discountEligible?: boolean; // 10% courtesy discount on re-purchase

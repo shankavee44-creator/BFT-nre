@@ -14,7 +14,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { TradingAccount } from '../types';
-import { resetSoftBreachedAccount } from '../utils/propRules';
+import { resetSoftBreachedAccount, isAccountSoftBreached } from '../utils/propRules';
 
 interface AccountBreachModalProps {
   isOpen: boolean;
@@ -35,9 +35,7 @@ export const AccountBreachModal: React.FC<AccountBreachModalProps> = ({
   onOpenChallengeModal,
   onResetSoftBreach,
 }) => {
-  const isSoft = Boolean(
-    account && (account.status === 'soft-breached' || account.breachType === 'soft')
-  );
+  const isSoft = isAccountSoftBreached(account);
 
   // Live countdown timer for soft breach reset (all hooks must execute unconditionally before early return)
   const [secondsRemaining, setSecondsRemaining] = useState<number>(() => {

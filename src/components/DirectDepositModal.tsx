@@ -98,9 +98,43 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
 
     const fetchHistory = async () => {
       try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const supaUserId = sessionData?.session?.user?.id || userProfile?.id;
+        if (supaUserId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(supaUserId)) {
+          const { data: supaRows } = await supabase
+            .from('crypto_deposits')
+            .select('*')
+            .eq('user_id', supaUserId)
+            .order('created_at', { ascending: false })
+            .limit(50);
+          if (Array.isArray(supaRows) && supaRows.length > 0) {
+            setDepositHistory(
+              supaRows.map((r: any) => ({
+                id: String(r.id),
+                user_id: r.user_id,
+                wallet_address: r.wallet_address || depositoryAddress,
+                amount: Number(r.amount || 0),
+                package_name: r.package_name || 'Self Funded Capital Deposit',
+                sku: r.package_sku || r.sku || 'BFT-SELF-CAPITAL',
+                package_sku: r.package_sku || r.sku || 'BFT-SELF-CAPITAL',
+                account_type: r.account_type || 'self_funded',
+                status: r.status || 'pending',
+                tx_hash: r.tx_hash || null,
+                created_at: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
+              }))
+            );
+            return;
+          }
+        }
+      } catch {
+        // fallback to local API if available
+      }
+
+      try {
         const token = localStorage.getItem('bft_jwt_session') || '';
-        const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
-        const res = await fetch(`${API_BASE}/api/crypto-deposits`, {
+        const rawBase = import.meta.env.VITE_API_BASE_URL || '';
+        const apiBase = rawBase.includes('.supabase.co/functions') ? '' : rawBase;
+        const res = await fetch(`${apiBase}/api/crypto-deposits`, {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
         if (res.ok) {
@@ -115,7 +149,7 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
     };
 
     fetchHistory();
-  }, [isOpen, activeTab]);
+  }, [isOpen, activeTab, userProfile?.id, depositoryAddress]);
 
   if (!isOpen) return null;
 
@@ -163,7 +197,7 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
         txHash: txHashInput.trim() || undefined,
       });
 
-      // 1. Insert transaction details (user_id, package_id, amount, status) into Supabase user_purchases & crypto_deposits
+      // 1. Insert transaction details into Supabase user_purchases (apiSubmitCryptoDeposit handles crypto_deposits)
       let supaPurchaseRow: NormalizedPurchaseRecord | null = null;
       try {
         const supaInsertRes = await insertSupabaseUserPurchase({
@@ -179,27 +213,16 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
           accountType,
           status: 'pending',
           txHash: txHashInput.trim() || null,
+          skipCryptoDepositInsert: true,
         });
         if (supaInsertRes.ok && supaInsertRes.row) {
           supaPurchaseRow = supaInsertRes.row;
         }
-        insertSupabaseCryptoDeposit({
-          userId: userProfile?.id,
-          userEmail: userProfile?.email,
-          walletAddress: depositoryAddress,
-          amount: cleanAmount,
-          packageName: computedPackageName,
-          sku: computedSku,
-          accountType,
-          status: 'pending',
-          txHash: txHashInput.trim() || null,
-          accountId: targetAccount?.id || null,
-        }).catch(() => {});
       } catch {
         // ignore
       }
 
-      // 2. Submit to backend /api/crypto-deposits
+      // 2. Submit to crypto_deposits & verify against TronGrid (credits self_capital_balance ONLY if self_funded & completed)
       const data = await apiSubmitCryptoDeposit({
         userId: userProfile?.id,
         email: userProfile?.email,
@@ -239,7 +262,11 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
 
       setSuccessMessage(
         statusLabel === 'completed'
-          ? `TronGrid TRC-20 transfer verified! Deposit ${savedRecord.id} marked completed (${savedRecord.sku} • ${savedRecord.account_type} • $${cleanAmount.toFixed(2)} USDT).`
+          ? `TronGrid TRC-20 transfer verified! Deposit ${savedRecord.id} marked completed (${savedRecord.sku} • ${savedRecord.account_type} • $${cleanAmount.toFixed(2)} USDT).${
+              accountType === 'self_funded'
+                ? ` Credited +$${cleanAmount.toFixed(2)} to your Self-Capital Balance.`
+                : ''
+            }`
           : `Pending record saved to crypto_deposits (${savedRecord.sku} • ${savedRecord.account_type} • $${cleanAmount.toFixed(2)} USDT). Automated TronGrid TRC-20 verification is monitoring ${depositoryAddress}.`
       );
       setTxHashInput('');
@@ -247,8 +274,8 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
       // Prepend to deposit history
       setDepositHistory((prev) => [savedRecord, ...prev]);
 
-      // Notify parent account handler when verified or self-funded
-      if (targetAccount && statusLabel === 'completed') {
+      // Notify parent account handler ONLY when verified AND accountType === 'self_funded'
+      if (targetAccount && statusLabel === 'completed' && accountType === 'self_funded') {
         onCreditAccountDeposit(targetAccount.id, cleanAmount, savedRecord);
       }
     } catch (err: any) {
@@ -262,13 +289,16 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
     setIsVerifyingTronGrid(true);
     setErrorMessage(null);
     try {
-      // 1. Trigger backend TronGrid verification for pending rows in crypto_deposits
-      const verifyData = await apiVerifyCryptoDeposits();
+      // 1. Trigger TronGrid verification for pending rows in crypto_deposits (automatically credits self_capital_balance if self_funded)
+      const verifyData = await apiVerifyCryptoDeposits({
+        userId: userProfile?.id,
+        email: userProfile?.email,
+      });
       if (verifyData?.ok && Array.isArray(verifyData.deposits)) {
         setDepositHistory(verifyData.deposits);
       }
 
-      if (verifyData?.matchedCount > 0 && Array.isArray(verifyData.completedDeposits)) {
+      if ((verifyData?.matchedCount ?? 0) > 0 && Array.isArray(verifyData.completedDeposits)) {
         for (const comp of verifyData.completedDeposits) {
           if (comp.accountType === 'self_funded' && targetAccount && comp.amount > 0) {
             onCreditAccountDeposit(targetAccount.id, Number(comp.amount), comp.deposit);
@@ -279,71 +309,6 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
         );
         setIsVerifyingTronGrid(false);
         return;
-      }
-
-      // 2. Also check Supabase crypto_deposits where status = 'pending' against TronGrid API
-      try {
-        const { data: sessionData } = await supabase.auth.getSession();
-        const supaUserId = sessionData?.session?.user?.id;
-        if (supaUserId) {
-          const { data: pendingRows } = await supabase
-            .from('crypto_deposits')
-            .select('*')
-            .eq('user_id', supaUserId)
-            .eq('status', 'pending');
-
-          if (Array.isArray(pendingRows) && pendingRows.length > 0) {
-            const fetched = await fetchTronGridTrc20Transfers({
-              walletAddress: depositoryAddress,
-              apiKey: DIRECT_USDT_TRC20_CONFIG.tronGridApiKey,
-            });
-            if (fetched.ok && fetched.transactions.length > 0) {
-              const claimed = new Set<string>();
-              let supaMatchedCount = 0;
-              for (const row of pendingRows) {
-                const matched = matchPendingDepositToTronGridTx(
-                  {
-                    id: String(row.id),
-                    user_id: row.user_id,
-                    wallet_address: row.wallet_address || depositoryAddress,
-                    amount: Number(row.amount),
-                    package_name: row.package_name,
-                    sku: row.package_sku || row.sku,
-                    package_sku: row.package_sku || row.sku,
-                    account_type: row.account_type,
-                    status: row.status || 'pending',
-                  },
-                  fetched.transactions,
-                  claimed
-                );
-                if (matched) {
-                  claimed.add(matched.transaction_id);
-                  supaMatchedCount += 1;
-                  await supabase
-                    .from('crypto_deposits')
-                    .update({ status: 'completed' })
-                    .eq('id', row.id);
-                  if (row.account_type === 'self_funded' && targetAccount) {
-                    onCreditAccountDeposit(targetAccount.id, Number(row.amount), {
-                      ...row,
-                      status: 'completed',
-                      tx_hash: matched.transaction_id,
-                    });
-                  }
-                }
-              }
-              if (supaMatchedCount > 0) {
-                setSuccessMessage(
-                  `Verified ${supaMatchedCount} USDT (TRC-20) transfer(s) via TronGrid! Deposit status updated to completed.`
-                );
-                setIsVerifyingTronGrid(false);
-                return;
-              }
-            }
-          }
-        }
-      } catch {
-        // Ignore Supabase fallback error
       }
 
       setSuccessMessage(

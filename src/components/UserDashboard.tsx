@@ -71,6 +71,8 @@ import {
   isLiveFundedAccount,
   isPersonalLiveAccount,
   isDemoAccount,
+  isAccountSoftBreached,
+  isAccountHardBreached,
   getAccountStatusBadgeLabel,
   getChallengeProfitTarget,
   getPackageSku,
@@ -1546,16 +1548,21 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                   ? Math.min(100, Math.max(0, (Math.max(0, profit) / Math.max(1, challengeTarget.targetAmount)) * 100))
                   : 100;
 
+                const isHardBreached = isAccountHardBreached(acc);
+                const isSoftBreached = isAccountSoftBreached(acc);
+
                 return (
                   <div
                     key={acc.id}
                     data-testid={`account-card-${acc.id}`}
                     className={`p-5 rounded-2xl bg-[#0a0a0a] border transition-colors ${
-                      acc.status === 'hard-breached' || acc.status === 'breached'
+                      isHardBreached
                         ? 'border-rose-500/50'
+                        : isSoftBreached
+                        ? 'border-amber-500/50'
                         : isPersonal
                         ? 'border-[#ff8800] hover:border-[#ffaa00]'
-                        : acc.status === 'passed'
+                        : acc.status === 'passed' || acc.status === 'passed_phase_1'
                         ? 'border-emerald-500/50'
                         : 'border-white/15 hover:border-[#ff8800]'
                     }`}
@@ -1591,9 +1598,11 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                       </div>
                       <span
                         className={`text-xs font-semibold px-2.5 py-0.5 rounded-full font-mono ${
-                          acc.status === 'hard-breached' || acc.status === 'breached'
+                          isHardBreached
                             ? 'bg-rose-950/80 text-rose-300 border border-rose-500/50'
-                            : acc.status === 'passed'
+                            : isSoftBreached
+                            ? 'bg-amber-950/80 text-amber-300 border border-amber-500/50'
+                            : acc.status === 'passed' || acc.status === 'passed_phase_1'
                             ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-500/50'
                             : 'bg-emerald-950/60 text-emerald-400 border border-emerald-500/30'
                         }`}

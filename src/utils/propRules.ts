@@ -916,14 +916,29 @@ export function sanitizeAccountForAntiBreach(account: TradingAccount): TradingAc
   let status = account.status || 'active';
   let breachType = account.breachType || 'none';
 
-  // Personal Live, Demo, Passed accounts, or newly purchased accounts with 0 trades and full balance must never be marked breached
+  // Normalize hyphenated status strings to canonical database underscore format
+  if (status === 'soft-breached') {
+    status = 'soft_breached';
+    breachType = 'soft';
+  } else if (status === 'hard-breached') {
+    status = 'hard_breached';
+    breachType = 'hard';
+  }
+
+  const isBreachStatus =
+    status === 'soft_breached' ||
+    status === 'hard_breached' ||
+    status === 'failed' ||
+    status === 'breached';
+
+  // Personal Live, Demo, Passed accounts, or newly purchased accounts (including Instant Funded) with 0 trades and full balance must never be marked breached
   if (isPersonal || isDemo || status === 'passed' || status === 'passed_phase_1') {
-    if (status === 'soft-breached' || status === 'hard-breached' || status === 'breached') {
+    if (isBreachStatus) {
       status = 'active';
       breachType = 'none';
     }
   } else if (hasNoTradesYet && curBal >= initBal) {
-    if (status === 'soft-breached' || status === 'hard-breached' || status === 'breached' || (status as string) === 'failed') {
+    if (isBreachStatus) {
       status = 'active';
       breachType = 'none';
     }
@@ -947,6 +962,59 @@ export function sanitizeAccountForAntiBreach(account: TradingAccount): TradingAc
     status,
     breachType,
   };
+}
+
+/**
+ * Returns true if the account is currently in a Soft Breach (Daily Drawdown Pause) state.
+ */
+export function isAccountSoftBreached(account?: TradingAccount | null): boolean {
+  if (!account || isPersonalLiveAccount(account) || isDemoAccount(account)) return false;
+  return (
+    account.status === 'soft_breached' ||
+    account.status === 'soft-breached' ||
+    account.breachType === 'soft'
+  );
+}
+
+/**
+ * Returns true if the account is permanently locked due to a Hard Breach (Overall Drawdown / Failed).
+ */
+export function isAccountHardBreached(account?: TradingAccount | null): boolean {
+  if (!account || isPersonalLiveAccount(account) || isDemoAccount(account)) return false;
+  if (isAccountSoftBreached(account)) return false;
+  return (
+    account.status === 'hard_breached' ||
+    account.status === 'hard-breached' ||
+    account.status === 'failed' ||
+    account.status === 'breached' ||
+    account.breachType === 'hard'
+  );
+}
+
+/**
+ * Normalizes any account status into the canonical Supabase `trading_accounts.status` value:
+ * `'active' | 'soft_breached' | 'hard_breached' | 'passed' | 'passed_phase_1'`
+ */
+export function normalizeDatabaseAccountStatus(
+  status?: string | null,
+  breachType?: string | null
+): 'active' | 'soft_breached' | 'hard_breached' | 'passed' | 'passed_phase_1' {
+  const s = String(status || '').trim().toLowerCase();
+  if (s === 'passed_phase_1') return 'passed_phase_1';
+  if (s === 'passed') return 'passed';
+  if (s === 'soft_breached' || s === 'soft-breached' || breachType === 'soft') {
+    return 'soft_breached';
+  }
+  if (
+    s === 'hard_breached' ||
+    s === 'hard-breached' ||
+    s === 'failed' ||
+    s === 'breached' ||
+    breachType === 'hard'
+  ) {
+    return 'hard_breached';
+  }
+  return 'active';
 }
 
 export function getChallengeProfitTarget(account?: TradingAccount | null): {
@@ -1459,11 +1527,7 @@ export function validateZeroToleranceTradeExecution(params: {
     };
   }
 
-  if (
-    account.status === 'hard-breached' ||
-    account.status === 'breached' ||
-    account.breachType === 'hard'
-  ) {
+  if (isAccountHardBreached(account)) {
     return {
       allowed: false,
       code: 'ACCOUNT_HARD_BREACHED',
@@ -1474,7 +1538,7 @@ export function validateZeroToleranceTradeExecution(params: {
     };
   }
 
-  if (account.status === 'soft-breached' || account.breachType === 'soft') {
+  if (isAccountSoftBreached(account)) {
     return {
       allowed: false,
       code: 'ACCOUNT_SOFT_BREACHED',
@@ -1680,7 +1744,7 @@ export function liquidateActiveTradesOnSoftBreach(params: {
     currentBalance: finalBalance,
     equity: finalBalance,
     startingDayEquity: finalBalance,
-    status: isAlsoHardBreached ? 'hard-breached' : 'soft-breached',
+    status: isAlsoHardBreached ? 'hard_breached' : 'soft_breached',
     breachType: isAlsoHardBreached ? 'hard' : 'soft',
     discountEligible: isAlsoHardBreached ? true : account.discountEligible,
     softBreachResetTime: isAlsoHardBreached ? undefined : nextReset,
@@ -1697,6 +1761,170 @@ export function liquidateActiveTradesOnSoftBreach(params: {
     totalCreditedBack: Number(totalCreditedBack.toFixed(2)),
     nextDayStartingBalance: finalBalance,
     remainingOverallBuffer: postMetrics.remainingOverallBuffer,
+  };
+}
+
+/**
+ * Real-Time Event-Driven Trading Engine Check:
+ * Continuously evaluates account equity and balance second-by-second:
+ * 1. Overall Drawdown (Hard Breach / Failed): Immediately updates status to `'hard_breached'`,
+ *    auto-liquidates all active floating trades, realizes PnL, and locks the account permanently.
+ * 2. Daily Drawdown (Soft Breach): Immediately updates status to `'soft_breached'`,
+ *    auto-liquidates all active floating trades, realizes PnL, locks order placement for the rest of the day,
+ *    and sets the next day's starting balance (`startingDayEquity`) to the remaining balance.
+ * 3. Target Reached (Passed): When challenge profit targets are met, automatically updates status to
+ *    `'passed'` (or `'passed_phase_1'`) for immediate phase transition without requiring page refresh.
+ * 4. Self-Funded Accounts (`personal_live`) & Demo Accounts: Unrestricted (`action: 'none'`).
+ */
+export function evaluateRealtimeTradingEngine(params: {
+  account: TradingAccount;
+  activeTrades: BinaryTrade[];
+  getLivePrice: (assetSymbol: string, strikePrice: number) => number;
+  nowMs?: number;
+  stakesAlreadyDeducted?: boolean;
+}): {
+  action: 'none' | 'soft_breach' | 'hard_breach' | 'target_reached';
+  updatedAccount: TradingAccount;
+  liquidatedTrades: BinaryTrade[];
+  liveEquity: number;
+  databaseStatus: 'active' | 'soft_breached' | 'hard_breached' | 'passed' | 'passed_phase_1';
+  reason?: string;
+} {
+  const nowMs = params.nowMs ?? Date.now();
+  const stakesAlreadyDeducted = params.stakesAlreadyDeducted ?? true;
+  const sanitized = sanitizeAccountForAntiBreach(params.account);
+
+  const { liveEquity } = calculateLiveAccountEquity(
+    sanitized.currentBalance,
+    params.activeTrades,
+    params.getLivePrice,
+    stakesAlreadyDeducted
+  );
+
+  // Self-Funded & Demo accounts are completely unrestricted
+  if (isPersonalLiveAccount(sanitized) || isDemoAccount(sanitized)) {
+    return {
+      action: 'none',
+      updatedAccount: { ...sanitized, equity: liveEquity },
+      liquidatedTrades: [],
+      liveEquity,
+      databaseStatus: 'active',
+    };
+  }
+
+  // If already breached or passed, preserve state
+  if (
+    isAccountHardBreached(sanitized) ||
+    isAccountSoftBreached(sanitized) ||
+    sanitized.status === 'passed' ||
+    sanitized.status === 'passed_phase_1'
+  ) {
+    return {
+      action: 'none',
+      updatedAccount: sanitized,
+      liquidatedTrades: [],
+      liveEquity,
+      databaseStatus: normalizeDatabaseAccountStatus(sanitized.status, sanitized.breachType),
+    };
+  }
+
+  const accountWithLiveEq: TradingAccount = {
+    ...sanitized,
+    equity: liveEquity,
+  };
+
+  const breachEval = evaluateAccountBreach(accountWithLiveEq);
+  if (breachEval.isBreached) {
+    const liquidation = liquidateActiveTradesOnSoftBreach({
+      account: accountWithLiveEq,
+      activeTrades: params.activeTrades,
+      getLivePrice: params.getLivePrice,
+      nowMs,
+      stakesAlreadyDeducted,
+      breachReason: breachEval.reason,
+    });
+
+    if (
+      breachEval.breachCategory === 'hard' ||
+      isAccountHardBreached(liquidation.updatedAccount)
+    ) {
+      const hardReason =
+        breachEval.reason ||
+        `Maximum Overall Loss Exceeded (${accountWithLiveEq.maxOverallLossPercent}%). Permanent Hard Breach enforced.`;
+      const breachLog: RuleViolationLog = {
+        id: `VIO-OVERALL-${nowMs}`,
+        rule: 'OVERALL_LOSS',
+        ruleName: 'Max Overall Loss (Hard Breach)',
+        severity: 'critical',
+        message: hardReason,
+        timestamp: nowMs,
+        details: `Final Equity: $${liquidation.updatedAccount.equity.toFixed(2)} (Permanent Hard Breach)`,
+      };
+      const hardAccount: TradingAccount = {
+        ...liquidation.updatedAccount,
+        status: 'hard_breached',
+        breachType: 'hard',
+        discountEligible: true,
+        softBreachResetTime: undefined,
+        breachReason: hardReason,
+        breachedAt: nowMs,
+        violationLogs: [...(sanitized.violationLogs || []), breachLog],
+      };
+      return {
+        action: 'hard_breach',
+        updatedAccount: hardAccount,
+        liquidatedTrades: liquidation.liquidatedTrades,
+        liveEquity: hardAccount.equity,
+        databaseStatus: 'hard_breached',
+        reason: hardReason,
+      };
+    }
+
+    return {
+      action: 'soft_breach',
+      updatedAccount: {
+        ...liquidation.updatedAccount,
+        status: 'soft_breached',
+        breachType: 'soft',
+      },
+      liquidatedTrades: liquidation.liquidatedTrades,
+      liveEquity: liquidation.updatedAccount.equity,
+      databaseStatus: 'soft_breached',
+      reason: liquidation.updatedAccount.breachReason,
+    };
+  }
+
+  // Check if Challenge Profit Target is reached (when no open trades are pending settlement)
+  const hasOpenActive = params.activeTrades.some((t) => t && t.status === 'active');
+  if (!hasOpenActive && !isLiveFundedAccount(accountWithLiveEq)) {
+    const targetInfo = getChallengeProfitTarget(accountWithLiveEq);
+    if (targetInfo.isTargetMet) {
+      const normType = normalizeChallengeAccountType(
+        accountWithLiveEq.accountType || accountWithLiveEq.tier
+      );
+      const isToPhase2 =
+        normType === 'two_step' &&
+        (accountWithLiveEq.phase === 'phase_1' || accountWithLiveEq.challengePhase === 'phase_1');
+      const passedStatus: 'passed_phase_1' | 'passed' = isToPhase2 ? 'passed_phase_1' : 'passed';
+      return {
+        action: 'target_reached',
+        updatedAccount: {
+          ...accountWithLiveEq,
+          status: passedStatus,
+        },
+        liquidatedTrades: [],
+        liveEquity,
+        databaseStatus: passedStatus,
+      };
+    }
+  }
+
+  return {
+    action: 'none',
+    updatedAccount: accountWithLiveEq,
+    liquidatedTrades: [],
+    liveEquity,
+    databaseStatus: 'active',
   };
 }
 

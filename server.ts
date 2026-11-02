@@ -194,11 +194,24 @@ async function ensureSupabaseProfileInRest(
 async function startServer() {
   const app = express();
 
-  // Robust CORS & Options preflight handler to prevent 405 Method Not Allowed
+  // Robust CORS & Options preflight handler to prevent CORS blocking and 405 Method Not Allowed
+  app.use((req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+    res.setHeader(
+      'Access-Control-Allow-Headers',
+      'authorization, x-client-info, apikey, content-type, x-admin-key, prefer'
+    );
+    if (req.method === 'OPTIONS') {
+      return res.status(200).end();
+    }
+    next();
+  });
+
   app.use(cors({
     origin: '*',
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'x-admin-key', 'apikey', 'prefer'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-admin-key', 'apikey', 'prefer', 'x-client-info'],
     preflightContinue: false,
     optionsSuccessStatus: 200
   }));
@@ -1648,8 +1661,14 @@ async function startServer() {
     }
   });
 
-  // POST /api/withdrawals/cancel - Atomically cancel pending withdrawal & refund balance
-  app.post('/api/withdrawals/cancel', (req, res) => {
+  // POST /api/withdrawals/cancel (and /functions/v1/api/withdrawals/cancel) - Atomically cancel pending withdrawal & refund balance
+  const handleCancelWithdrawalRoute = (req: express.Request, res: express.Response) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader(
+      'Access-Control-Allow-Headers',
+      'authorization, x-client-info, apikey, content-type, x-admin-key'
+    );
     try {
       const user = getAuthenticatedUser(req);
       if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
@@ -1662,7 +1681,10 @@ async function startServer() {
     } catch (err: any) {
       return res.status(400).json({ ok: false, error: err?.message || 'Cancellation failed.' });
     }
-  });
+  };
+
+  app.post('/api/withdrawals/cancel', handleCancelWithdrawalRoute);
+  app.post('/functions/v1/api/withdrawals/cancel', handleCancelWithdrawalRoute);
 
   // GET /api/withdrawals - List withdrawal ledger for user
   app.get('/api/withdrawals', (req, res) => {

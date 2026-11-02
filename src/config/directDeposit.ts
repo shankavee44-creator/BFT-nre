@@ -188,8 +188,23 @@ export function buildSupabaseCryptoDepositRow(input: CryptoDepositRecordInput) {
     package_sku: payload.package_sku,
     account_type: payload.account_type,
     status: payload.status,
+    ...(payload.tx_hash ? { tx_hash: payload.tx_hash } : {}),
   };
 }
+
+export function buildSupabaseCryptoDepositCoreRow(input: CryptoDepositRecordInput) {
+  const payload = buildCryptoDepositPayload(input);
+  return {
+    ...(input.userId ? { user_id: input.userId } : {}),
+    wallet_address: payload.wallet_address,
+    amount: payload.amount,
+    package_name: payload.package_name,
+    package_sku: payload.package_sku,
+    account_type: payload.account_type,
+    status: payload.status,
+  };
+}
+
 
 export interface UserPurchaseRecordInput {
   id?: string;
@@ -700,5 +715,71 @@ export async function fetchTronGridTrc20Transfers(options?: {
       error: err?.message || 'Failed to fetch TRC-20 transactions from TronGrid API',
     };
   }
+}
+
+export interface CryptoDepositCreditEvaluation {
+  shouldCreditSelfCapital: boolean;
+  accountType: CryptoDepositAccountType;
+  depositAmount: number;
+  previousSelfCapitalBalance: number;
+  creditedSelfCapitalAmount: number;
+  newSelfCapitalBalance: number;
+  profileUpdatePayload: {
+    self_capital_balance: number;
+    self_balance: number;
+  } | null;
+}
+
+/**
+ * Pure helper: Evaluates whether a verified crypto deposit should credit the user's
+ * `self_capital_balance` / `self_balance` in the `profiles` table.
+ * Strictly credits ONLY when `accountType === 'self_funded'`, ensuring package purchases
+ * (`accountType === 'challenge'`) NEVER add funds to the self-capital balance.
+ */
+export function computeCryptoDepositVerificationCredit(params: {
+  amount: number;
+  accountType?: CryptoDepositAccountType | string | null;
+  currentSelfCapitalBalance?: number | null;
+  currentSelfBalance?: number | null;
+}): CryptoDepositCreditEvaluation {
+  const resolvedType = resolveDepositAccountType(params.accountType);
+  const cleanDepositAmount = Number(Math.max(0, Number(params.amount || 0)).toFixed(2));
+  const rawPrev =
+    params.currentSelfCapitalBalance !== undefined && params.currentSelfCapitalBalance !== null
+      ? Number(params.currentSelfCapitalBalance)
+      : params.currentSelfBalance !== undefined && params.currentSelfBalance !== null
+      ? Number(params.currentSelfBalance)
+      : 0;
+  const previousSelfCapitalBalance = Number(
+    (Number.isFinite(rawPrev) ? Math.max(0, rawPrev) : 0).toFixed(2)
+  );
+
+  if (resolvedType === 'self_funded' && cleanDepositAmount > 0) {
+    const newSelfCapitalBalance = Number(
+      (previousSelfCapitalBalance + cleanDepositAmount).toFixed(2)
+    );
+    return {
+      shouldCreditSelfCapital: true,
+      accountType: 'self_funded',
+      depositAmount: cleanDepositAmount,
+      previousSelfCapitalBalance,
+      creditedSelfCapitalAmount: cleanDepositAmount,
+      newSelfCapitalBalance,
+      profileUpdatePayload: {
+        self_capital_balance: newSelfCapitalBalance,
+        self_balance: newSelfCapitalBalance,
+      },
+    };
+  }
+
+  return {
+    shouldCreditSelfCapital: false,
+    accountType: 'challenge',
+    depositAmount: cleanDepositAmount,
+    previousSelfCapitalBalance,
+    creditedSelfCapitalAmount: 0,
+    newSelfCapitalBalance: previousSelfCapitalBalance,
+    profileUpdatePayload: null,
+  };
 }
 

@@ -7,7 +7,13 @@ import type {
   ReferralLevel,
   KYCStatus,
 } from '../types/index.ts';
-import { isPersonalLiveAccount, isDemoAccount, getDynamicAccountLimits, sanitizeAccountForAntiBreach } from './propRules.ts';
+import {
+  isPersonalLiveAccount,
+  isDemoAccount,
+  getDynamicAccountLimits,
+  sanitizeAccountForAntiBreach,
+  normalizeDatabaseAccountStatus,
+} from './propRules.ts';
 import {
   DIRECT_USDT_TRC20_CONFIG,
   type UserPurchaseRecordInput,
@@ -15,9 +21,13 @@ import {
   type CryptoDepositAccountType,
   buildSupabaseUserPurchasePayload,
   buildSupabaseCryptoDepositRow,
+  buildSupabaseCryptoDepositCoreRow,
+  computeCryptoDepositVerificationCredit,
   mapPurchaseRecord,
   mergeRealtimePurchase,
 } from '../config/directDeposit.ts';
+import { isTwoFactorEnabledOnProfile } from './authOtpLogic.ts';
+
 
 export {
   mapPurchaseRecord,
@@ -651,7 +661,11 @@ export async function commitProfileBalanceToSupabase(params: {
   newBalance: number;
 }): Promise<boolean> {
   const rounded = Number(params.newBalance.toFixed(2));
-  const payload: Record<string, number> = { [params.column]: rounded };
+  const primaryPayload: Record<string, number> =
+    params.column === 'self_balance'
+      ? { self_balance: rounded, self_capital_balance: rounded }
+      : { [params.column]: rounded };
+  const fallbackPayload: Record<string, number> = { [params.column]: rounded };
 
   const candidateUuids = new Set<string>();
   if (cachedSupabaseProfileUuid && UUID_REGEX.test(cachedSupabaseProfileUuid)) {
@@ -674,11 +688,20 @@ export async function commitProfileBalanceToSupabase(params: {
 
   for (const uid of Array.from(candidateUuids)) {
     try {
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from('profiles')
-        .update(payload)
+        .update(primaryPayload)
         .eq('id', uid)
         .select('id, self_balance, demo_balance, funded_balance');
+      if (error && params.column === 'self_balance') {
+        const fbRes = await supabase
+          .from('profiles')
+          .update(fallbackPayload)
+          .eq('id', uid)
+          .select('id, self_balance, demo_balance, funded_balance');
+        data = fbRes.data;
+        error = fbRes.error;
+      }
       if (!error && Array.isArray(data) && data.length > 0) {
         if (data[0]?.id && UUID_REGEX.test(String(data[0].id))) {
           cachedSupabaseProfileUuid = String(data[0].id);
@@ -697,11 +720,20 @@ export async function commitProfileBalanceToSupabase(params: {
   const normalizedEmail = params.userEmail ? params.userEmail.trim().toLowerCase() : '';
   if (normalizedEmail) {
     try {
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from('profiles')
-        .update(payload)
+        .update(primaryPayload)
         .ilike('email', normalizedEmail)
         .select('id, self_balance, demo_balance, funded_balance');
+      if (error && params.column === 'self_balance') {
+        const fbRes = await supabase
+          .from('profiles')
+          .update(fallbackPayload)
+          .ilike('email', normalizedEmail)
+          .select('id, self_balance, demo_balance, funded_balance');
+        data = fbRes.data;
+        error = fbRes.error;
+      }
       if (!error && Array.isArray(data) && data.length > 0) {
         if (data[0]?.id && UUID_REGEX.test(String(data[0].id))) {
           cachedSupabaseProfileUuid = String(data[0].id);
@@ -749,7 +781,7 @@ export function applyRealtimeProfileUpdate(
     return Number.isFinite(num) ? num : undefined;
   };
 
-  const rawSelf = parseNumeric(row.self_balance);
+  const rawSelf = parseNumeric(row.self_capital_balance ?? row.self_balance);
   const rawDemo = parseNumeric(row.demo_balance);
   const rawFunded = parseNumeric(row.funded_balance);
 
@@ -849,6 +881,10 @@ export function applyRealtimeProfileUpdate(
     row.profile_locked !== undefined && row.profile_locked !== null
       ? Boolean(row.profile_locked)
       : prevProfile.profileLocked;
+  const nextTwoFactor =
+    row.two_factor_enabled !== undefined || row.is_2fa_enabled !== undefined
+      ? isTwoFactorEnabledOnProfile(row)
+      : prevProfile.twoFactorEnabled;
 
   const profileChanged =
     nextSelf !== prevProfile.selfBalance ||
@@ -858,7 +894,8 @@ export function applyRealtimeProfileUpdate(
     nextFullName !== prevProfile.fullName ||
     nextReferralCode !== prevProfile.referralCode ||
     nextReferredBy !== prevProfile.referredBy ||
-    nextLocked !== prevProfile.profileLocked;
+    nextLocked !== prevProfile.profileLocked ||
+    nextTwoFactor !== prevProfile.twoFactorEnabled;
 
   const updatedProfile: UserProfile = profileChanged
     ? {
@@ -870,6 +907,7 @@ export function applyRealtimeProfileUpdate(
         referredBy: nextReferredBy,
         kycStatus: resolvedKycStatus,
         profileLocked: nextLocked,
+        twoFactorEnabled: nextTwoFactor,
         selfBalance: nextSelf,
         demoBalance: nextDemo,
         fundedBalance: nextFunded,
@@ -1833,22 +1871,25 @@ export interface UserRealtimeSubscriptionCallbacks {
 }
 
 export function buildSupabaseTradingAccountPayload(account: TradingAccount, userId: string) {
+  const sanitized = sanitizeAccountForAntiBreach(account);
   const limits = getDynamicAccountLimits(
-    account.accountType || account.tier,
-    account.phase || account.challengePhase
+    sanitized.accountType || sanitized.tier,
+    sanitized.phase || sanitized.challengePhase
   );
 
-  const startBal = Number(account.initialBalance || account.size || 10000);
+  const startBal = Number(sanitized.initialBalance || sanitized.size || 10000);
   const curBal =
-    Number.isFinite(Number(account.currentBalance)) &&
-    (Number(account.currentBalance) > 0 || (account.tradesCount || 0) > 0)
-      ? Number(account.currentBalance)
+    Number.isFinite(Number(sanitized.currentBalance)) &&
+    (Number(sanitized.currentBalance) > 0 || (sanitized.tradesCount || 0) > 0)
+      ? Number(sanitized.currentBalance)
       : startBal;
   const eq =
-    Number.isFinite(Number(account.equity)) &&
-    (Number(account.equity) > 0 || (account.tradesCount || 0) > 0)
-      ? Number(account.equity)
+    Number.isFinite(Number(sanitized.equity)) &&
+    (Number(sanitized.equity) > 0 || (sanitized.tradesCount || 0) > 0)
+      ? Number(sanitized.equity)
       : curBal;
+
+  const dbStatus = normalizeDatabaseAccountStatus(sanitized.status, sanitized.breachType);
 
   return {
     user_id: userId,
@@ -1859,8 +1900,8 @@ export function buildSupabaseTradingAccountPayload(account: TradingAccount, user
     daily_drawdown: limits.dailyLossLimitPercent,
     max_drawdown: limits.maxOverallLossPercent,
     profit_target: limits.profitTargetPercent,
-    challenge_phase: account.phase || account.challengePhase || limits.initialPhase,
-    status: account.status || 'active',
+    challenge_phase: sanitized.phase || sanitized.challengePhase || limits.initialPhase,
+    status: dbStatus,
   };
 }
 
@@ -1884,7 +1925,13 @@ export function mapSupabaseTradingAccountRow(row: Record<string, any>): TradingA
       ? rawEq
       : curBal;
   const phase = (row.challenge_phase || row.phase || limits.initialPhase) as any;
-  const status = row.status || 'active';
+  const normalizedStatus = normalizeDatabaseAccountStatus(row.status, row.breach_type);
+  const breachType =
+    normalizedStatus === 'soft_breached'
+      ? 'soft'
+      : normalizedStatus === 'hard_breached'
+      ? 'hard'
+      : 'none';
 
   const rawAcc: TradingAccount = {
     id: String(row.id || `ACC-${Date.now()}`),
@@ -1913,7 +1960,8 @@ export function mapSupabaseTradingAccountRow(row: Record<string, any>): TradingA
     maxOverallLossPercent: limits.maxOverallLossPercent,
     profitTargetPercent: limits.profitTargetPercent,
     maxRiskPerTradePercent: limits.maxRiskPerTradePercent || 5,
-    status,
+    status: normalizedStatus,
+    breachType,
     phase,
     challengePhase: phase,
     tradingDaysCompleted: Number(row.trading_days_completed || 0),
@@ -1954,6 +2002,16 @@ export async function insertSupabaseCryptoDeposit(params: {
     txHash: params.txHash || undefined,
   });
 
+  const corePayload = buildSupabaseCryptoDepositCoreRow({
+    userId: effectiveUserId,
+    walletAddress: params.walletAddress || DIRECT_USDT_TRC20_CONFIG.walletAddress,
+    amount: params.amount,
+    packageName: params.packageName,
+    sku: params.sku,
+    accountType: (params.accountType as CryptoDepositAccountType) || 'self_funded',
+    status: (params.status as 'pending' | 'completed' | 'approved' | 'declined') || 'pending',
+  });
+
   try {
     const { data, error } = await supabase
       .from('crypto_deposits')
@@ -1965,16 +2023,110 @@ export async function insertSupabaseCryptoDeposit(params: {
       return { ok: true, row: data };
     }
 
+    // Fallback to core columns if tx_hash is not on the remote table
+    const { data: coreData, error: coreErr } = await supabase
+      .from('crypto_deposits')
+      .insert([corePayload])
+      .select('*')
+      .maybeSingle();
+
+    if (!coreErr && coreData) {
+      return { ok: true, row: { ...payload, ...coreData } };
+    }
+
     // Fallback if select after insert is restricted by RLS
-    const { error: plainErr } = await supabase.from('crypto_deposits').insert([payload]);
+    const { error: plainErr } = await supabase.from('crypto_deposits').insert([corePayload]);
     if (!plainErr) {
       return { ok: true, row: { ...payload, created_at: new Date().toISOString() } };
     }
 
-    return { ok: false, error: plainErr.message || error?.message };
+    return { ok: false, error: plainErr.message || coreErr?.message || error?.message };
   } catch (err: any) {
     return { ok: false, error: err?.message || 'crypto_deposits insert failed' };
   }
+}
+
+/**
+ * Marks a crypto deposit as 'completed' in `crypto_deposits` and automatically credits
+ * the exact deposit amount to `self_capital_balance` & `self_balance` in `profiles`
+ * ONLY when `accountType === 'self_funded'` (never crediting self-capital for `challenge` purchases).
+ */
+export async function verifyAndCreditCryptoDepositInSupabase(params: {
+  depositId?: string;
+  userId?: string;
+  userEmail?: string;
+  amount: number;
+  accountType?: 'challenge' | 'self_funded' | string;
+  txHash?: string | null;
+}): Promise<{
+  ok: boolean;
+  creditedSelfCapitalAmount: number;
+  newSelfCapitalBalance?: number;
+  accountType: CryptoDepositAccountType;
+  error?: string;
+}> {
+  const effectiveUserId = await resolveSupabaseWithdrawalUserUuid({
+    userId: params.userId,
+    userEmail: params.userEmail,
+  });
+
+  if (params.depositId && UUID_REGEX.test(params.depositId)) {
+    try {
+      await supabase
+        .from('crypto_deposits')
+        .update({ status: 'completed' })
+        .eq('id', params.depositId);
+    } catch {
+      // ignore
+    }
+  }
+
+  const profileRow = await fetchSupabaseProfileRow({
+    userId: effectiveUserId,
+    userEmail: params.userEmail,
+  });
+
+  const creditEval = computeCryptoDepositVerificationCredit({
+    amount: params.amount,
+    accountType: params.accountType,
+    currentSelfCapitalBalance: profileRow?.self_capital_balance,
+    currentSelfBalance: profileRow?.self_balance,
+  });
+
+  if (creditEval.shouldCreditSelfCapital) {
+    recordDirectBalanceCommit('self_balance', creditEval.newSelfCapitalBalance);
+    await commitProfileBalanceToSupabase({
+      userId: profileRow?.id || effectiveUserId,
+      userEmail: profileRow?.email || params.userEmail,
+      column: 'self_balance',
+      newBalance: creditEval.newSelfCapitalBalance,
+    });
+
+    if (typeof window !== 'undefined') {
+      try {
+        window.dispatchEvent(
+          new CustomEvent('bft-realtime-profile-update', {
+            detail: {
+              ...(profileRow || {}),
+              id: profileRow?.id || effectiveUserId,
+              email: profileRow?.email || params.userEmail,
+              self_balance: creditEval.newSelfCapitalBalance,
+              self_capital_balance: creditEval.newSelfCapitalBalance,
+            },
+          })
+        );
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  return {
+    ok: true,
+    creditedSelfCapitalAmount: creditEval.creditedSelfCapitalAmount,
+    newSelfCapitalBalance: creditEval.newSelfCapitalBalance,
+    accountType: creditEval.accountType,
+  };
 }
 
 export async function insertSupabaseTradingAccount(params: {
@@ -2046,7 +2198,7 @@ export async function updateSupabaseTradingAccountState(params: {
     updatePayload.equity = updatePayload.current_balance;
   }
   if (params.status) {
-    updatePayload.status = params.status;
+    updatePayload.status = normalizeDatabaseAccountStatus(params.status);
   }
   if (params.phase) {
     updatePayload.challenge_phase = params.phase;

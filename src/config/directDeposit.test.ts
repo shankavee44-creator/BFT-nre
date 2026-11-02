@@ -20,6 +20,7 @@ import {
   buildSupabaseUserPurchasePayload,
   mapPurchaseRecord,
   mergeRealtimePurchase,
+  computeCryptoDepositVerificationCredit,
 } from './directDeposit';
 import {
   createCryptoDepositRecord,
@@ -31,6 +32,26 @@ import {
   createUserPurchaseRecord,
   getUserPurchases,
 } from '../server/db';
+
+test('computeCryptoDepositVerificationCredit credits self_capital_balance ONLY for self_funded deposits and never for challenge package purchases', () => {
+  const selfFundedCredit = computeCryptoDepositVerificationCredit({
+    accountType: 'self_funded',
+    amount: 250.75,
+    currentSelfCapitalBalance: 100.0,
+  });
+  assert.equal(selfFundedCredit.shouldCreditSelfCapital, true);
+  assert.equal(selfFundedCredit.creditedSelfCapitalAmount, 250.75);
+  assert.equal(selfFundedCredit.newSelfCapitalBalance, 350.75);
+
+  const challengePurchaseCredit = computeCryptoDepositVerificationCredit({
+    accountType: 'challenge',
+    amount: 149.0,
+    currentSelfCapitalBalance: 350.75,
+  });
+  assert.equal(challengePurchaseCredit.shouldCreditSelfCapital, false);
+  assert.equal(challengePurchaseCredit.creditedSelfCapitalAmount, 0);
+  assert.equal(challengePurchaseCredit.newSelfCapitalBalance, 350.75);
+});
 
 test('Static USDT TRC-20 wallet address, TronGrid API key, and endpoint match official configuration', () => {
   assert.equal(DIRECT_USDT_TRC20_CONFIG.walletAddress, 'TWr3rLWrWGBcfwix5osJwAwMXmpcu4PNSp');
@@ -220,9 +241,10 @@ test('parseChallengePackageFromDeposit extracts tier, size, and tierName from SK
 });
 
 test('verifyAndCompletePendingCryptoDepositsInDb updates deposit status to completed and activates challenge package or credits self-funded balance', () => {
+  const testUserId = `usr_test_dep_${Date.now()}`;
   // 1. Create a pending challenge deposit (without an existing accountId so verifier provisions & activates it)
   const pendingChallenge = createCryptoDepositRecord({
-    userId: 'usr_bft_001',
+    userId: testUserId,
     amount: 149.25,
     packageName: '1-Step Blitz ($25,000)',
     sku: 'BFT-1S-25K',
@@ -231,11 +253,11 @@ test('verifyAndCompletePendingCryptoDepositsInDb updates deposit status to compl
   assert.equal(pendingChallenge.status, 'pending');
 
   // 2. Create a pending self_funded deposit
-  const personalBefore = ensurePersonalLiveAccountForUser('usr_bft_001');
+  const personalBefore = ensurePersonalLiveAccountForUser(testUserId);
   const balanceBefore = Number(personalBefore?.currentBalance || 0);
 
   const pendingSelfFunded = createCryptoDepositRecord({
-    userId: 'usr_bft_001',
+    userId: testUserId,
     accountId: personalBefore?.id,
     amount: 315.5,
     packageName: 'Self-Funded Live Deposit ($315.50 USDT)',
@@ -245,7 +267,7 @@ test('verifyAndCompletePendingCryptoDepositsInDb updates deposit status to compl
   assert.equal(pendingSelfFunded.status, 'pending');
 
   // Ensure both appear in getPendingCryptoDeposits
-  const pendingRows = getPendingCryptoDeposits('usr_bft_001');
+  const pendingRows = getPendingCryptoDeposits(testUserId);
   assert.ok(pendingRows.some((r) => r.id === pendingChallenge.id));
   assert.ok(pendingRows.some((r) => r.id === pendingSelfFunded.id));
 
@@ -266,13 +288,13 @@ test('verifyAndCompletePendingCryptoDepositsInDb updates deposit status to compl
   ];
 
   const verification = verifyAndCompletePendingCryptoDepositsInDb(tronGridTransfers, {
-    userId: 'usr_bft_001',
+    userId: testUserId,
   });
 
   assert.ok(verification.matchedCount >= 2);
 
   // Verify both deposits are now 'completed'
-  const allUserDeposits = getCryptoDeposits({ userId: 'usr_bft_001' });
+  const allUserDeposits = getCryptoDeposits({ userId: testUserId });
   const updatedChallengeDep = allUserDeposits.find((d) => d.id === pendingChallenge.id);
   const updatedSelfFundedDep = allUserDeposits.find((d) => d.id === pendingSelfFunded.id);
 
@@ -288,7 +310,7 @@ test('verifyAndCompletePendingCryptoDepositsInDb updates deposit status to compl
 
   // Verify the self_funded deposit status is 'completed' and user's self-funded balance increased by $315.50
   assert.equal(updatedSelfFundedDep?.status, 'completed');
-  const personalAfter = ensurePersonalLiveAccountForUser('usr_bft_001');
+  const personalAfter = ensurePersonalLiveAccountForUser(testUserId);
   assert.equal(
     Number(personalAfter?.currentBalance || 0),
     Number((balanceBefore + 315.5).toFixed(2))

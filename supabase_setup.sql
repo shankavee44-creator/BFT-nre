@@ -45,6 +45,14 @@ ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS kyc_doc_type TEXT;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS kyc_doc_number TEXT;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS front_document_url TEXT;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS back_document_url TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS self_balance NUMERIC(15, 2) NOT NULL DEFAULT 0.00;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS self_capital_balance NUMERIC(15, 2) NOT NULL DEFAULT 0.00;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS demo_balance NUMERIC(15, 2) NOT NULL DEFAULT 10000.00;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS funded_balance NUMERIC(15, 2) NOT NULL DEFAULT 0.00;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_2fa_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS totp_secret TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user';
 
 -- KYC SUBMISSIONS TABLE (Full Personal Details + Dual-Sided Document Storage Record)
 CREATE TABLE IF NOT EXISTS public.kyc_submissions (

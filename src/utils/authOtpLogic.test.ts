@@ -8,6 +8,8 @@ import {
   generateSixDigitOtp,
   buildOAuthCallbackUrl,
   resolveOrBuildUserProfile,
+  isTwoFactorEnabledOnProfile,
+  verifyAdminAuthorization,
 } from './authOtpLogic';
 
 test('sanitizeOtpEmail and isValidEmailForOtp validate returning user emails', () => {
@@ -64,6 +66,8 @@ test('resolveOrBuildUserProfile skips upsert when profile already exists from tr
     address: '742 Evergreen Terrace',
     date_of_birth: '1992-04-15',
     country: 'United Kingdom',
+    two_factor_enabled: true,
+    self_capital_balance: 500.25,
   };
 
   const res = resolveOrBuildUserProfile(user, existingProfile);
@@ -72,6 +76,8 @@ test('resolveOrBuildUserProfile skips upsert when profile already exists from tr
   assert.equal(res.resolvedProfile.referralCode, 'BFT-TRIG99');
   assert.equal(res.resolvedProfile.kycStatus, 'pending');
   assert.equal(res.resolvedProfile.profileLocked, true);
+  assert.equal(res.resolvedProfile.twoFactorEnabled, true);
+  assert.equal(res.resolvedProfile.selfBalance, 500.25);
 });
 
 test('resolveOrBuildUserProfile prepares safe upsert payload when OAuth user has no profile row yet', () => {
@@ -92,3 +98,54 @@ test('resolveOrBuildUserProfile prepares safe upsert payload when OAuth user has
   assert.equal(res.resolvedProfile.referredBy, 'BFT-SPONSOR');
   assert.equal(res.resolvedProfile.kycStatus, 'unverified');
 });
+
+test('isTwoFactorEnabledOnProfile checks two_factor_enabled, is_2fa_enabled, and auth user metadata', () => {
+  assert.equal(isTwoFactorEnabledOnProfile({ two_factor_enabled: true }), true);
+  assert.equal(isTwoFactorEnabledOnProfile({ is_2fa_enabled: true }), true);
+  assert.equal(isTwoFactorEnabledOnProfile({ two_factor_enabled: 1 }), true);
+  assert.equal(
+    isTwoFactorEnabledOnProfile(
+      { two_factor_enabled: false },
+      { user_metadata: { two_factor_enabled: true } }
+    ),
+    true
+  );
+  assert.equal(isTwoFactorEnabledOnProfile({ two_factor_enabled: false, is_2fa_enabled: false }), false);
+  assert.equal(isTwoFactorEnabledOnProfile(null, null), false);
+});
+
+test('verifyAdminAuthorization authorizes valid security keys, profile roles, and Supabase metadata roles', () => {
+  // Valid master security key
+  const byKey = verifyAdminAuthorization({ adminKey: 'bft_admin_master_key_2026' });
+  assert.equal(byKey.isAdmin, true);
+  assert.equal(byKey.matchedBy, 'admin_key');
+
+  // Authorized profile role
+  const byProfileRole = verifyAdminAuthorization({
+    profileRow: { role: 'admin', email: 'operator@custom.io' },
+  });
+  assert.equal(byProfileRole.isAdmin, true);
+  assert.equal(byProfileRole.matchedBy, 'profile_role');
+
+  // Authorized Supabase user_metadata role
+  const byMetaRole = verifyAdminAuthorization({
+    authUser: { email: 'meta@custom.io', user_metadata: { role: 'superadmin' } },
+  });
+  assert.equal(byMetaRole.isAdmin, true);
+  assert.equal(byMetaRole.matchedBy, 'supabase_metadata');
+
+  // Authorized admin email
+  const byEmail = verifyAdminAuthorization({
+    currentUser: { email: 'shankavee44@gmail.com', role: 'user' },
+  });
+  assert.equal(byEmail.isAdmin, true);
+  assert.equal(byEmail.matchedBy, 'admin_email');
+
+  // Unauthorized guest/user
+  const denied = verifyAdminAuthorization({
+    adminKey: 'wrong_key',
+    profileRow: { role: 'user', email: 'regular@user.com' },
+  });
+  assert.equal(denied.isAdmin, false);
+});
+

@@ -89,6 +89,9 @@ import {
   calculateLiveAccountEquity,
   liquidateActiveTradesOnSoftBreach,
   validateZeroToleranceTradeExecution,
+  isAccountSoftBreached,
+  isAccountHardBreached,
+  evaluateRealtimeTradingEngine,
 } from '../utils/propRules';
 import { BftLogo } from './BftLogo';
 import {
@@ -99,6 +102,7 @@ import {
   recordAtomicTradeSettlement,
   isTradeAlreadySettled,
   commitProfileBalanceToSupabase,
+  updateSupabaseTradingAccountState,
 } from '../utils/supabaseRealtimeSync';
 import {
   calculateHeikinAshi,
@@ -704,13 +708,8 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
   // Dual-Breach System vs No Active Account State
   const hasNoAccount = !effectiveAccount;
-  const isSoftBreached = Boolean(account && (account.status === 'soft-breached' || account.breachType === 'soft'));
-  const isHardBreached = Boolean(
-    account &&
-      (account.status === 'hard-breached' ||
-        account.status === 'breached' ||
-        (!isSoftBreached && account.status !== 'active' && account.status !== 'passed' && account.status !== 'passed_phase_1'))
-  );
+  const isSoftBreached = isAccountSoftBreached(account);
+  const isHardBreached = isAccountHardBreached(account);
   const isBreached = isSoftBreached || isHardBreached;
   const otherActiveAccounts = accounts.filter((a) => a.id !== account?.id && a.status === 'active');
 
@@ -724,6 +723,19 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     if (!account) return;
     const unbreached = resetSoftBreachedAccount(account);
     onUpdateAccount(unbreached);
+    updateSupabaseTradingAccountState({
+      accountId: unbreached.id,
+      supabaseAccountId: unbreached.supabaseAccountId,
+      userId: userProfile?.id || unbreached.ownerId,
+      userEmail: userProfile?.email || unbreached.ownerEmail,
+      accountType: unbreached.accountType || unbreached.tier,
+      startingBalance: unbreached.initialBalance || unbreached.size,
+      currentBalance: unbreached.currentBalance,
+      equity: unbreached.equity,
+      startingDayEquity: unbreached.startingDayEquity,
+      status: 'active',
+      phase: unbreached.phase,
+    }).catch(() => {});
     soundEngine.playTradeWin();
   };
 
@@ -748,13 +760,12 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     1.0
   );
 
-  // Real-time Drawdown, Soft Breach, and Active Trade Auto-Liquidation Engine (1-Step, 2-Step, and Instant Funded)
+  // Real-Time Event-Driven Trading Engine: Instant Drawdown Breach, Auto-Liquidation, Target Reached & Dynamic Supabase Status Updates
   useEffect(() => {
     if (
       !account ||
-      account.status === 'breached' ||
-      account.status === 'hard-breached' ||
-      account.status === 'soft-breached' ||
+      isAccountHardBreached(account) ||
+      isAccountSoftBreached(account) ||
       account.status === 'passed' ||
       account.status === 'passed_phase_1' ||
       isPersonalLiveAccount(account) ||
@@ -763,73 +774,81 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       return;
     }
 
-    const evaluatedAccount = sanitizeAccountForAntiBreach({
-      ...account,
-      equity: liveEquity,
+    const nowMs = Date.now();
+    const getLivePriceForAsset = (sym: string, strike: number) => {
+      if (sym === selectedAssetRef.current.symbol) return currentPriceRef.current;
+      const feedPrice = liveMarketFeed.getLatestPrice(sym);
+      const tradeMarket = getAssetMarketState(sym);
+      return feedPrice ?? tradeMarket?.lastPrice ?? strike;
+    };
+
+    const engineResult = evaluateRealtimeTradingEngine({
+      account,
+      activeTrades: activeTradesRef.current,
+      getLivePrice: getLivePriceForAsset,
+      nowMs,
+      stakesAlreadyDeducted: true,
     });
-    const breachEval = evaluateAccountBreach(evaluatedAccount);
 
-    if (breachEval.isBreached) {
+    if (engineResult.action === 'soft_breach' || engineResult.action === 'hard_breach') {
       soundEngine.playTradeLoss();
-      const nowMs = Date.now();
-      const getLivePriceForAsset = (sym: string, strike: number) => {
-        if (sym === selectedAssetRef.current.symbol) return currentPriceRef.current;
-        const feedPrice = liveMarketFeed.getLatestPrice(sym);
-        const tradeMarket = getAssetMarketState(sym);
-        return feedPrice ?? tradeMarket?.lastPrice ?? strike;
-      };
+      const balanceCol = resolveAccountBalanceColumn(engineResult.updatedAccount);
 
-      const liquidation = liquidateActiveTradesOnSoftBreach({
-        account: evaluatedAccount,
-        activeTrades: activeTradesRef.current,
-        getLivePrice: getLivePriceForAsset,
-        nowMs,
-        stakesAlreadyDeducted: true,
-        breachReason: breachEval.reason,
-      });
-
-      const balanceCol = resolveAccountBalanceColumn(evaluatedAccount);
-      for (const closedTrade of liquidation.liquidatedTrades) {
+      for (const closedTrade of engineResult.liquidatedTrades) {
         recordAtomicTradeSettlement({
           tradeId: closedTrade.id,
-          accountId: evaluatedAccount.id,
+          accountId: engineResult.updatedAccount.id,
           column: balanceCol,
-          finalBalance: liquidation.updatedAccount.currentBalance,
+          finalBalance: engineResult.updatedAccount.currentBalance,
           nowMs,
         });
         onUpdateTrade(closedTrade);
       }
 
-      if (breachEval.breachCategory === 'hard' || liquidation.updatedAccount.status === 'hard-breached') {
-        const hardReason =
-          breachEval.reason ||
-          `Maximum Overall Loss Exceeded (${evaluatedAccount.maxOverallLossPercent}%). Permanent Hard Breach enforced.`;
-        const breachLog = {
-          id: `VIO-OVERALL-${nowMs}`,
-          rule: 'OVERALL_LOSS' as const,
-          ruleName: 'Max Overall Loss (Hard Breach)',
-          severity: 'critical' as const,
-          message: hardReason,
-          timestamp: nowMs,
-          details: `Final Equity: $${liquidation.updatedAccount.equity.toFixed(2)} (Permanent Hard Breach)`,
-        };
-        const hardUpdated: TradingAccount = {
-          ...liquidation.updatedAccount,
-          status: 'hard-breached',
-          breachType: 'hard',
-          discountEligible: true,
-          breachReason: hardReason,
-          breachedAt: nowMs,
-          violationLogs: [...(account.violationLogs || []), breachLog],
-        };
-        onUpdateAccount(hardUpdated);
-        setIsBreachModalOpen(true);
-      } else {
-        onUpdateAccount(liquidation.updatedAccount);
-        setIsBreachModalOpen(true);
-      }
+      accountRef.current = engineResult.updatedAccount;
+      onUpdateAccount(engineResult.updatedAccount);
+
+      // Instantly persist 'soft_breached' or 'hard_breached' and realized balance/equity to Supabase trading_accounts
+      updateSupabaseTradingAccountState({
+        accountId: engineResult.updatedAccount.id,
+        supabaseAccountId: engineResult.updatedAccount.supabaseAccountId,
+        userId: userProfile?.id || engineResult.updatedAccount.ownerId,
+        userEmail: userProfile?.email || engineResult.updatedAccount.ownerEmail,
+        accountType: engineResult.updatedAccount.accountType || engineResult.updatedAccount.tier,
+        startingBalance:
+          engineResult.updatedAccount.initialBalance || engineResult.updatedAccount.size,
+        currentBalance: engineResult.updatedAccount.currentBalance,
+        equity: engineResult.updatedAccount.equity,
+        startingDayEquity: engineResult.updatedAccount.startingDayEquity,
+        status: engineResult.databaseStatus,
+        phase: engineResult.updatedAccount.phase,
+        tradesCount: engineResult.updatedAccount.tradesCount,
+        winRate: engineResult.updatedAccount.winRate,
+      }).catch(() => {});
+
+      setIsBreachModalOpen(true);
+    } else if (engineResult.action === 'target_reached') {
+      // Automatically update status to 'passed' (or 'passed_phase_1') and transition phase without page refresh
+      updateSupabaseTradingAccountState({
+        accountId: engineResult.updatedAccount.id,
+        supabaseAccountId: engineResult.updatedAccount.supabaseAccountId,
+        userId: userProfile?.id || engineResult.updatedAccount.ownerId,
+        userEmail: userProfile?.email || engineResult.updatedAccount.ownerEmail,
+        accountType: engineResult.updatedAccount.accountType || engineResult.updatedAccount.tier,
+        startingBalance:
+          engineResult.updatedAccount.initialBalance || engineResult.updatedAccount.size,
+        currentBalance: engineResult.updatedAccount.currentBalance,
+        equity: engineResult.updatedAccount.equity,
+        startingDayEquity: engineResult.updatedAccount.startingDayEquity,
+        status: engineResult.databaseStatus,
+        phase: engineResult.updatedAccount.phase,
+        tradesCount: engineResult.updatedAccount.tradesCount,
+        winRate: engineResult.updatedAccount.winRate,
+      }).catch(() => {});
+
+      onPassChallengePhase?.(engineResult.updatedAccount);
     }
-  }, [liveEquity, account, onUpdateAccount, onUpdateTrade]);
+  }, [liveEquity, account, onUpdateAccount, onUpdateTrade, onPassChallengePhase, userProfile?.id, userProfile?.email]);
 
   // Sound toggle handler
   const handleToggleSound = () => {
@@ -1331,6 +1350,25 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             }).catch(() => {});
           }
 
+          // Permanently persist current_balance and equity in Supabase trading_accounts on every closed trade
+          if (!isDemoAccount(updatedAccount) && !isPersonalLiveAccount(updatedAccount)) {
+            updateSupabaseTradingAccountState({
+              accountId: updatedAccount.id,
+              supabaseAccountId: updatedAccount.supabaseAccountId,
+              userId: userProfile?.id || updatedAccount.ownerId,
+              userEmail: userProfile?.email || updatedAccount.ownerEmail,
+              accountType: updatedAccount.accountType || updatedAccount.tier,
+              startingBalance: updatedAccount.initialBalance || updatedAccount.size,
+              currentBalance: newBalance,
+              equity: newBalance,
+              startingDayEquity: updatedAccount.startingDayEquity,
+              status: updatedAccount.status,
+              phase: updatedAccount.phase,
+              tradesCount: updatedAccount.tradesCount,
+              winRate: updatedAccount.winRate,
+            }).catch(() => {});
+          }
+
           // Check if a One-Step or Two-Step Challenge account just hit its profit target!
           if (account && settlement.status === 'won' && !isLiveFundedAccount(updatedAccount)) {
             const targetStatus = getChallengeProfitTarget(updatedAccount);
@@ -1407,9 +1445,13 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       return;
     }
     const activeAcc = effectiveAccount;
-    if (activeAcc.status === 'breached' || activeAcc.status === 'hard-breached') {
+    if (isAccountHardBreached(activeAcc) || isAccountSoftBreached(activeAcc)) {
       soundEngine.playTradeLoss();
-      setTradeError('Account is locked due to rule breach. Trading is disabled.');
+      setTradeError(
+        isAccountSoftBreached(activeAcc)
+          ? 'Soft Breach Active: Daily drawdown limit reached. Trading is locked for the rest of the day.'
+          : 'Account is permanently locked due to a Hard Breach. Trading is disabled.'
+      );
       setIsBreachModalOpen(true);
       return;
     }
@@ -4992,8 +5034,10 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             <div className="p-1.5 rounded-lg bg-[#141722] border border-[#2a2e39] font-mono">
               <div className="flex items-center justify-between text-[9.5px] mb-0.5">
                 <span className="text-slate-400 font-semibold">Amount / <span className="text-blue-400 font-bold">Percent</span></span>
-                <span className="text-[8.5px] text-slate-400">
-                  Max 5%: ${account ? ((account.initialBalance * 5) / 100).toFixed(0) : '500'}
+                <span className="text-[8.5px] text-slate-400" data-testid="terminal-max-risk-label">
+                  {isPersonalLiveAccount(effectiveAccount) || isDemoAccount(effectiveAccount)
+                    ? 'Max Risk: NONE'
+                    : `Max 5%: $${(((effectiveAccount?.initialBalance || effectiveAccount?.size || 10000) * 5) / 100).toFixed(0)}`}
                 </span>
               </div>
 

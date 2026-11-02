@@ -1934,6 +1934,12 @@ export function createDepositRequest(params: {
       ? `BFT-CHALLENGE-${Math.round(cleanAmount)}`
       : `BFT-SELF-${Math.round(cleanAmount)}`);
 
+  ensureUserInDb({
+    id: params.userId,
+    email: `${String(params.userId).toLowerCase().replace(/[^a-z0-9]/g, '')}@client-bft.com`,
+    fullName: `Trader ${String(params.userId).slice(-4)}`,
+  });
+
   db.prepare(`
     INSERT INTO deposits (
       id, user_id, account_id, amount, payment_method, currency, network,

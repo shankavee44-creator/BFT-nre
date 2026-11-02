@@ -92,6 +92,7 @@ import {
   mergeRealtimePurchase,
   NormalizedPurchaseRecord,
   insertSupabaseTradingAccount,
+  updateSupabaseTradingAccountState,
 } from './utils/supabaseRealtimeSync';
 import {
   PACKAGES,
@@ -99,6 +100,8 @@ import {
   createDefaultPersonalLiveAccount,
   isPersonalLiveAccount,
   isDemoAccount,
+  isAccountSoftBreached,
+  isAccountHardBreached,
   sanitizeAccountForAntiBreach,
 } from './utils/propRules';
 import {
@@ -115,7 +118,7 @@ import {
   apiSettleTrade,
   apiGetUserTrades,
 } from './utils/apiClient';
-import { resolveOrBuildUserProfile } from './utils/authOtpLogic';
+import { resolveOrBuildUserProfile, isTwoFactorEnabledOnProfile } from './utils/authOtpLogic';
 import { broadcastSyncEvent, subscribeToSyncEvents } from './utils/crossTabSync';
 import { Gift, X, UserPlus, ShieldAlert, LogIn } from 'lucide-react';
 
@@ -334,20 +337,58 @@ export default function App() {
         });
 
         if (Array.isArray(res.accounts)) {
-          const mappedAccounts = res.accounts.map((a: TradingAccount) => ({
-            ...a,
-            ownerId: res.user.id,
-            ownerEmail: res.user.email,
-          }));
-          setAccounts(mappedAccounts);
-          saveAccounts(mappedAccounts);
-          const storedActiveId = loadActiveAccountId();
-          if (!storedActiveId) {
-            const fundedAcc = mappedAccounts.find((a: TradingAccount) => a.currentBalance > 0);
-            const nextActiveId = fundedAcc?.id || 'BFT-DEMO-001';
-            setActiveAccountId(nextActiveId);
-            saveActiveAccountId(nextActiveId);
-          }
+          setAccounts((prev) => {
+            const mappedAccounts = res.accounts.map((a: TradingAccount) => {
+              const incoming = sanitizeAccountForAntiBreach({
+                ...a,
+                ownerId: res.user.id,
+                ownerEmail: res.user.email,
+              });
+              const localAcc = prev.find(
+                (p) =>
+                  p.id === incoming.id ||
+                  (p.supabaseAccountId && p.supabaseAccountId === incoming.id) ||
+                  p.loginId === incoming.loginId
+              );
+              if (!localAcc) return incoming;
+
+              const localHasMoreTrades = (localAcc.tradesCount || 0) > (incoming.tradesCount || 0);
+              const localHasPostTradeBalance =
+                localHasMoreTrades &&
+                Math.abs(localAcc.currentBalance - localAcc.initialBalance) > 0.01 &&
+                Math.abs(incoming.currentBalance - incoming.initialBalance) < 0.01;
+              const localHasTerminalStatus =
+                isAccountSoftBreached(localAcc) ||
+                isAccountHardBreached(localAcc) ||
+                localAcc.status === 'passed' ||
+                localAcc.status === 'passed_phase_1';
+
+              return sanitizeAccountForAntiBreach({
+                ...incoming,
+                supabaseAccountId: localAcc.supabaseAccountId || incoming.supabaseAccountId,
+                currentBalance: localHasPostTradeBalance ? localAcc.currentBalance : incoming.currentBalance,
+                equity: localHasPostTradeBalance ? localAcc.equity : incoming.equity,
+                startingDayEquity:
+                  isAccountSoftBreached(localAcc) || localHasPostTradeBalance
+                    ? localAcc.startingDayEquity
+                    : incoming.startingDayEquity,
+                status: localHasTerminalStatus ? localAcc.status : incoming.status,
+                breachType: localAcc.breachType || incoming.breachType,
+                softBreachResetTime: localAcc.softBreachResetTime || incoming.softBreachResetTime,
+                tradesCount: Math.max(localAcc.tradesCount || 0, incoming.tradesCount || 0),
+                winRate: localAcc.winRate || incoming.winRate,
+              });
+            });
+            saveAccounts(mappedAccounts);
+            const storedActiveId = loadActiveAccountId();
+            if (!storedActiveId) {
+              const fundedAcc = mappedAccounts.find((a: TradingAccount) => a.currentBalance > 0);
+              const nextActiveId = fundedAcc?.id || 'BFT-DEMO-001';
+              setActiveAccountId(nextActiveId);
+              saveActiveAccountId(nextActiveId);
+            }
+            return mappedAccounts;
+          });
         }
 
         fetchSupabaseProfileRow({
@@ -624,11 +665,14 @@ export default function App() {
                 currentBalance: mergedBalance,
                 equity: mergedEquity,
                 startingDayEquity:
-                  localAcc.status === 'soft-breached' || localHasPostTradeMutation
+                  isAccountSoftBreached(localAcc) || localHasPostTradeMutation
                     ? localAcc.startingDayEquity
                     : sa.startingDayEquity,
                 status:
-                  localAcc.status === 'soft-breached' || localAcc.status === 'hard-breached'
+                  isAccountSoftBreached(localAcc) ||
+                  isAccountHardBreached(localAcc) ||
+                  localAcc.status === 'passed' ||
+                  localAcc.status === 'passed_phase_1'
                     ? localAcc.status
                     : sa.status,
                 breachType: localAcc.breachType || sa.breachType,
@@ -756,6 +800,13 @@ export default function App() {
     const hydrateFromSupabaseSessionUser = async (sessionUser: any) => {
       if (!sessionUser?.id || !sessionUser?.email) return;
 
+      if (
+        typeof window !== 'undefined' &&
+        sessionStorage.getItem('bft_2fa_login_gate_active') === 'true'
+      ) {
+        return;
+      }
+
       let existingProfile: any = null;
       try {
         const { data: p } = await supabase
@@ -768,14 +819,22 @@ export default function App() {
         // ignore read error
       }
 
-      // If 2FA is enabled for this profile, ensure 2FA verification was passed in this browser session
-      if (existingProfile?.is_2fa_enabled) {
+      // If 2FA is enabled for this profile (two_factor_enabled or is_2fa_enabled), ensure 2FA verification was passed
+      if (isTwoFactorEnabledOnProfile(existingProfile, sessionUser)) {
+        const isPending2fa =
+          typeof window !== 'undefined' &&
+          (sessionStorage.getItem(`bft_2fa_pending_${sessionUser.id}`) === 'true' ||
+            (sessionUser.email &&
+              sessionStorage.getItem(`bft_2fa_pending_${sessionUser.email}`) === 'true'));
         const isVerified =
           typeof window !== 'undefined' &&
+          !isPending2fa &&
           (sessionStorage.getItem(`bft_2fa_verified_${sessionUser.id}`) === 'true' ||
-           localStorage.getItem(`bft_2fa_verified_${sessionUser.id}`) === 'true' ||
-           (sessionUser.email && sessionStorage.getItem(`bft_2fa_verified_${sessionUser.email}`) === 'true') ||
-           (sessionUser.email && localStorage.getItem(`bft_2fa_verified_${sessionUser.email}`) === 'true'));
+            localStorage.getItem(`bft_2fa_verified_${sessionUser.id}`) === 'true' ||
+            (sessionUser.email &&
+              sessionStorage.getItem(`bft_2fa_verified_${sessionUser.email}`) === 'true') ||
+            (sessionUser.email &&
+              localStorage.getItem(`bft_2fa_verified_${sessionUser.email}`) === 'true'));
         if (!isVerified) {
           return;
         }
@@ -814,9 +873,11 @@ export default function App() {
         }
       }
 
+      const rawExistingSelfBalance =
+        existingProfile?.self_capital_balance ?? existingProfile?.self_balance;
       const resolvedSelfBalance =
-        existingProfile?.self_balance !== undefined && existingProfile?.self_balance !== null
-          ? Number(existingProfile.self_balance)
+        rawExistingSelfBalance !== undefined && rawExistingSelfBalance !== null
+          ? Number(rawExistingSelfBalance)
           : resolvedProfile.selfBalance !== undefined
           ? resolvedProfile.selfBalance
           : backendSync?.user?.selfBalance;
@@ -919,6 +980,23 @@ export default function App() {
         tradingDaysCompleted: updated.tradingDaysCompleted,
         certificateId: updated.certificateId,
       }).catch(() => {});
+
+      updateSupabaseTradingAccountState({
+        accountId: updated.id,
+        supabaseAccountId: updated.supabaseAccountId,
+        userId: userProfileRef.current.id || updated.ownerId,
+        userEmail: userProfileRef.current.email || updated.ownerEmail,
+        accountType: updated.accountType || updated.tier,
+        startingBalance: updated.initialBalance || updated.size,
+        currentBalance: updated.currentBalance,
+        equity: updated.equity,
+        startingDayEquity: updated.startingDayEquity,
+        status: updated.status,
+        phase: updated.phase,
+        tradesCount: updated.tradesCount,
+        winRate: updated.winRate,
+        tradingDaysCompleted: updated.tradingDaysCompleted,
+      }).catch(() => {});
     }
 
     // Synchronize account balances with Supabase profiles table for persistence
@@ -936,7 +1014,21 @@ export default function App() {
     }
   };
 
-  const handleCreditAccountDeposit = (accountId: string, amountUsdt: number) => {
+  const handleCreditAccountDeposit = (
+    accountId: string,
+    amountUsdt: number,
+    depositRecord?: any
+  ) => {
+    // Package purchases (account_type === 'challenge') must NEVER credit self_capital_balance
+    const isChallengePurchase =
+      depositRecord &&
+      String(depositRecord.account_type || depositRecord.accountType || '')
+        .toLowerCase()
+        .trim() === 'challenge';
+    if (isChallengePurchase) {
+      return;
+    }
+
     setAccounts((prev) => {
       let matched = false;
       const updated = prev.map((acc) => {
@@ -994,34 +1086,43 @@ export default function App() {
         }).catch(() => {});
         const nextList = [...updated, createdWithId];
         saveAccounts(nextList);
-        
-        // Synchronize fresh Personal balance to Supabase after auto-provisioning
-        if (userProfile.id && userProfile.isLoggedIn) {
-          const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userProfile.id);
-          if (isUuid) {
-            supabase
-              .from('profiles')
-              .update({ self_balance: amountUsdt })
-              .eq('id', userProfile.id)
-              .then(() => {});
-          }
+
+        // Synchronize fresh Personal balance to Supabase profiles (self_capital_balance & self_balance)
+        if ((userProfile.id || userProfile.email) && userProfile.isLoggedIn) {
+          recordDirectBalanceCommit('self_balance', amountUsdt);
+          commitProfileBalanceToSupabase({
+            userId: userProfile.id,
+            userEmail: userProfile.email,
+            column: 'self_balance',
+            newBalance: amountUsdt,
+          }).catch(() => {});
+          setUserProfile((prevProf) => {
+            const nextProf = { ...prevProf, selfBalance: amountUsdt };
+            userProfileRef.current = nextProf;
+            saveProfile(nextProf);
+            return nextProf;
+          });
         }
         return nextList;
       }
 
       // Synchronize fresh Personal balance to Supabase for existing account
-      const matchedPersonal = updated.find(a => a.id === accountId && isPersonalLiveAccount(a));
-      if (matchedPersonal && userProfile.id && userProfile.isLoggedIn) {
-        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userProfile.id);
-        if (isUuid) {
-          supabase
-            .from('profiles')
-            .update({ self_balance: matchedPersonal.currentBalance })
-            .eq('id', userProfile.id)
-            .then(() => {});
-          
-          setUserProfile(prev => ({ ...prev, selfBalance: matchedPersonal.currentBalance }));
-        }
+      const matchedPersonal = updated.find((a) => a.id === accountId && isPersonalLiveAccount(a));
+      if (matchedPersonal && (userProfile.id || userProfile.email) && userProfile.isLoggedIn) {
+        recordDirectBalanceCommit('self_balance', matchedPersonal.currentBalance);
+        commitProfileBalanceToSupabase({
+          userId: userProfile.id,
+          userEmail: userProfile.email,
+          column: 'self_balance',
+          newBalance: matchedPersonal.currentBalance,
+        }).catch(() => {});
+
+        setUserProfile((prevProf) => {
+          const nextProf = { ...prevProf, selfBalance: matchedPersonal.currentBalance };
+          userProfileRef.current = nextProf;
+          saveProfile(nextProf);
+          return nextProf;
+        });
       }
 
       saveAccounts(updated);
@@ -1234,6 +1335,18 @@ export default function App() {
         setActiveAccountId(deployed.id);
         saveActiveAccountId(deployed.id);
 
+        updateSupabaseTradingAccountState({
+          accountId: locked.id,
+          supabaseAccountId: locked.supabaseAccountId,
+          userId: userProfile.id,
+          userEmail: userProfile.email,
+          accountType: locked.accountType || locked.tier,
+          startingBalance: locked.initialBalance || locked.size,
+          currentBalance: locked.currentBalance,
+          equity: locked.equity,
+          status: locked.status,
+          phase: locked.phase,
+        }).catch(() => {});
         insertSupabaseTradingAccount({
           account: locked,
           userId: userProfile.id,
@@ -1277,6 +1390,18 @@ export default function App() {
     setActiveAccountId(deployedNext.id);
     saveActiveAccountId(deployedNext.id);
 
+    updateSupabaseTradingAccountState({
+      accountId: lockedPrev.id,
+      supabaseAccountId: lockedPrev.supabaseAccountId,
+      userId: userProfile.id,
+      userEmail: userProfile.email,
+      accountType: lockedPrev.accountType || lockedPrev.tier,
+      startingBalance: lockedPrev.initialBalance || lockedPrev.size,
+      currentBalance: lockedPrev.currentBalance,
+      equity: lockedPrev.equity,
+      status: lockedPrev.status,
+      phase: lockedPrev.phase,
+    }).catch(() => {});
     insertSupabaseTradingAccount({
       account: lockedPrev,
       userId: userProfile.id,

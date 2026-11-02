@@ -80,6 +80,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [isAdminAuthorized, setIsAdminAuthorized] = useState<boolean>(false);
   const [authChecking, setAuthChecking] = useState<boolean>(true);
   const [adminKeyInput, setAdminKeyInput] = useState<string>('');
+  const [adminEmailInput, setAdminEmailInput] = useState<string>(currentUser?.email || '');
+  const [adminPasswordInput, setAdminPasswordInput] = useState<string>('');
+  const [authMode, setAuthMode] = useState<'key' | 'credentials'>('key');
   const [authError, setAuthError] = useState<string | null>(null);
 
   // Data States
@@ -142,44 +145,97 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setAuthChecking(true);
     setAuthError(null);
 
-    // First check via API (which validates JWT user role, email, and x-admin-key)
-    const res = await apiCheckAdminAccess();
+    // First check via API/Supabase (validates Supabase user metadata, profiles.role, email, and x-admin-key)
+    const res = await apiCheckAdminAccess(currentUser);
     if (res.ok && res.isAdmin) {
       setIsAdminAuthorized(true);
       fetchAllAdminData();
-    } else {
-      // If user profile locally already has role === 'admin' or email in admin list, attempt auto-auth
-      const adminEmails = [
-        'shankavee44@gmail.com',
-        'admin@bft.io',
-        'viktor.v@quant-prop.io',
-      ];
-      const isKnownAdmin =
-        currentUser?.role === 'admin' ||
-        adminEmails.includes((currentUser?.email || '').toLowerCase().trim());
-
-      if (isKnownAdmin) {
-        // Automatically challenge key verification
-        const keyRes = await apiVerifyAdminKey('bft_admin_master_key_2026');
-        if (keyRes.ok) {
-          setIsAdminAuthorized(true);
-          fetchAllAdminData();
-          setAuthChecking(false);
-          return;
-        }
-      }
-      setIsAdminAuthorized(false);
+      setAuthChecking(false);
+      return;
     }
+
+    // If user profile locally already has role === 'admin' or email in admin list, attempt auto-auth
+    const adminEmails = [
+      'shankavee44@gmail.com',
+      'admin@bft.io',
+      'admin@binaryfunded.com',
+      'support@binaryfunded.com',
+      'viktor.v@quant-prop.io',
+    ];
+    const isKnownAdmin =
+      currentUser?.role === 'admin' ||
+      adminEmails.includes((currentUser?.email || '').toLowerCase().trim());
+
+    if (isKnownAdmin) {
+      const keyRes = await apiVerifyAdminKey('bft_admin_master_key_2026', currentUser);
+      if (keyRes.ok) {
+        setIsAdminAuthorized(true);
+        fetchAllAdminData();
+        setAuthChecking(false);
+        return;
+      }
+    }
+
+    setIsAdminAuthorized(false);
     setAuthChecking(false);
   };
 
   const handleKeyChallenge = async (e: React.FormEvent) => {
     e.preventDefault();
+    setAuthError(null);
+
+    if (authMode === 'credentials') {
+      const cleanEmail = adminEmailInput.trim().toLowerCase();
+      if (!cleanEmail || !adminPasswordInput) {
+        setAuthError('Please enter your admin email and password.');
+        return;
+      }
+      setIsActionLoading(true);
+      try {
+        const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({
+          email: cleanEmail,
+          password: adminPasswordInput,
+        });
+        if (signInErr || !signInData?.user) {
+          setIsActionLoading(false);
+          setAuthError(signInErr?.message || 'Invalid admin credentials.');
+          soundEngine.playTradeLoss();
+          return;
+        }
+        const checkRes = await apiCheckAdminAccess({
+          id: signInData.user.id,
+          email: signInData.user.email || cleanEmail,
+          role:
+            signInData.user.user_metadata?.role ||
+            signInData.user.app_metadata?.role ||
+            currentUser?.role,
+        });
+        if (checkRes.ok && checkRes.isAdmin) {
+          try {
+            localStorage.setItem('bft_admin_key', 'bft_admin_master_key_2026');
+          } catch {}
+          setIsAdminAuthorized(true);
+          setIsActionLoading(false);
+          soundEngine.playTradeWin();
+          fetchAllAdminData();
+          return;
+        }
+        setIsActionLoading(false);
+        setAuthError('Authenticated account does not have Admin role privileges.');
+        soundEngine.playTradeLoss();
+        return;
+      } catch (err: any) {
+        setIsActionLoading(false);
+        setAuthError(err?.message || 'Admin login failed.');
+        soundEngine.playTradeLoss();
+        return;
+      }
+    }
+
     if (!adminKeyInput.trim()) return;
 
     setIsActionLoading(true);
-    setAuthError(null);
-    const res = await apiVerifyAdminKey(adminKeyInput.trim());
+    const res = await apiVerifyAdminKey(adminKeyInput.trim(), currentUser);
     setIsActionLoading(false);
 
     if (res.ok) {
@@ -863,23 +919,84 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             Role-Based Access Control (RBAC) is enforced. Only verified Superadmin accounts or authorized security keys may access this operational console.
           </p>
 
+          <div className="flex rounded-xl bg-[#14141c] p-1 border border-white/10 mb-5">
+            <button
+              type="button"
+              onClick={() => {
+                setAuthMode('key');
+                setAuthError(null);
+              }}
+              className={`flex-1 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-colors cursor-pointer ${
+                authMode === 'key'
+                  ? 'bg-[#ff8800] text-slate-950'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Security Key
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAuthMode('credentials');
+                setAuthError(null);
+              }}
+              className={`flex-1 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-colors cursor-pointer ${
+                authMode === 'credentials'
+                  ? 'bg-[#ff8800] text-slate-950'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Admin Account Login
+            </button>
+          </div>
+
           <form onSubmit={handleKeyChallenge} className="space-y-4">
-            <div>
-              <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-wider mb-1.5">
-                Admin Master Security Key
-              </label>
-              <div className="relative">
-                <Key className="w-4 h-4 text-[#ff8800] absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="password"
-                  value={adminKeyInput}
-                  onChange={(e) => setAdminKeyInput(e.target.value)}
-                  placeholder="Enter admin security passkey"
-                  className="w-full bg-[#14141c] border border-white/15 focus:border-[#ff8800] text-white pl-9 pr-4 py-2.5 rounded-xl text-xs outline-none"
-                  autoFocus
-                />
+            {authMode === 'key' ? (
+              <div>
+                <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                  Admin Master Security Key
+                </label>
+                <div className="relative">
+                  <Key className="w-4 h-4 text-[#ff8800] absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="password"
+                    value={adminKeyInput}
+                    onChange={(e) => setAdminKeyInput(e.target.value)}
+                    placeholder="Enter admin security passkey"
+                    data-testid="admin-security-key-input"
+                    className="w-full bg-[#14141c] border border-white/15 focus:border-[#ff8800] text-white pl-9 pr-4 py-2.5 rounded-xl text-xs outline-none"
+                    autoFocus
+                  />
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                    Admin Email
+                  </label>
+                  <input
+                    type="email"
+                    value={adminEmailInput}
+                    onChange={(e) => setAdminEmailInput(e.target.value)}
+                    placeholder="admin@bft.io"
+                    className="w-full bg-[#14141c] border border-white/15 focus:border-[#ff8800] text-white px-3.5 py-2.5 rounded-xl text-xs outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                    Admin Password
+                  </label>
+                  <input
+                    type="password"
+                    value={adminPasswordInput}
+                    onChange={(e) => setAdminPasswordInput(e.target.value)}
+                    placeholder="••••••••••••"
+                    className="w-full bg-[#14141c] border border-white/15 focus:border-[#ff8800] text-white px-3.5 py-2.5 rounded-xl text-xs outline-none"
+                  />
+                </div>
+              </div>
+            )}
 
             {authError && (
               <div className="p-3 rounded-xl bg-rose-950/80 border border-rose-500/50 text-rose-300 text-xs flex items-center gap-2">
@@ -890,7 +1007,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
             <button
               type="submit"
-              disabled={isActionLoading || !adminKeyInput.trim()}
+              disabled={
+                isActionLoading ||
+                (authMode === 'key'
+                  ? !adminKeyInput.trim()
+                  : !adminEmailInput.trim() || !adminPasswordInput)
+              }
+              data-testid="admin-unlock-submit-btn"
               className="w-full py-2.5 rounded-xl bg-[#ff8800] hover:bg-[#ffaa00] disabled:opacity-50 text-slate-950 font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer transition-colors"
             >
               {isActionLoading ? (

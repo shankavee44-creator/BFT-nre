@@ -59,6 +59,7 @@ import {
   fetchSupabaseWithdrawalsForUser,
   mapSupabaseWithdrawalToRequest,
   computeWithdrawalDeduction,
+  computeWithdrawalRefund,
   hasActivePendingWithdrawal,
   getActivePendingWithdrawal,
   PENDING_WITHDRAWAL_WARNING_MESSAGE,
@@ -221,11 +222,55 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
     try {
       const targetReq = withdrawals.find((w) => String(w.id) === String(withdrawalId));
 
-      // Always perform backend cancellation to be safe
-      const { data: { session } } = await supabase.auth.getSession();
-      const res = await apiCancelWithdrawal({ withdrawalId, token: session?.access_token });
+      // Direct Supabase client cancellation (bypasses unstable Edge Function CORS errors)
+      const { data: { session } } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
+      const res = await apiCancelWithdrawal({
+        withdrawalId,
+        token: session?.access_token,
+        userId: userProfile?.id || account?.ownerId,
+        userEmail: userProfile?.email,
+        amount: targetReq?.amount,
+        accountType: targetReq?.accountType,
+        refundInSupabase: !userProfile,
+      });
 
-      // Refresh withdrawals from source regardless, to ensure UI is in sync
+      if (!res.ok) {
+        setError(res.error || 'Failed to cancel withdrawal request.');
+        return;
+      }
+
+      const refundAmount = Number(
+        res.refundedAmount || targetReq?.amount || (targetReq as any)?.grossAmount || 0
+      );
+      const resolvedAccountType =
+        targetReq?.accountType ||
+        res.withdrawal?.account_type ||
+        (account && isPersonalLiveAccount(account) ? 'self' : 'funded');
+
+      if (refundAmount > 0 && userProfile) {
+        const refundResult = computeWithdrawalRefund({
+          amount: refundAmount,
+          accountType: resolvedAccountType,
+          account,
+          userProfile,
+        });
+
+        if (refundResult.updatedAccount) {
+          onUpdateAccount(refundResult.updatedAccount);
+        }
+        if (onUpdateProfile) {
+          onUpdateProfile(refundResult.updatedProfile);
+        }
+
+        await commitProfileBalanceToSupabase({
+          userId: userProfile.id || account?.ownerId,
+          userEmail: userProfile.email,
+          column: refundResult.column,
+          newBalance: refundResult.newBalance,
+        });
+      }
+
+      // Refresh withdrawals from Supabase source to ensure UI ledger is in sync
       const rows = await fetchSupabaseWithdrawalsForUser({
         userId: userProfile?.id || account?.ownerId,
         userEmail: userProfile?.email,
@@ -236,23 +281,17 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
         }
       }
 
-      if (!res.ok) {
-        setError(res.error || 'Failed to cancel withdrawal request.');
-        return;
-      }
-
-      // If we found it locally, update it. If not found, the refresh will handle it.
       if (targetReq) {
         onUpdateWithdrawal({
           ...targetReq,
           status: 'cancelled',
         });
         setSuccessBanner(
-          `Withdrawal request #${String(withdrawalId).slice(0, 8)} cancelled! Successfully refunded $${targetReq.amount.toFixed(2)} USD back to your active balance.`
+          `Withdrawal request #${String(withdrawalId).slice(0, 8)} cancelled! Successfully refunded $${refundAmount.toFixed(2)} USD back to your active balance.`
         );
       } else {
         setSuccessBanner(
-          `Withdrawal #${String(withdrawalId).slice(0, 8)} cancellation processed. Balance updated.`
+          `Withdrawal #${String(withdrawalId).slice(0, 8)} cancellation processed. Balance refunded.`
         );
       }
       setForceCleared(true);

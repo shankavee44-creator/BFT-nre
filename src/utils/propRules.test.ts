@@ -28,6 +28,7 @@ import {
   calculateLiveAccountEquity,
   validateZeroToleranceTradeExecution,
   liquidateActiveTradesOnSoftBreach,
+  evaluateRealtimeTradingEngine,
   MIN_WITHDRAWAL_PROFIT,
   FIRST_WITHDRAWAL_WAITING_DAYS,
   WITHDRAWAL_GUARANTEE_NOTICE,
@@ -770,7 +771,7 @@ test('Soft Breach auto-liquidation closes active floating trades, realizes PnL, 
   assert.equal(liq.updatedAccount.currentBalance, 4500);
   assert.equal(liq.updatedAccount.equity, 4500);
   assert.equal(liq.updatedAccount.startingDayEquity, 4500);
-  assert.equal(liq.updatedAccount.status, 'soft-breached');
+  assert.equal(liq.updatedAccount.status, 'soft_breached');
   assert.equal(liq.updatedAccount.breachType, 'soft');
   assert.equal(liq.remainingOverallBuffer, 250);
 
@@ -840,5 +841,126 @@ test('Zero-Tolerance Execution blocks trades exceeding remaining drawdown buffer
   const okSelf = validateZeroToleranceTradeExecution({ account: selfFunded, stake: 2500 });
   assert.equal(okSelf.allowed, true);
 });
+
+test('evaluateRealtimeTradingEngine triggers instant soft_breached, hard_breached, passed, and ignores self-funded', () => {
+  const base5k: TradingAccount = {
+    id: 'ACC-RT-5K',
+    loginId: 'BFT-RT-5K',
+    passwordHash: 'pass',
+    tier: 'one-step',
+    accountType: 'one_step',
+    tierName: 'One-Step Challenge',
+    size: 5000,
+    initialBalance: 5000,
+    startingDayEquity: 5000,
+    currentBalance: 4400, // $400 already lost + $200 stake deducted
+    equity: 4400,
+    dailyLossLimitPercent: 10,
+    maxOverallLossPercent: 15,
+    profitTargetPercent: 30,
+    status: 'active',
+    phase: 'phase_1',
+    tradingDaysCompleted: 5,
+    tradesCount: 4,
+    winRate: 50,
+    createdDate: '2026-10-01',
+    lastActiveDate: '2026-10-25',
+  };
+
+  const losingTrade: BinaryTrade = {
+    id: 'TRD-RT-1',
+    accountId: 'ACC-RT-5K',
+    asset: 'BTC/USDT (OTC)',
+    direction: 'CALL',
+    investment: 200,
+    payoutPercentage: 90,
+    potentialPayout: 380,
+    strikePrice: 95000,
+    currentPrice: 94800,
+    startTime: 1000,
+    endTime: 61000,
+    durationSeconds: 60,
+    status: 'active',
+  };
+
+  // 1. Live equity = $4,400 + $0 (OTM) = $4,400 -> $600 daily loss >= $500 (10%) -> instant soft_breached
+  const softEval = evaluateRealtimeTradingEngine({
+    account: base5k,
+    activeTrades: [losingTrade],
+    getLivePrice: () => 94800,
+    nowMs: 50000,
+  });
+  assert.equal(softEval.action, 'soft_breach');
+  assert.equal(softEval.databaseStatus, 'soft_breached');
+  assert.equal(softEval.updatedAccount.status, 'soft_breached');
+  assert.equal(softEval.liquidatedTrades.length, 1);
+  assert.equal(softEval.liquidatedTrades[0].status, 'lost');
+  assert.equal(softEval.updatedAccount.currentBalance, 4400);
+  assert.equal(softEval.updatedAccount.startingDayEquity, 4400);
+
+  // 2. Hard breach when live equity drops to $4,250 ($750 overall loss = 15% of $5,000)
+  const hardEval = evaluateRealtimeTradingEngine({
+    account: { ...base5k, startingDayEquity: 4500, currentBalance: 4200, equity: 4200 },
+    activeTrades: [losingTrade],
+    getLivePrice: () => 94800,
+    nowMs: 50000,
+  });
+  assert.equal(hardEval.action, 'hard_breach');
+  assert.equal(hardEval.databaseStatus, 'hard_breached');
+  assert.equal(hardEval.updatedAccount.status, 'hard_breached');
+  assert.equal(hardEval.liquidatedTrades.length, 1);
+
+  // 3. Target reached: $5,000 + 30% ($1,500) = $6,500 balance -> instant passed
+  const passedEval = evaluateRealtimeTradingEngine({
+    account: { ...base5k, currentBalance: 6550, equity: 6550 },
+    activeTrades: [],
+    getLivePrice: () => 95000,
+    nowMs: 50000,
+  });
+  assert.equal(passedEval.action, 'target_reached');
+  assert.equal(passedEval.databaseStatus, 'passed');
+  assert.equal(passedEval.updatedAccount.status, 'passed');
+
+  // 4. Instant Funded ($50K) newly purchased account has 0 trades and full balance -> active (no false breach)
+  const instant50k: TradingAccount = {
+    id: 'ACC-INST-50K',
+    loginId: 'BFT-INST-50K',
+    passwordHash: 'pass',
+    tier: 'instant',
+    accountType: 'instant',
+    tierName: 'Instant Funded',
+    size: 50000,
+    initialBalance: 50000,
+    startingDayEquity: 0,
+    currentBalance: 0,
+    equity: 0,
+    dailyLossLimitPercent: 6,
+    maxOverallLossPercent: 12,
+    profitTargetPercent: 0,
+    status: 'hard-breached',
+    phase: 'funded',
+    tradingDaysCompleted: 0,
+    tradesCount: 0,
+    winRate: 0,
+    createdDate: '2026-10-25',
+    lastActiveDate: '2026-10-25',
+  };
+  const sanitizedInstant = sanitizeAccountForAntiBreach(instant50k);
+  assert.equal(sanitizedInstant.currentBalance, 50000);
+  assert.equal(sanitizedInstant.equity, 50000);
+  assert.equal(sanitizedInstant.status, 'active');
+
+  // 5. Self-Funded account ignores drawdown rules completely
+  const selfFunded = createDefaultPersonalLiveAccount('usr-1', 'user@test.com', 5000);
+  const selfEval = evaluateRealtimeTradingEngine({
+    account: { ...selfFunded, currentBalance: 500, equity: 500 },
+    activeTrades: [],
+    getLivePrice: () => 95000,
+    nowMs: 50000,
+  });
+  assert.equal(selfEval.action, 'none');
+  assert.equal(selfEval.updatedAccount.status, 'active');
+});
+
 
 

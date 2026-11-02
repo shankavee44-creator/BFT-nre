@@ -22,7 +22,7 @@ import {
 } from '../utils/affiliateEngine';
 import { apiEmailSessionSync, apiValidate2fa } from '../utils/apiClient';
 import { supabase } from '../utils/supabase';
-import { resolveOrBuildUserProfile } from '../utils/authOtpLogic';
+import { resolveOrBuildUserProfile, isTwoFactorEnabledOnProfile } from '../utils/authOtpLogic';
 import { BftLogo } from './BftLogo';
 
 interface AuthModalProps {
@@ -259,12 +259,24 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
 
     try {
+      // Lock auto-redirect in App.tsx onAuthStateChange while login 2FA check is in progress
+      try {
+        sessionStorage.setItem('bft_2fa_login_gate_active', 'true');
+        sessionStorage.removeItem(`bft_2fa_verified_${cleanEmail}`);
+        localStorage.removeItem(`bft_2fa_verified_${cleanEmail}`);
+      } catch {
+        // ignore
+      }
+
       const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
         email: cleanEmail,
         password,
       });
 
       if (signInError || !signInData?.user) {
+        try {
+          sessionStorage.removeItem('bft_2fa_login_gate_active');
+        } catch {}
         setAuthError(signInError?.message || 'Invalid email or password.');
         setIsSubmitting(false);
         return;
@@ -291,14 +303,30 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         // ignore profile lookup error
       }
 
-      const userHas2fa = Boolean(
-        profileRow?.is_2fa_enabled ||
-        authUser.user_metadata?.is_2fa_enabled
-      );
+      const userHas2fa = isTwoFactorEnabledOnProfile(profileRow, authUser);
 
       if (userHas2fa) {
+        try {
+          sessionStorage.removeItem(`bft_2fa_verified_${authUser.id}`);
+          localStorage.removeItem(`bft_2fa_verified_${authUser.id}`);
+          if (profileRow?.id) {
+            sessionStorage.removeItem(`bft_2fa_verified_${profileRow.id}`);
+            localStorage.removeItem(`bft_2fa_verified_${profileRow.id}`);
+          }
+          sessionStorage.setItem(`bft_2fa_pending_${authUser.id}`, 'true');
+        } catch {
+          // ignore
+        }
+
         setTempUserId(profileRow?.id || authUser.id);
-        setPendingAuthUser(authUser);
+        setPendingAuthUser({
+          ...authUser,
+          totp_secret:
+            profileRow?.totp_secret ||
+            authUser.user_metadata?.totp_secret ||
+            authUser.user_metadata?.pending_totp_secret ||
+            undefined,
+        });
         setIs2faRequired(true);
         setTotpCode('');
         setAuthError(null);
@@ -307,9 +335,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       }
 
       try {
+        sessionStorage.removeItem('bft_2fa_login_gate_active');
+        sessionStorage.removeItem(`bft_2fa_pending_${authUser.id}`);
         sessionStorage.setItem(`bft_2fa_verified_${authUser.id}`, 'true');
+        sessionStorage.setItem(`bft_2fa_verified_${cleanEmail}`, 'true');
         if (rememberMe) {
           localStorage.setItem(`bft_2fa_verified_${authUser.id}`, 'true');
+          localStorage.setItem(`bft_2fa_verified_${cleanEmail}`, 'true');
         }
       } catch {
         // ignore
@@ -317,6 +349,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
       await ensureSupabaseUserProfileAndLogin(authUser);
     } catch {
+      try {
+        sessionStorage.removeItem('bft_2fa_login_gate_active');
+      } catch {}
       setAuthError('An error occurred during sign-in.');
     } finally {
       setIsSubmitting(false);
@@ -341,6 +376,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         userId: tempUserId,
         email: cleanEmail,
         code: cleanCode,
+        secret: pendingAuthUser?.totp_secret,
       });
 
       if (!validation.isValid) {
@@ -355,9 +391,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       };
 
       try {
+        sessionStorage.removeItem('bft_2fa_login_gate_active');
+        sessionStorage.removeItem(`bft_2fa_pending_${resolvedUser.id}`);
         sessionStorage.setItem(`bft_2fa_verified_${resolvedUser.id}`, 'true');
+        sessionStorage.setItem(`bft_2fa_verified_${cleanEmail}`, 'true');
         if (rememberMe) {
           localStorage.setItem(`bft_2fa_verified_${resolvedUser.id}`, 'true');
+          localStorage.setItem(`bft_2fa_verified_${cleanEmail}`, 'true');
         }
       } catch {
         // ignore

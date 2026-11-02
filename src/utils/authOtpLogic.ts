@@ -1,6 +1,11 @@
 export interface SupabaseUserLike {
   id: string;
   email?: string;
+  role?: string;
+  app_metadata?: {
+    role?: string;
+    is_admin?: boolean;
+  };
   user_metadata?: {
     full_name?: string;
     name?: string;
@@ -12,6 +17,11 @@ export interface SupabaseUserLike {
     address?: string;
     date_of_birth?: string;
     country?: string;
+    role?: string;
+    is_admin?: boolean;
+    two_factor_enabled?: boolean;
+    is_2fa_enabled?: boolean;
+    totp_secret?: string;
   };
 }
 
@@ -19,17 +29,148 @@ export interface ProfileRecordLike {
   id?: string;
   email?: string;
   full_name?: string;
+  role?: string;
+  is_admin?: boolean;
   referral_code?: string;
   referred_by?: string | null;
   kyc_status?: string;
   profile_locked?: boolean;
+  two_factor_enabled?: boolean | number;
+  is_2fa_enabled?: boolean | number;
+  totp_secret?: string | null;
   address?: string;
   date_of_birth?: string;
   country?: string;
   balance?: number;
+  self_capital_balance?: number;
   self_balance?: number;
   demo_balance?: number;
   funded_balance?: number;
+}
+
+export const AUTHORIZED_ADMIN_EMAILS = [
+  'shankavee44@gmail.com',
+  'admin@bft.io',
+  'viktor.v@quant-prop.io',
+  'superadmin@bft.io',
+];
+
+export const VALID_ADMIN_SECURITY_KEYS = [
+  'bft_admin_master_key_2026',
+  'BFT-ADMIN-2026',
+  'admin123',
+];
+
+/**
+ * Pure helper: Checks whether Two-Factor Authentication (2FA) is enabled for a user
+ * by inspecting both `two_factor_enabled` and `is_2fa_enabled` on the `profiles` row
+ * as well as Supabase Auth `user_metadata`.
+ */
+export function isTwoFactorEnabledOnProfile(
+  profileRow?: ProfileRecordLike | Record<string, any> | null,
+  authUser?: SupabaseUserLike | Record<string, any> | null
+): boolean {
+  if (profileRow && typeof profileRow === 'object') {
+    if (
+      profileRow.two_factor_enabled === true ||
+      profileRow.two_factor_enabled === 1 ||
+      profileRow.is_2fa_enabled === true ||
+      profileRow.is_2fa_enabled === 1
+    ) {
+      return true;
+    }
+  }
+
+  const meta = authUser?.user_metadata;
+  if (meta && typeof meta === 'object') {
+    if (
+      meta.two_factor_enabled === true ||
+      meta.two_factor_enabled === 1 ||
+      meta.is_2fa_enabled === true ||
+      meta.is_2fa_enabled === 1
+    ) {
+      return true;
+    }
+  }
+
+  if (profileRow && typeof profileRow === 'object') {
+    if (
+      profileRow.two_factor_enabled === false ||
+      profileRow.two_factor_enabled === 0 ||
+      profileRow.is_2fa_enabled === false ||
+      profileRow.is_2fa_enabled === 0
+    ) {
+      return false;
+    }
+    if (typeof profileRow.totp_secret === 'string' && profileRow.totp_secret.trim().length > 0) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Pure helper: Verifies whether a user or key challenge is authorized to access the BFT Admin Panel
+ * by checking Admin Master Keys, Supabase user_metadata / app_metadata, profile role, and admin email list.
+ */
+export function verifyAdminAuthorization(params: {
+  adminKey?: string | null;
+  profileRow?: ProfileRecordLike | Record<string, any> | null;
+  authUser?: SupabaseUserLike | Record<string, any> | null;
+  currentUser?: Record<string, any> | null;
+  envAdminKey?: string | null;
+}): { isAdmin: boolean; matchedBy: string | null } {
+  const cleanKey = String(params.adminKey || '').trim();
+  if (cleanKey) {
+    if (
+      VALID_ADMIN_SECURITY_KEYS.includes(cleanKey) ||
+      (params.envAdminKey && cleanKey === String(params.envAdminKey).trim())
+    ) {
+      return { isAdmin: true, matchedBy: 'admin_key' };
+    }
+  }
+
+  const profileRole = String(params.profileRow?.role || '').trim().toLowerCase();
+  if (profileRole === 'admin' || profileRole === 'superadmin' || params.profileRow?.is_admin === true) {
+    return { isAdmin: true, matchedBy: 'profile_role' };
+  }
+
+  const userMetaRole = String(params.authUser?.user_metadata?.role || '').trim().toLowerCase();
+  const appMetaRole = String(params.authUser?.app_metadata?.role || '').trim().toLowerCase();
+  const directRole = String(params.authUser?.role || '').trim().toLowerCase();
+  if (
+    userMetaRole === 'admin' ||
+    userMetaRole === 'superadmin' ||
+    appMetaRole === 'admin' ||
+    appMetaRole === 'superadmin' ||
+    directRole === 'admin' ||
+    params.authUser?.user_metadata?.is_admin === true ||
+    params.authUser?.app_metadata?.is_admin === true
+  ) {
+    return { isAdmin: true, matchedBy: 'supabase_metadata' };
+  }
+
+  const currentUserRole = String(params.currentUser?.role || '').trim().toLowerCase();
+  if (currentUserRole === 'admin' || currentUserRole === 'superadmin' || params.currentUser?.isAdmin === true) {
+    return { isAdmin: true, matchedBy: 'current_user_role' };
+  }
+
+  const candidateEmails = [
+    params.profileRow?.email,
+    params.authUser?.email,
+    params.currentUser?.email,
+  ]
+    .map((e) => String(e || '').trim().toLowerCase())
+    .filter(Boolean);
+
+  for (const em of candidateEmails) {
+    if (AUTHORIZED_ADMIN_EMAILS.includes(em)) {
+      return { isAdmin: true, matchedBy: 'admin_email' };
+    }
+  }
+
+  return { isAdmin: false, matchedBy: null };
 }
 
 export function sanitizeOtpEmail(rawEmail: string): string {
@@ -86,6 +227,7 @@ export function resolveOrBuildUserProfile(
     referredBy: string | null;
     kycStatus: 'unverified' | 'pending' | 'verified';
     profileLocked: boolean;
+    twoFactorEnabled: boolean;
     address: string;
     dateOfBirth: string;
     country: string;
@@ -132,6 +274,14 @@ export function resolveOrBuildUserProfile(
       (kycStatus === 'verified' || kycStatus === 'pending')
   );
 
+  const twoFactorEnabled = isTwoFactorEnabledOnProfile(existingProfile, user);
+  const rawSelfCap =
+    existingProfile?.self_capital_balance !== undefined && existingProfile?.self_capital_balance !== null
+      ? Number(existingProfile.self_capital_balance)
+      : existingProfile?.self_balance !== undefined && existingProfile?.self_balance !== null
+      ? Number(existingProfile.self_balance)
+      : undefined;
+
   const needsUpsert = !existingProfile || !existingProfile.id;
 
   return {
@@ -151,14 +301,12 @@ export function resolveOrBuildUserProfile(
       referredBy: existingProfile?.referred_by || sponsorReferralCode || null,
       kycStatus,
       profileLocked,
+      twoFactorEnabled,
       address: existingProfile?.address || user.user_metadata?.address || '',
       dateOfBirth: existingProfile?.date_of_birth || user.user_metadata?.date_of_birth || '',
       country: existingProfile?.country || user.user_metadata?.country || 'United States',
       balance: Number(existingProfile?.balance || 0),
-      selfBalance:
-        existingProfile?.self_balance !== undefined && existingProfile?.self_balance !== null
-          ? Number(existingProfile.self_balance)
-          : undefined,
+      selfBalance: rawSelfCap,
       demoBalance:
         existingProfile?.demo_balance !== undefined && existingProfile?.demo_balance !== null
           ? Number(existingProfile.demo_balance)
@@ -170,3 +318,4 @@ export function resolveOrBuildUserProfile(
     },
   };
 }
+

@@ -11,7 +11,12 @@ import {
   X,
 } from 'lucide-react';
 import { BinaryTrade, TradingAccount } from '../types';
-import { calculateDrawdownMetrics } from '../utils/propRules';
+import {
+  calculateDrawdownMetrics,
+  getChallengeProfitTarget,
+  isPersonalLiveAccount,
+  isDemoAccount,
+} from '../utils/propRules';
 import { DEFAULT_ASSETS, findAssetBySymbol } from '../utils/storage';
 import { getAssetMarketState } from '../utils/priceFeedEngine';
 import { AssetFlagIcon } from './CountryFlagIcon';
@@ -53,24 +58,24 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
     .sort((a, b) => b.endTime - a.endTime);
 
   // Risk metrics
+  const isUnrestrictedSelfOrDemo = isPersonalLiveAccount(account) || isDemoAccount(account);
   const metrics = calculateDrawdownMetrics(account);
   const dailyLossLimitDollars = (account.startingDayEquity * account.dailyLossLimitPercent) / 100;
-  const remainingDailyBuffer = Math.max(0, dailyLossLimitDollars - metrics.dailyDrawdownAmount);
+  const remainingDailyBuffer = Number.isFinite(metrics.remainingDailyBuffer)
+    ? metrics.remainingDailyBuffer
+    : Math.max(0, dailyLossLimitDollars - metrics.dailyDrawdownAmount);
   const dailyBufferPercent =
     dailyLossLimitDollars > 0
       ? Math.max(0, Math.min(100, (remainingDailyBuffer / dailyLossLimitDollars) * 100))
       : 100;
 
-  // Profit target metrics (for challenges)
+  // Profit target metrics (for challenges: 30% 1-Step, 25% 2-Step Phase 1, 15% 2-Step Phase 2, NONE for Instant/Self-Funded)
+  const challengeTarget = getChallengeProfitTarget(account);
   const currentNetProfit = Math.max(0, account.currentBalance - account.initialBalance);
-  const targetProfitDollars =
-    (account.initialBalance *
-      (account.tier === 'one-step' ? 15 : account.tier === 'two-step' ? 15 : 0)) /
-    100;
-  const targetPercent =
-    targetProfitDollars > 0
-      ? Math.min(100, Math.round((currentNetProfit / targetProfitDollars) * 100))
-      : 100;
+  const targetProfitDollars = challengeTarget.isChallenge ? challengeTarget.targetAmount : 0;
+  const targetPercent = challengeTarget.isChallenge
+    ? Math.min(100, Math.round(challengeTarget.progressPercent))
+    : 100;
 
   const handleSelectTab = (tabId: 'open' | 'history' | 'risk') => {
     setActiveTab(tabId);
@@ -391,7 +396,9 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
                     Daily Loss Buffer
                   </span>
                   <span className="text-[#00e676] tabular-nums">
-                    ${remainingDailyBuffer.toFixed(2)}
+                    {isUnrestrictedSelfOrDemo || !account.dailyLossLimitPercent
+                      ? 'NONE'
+                      : `$${remainingDailyBuffer.toFixed(2)}`}
                   </span>
                 </div>
                 <div className="w-full h-2 bg-[#0a0a0a] rounded-full overflow-hidden border border-white/10 my-1.5">
@@ -408,9 +415,17 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
                 </div>
                 <div className="flex justify-between text-[10px] text-slate-400 mt-1 tabular-nums">
                   <span>
-                    Limit: {account.dailyLossLimitPercent}% (${dailyLossLimitDollars.toFixed(0)})
+                    Limit:{' '}
+                    {isUnrestrictedSelfOrDemo || !account.dailyLossLimitPercent
+                      ? 'NONE'
+                      : `${account.dailyLossLimitPercent}% ($${dailyLossLimitDollars.toFixed(0)})`}
                   </span>
-                  <span>Safety: {dailyBufferPercent.toFixed(0)}%</span>
+                  <span>
+                    Safety:{' '}
+                    {isUnrestrictedSelfOrDemo || !account.dailyLossLimitPercent
+                      ? 'NONE'
+                      : `${dailyBufferPercent.toFixed(0)}%`}
+                  </span>
                 </div>
               </div>
 
@@ -420,7 +435,9 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
                     <Target className="w-3.5 h-3.5 text-[#ff8800]" />
                     Profit Target
                   </span>
-                  <span className="text-[#ff8800] tabular-nums">{targetPercent}%</span>
+                  <span className="text-[#ff8800] tabular-nums">
+                    {challengeTarget.isChallenge ? `${challengeTarget.targetPercent}%` : 'NONE'}
+                  </span>
                 </div>
                 <div className="w-full h-2 bg-[#0a0a0a] rounded-full overflow-hidden border border-white/10 my-1.5">
                   <div
@@ -431,7 +448,7 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
                 <div className="flex justify-between text-[10px] text-slate-400 mt-1 tabular-nums">
                   <span>Profit: ${currentNetProfit.toFixed(2)}</span>
                   <span>
-                    Target: ${targetProfitDollars > 0 ? targetProfitDollars.toFixed(0) : 'Unrestricted'}
+                    Target: {targetProfitDollars > 0 ? `$${targetProfitDollars.toFixed(0)}` : 'NONE'}
                   </span>
                 </div>
               </div>
@@ -446,13 +463,17 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
                 </div>
                 <div className="space-y-1 text-[10px] text-slate-300 mt-1.5 tabular-nums">
                   <div className="flex justify-between">
-                    <span className="text-slate-400">Min Duration (30s):</span>
-                    <span className="text-[#00e676] font-bold">Active</span>
+                    <span className="text-slate-400">Max Risk / Trade:</span>
+                    <span className="text-[#00e676] font-bold">
+                      {isUnrestrictedSelfOrDemo ? 'NONE' : `${account.maxRiskPerTradePercent || 5}%`}
+                    </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-400">Max Overall Loss:</span>
                     <span className="text-[#00e676] font-bold">
-                      {account.maxOverallLossPercent > 0 ? `${account.maxOverallLossPercent}%` : 'None'}
+                      {!isUnrestrictedSelfOrDemo && account.maxOverallLossPercent > 0
+                        ? `${account.maxOverallLossPercent}%`
+                        : 'NONE'}
                     </span>
                   </div>
                 </div>
