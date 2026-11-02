@@ -28,6 +28,7 @@ import {
   Ban,
   LogOut,
   Smartphone,
+  Sparkles,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import {
@@ -60,6 +61,7 @@ import { CountryFlagIcon } from './CountryFlagIcon';
 import { AffiliateDashboard } from './AffiliateDashboard';
 import { BftLogo } from './BftLogo';
 import { FundedCertificate } from './FundedCertificate';
+import { validateDemoBalance, persistCustomDemoBalance } from '../utils/demoBalanceManager';
 import {
   canUserWithdraw,
   validateAndLockProfileDetails,
@@ -182,6 +184,17 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   const [isDisabling2fa, setIsDisabling2fa] = useState(false);
 
   const [profileSaveMessage, setProfileSaveMessage] = useState<string | null>(null);
+  const [dashboardDemoBalanceInput, setDashboardDemoBalanceInput] = useState(
+    String((userProfile.demoBalance ?? 10000).toFixed(2))
+  );
+  const [isSavingDashboardDemo, setIsSavingDashboardDemo] = useState(false);
+  const [dashboardDemoNotice, setDashboardDemoNotice] = useState<{ text: string; isError?: boolean } | null>(null);
+
+  useEffect(() => {
+    if (userProfile.demoBalance !== undefined && userProfile.demoBalance !== null) {
+      setDashboardDemoBalanceInput(String(Number(userProfile.demoBalance).toFixed(2)));
+    }
+  }, [userProfile.demoBalance]);
   const [profileErrorMessage, setProfileErrorMessage] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [withdrawalBlockNotice, setWithdrawalBlockNotice] = useState<string | null>(null);
@@ -2832,6 +2845,121 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                 : 'Save & Permanently Lock Personal Details'}
             </button>
           </form>
+
+          {/* Customizable Demo Account Balance ($1 to $10,000) Card */}
+          <div className="p-6 rounded-3xl bg-[#0a0a0a] border border-amber-500/30 space-y-4 font-mono shadow-xl">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-amber-400" />
+                  Customizable Simulator Capital (Demo Account)
+                </h3>
+                <p className="text-xs text-slate-400 mt-1 font-sans">
+                  Set any custom demo balance between <strong className="text-white">$1.00</strong> and <strong className="text-white">$10,000.00</strong>. Automatically synchronizes with your top Account Switcher and OTC Trading Terminal.
+                </p>
+              </div>
+              <div className="text-left sm:text-right">
+                <span className="text-[10px] text-slate-400 block uppercase">Current Demo Balance</span>
+                <span className="text-xl font-black text-amber-400">
+                  ${(userProfile.demoBalance ?? 10000).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              </div>
+            </div>
+
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                soundEngine.playUiClick();
+                const val = validateDemoBalance(dashboardDemoBalanceInput);
+                if (!val.valid) {
+                  setDashboardDemoNotice({ text: val.error || 'Invalid amount.', isError: true });
+                  return;
+                }
+                setIsSavingDashboardDemo(true);
+                setDashboardDemoNotice(null);
+                try {
+                  await persistCustomDemoBalance({
+                    userId: userProfile.id,
+                    userEmail: userProfile.email,
+                    newBalance: val.normalized,
+                  });
+                  onUpdateProfile({
+                    ...userProfile,
+                    demoBalance: val.normalized,
+                  });
+                  const demoAcc = accounts.find((a) => a.id === 'BFT-DEMO' || a.tier === 'demo');
+                  if (demoAcc && onUpdateAccount) {
+                    onUpdateAccount({
+                      ...demoAcc,
+                      currentBalance: val.normalized,
+                      initialBalance: val.normalized,
+                      startingDayEquity: val.normalized,
+                      equity: val.normalized,
+                    });
+                  }
+                  soundEngine.playTradeWin();
+                  setDashboardDemoNotice({ text: `Successfully updated Demo balance to $${val.normalized.toLocaleString('en-US', { minimumFractionDigits: 2 })}!` });
+                } catch (err: any) {
+                  setDashboardDemoNotice({ text: err?.message || 'Failed to update balance.', isError: true });
+                } finally {
+                  setIsSavingDashboardDemo(false);
+                }
+              }}
+              className="space-y-3 pt-2 border-t border-white/10"
+            >
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                <div className="relative flex-1">
+                  <span className="absolute left-3.5 top-2.5 text-slate-400 text-sm">$</span>
+                  <input
+                    type="number"
+                    min="1"
+                    max="10000"
+                    step="0.01"
+                    value={dashboardDemoBalanceInput}
+                    onChange={(e) => {
+                      setDashboardDemoBalanceInput(e.target.value);
+                      setDashboardDemoNotice(null);
+                    }}
+                    placeholder="10000.00"
+                    className="w-full pl-8 pr-4 py-2.5 rounded-xl bg-[#141418] border border-white/15 text-sm font-bold text-white focus:outline-none focus:border-amber-400"
+                  />
+                </div>
+
+                <div className="flex items-center gap-1.5 overflow-x-auto">
+                  {[500, 1000, 5000, 10000].map((amt) => (
+                    <button
+                      key={amt}
+                      type="button"
+                      onClick={() => setDashboardDemoBalanceInput(String(amt))}
+                      className="px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-bold text-slate-300 border border-white/10 cursor-pointer transition-colors"
+                    >
+                      ${amt.toLocaleString()}
+                    </button>
+                  ))}
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isSavingDashboardDemo}
+                  className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs uppercase tracking-wide cursor-pointer transition-all disabled:opacity-50 shrink-0"
+                >
+                  {isSavingDashboardDemo ? 'Saving...' : 'Set Demo Balance'}
+                </button>
+              </div>
+
+              {dashboardDemoNotice && (
+                <div
+                  className={`text-xs p-3 rounded-xl border ${
+                    dashboardDemoNotice.isError
+                      ? 'bg-rose-950/40 border-rose-500/40 text-rose-300'
+                      : 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300'
+                  }`}
+                >
+                  {dashboardDemoNotice.text}
+                </div>
+              )}
+            </form>
+          </div>
         </div>
       )}
 

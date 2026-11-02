@@ -91,6 +91,8 @@ import {
 } from './src/server/db.ts';
 import { BackendMarketEngine } from './src/server/marketEngine.ts';
 import { CopyTradingEngine } from './src/server/copyTradingEngine.ts';
+import { generateSupportChatReply } from './src/server/aiChatService.ts';
+import { validateDemoBalance } from './src/utils/demoBalanceManager.ts';
 
 dotenv.config({ override: true });
 
@@ -952,6 +954,78 @@ async function startServer() {
       });
     } catch (err: any) {
       return res.status(400).json({ ok: false, error: err?.message || 'Failed to update profile.' });
+    }
+  });
+
+  // POST /api/profile/demo-balance - Update custom demo balance ($1 to $10,000)
+  app.post('/api/profile/demo-balance', async (req, res) => {
+    try {
+      const authUser = getAuthenticatedUser(req);
+      const targetUserId = req.body?.userId || authUser?.id;
+      const targetEmail = req.body?.email || authUser?.email;
+      const rawBalance = req.body?.demoBalance;
+
+      const validation = validateDemoBalance(rawBalance);
+      if (!validation.valid) {
+        return res.status(400).json({ ok: false, error: validation.error });
+      }
+
+      const balance = validation.normalized;
+
+      // Update SQLite user record if exists
+      if (targetUserId || targetEmail) {
+        try {
+          const user = targetUserId ? getUserById(targetUserId) : (targetEmail ? getUserByEmail(targetEmail) : null);
+          if (user) {
+            db.prepare('UPDATE users SET demo_balance = ?, updated_at = ? WHERE id = ?').run(
+              balance,
+              Date.now(),
+              user.id
+            );
+            // Also synchronize demo trading account initial & current balance
+            db.prepare(`
+              UPDATE accounts SET
+                current_balance = ?,
+                initial_balance = ?
+              WHERE user_id = ? AND (tier = 'demo' OR id LIKE 'BFT-DEMO%')
+            `).run(balance, balance, user.id);
+          }
+        } catch (dbErr) {
+          console.warn('SQLite demo balance sync notice:', dbErr);
+        }
+      }
+
+      return res.json({ ok: true, demoBalance: balance });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || 'Failed to update demo balance.' });
+    }
+  });
+
+  // POST /api/ai-chat - 24/7 AI Prop Trading Support Chatbot via @google/genai
+  app.post('/api/ai-chat', async (req, res) => {
+    try {
+      const { message, history } = req.body || {};
+      if (!message || typeof message !== 'string' || !message.trim()) {
+        return res.status(400).json({ ok: false, error: 'Message cannot be empty.' });
+      }
+
+      const reply = await generateSupportChatReply({
+        message: message.trim(),
+        history: Array.isArray(history) ? history : [],
+      });
+
+      return res.json({
+        ok: true,
+        reply,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      console.error('AI chat endpoint error:', err);
+      return res.json({
+        ok: true,
+        reply: 'Our AI Risk Desk is reviewing your request. For immediate assistance with promo codes, use SPOOKY40 for 40% OFF or SPOOKY20 for 20% OFF!',
+        timestamp: new Date().toISOString(),
+      });
     }
   });
 

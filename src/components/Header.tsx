@@ -30,6 +30,7 @@ import { getAuthoritativeAccountBalance } from '../utils/supabaseRealtimeSync';
 import { isRouteProtected } from '../utils/authRouting';
 import { BUILTIN_AVATARS } from '../utils/storage';
 import { BftLogo } from './BftLogo';
+import { QuotexAccountSwitcher } from './QuotexAccountSwitcher';
 
 interface HeaderProps {
   currentTab: string;
@@ -37,6 +38,8 @@ interface HeaderProps {
   accounts: TradingAccount[];
   activeAccount: TradingAccount | undefined;
   onSelectAccount: (accountId: string) => void;
+  onUpdateProfile?: (updated: UserProfile) => void;
+  onUpdateAccount?: (updated: TradingAccount) => void;
   userProfile: UserProfile;
   activePromoCode: PromoCodeType;
   onSelectPromoCode: (code: PromoCodeType) => void;
@@ -56,6 +59,8 @@ export const Header: React.FC<HeaderProps> = ({
   accounts,
   activeAccount,
   onSelectAccount,
+  onUpdateProfile,
+  onUpdateAccount,
   userProfile,
   activePromoCode,
   onSelectPromoCode,
@@ -208,7 +213,7 @@ export const Header: React.FC<HeaderProps> = ({
             { id: 'home', label: 'Challenges & Pricing' },
             { id: 'terminal', label: 'Trading Terminal' },
             { id: 'rules', label: 'Prop Rules' },
-            { id: 'affiliate', label: 'Affiliates (10%/5%/2% + 8%)' },
+            { id: 'affiliate', label: 'Affiliate' },
             { id: 'withdrawals', label: 'Withdrawals' },
             { id: 'dashboard', label: 'Trader Hub & KYC' },
             { id: 'faq', label: 'FAQ' },
@@ -285,46 +290,21 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           )}
 
-          {/* Dynamic Auth State: Logged-In User Profile & Logout vs Logged-Out Sign In & Register */}
+          {/* Dynamic Auth State: Logged-In Quotex-Style Account Switcher vs Logged-Out Sign In & Register */}
           {userProfile.isLoggedIn ? (
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                data-testid="header-user-profile-btn"
-                onClick={() => handleNavClick('dashboard')}
-                className="flex items-center gap-1.5 p-1 pr-2.5 rounded-xl bg-[#121216] border border-white/10 hover:border-[#ff8800]/40 transition-all cursor-pointer whitespace-nowrap"
-                title="Open Trader Profile & KYC"
-              >
-                <div className="relative">
-                  <img
-                    src={userProfile.avatarUrl || BUILTIN_AVATARS[0]}
-                    alt={userProfile.fullName || userProfile.email}
-                    className="w-6 h-6 rounded-lg object-cover ring-1 ring-[#ff8800]/50"
-                  />
-                  <span
-                    className={`absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full border border-[#0a0a0a] ${
-                      userProfile.kycStatus === 'verified' ? 'bg-emerald-400' : 'bg-[#ff8800]'
-                    }`}
-                  />
-                </div>
-                <span className="hidden md:inline text-xs font-bold text-white font-mono">
-                  {(userProfile.fullName || userProfile.email).split(' ')[0]}
-                </span>
-              </button>
-
-              {onLogout && (
-                <button
-                  type="button"
-                  data-testid="header-logout-btn"
-                  onClick={onLogout}
-                  className="px-2.5 py-1.5 rounded-xl bg-[#121216] hover:bg-rose-950/60 border border-white/10 hover:border-rose-500/40 text-slate-300 hover:text-rose-300 transition-all cursor-pointer flex items-center gap-1 text-xs font-mono font-bold"
-                  title="Sign Out"
-                  aria-label="Sign Out"
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                  <span className="hidden xl:inline">Logout</span>
-                </button>
-              )}
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              <QuotexAccountSwitcher
+                userProfile={userProfile}
+                accounts={accounts}
+                activeAccount={activeAccount}
+                onSelectAccount={onSelectAccount}
+                onUpdateProfile={onUpdateProfile}
+                onUpdateAccount={onUpdateAccount}
+                onOpenDepositModal={onOpenDepositModal}
+                onOpenWithdrawalModal={onOpenWithdrawalModal}
+                onNavigateTab={handleNavClick}
+                onLogout={onLogout}
+              />
             </div>
           ) : (
             <div className="flex items-center gap-1.5 sm:gap-2">
@@ -478,7 +458,7 @@ export const Header: React.FC<HeaderProps> = ({
               { id: 'home', label: 'Challenges & Pricing' },
               { id: 'terminal', label: 'Trading Terminal' },
               { id: 'rules', label: 'Prop Rules & Objectives' },
-              { id: 'affiliate', label: 'Affiliates (10%/5%/2% + 8%)' },
+              { id: 'affiliate', label: 'Affiliate' },
               { id: 'withdrawals', label: 'Withdrawal Portal' },
               { id: 'dashboard', label: 'Trader Hub & KYC' },
               { id: 'faq', label: 'FAQ & Support' },

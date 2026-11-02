@@ -1632,6 +1632,8 @@ export default function App() {
           accounts={userAccounts}
           activeAccount={activeAccount}
           onSelectAccount={handleSelectAccount}
+          onUpdateProfile={handleUpdateProfile}
+          onUpdateAccount={handleUpdateSingleAccount}
           userProfile={userProfile}
           activePromoCode={activePromoCode}
           onSelectPromoCode={setActivePromoCode}
