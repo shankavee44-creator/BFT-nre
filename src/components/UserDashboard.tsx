@@ -59,6 +59,7 @@ import { soundEngine } from '../utils/soundEffects';
 import { CountryFlagIcon } from './CountryFlagIcon';
 import { AffiliateDashboard } from './AffiliateDashboard';
 import { BftLogo } from './BftLogo';
+import { FundedCertificate } from './FundedCertificate';
 import {
   canUserWithdraw,
   validateAndLockProfileDetails,
@@ -119,7 +120,7 @@ interface UserDashboardProps {
   onOpenWithdrawalModal?: () => void;
   onNavigateToPricing?: () => void;
   onPassChallengePhase?: (account: TradingAccount) => void;
-  initialTab?: 'accounts' | 'analytics' | 'affiliate' | 'kyc' | 'profile' | 'security' | 'admin_users';
+  initialTab?: 'accounts' | 'analytics' | 'affiliate' | 'kyc' | 'profile' | 'security' | 'admin_users' | 'certificates';
   onLogout?: () => void;
   onOpenAdminDashboard?: () => void;
 }
@@ -153,7 +154,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   );
 
   const [activeTab, setActiveTab] = useState<
-    'accounts' | 'analytics' | 'affiliate' | 'kyc' | 'profile' | 'security' | 'admin_users'
+    'accounts' | 'analytics' | 'affiliate' | 'kyc' | 'profile' | 'security' | 'admin_users' | 'certificates'
   >(initialTab === 'admin_users' && !isUserAdmin ? 'accounts' : initialTab);
 
   // Personal Profile Details State (Full Name, Address, Date of Birth)
@@ -1429,6 +1430,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
       <div className="flex gap-2 border-b border-white/10 mb-8 overflow-x-auto pb-2 font-mono">
         {[
           { id: 'accounts', label: `My Trading Accounts (${accounts.length})` },
+          { id: 'certificates', label: 'Certificates' },
           { id: 'kyc', label: `KYC Verification (${formatKycStatusBadgeText(userProfile.kycStatus)})` },
           { id: 'profile', label: 'Profile & Personal Details' },
           { id: 'analytics', label: 'Performance Analytics' },
@@ -2051,6 +2053,16 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Tab: Official Funded Trader Certificates */}
+      {activeTab === 'certificates' && (
+        <FundedCertificate
+          userProfile={userProfile}
+          accounts={accounts}
+          onOpenTerminal={onOpenTerminal}
+          onOpenChallengeModal={onOpenChallengeModal}
+        />
       )}
 
       {/* Tab 2: Strict 2-Step KYC Verification & Profile Lock */}

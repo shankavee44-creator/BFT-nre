@@ -5,7 +5,7 @@
 export const PUBLIC_ROUTES = ['home', 'rules', 'faq'] as const;
 export type PublicRoute = (typeof PUBLIC_ROUTES)[number];
 
-export const PROTECTED_ROUTES = ['terminal', 'dashboard', 'affiliate', 'withdrawals'] as const;
+export const PROTECTED_ROUTES = ['terminal', 'dashboard', 'affiliate', 'withdrawals', 'certificates'] as const;
 export type ProtectedRoute = (typeof PROTECTED_ROUTES)[number];
 
 export type AppRoute = PublicRoute | ProtectedRoute | string;
@@ -61,6 +61,7 @@ export function resolveTargetRoute(requestedRoute: string, isLoggedIn: boolean):
     dashboard: 'Trader Hub & KYC Portal',
     affiliate: 'Affiliate Commission Dashboard',
     withdrawals: 'Withdrawal & Payout Portal',
+    certificates: 'Funded Trader Certificates Portal',
   };
 
   const featureName = routeNames[requestedRoute] || 'Trader Area';

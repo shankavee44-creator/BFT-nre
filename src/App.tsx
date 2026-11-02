@@ -1482,7 +1482,7 @@ export default function App() {
     const urlParams = new URLSearchParams(window.location.search);
     const rawPath = window.location.pathname.replace(/^\//, '');
     const path = urlParams.get('autostart') === '1' ? 'terminal' : (rawPath || 'home');
-    const validTabs = ['home', 'terminal', 'rules', 'affiliate', 'withdrawals', 'dashboard', 'faq'];
+    const validTabs = ['home', 'terminal', 'rules', 'affiliate', 'withdrawals', 'dashboard', 'certificates', 'faq'];
     if (validTabs.includes(path) && path !== currentTab) {
       handleNavigateTab(path);
     }
@@ -1789,7 +1789,7 @@ export default function App() {
           </div>
         )}
 
-        {(currentTab === 'dashboard' || currentTab === 'affiliate') && (
+        {(currentTab === 'dashboard' || currentTab === 'affiliate' || currentTab === 'certificates') && (
           <UserDashboard
             userProfile={userProfile}
             onUpdateProfile={handleUpdateProfile}
@@ -1812,7 +1812,13 @@ export default function App() {
               }, 100);
             }}
             onPassChallengePhase={handlePassChallengePhase}
-            initialTab={currentTab === 'affiliate' ? 'affiliate' : 'accounts'}
+            initialTab={
+              currentTab === 'affiliate'
+                ? 'affiliate'
+                : currentTab === 'certificates'
+                ? 'certificates'
+                : 'accounts'
+            }
             onLogout={handleLogout}
             onOpenAdminDashboard={() => setIsAdminDashboardOpen(true)}
           />

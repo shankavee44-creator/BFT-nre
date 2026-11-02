@@ -32,6 +32,7 @@ test('canAccessRoute blocks protected pages to unauthenticated users', () => {
   assert.strictEqual(canAccessRoute('dashboard', false), false);
   assert.strictEqual(canAccessRoute('affiliate', false), false);
   assert.strictEqual(canAccessRoute('withdrawals', false), false);
+  assert.strictEqual(canAccessRoute('certificates', false), false);
 });
 
 test('canAccessRoute grants access to all routes when user is logged in', () => {
@@ -39,6 +40,7 @@ test('canAccessRoute grants access to all routes when user is logged in', () => 
   assert.strictEqual(canAccessRoute('dashboard', true), true);
   assert.strictEqual(canAccessRoute('affiliate', true), true);
   assert.strictEqual(canAccessRoute('withdrawals', true), true);
+  assert.strictEqual(canAccessRoute('certificates', true), true);
   assert.strictEqual(canAccessRoute('home', true), true);
 });
 
