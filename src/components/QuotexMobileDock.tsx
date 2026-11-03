@@ -71,18 +71,16 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = ({
   onToggleTradesDrawer,
   onSelectTradesTab,
 }) => {
-  const [isConfigExpanded, setIsConfigExpanded] = useState(false);
-
   const potentialProfit = (effectiveInvestment * selectedAsset.payout) / 100;
   const totalPayout = effectiveInvestment + potentialProfit;
 
   return (
     <div
       data-testid="quotex-mobile-dock"
-      className="md:hidden sticky bottom-0 left-0 right-0 z-30 bg-[#0e1015]/98 border-t border-white/15 px-2.5 py-2 shrink-0 font-mono select-none w-full max-w-[100vw] overflow-x-hidden hw-accelerate shadow-2xl"
+      className="md:hidden sticky bottom-0 left-0 right-0 z-30 bg-[#0e1015]/98 border-t border-white/15 px-2 py-1.5 shrink-0 font-mono select-none w-full max-w-[100vw] overflow-x-hidden hw-accelerate shadow-2xl space-y-1.5"
     >
-      {/* 1. Asset Selector Bar with Payout % & PENDING TRADE Switch */}
-      <div className="flex items-center justify-between pb-1 mb-1 border-b border-white/10 gap-2">
+      {/* 1. Asset Selector Bar & Pending Switch */}
+      <div className="flex items-center justify-between pb-1 border-b border-white/10 gap-2">
         <button
           type="button"
           data-testid="mobile-dock-asset-btn"
@@ -90,11 +88,11 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = ({
             soundEngine.playUiClick();
             onOpenAssetModal();
           }}
-          className="flex items-center gap-1 text-left py-0.5 px-2 rounded-lg bg-[#161922] border border-white/10 active:bg-[#1e222d] text-white cursor-pointer min-w-0"
+          className="flex items-center gap-1.5 text-left py-1 px-2.5 rounded-lg bg-[#161922] border border-white/10 active:bg-[#1e222d] text-white cursor-pointer min-w-0"
         >
           <AssetFlagIcon symbol={selectedAsset.symbol} category={selectedAsset.category} flagEmoji={selectedAsset.flag} size="xs" />
           <span className="font-black text-xs tracking-tight truncate">{selectedAsset.symbol}</span>
-          <span className="text-xs font-black text-[#00e676] ml-0.5 shrink-0">
+          <span className="text-xs font-black text-[#00e676] ml-1 shrink-0">
             {selectedAsset.payout}%
           </span>
           <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
@@ -107,9 +105,9 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = ({
             soundEngine.playUiClick();
             onTogglePendingTrade();
           }}
-          className="flex items-center gap-1.5 py-0.5 px-1.5 rounded-lg bg-[#161922] border border-white/10 active:bg-[#1e222d] text-[10px] font-bold text-slate-300 cursor-pointer shrink-0"
+          className="flex items-center gap-1.5 py-1 px-2 rounded-lg bg-[#161922] border border-white/10 active:bg-[#1e222d] text-[10px] font-bold text-slate-300 cursor-pointer shrink-0"
         >
-          <span className="text-blue-400 font-bold text-[9px]">PENDING TRADE</span>
+          <span className="text-blue-400 font-bold text-[9px]">PENDING</span>
           <div
             className={`w-5.5 h-3 rounded-full p-0.5 transition-colors flex items-center ${
               pendingOrderEnabled ? 'bg-blue-500 justify-end' : 'bg-[#2a2e39] justify-start'
@@ -120,163 +118,146 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = ({
         </button>
       </div>
 
-      {/* 2. Compact Collapsible Accordion Header Summary Bar */}
-      <div className="bg-[#161922] border border-white/10 rounded-lg px-2 py-1 mb-1 text-[11px] font-mono select-none">
-        <button
-          type="button"
-          data-testid="mobile-dock-accordion-toggle"
-          onClick={() => {
-            soundEngine.playUiClick();
-            setIsConfigExpanded((prev) => !prev);
-          }}
-          className="flex items-center justify-between w-full cursor-pointer text-slate-200 hover:text-white"
-        >
-          <div className="flex items-center gap-1.5 text-[10.5px]">
-            <Clock className="w-3 h-3 text-[#ff8800] shrink-0" />
-            <span className="font-bold text-white">{formatSecondsToTimer(duration)}</span>
-            <span className="text-slate-600">|</span>
-            <span className="font-bold text-white">
-              {investmentMode === 'usd' ? `$${investment}` : `${investment}%`}
+      {/* 2. Inline Sticky Duration & Amount Selectors (Quotex Style - Always Visible & Interactive) */}
+      <div className="grid grid-cols-2 gap-2">
+        {/* Duration / Time Box */}
+        <div className="px-2 py-1 rounded-lg bg-[#161922] border border-white/10 font-mono">
+          <div className="flex items-center justify-between text-[9.5px] text-slate-400 mb-0.5">
+            <span>Duration</span>
+            <div className="flex gap-1">
+              {[30, 60, 300].map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => {
+                    soundEngine.playUiClick();
+                    onChangeDuration(s);
+                  }}
+                  className={`px-1 rounded text-[9px] font-bold cursor-pointer ${
+                    duration === s ? 'bg-[#ff8800] text-slate-950 font-black' : 'bg-[#0a0a0a] text-slate-300'
+                  }`}
+                >
+                  {s >= 60 ? `${s / 60}m` : `${s}s`}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex items-center justify-between bg-[#0a0a0a] border border-white/10 rounded-md px-1.5 py-0.5">
+            <button
+              type="button"
+              onClick={() => {
+                soundEngine.playUiClick();
+                onChangeDuration(Math.max(15, duration - (duration <= 60 ? 15 : 60)));
+              }}
+              className="w-5 h-5 rounded bg-[#1e222d] text-white font-black flex items-center justify-center text-xs cursor-pointer active:bg-slate-700"
+            >
+              -
+            </button>
+            <span
+              data-testid="mobile-dock-time-value"
+              className="font-black text-white text-xs tracking-wider tabular-nums"
+            >
+              {formatSecondsToTimer(duration)}
             </span>
-            <span className="text-slate-600">|</span>
-            <span className="font-black text-[#00e676]">
-              Payout ${totalPayout.toFixed(2)} (+${potentialProfit.toFixed(2)})
-            </span>
-          </div>
-
-          <div className="flex items-center gap-1 text-[10px] text-[#ff8800] font-bold shrink-0 ml-1">
-            <SlidersHorizontal className="w-3 h-3" />
-            <span>{isConfigExpanded ? 'Close' : 'Adjust'}</span>
-            <ChevronDown
-              className={`w-3.5 h-3.5 transition-transform duration-200 ${
-                isConfigExpanded ? 'rotate-180' : ''
-              }`}
-            />
-          </div>
-        </button>
-      </div>
-
-      {/* 2B. Expanded Duration / Amount Adjustment Controls */}
-      {isConfigExpanded && (
-        <div className="space-y-1 mb-1 animate-in fade-in duration-150">
-          <div className="grid grid-cols-2 gap-1.5">
-            {/* Duration / Time Box */}
-            <div className="px-1.5 py-1 rounded-lg bg-[#161922] border border-white/10 font-mono">
-              <div className="flex items-center justify-between text-[9px] text-slate-400 mb-0.5">
-                <span>Duration / <button type="button" onClick={() => { soundEngine.playUiClick(); const times = [30, 60, 300, 900]; onChangeDuration(times[(times.indexOf(duration) + 1) % times.length]); }} className="text-blue-400 font-bold hover:underline cursor-pointer">Time</button></span>
-              </div>
-              <div className="flex items-center justify-between bg-[#0a0a0a] border border-white/10 rounded-md px-1 py-0.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    soundEngine.playUiClick();
-                    onChangeDuration(Math.max(30, duration - (duration <= 60 ? 5 : 60)));
-                  }}
-                  className="w-5 h-5 rounded bg-[#1e222d] active:bg-[#2a3040] text-white font-black flex items-center justify-center text-xs cursor-pointer"
-                  title="Decrease Time"
-                >
-                  -
-                </button>
-                <span
-                  data-testid="mobile-dock-time-value"
-                  className="font-black text-white text-xs tracking-wider tabular-nums"
-                >
-                  {formatSecondsToTimer(duration)}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    soundEngine.playUiClick();
-                    onChangeDuration(duration + (duration < 60 ? 5 : 60));
-                  }}
-                  className="w-5 h-5 rounded bg-[#1e222d] active:bg-[#2a3040] text-white font-black flex items-center justify-center text-xs cursor-pointer"
-                  title="Increase Time"
-                >
-                  +
-                </button>
-              </div>
-            </div>
-
-            {/* Amount / Percent Box */}
-            <div className="px-1.5 py-1 rounded-lg bg-[#161922] border border-white/10 font-mono">
-              <div className="flex items-center justify-between text-[9px] text-slate-400 mb-0.5">
-                <span>Amount / <button type="button" onClick={() => { soundEngine.playUiClick(); onToggleInvestmentMode(); }} className="text-blue-400 font-bold hover:underline cursor-pointer">Percent</button></span>
-              </div>
-              <div className="flex items-center justify-between bg-[#0a0a0a] border border-white/10 rounded-md px-1 py-0.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    soundEngine.playUiClick();
-                    onChangeInvestment(Math.max(1, investment - (investment <= 10 ? 1 : 10)));
-                  }}
-                  className="w-5 h-5 rounded bg-[#1e222d] active:bg-[#2a3040] text-white font-black flex items-center justify-center text-xs cursor-pointer"
-                  title="Decrease Investment"
-                >
-                  -
-                </button>
-                <span
-                  data-testid="mobile-dock-investment-value"
-                  className="font-black text-white text-xs tracking-wider tabular-nums"
-                >
-                  {investmentMode === 'usd' ? `${investment} $` : `${investment} %`}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    soundEngine.playUiClick();
-                    onChangeInvestment(investment + (investment < 10 ? 1 : 10));
-                  }}
-                  className="w-5 h-5 rounded bg-[#1e222d] active:bg-[#2a3040] text-white font-black flex items-center justify-center text-xs cursor-pointer"
-                  title="Increase Investment"
-                >
-                  +
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Detailed Payout Line inside Accordion */}
-          <div
-            data-testid="mobile-payout-display"
-            className="flex items-center justify-between px-2 py-0.5 rounded bg-[#161922] border border-white/10 text-[10px] font-mono tabular-nums"
-          >
-            <span className="text-slate-400">Total Payout</span>
-            <div className="flex items-center gap-1">
-              <span className="font-black text-white text-xs">${totalPayout.toFixed(2)}</span>
-              <span className="text-[9px] font-black text-[#00e676]">
-                (+${potentialProfit.toFixed(2)})
-              </span>
-            </div>
+            <button
+              type="button"
+              onClick={() => {
+                soundEngine.playUiClick();
+                onChangeDuration(duration + (duration < 60 ? 15 : 60));
+              }}
+              className="w-5 h-5 rounded bg-[#1e222d] text-white font-black flex items-center justify-center text-xs cursor-pointer active:bg-slate-700"
+            >
+              +
+            </button>
           </div>
         </div>
-      )}
 
-      {/* Fallback payout display testid if collapsed */}
-      {!isConfigExpanded && (
-        <span data-testid="mobile-payout-display" className="hidden" />
-      )}
+        {/* Investment / Amount Box */}
+        <div className="px-2 py-1 rounded-lg bg-[#161922] border border-white/10 font-mono">
+          <div className="flex items-center justify-between text-[9.5px] text-slate-400 mb-0.5">
+            <span>Amount</span>
+            <button
+              type="button"
+              onClick={() => {
+                soundEngine.playUiClick();
+                onToggleInvestmentMode();
+              }}
+              className="text-blue-400 font-bold hover:underline cursor-pointer text-[9px]"
+            >
+              {investmentMode === 'usd' ? '$ → %' : '% → $'}
+            </button>
+          </div>
+          <div className="flex items-center justify-between bg-[#0a0a0a] border border-white/10 rounded-md px-1.5 py-0.5">
+            <button
+              type="button"
+              onClick={() => {
+                soundEngine.playUiClick();
+                onChangeInvestment(Math.max(1, investment - (investment <= 10 ? 1 : 10)));
+              }}
+              className="w-5 h-5 rounded bg-[#1e222d] text-white font-black flex items-center justify-center text-xs cursor-pointer active:bg-slate-700"
+            >
+              -
+            </button>
+            <div className="flex items-center gap-0.5 font-black text-white text-xs">
+              <input
+                aria-label="Trade Investment Amount"
+                type="number"
+                min={1}
+                value={investment}
+                onChange={(e) => onChangeInvestment(Math.max(1, Number(e.target.value)))}
+                className="w-12 bg-transparent text-center focus:outline-none font-black text-white"
+              />
+              <span className="text-xs text-slate-300">{investmentMode === 'usd' ? '$' : '%'}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                soundEngine.playUiClick();
+                onChangeInvestment(investment + (investment < 10 ? 1 : 10));
+              }}
+              className="w-5 h-5 rounded bg-[#1e222d] text-white font-black flex items-center justify-center text-xs cursor-pointer active:bg-slate-700"
+            >
+              +
+            </button>
+          </div>
+        </div>
+      </div>
 
-      {/* 3. Full-Width Action Buttons: Buy & Sell */}
+      {/* Payout Summary Row */}
+      <div
+        data-testid="mobile-payout-display"
+        className="flex items-center justify-between px-2 py-1 rounded-lg bg-[#161922] border border-white/10 text-[10.5px] font-mono tabular-nums"
+      >
+        <span className="text-slate-400 font-bold">Estimated Payout</span>
+        <div className="flex items-center gap-1.5">
+          <span className="font-black text-white text-xs">${totalPayout.toFixed(2)}</span>
+          <span className="text-[10px] font-black text-[#00e676]">
+            (+${potentialProfit.toFixed(2)})
+          </span>
+        </div>
+      </div>
+
+      {/* 3. Prominent Buy & Sell Action Buttons */}
       {isSoftBreached ? (
-        <div className="p-1.5 rounded-lg bg-amber-950/60 border border-amber-500/60 text-center font-mono text-[10px] text-amber-200">
+        <div className="p-2 rounded-lg bg-amber-950/60 border border-amber-500/60 text-center font-mono text-[10.5px] text-amber-200">
           <div className="font-black uppercase flex items-center justify-center gap-1 text-white">
             <Clock className="w-3.5 h-3.5 text-amber-400" />
             <span>Daily Pause (Soft Breach)</span>
           </div>
         </div>
       ) : isHardBreached ? (
-        <div className="p-1.5 rounded-lg bg-rose-950/60 border border-rose-500/60 text-center font-mono text-[10px] text-rose-200">
+        <div className="p-2 rounded-lg bg-rose-950/60 border border-rose-500/60 text-center font-mono text-[10.5px] text-rose-200">
           <div className="font-black uppercase flex items-center justify-center gap-1 text-white">
             <Lock className="w-3.5 h-3.5 text-rose-400" />
             <span>Terminal Locked (Hard Breach)</span>
           </div>
         </div>
       ) : riskBarricaded ? (
-        <div className="p-1.5 rounded-lg bg-amber-950/60 border border-amber-500 text-center text-[10px] text-amber-300 font-bold">
+        <div className="p-2 rounded-lg bg-amber-950/60 border border-amber-500 text-center text-[10.5px] text-amber-300 font-bold">
           Risk Barricade Active: Orders blocked at 80% loss threshold.
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-1.5 font-sans my-1">
+        <div className="grid grid-cols-2 gap-2 font-sans">
           {/* Green "Buy" Button */}
           <button
             type="button"
@@ -285,11 +266,11 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = ({
               soundEngine.playTradePlacement('CALL');
               onTriggerTrade('CALL');
             }}
-            className="h-9 sm:h-10 rounded-xl bg-[#00c853] hover:bg-[#00e676] active:scale-[0.98] text-white font-black text-xs sm:text-sm flex items-center justify-between px-3.5 cursor-pointer transition-all shadow-md"
+            className="h-10 sm:h-11 rounded-xl bg-[#00c853] hover:bg-[#00e676] active:scale-[0.98] text-white font-black text-sm flex items-center justify-between px-4 cursor-pointer transition-all shadow-md"
           >
             <span>Buy</span>
-            <span className="w-5 h-5 rounded-full bg-white/20 flex items-center justify-center">
-              <TrendingUp className="w-3.5 h-3.5 stroke-[3]" />
+            <span className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center">
+              <TrendingUp className="w-4 h-4 stroke-[3]" />
             </span>
           </button>
 
@@ -301,19 +282,19 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = ({
               soundEngine.playTradePlacement('PUT');
               onTriggerTrade('PUT');
             }}
-            className="h-9 sm:h-10 rounded-xl bg-[#ff334b] hover:bg-[#ff4d63] active:scale-[0.98] text-white font-black text-xs sm:text-sm flex items-center justify-between px-3.5 cursor-pointer transition-all shadow-md"
+            className="h-10 sm:h-11 rounded-xl bg-[#ff334b] hover:bg-[#ff4d63] active:scale-[0.98] text-white font-black text-sm flex items-center justify-between px-4 cursor-pointer transition-all shadow-md"
           >
             <span>Sell</span>
-            <span className="w-5 h-5 rounded-full bg-white/20 flex items-center justify-center">
-              <TrendingDown className="w-3.5 h-3.5 stroke-[3]" />
+            <span className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center">
+              <TrendingDown className="w-4 h-4 stroke-[3]" />
             </span>
           </button>
         </div>
       )}
 
-      {/* 4. Trades and History Drawer Trigger */}
-      <div className="flex items-center justify-between pt-1 border-t border-white/10 text-[9.5px] gap-1">
-        <div className="flex items-center gap-1">
+      {/* 4. Trades & History Drawer Toggle Bar */}
+      <div className="flex items-center justify-between pt-1 border-t border-white/10 text-[10px] gap-1">
+        <div className="flex items-center gap-1.5">
           <button
             type="button"
             data-testid="mobile-dock-trades-tab"
@@ -325,7 +306,7 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = ({
                 onToggleTradesDrawer();
               }
             }}
-            className={`px-1.5 py-0.5 rounded font-bold flex items-center gap-1 cursor-pointer transition-colors ${
+            className={`px-2 py-1 rounded font-bold flex items-center gap-1 cursor-pointer transition-colors ${
               isTradesDrawerOpen && activeTradesTab === 'trades'
                 ? 'bg-[#ff8800] text-slate-950 font-black'
                 : 'bg-[#161922] text-slate-200 hover:text-white border border-white/10'
@@ -346,7 +327,7 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = ({
                 onToggleTradesDrawer();
               }
             }}
-            className={`px-1.5 py-0.5 rounded font-bold flex items-center gap-1 cursor-pointer transition-colors ${
+            className={`px-2 py-1 rounded font-bold flex items-center gap-1 cursor-pointer transition-colors ${
               isTradesDrawerOpen && activeTradesTab === 'history'
                 ? 'bg-[#ff8800] text-slate-950 font-black'
                 : 'bg-[#161922] text-slate-200 hover:text-white border border-white/10'
@@ -364,17 +345,17 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = ({
               soundEngine.playUiClick();
               onToggleTradesDrawer();
             }}
-            className="p-0.5 rounded bg-[#161922] border border-white/10 text-slate-400 hover:text-white cursor-pointer"
+            className="p-1 rounded bg-[#161922] border border-white/10 text-slate-400 hover:text-white cursor-pointer"
           >
             <ChevronUp
-              className={`w-3 h-3 transition-transform duration-200 ${
+              className={`w-3.5 h-3.5 transition-transform duration-200 ${
                 isTradesDrawerOpen ? 'rotate-180 text-[#ff8800]' : ''
               }`}
             />
           </button>
         </div>
 
-        <div className="text-[9.5px] text-slate-400 shrink-0 tabular-nums">
+        <div className="text-[10px] text-slate-400 shrink-0 tabular-nums">
           Daily DD:{' '}
           <span
             className={`font-black ${
