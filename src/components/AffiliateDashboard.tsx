@@ -18,6 +18,12 @@ import {
   FileText,
   AlertCircle,
   Percent,
+  Crown,
+  Trophy,
+  CheckCircle2,
+  Zap,
+  Info,
+  Gift,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -31,6 +37,12 @@ import {
   requestAffiliatePayout,
   mergeCommissionLedgers,
   formatPurchasedPackageLabel,
+  claimVipMilestoneReward,
+  isMilestoneRewardClaimed,
+  VIP_ACTIVE_TRADERS_THRESHOLD,
+  VIP_MILESTONE_REWARD_AMOUNT,
+  BASIC_TIER_RATES,
+  VIP_TIER_RATES,
 } from '../utils/affiliateEngine';
 import { soundEngine } from '../utils/soundEffects';
 import { apiGetAffiliateDashboard } from '../utils/apiClient';
@@ -60,7 +72,7 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
   const [showQrModal, setShowQrModal] = useState(false);
-  const [filterLevel, setFilterLevel] = useState<'all' | '1' | '2' | '3' | 'withdrawal'>('all');
+  const [filterLevel, setFilterLevel] = useState<'all' | '1' | '2' | '3' | 'withdrawal' | 'vip'>('all');
 
   const [payoutAmount, setPayoutAmount] = useState<number>(50);
   const [payoutMethod, setPayoutMethod] = useState<'USDT (TRC-20)' | 'Bank Transfer'>('USDT (TRC-20)');
@@ -68,10 +80,15 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
   const [payoutError, setPayoutError] = useState<string | null>(null);
   const [payoutSuccess, setPayoutSuccess] = useState<string | null>(null);
   const [isSubmittingPayout, setIsSubmittingPayout] = useState(false);
+
   const [supabaseCommissions, setSupabaseCommissions] = useState<ReferralRecord[]>([]);
   const [backendCommissions, setBackendCommissions] = useState<ReferralRecord[]>([]);
   const [resolvedSupabaseUuid, setResolvedSupabaseUuid] = useState<string | null>(null);
   const [referredNetworkCount, setReferredNetworkCount] = useState(0);
+  const [backendActiveFundedCount, setBackendActiveFundedCount] = useState<number>(0);
+
+  const [milestoneClaimSuccess, setMilestoneClaimSuccess] = useState<string | null>(null);
+  const [milestoneClaimError, setMilestoneClaimError] = useState<string | null>(null);
 
   // Query Supabase referral_commissions & network count + subscribe to real-time changes
   useEffect(() => {
@@ -87,7 +104,25 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
       const rawType = String(c.source_type || c.commission_type || 'package').toLowerCase();
       const isWithdrawal = rawType.includes('withdrawal');
       const level = (Number(c.level || c.tier_level || 1) as 1 | 2 | 3);
-      const rate = isWithdrawal ? 0.08 : level === 1 ? 0.10 : level === 2 ? 0.05 : 0.02;
+
+      const isVip =
+        c.affiliate_tier === 'vip' ||
+        c.tier === 'vip' ||
+        Number(c.rate) >= 0.15 ||
+        (level === 2 && Number(c.rate) >= 0.08) ||
+        (level === 3 && Number(c.rate) >= 0.05) ||
+        (isWithdrawal && Number(c.rate) >= 0.10);
+
+      const tier: 'basic' | 'vip' = isVip ? 'vip' : 'basic';
+      const defaultRate = isWithdrawal
+        ? (isVip ? VIP_TIER_RATES.WITHDRAWAL_ROYALTY : BASIC_TIER_RATES.WITHDRAWAL_ROYALTY)
+        : level === 1
+        ? (isVip ? VIP_TIER_RATES.LEVEL_1 : BASIC_TIER_RATES.LEVEL_1)
+        : level === 2
+        ? (isVip ? VIP_TIER_RATES.LEVEL_2 : BASIC_TIER_RATES.LEVEL_2)
+        : (isVip ? VIP_TIER_RATES.LEVEL_3 : BASIC_TIER_RATES.LEVEL_3);
+
+      const rate = typeof c.rate === 'number' && c.rate > 0 ? c.rate : defaultRate;
       const pkgPrice = Number(c.package_amount ?? c.base_amount ?? c.package_price ?? 0);
       const commAmt = Number(c.amount ?? c.commission_amount ?? (pkgPrice * rate));
       const rawPkgName = String(c.description || c.package_name || 'Challenge Commission');
@@ -110,6 +145,7 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
         commissionRate: rate,
         commissionAmount: Number(commAmt.toFixed(2)),
         commissionType: isWithdrawal ? 'withdrawal' : 'package',
+        affiliateTier: tier,
         status: 'paid',
         createdAt: c.created_at
           ? typeof c.created_at === 'number'
@@ -147,6 +183,7 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
         let rawComms: any[] = [];
         let rawBackendComms: any[] = [];
         let networkCount: number | null = null;
+        let activeCount: number | null = null;
 
         // 1. Fetch Commissions from Supabase using exact referrer_id column
         if (validUuid) {
@@ -170,7 +207,7 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
           }
         }
 
-        // 3. Also fetch backend affiliate dashboard API (recentCommissions & teamSize)
+        // 3. Also fetch backend affiliate dashboard API (recentCommissions, teamSize & activeFundedCount)
         try {
           const dashRes = await apiGetAffiliateDashboard({
             userId: validUuid || targetUserId,
@@ -182,6 +219,9 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
             }
             if (networkCount === null && typeof dashRes.stats.teamSize === 'number' && dashRes.stats.teamSize > 0) {
               networkCount = dashRes.stats.teamSize;
+            }
+            if (typeof dashRes.stats.activeFundedCount === 'number') {
+              activeCount = dashRes.stats.activeFundedCount;
             }
           }
         } catch {
@@ -197,6 +237,9 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
           }
           if (networkCount !== null) {
             setReferredNetworkCount((prev) => Math.max(prev, networkCount!));
+          }
+          if (activeCount !== null) {
+            setBackendActiveFundedCount(activeCount);
           }
         }
       } catch (err) {
@@ -240,43 +283,26 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
     backendReferrals: backendCommissions,
   });
 
-  const totalPaid = payouts
-    .filter((p) => p.status === 'completed' || p.status === 'processing')
-    .reduce((sum, p) => sum + p.amount, 0);
+  // Calculate unique active funded traders (referrals who made an actual funded package purchase with amount > 0)
+  const uniqueFundedBuyersCount = new Set(
+    allMergedCommissions
+      .filter((c) => c.commissionType !== 'withdrawal' && Number(c.packagePrice) > 0)
+      .map((c) => c.referredUserId)
+  ).size;
 
-  const lifetimeEarnedTotal = Number(
-    allMergedCommissions.reduce((sum, c) => sum + c.commissionAmount, 0).toFixed(2)
+  const effectiveActiveFundedCount = Math.max(
+    backendActiveFundedCount,
+    uniqueFundedBuyersCount
   );
 
-  const stats = {
-    availableBalance: Math.max(0, Number((lifetimeEarnedTotal - totalPaid).toFixed(2))),
-    lifetimeEarnings: lifetimeEarnedTotal,
-    level1Earnings: Number(
-      allMergedCommissions
-        .filter((c) => c.level === 1 && c.commissionType === 'package')
-        .reduce((sum, c) => sum + c.commissionAmount, 0)
-        .toFixed(2)
-    ),
-    level2Earnings: Number(
-      allMergedCommissions
-        .filter((c) => c.level === 2)
-        .reduce((sum, c) => sum + c.commissionAmount, 0)
-        .toFixed(2)
-    ),
-    level3Earnings: Number(
-      allMergedCommissions
-        .filter((c) => c.level === 3)
-        .reduce((sum, c) => sum + c.commissionAmount, 0)
-        .toFixed(2)
-    ),
-    withdrawalEarnings: Number(
-      allMergedCommissions
-        .filter((c) => c.commissionType === 'withdrawal')
-        .reduce((sum, c) => sum + c.commissionAmount, 0)
-        .toFixed(2)
-    ),
-    totalReferralsCount: referredNetworkCount,
-  };
+  const stats = calculateAffiliateStats(
+    userProfile.id,
+    allMergedCommissions,
+    payouts,
+    undefined,
+    undefined,
+    effectiveActiveFundedCount
+  );
 
   const handleCopyLink = () => {
     navigator.clipboard.writeText(referralLink);
@@ -290,6 +316,29 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
     setCopiedCode(true);
     soundEngine.playUiClick();
     setTimeout(() => setCopiedCode(false), 2000);
+  };
+
+  const handleClaimMilestone = () => {
+    setMilestoneClaimError(null);
+    setMilestoneClaimSuccess(null);
+    const res = claimVipMilestoneReward({
+      userId: userProfile.id,
+      userName: userProfile.fullName || (userProfile as any).name || 'Trader',
+      userEmail: userProfile.email,
+      referrals: allMergedCommissions,
+      activeCountOverride: stats.activeFundedCount,
+    });
+    if (res.success && res.rewardRecord) {
+      soundEngine.playTradeWin();
+      setMilestoneClaimSuccess(
+        'Congratulations! $10,000 Milestone Cash Reward has been credited directly to your affiliate balance.'
+      );
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('bft-affiliate-updated'));
+      }
+    } else {
+      setMilestoneClaimError(res.error || 'Failed to claim milestone reward');
+    }
   };
 
   const handleSubmitPayout = (e: React.FormEvent) => {
@@ -351,36 +400,49 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
   const filteredReferrals = allMergedCommissions.filter((r) => {
     if (filterLevel === 'all') return true;
     if (filterLevel === 'withdrawal') return r.commissionType === 'withdrawal';
+    if (filterLevel === 'vip') return r.affiliateTier === 'vip';
     return r.level === parseInt(filterLevel, 10) && r.commissionType !== 'withdrawal';
   });
 
   return (
     <div data-testid="affiliate-dashboard" className="space-y-8 font-sans w-full max-w-full overflow-x-hidden">
-      {/* 1. HERO BANNER WITH 3-TIER PACKAGE (10% L1 / 5% L2 / 2% L3) + 8% DIRECT PAYOUT BONUS */}
+      {/* 1. HERO BANNER WITH CURRENT TIER STATUS */}
       <div className="relative rounded-3xl bg-[#111115] border border-[#ff8800]/40 p-6 sm:p-8 overflow-hidden">
         <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
           <div className="space-y-2 max-w-2xl">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#ff8800]/15 border border-[#ff8800]/40 text-[#ff8800] text-xs font-mono font-bold">
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>3-TIER AFFILIATE & DIRECT PAYOUT BONUS SYSTEM</span>
+              {stats.isVipUnlocked ? (
+                <>
+                  <Crown className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="text-amber-300">VIP AFFILIATE TIER ACTIVE (15% / 8% / 5% + 10%)</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>BASIC AFFILIATE TIER (10% / 5% / 2% + 8%)</span>
+                </>
+              )}
             </div>
             <h2 className="text-2xl sm:text-4xl font-black text-white tracking-tight">
               "Let's trade, profit, and earn more together"
             </h2>
             <p className="text-sm text-slate-300 leading-relaxed">
-              Earn <strong className="text-[#ff8800]">3-Tier Challenge Commissions</strong> (<strong>10% Level 1 Direct Referrals</strong>, <strong>5% Level 2 Sub-referrals</strong>, <strong>2% Level 3 Network</strong>) on every challenge purchase, PLUS an extra{' '}
-              <strong className="text-emerald-400">8% Direct Payout Bonus</strong> every time your direct referrals withdraw their trading profits!
+              Earn generous multi-level challenge commissions on funded account purchases across 3 tiers, plus direct payout bonuses whenever your direct referrals withdraw trading profits. Reach 1,000 active funded traders to unlock the prestigious <strong>VIP Tier</strong> and a <strong>$10,000 Cash Reward</strong>!
             </p>
           </div>
 
           <div className="flex items-center gap-3 p-4 rounded-2xl bg-[#0a0a0d] border border-[#ff8800]/40 shrink-0">
-            <div className="w-12 h-12 rounded-xl bg-[#ff8800] flex items-center justify-center text-slate-950">
-              <Award className="w-6 h-6 stroke-[2.5]" />
+            <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-slate-950 ${stats.isVipUnlocked ? 'bg-gradient-to-br from-amber-400 to-yellow-500' : 'bg-[#ff8800]'}`}>
+              {stats.isVipUnlocked ? <Crown className="w-6 h-6 stroke-[2.5]" /> : <Award className="w-6 h-6 stroke-[2.5]" />}
             </div>
             <div>
-              <div className="text-[10px] uppercase font-bold text-slate-400 font-mono">3-Tier + Payout Bonus</div>
-              <div className="text-base font-black text-white">10% L1 • 5% L2 • 2% L3 + 8% Payout</div>
-              <div className="text-[11px] text-emerald-400 font-mono font-bold">● Real-Time Commission Ledger</div>
+              <div className="text-[10px] uppercase font-bold text-slate-400 font-mono">
+                {stats.isVipUnlocked ? 'VIP Tier Rates' : 'Basic Tier Rates'}
+              </div>
+              <div className="text-base font-black text-white">
+                {stats.isVipUnlocked ? '15% L1 • 8% L2 • 5% L3 + 10% WD' : '10% L1 • 5% L2 • 2% L3 + 8% WD'}
+              </div>
+              <div className="text-[11px] text-emerald-400 font-mono font-bold">● Real-Time Supabase Ledger Sync</div>
             </div>
           </div>
         </div>
@@ -426,7 +488,214 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
         </div>
       </div>
 
-      {/* 2. PRIMARY METRICS */}
+      {/* 2. PROMINENT VIP TIER PROGRESS BAR & $10,000 MILESTONE CARD */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* Progress Bar Component */}
+        <div className="lg:col-span-7 rounded-3xl bg-gradient-to-br from-[#121217] via-[#16141c] to-[#121217] border border-amber-500/30 p-6 sm:p-7 shadow-2xl relative overflow-hidden">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
+                <Crown className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-white flex items-center gap-2">
+                  <span>VIP Tier Qualification Progress</span>
+                  {stats.isVipUnlocked && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] bg-amber-400 text-slate-950 font-black">
+                      UNLOCKED
+                    </span>
+                  )}
+                </h3>
+                <p className="text-xs text-slate-400 font-mono">
+                  Requirement: 1,000 Active Funded Referrals
+                </p>
+              </div>
+            </div>
+
+            <div className="text-right">
+              <span className="text-2xl font-black text-amber-400 font-mono">
+                {stats.activeFundedCount}
+              </span>
+              <span className="text-xs text-slate-400 font-mono"> / {stats.vipThreshold.toLocaleString()}</span>
+              <div className="text-[11px] font-bold text-slate-400">
+                {stats.vipProgressPercent}% Completed
+              </div>
+            </div>
+          </div>
+
+          {/* Progress Bar Track */}
+          <div className="w-full bg-[#09090c] rounded-full h-4 p-0.5 border border-white/15 mb-3 overflow-hidden">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-amber-500 via-yellow-400 to-[#ff8800] transition-all duration-700 shadow-[0_0_12px_rgba(245,158,11,0.5)]"
+              style={{ width: `${Math.max(2, Math.min(100, stats.vipProgressPercent))}%` }}
+            />
+          </div>
+
+          <div className="flex items-center justify-between text-xs font-mono text-slate-300 mb-4">
+            <span>
+              {stats.isVipUnlocked ? (
+                <strong className="text-emerald-400 font-bold">✓ VIP Status Achieved! All new referrals earn VIP rates.</strong>
+              ) : (
+                <>
+                  <strong className="text-amber-400">{stats.remainingToVip.toLocaleString()}</strong> active funded referrals remaining
+                </>
+              )}
+            </span>
+            <span className="text-slate-400">Target: 1,000 Active Funded</span>
+          </div>
+
+          {/* Definition Notice Box */}
+          <div className="p-3.5 rounded-2xl bg-[#09090d] border border-white/10 flex items-start gap-2.5 text-xs leading-relaxed text-slate-300">
+            <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <div>
+              <strong className="text-white">Active Trader Definition:</strong> An active trader counts strictly when a referred trader actually purchases an <strong className="text-amber-300">Instant Funded</strong> or <strong className="text-amber-300">Evaluation Challenge</strong> account. Free/demo signups ($0) do not count.
+              <div className="mt-1 text-[11px] text-slate-400">
+                <strong className="text-slate-300">Historical Rate Isolation:</strong> Referrals who registered during Basic tier remain at Basic rates. Only new referrals joined after achieving VIP status earn VIP rates.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* $10,000 Milestone Cash Reward Card */}
+        <div className="lg:col-span-5 rounded-3xl bg-gradient-to-br from-[#18130c] via-[#20180d] to-[#14110b] border-2 border-amber-500/50 p-6 sm:p-7 shadow-2xl flex flex-col justify-between relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-36 h-36 bg-amber-500/10 rounded-full blur-2xl pointer-events-none" />
+
+          <div>
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/40 text-[11px] font-mono font-black mb-3">
+              <Trophy className="w-3.5 h-3.5" />
+              <span>1,000 ACTIVE TRADERS MILESTONE</span>
+            </div>
+            <h3 className="text-2xl font-black text-white tracking-tight flex items-center gap-2">
+              <span>$10,000 Cash Reward</span>
+            </h3>
+            <p className="text-xs text-slate-300 mt-2 leading-relaxed">
+              Complete the 1,000 active funded trader milestone and receive an instant, unencumbered <strong>$10,000 USD Cash Reward</strong> deposited straight into your available affiliate balance.
+            </p>
+          </div>
+
+          <div className="mt-5 pt-4 border-t border-amber-500/20">
+            {stats.milestoneClaimed ? (
+              <div className="p-3 rounded-2xl bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 text-xs font-mono font-bold flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>$10,000 Milestone Reward Claimed & Deposited</span>
+              </div>
+            ) : stats.isVipUnlocked ? (
+              <div className="space-y-2">
+                <button
+                  onClick={handleClaimMilestone}
+                  className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-400 via-yellow-400 to-[#ff8800] text-slate-950 font-black text-xs font-mono uppercase tracking-wide flex items-center justify-center gap-2 cursor-pointer shadow-lg hover:brightness-110 transition-all"
+                >
+                  <Gift className="w-4 h-4 stroke-[2.5]" />
+                  <span>Claim $10,000 Cash Reward Now</span>
+                </button>
+                {milestoneClaimSuccess && (
+                  <p className="text-xs text-emerald-400 font-mono text-center font-bold">{milestoneClaimSuccess}</p>
+                )}
+                {milestoneClaimError && (
+                  <p className="text-xs text-rose-400 font-mono text-center">{milestoneClaimError}</p>
+                )}
+              </div>
+            ) : (
+              <div className="flex items-center justify-between text-xs font-mono">
+                <span className="text-slate-400">Milestone Status:</span>
+                <span className="text-amber-400 font-bold">{stats.remainingToVip.toLocaleString()} Referrals Remaining</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* 3. BASIC VS. VIP COMPARISON CARD */}
+      <div className="rounded-3xl bg-[#111115] border border-white/10 p-6 sm:p-7 shadow-xl">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+          <div>
+            <h3 className="text-base sm:text-lg font-black text-white flex items-center gap-2">
+              <Layers className="w-5 h-5 text-[#ffaa00]" />
+              <span>Affiliate Tier Comparison: Basic vs. VIP Tiers</span>
+            </h3>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Contrast tier benefits side-by-side to understand commission growth and historical isolation.
+            </p>
+          </div>
+          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#0a0a0d] border border-white/15 text-xs font-mono text-slate-300">
+            <span>Your Active Tier:</span>
+            <span className={`font-black uppercase px-2 py-0.5 rounded ${stats.isVipUnlocked ? 'bg-amber-400 text-slate-950' : 'bg-slate-700 text-white'}`}>
+              {stats.affiliateTier}
+            </span>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left font-mono text-xs">
+            <thead>
+              <tr className="border-b border-white/15 text-[11px] uppercase text-slate-400 bg-white/5">
+                <th className="py-3 px-4 rounded-l-xl">Commission Stream</th>
+                <th className="py-3 px-4">Basic Tier (&lt;1,000 Active)</th>
+                <th className="py-3 px-4 text-amber-300">VIP Tier (1,000+ Active)</th>
+                <th className="py-3 px-4 rounded-r-xl text-right">VIP Upgrade Impact</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/5 font-sans">
+              <tr className="hover:bg-white/5">
+                <td className="py-3.5 px-4 font-bold text-white flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                  <span>Direct Referral Challenge Purchase (L1)</span>
+                </td>
+                <td className="py-3.5 px-4 font-mono font-bold text-slate-300">10%</td>
+                <td className="py-3.5 px-4 font-mono font-black text-amber-400">15%</td>
+                <td className="py-3.5 px-4 font-mono text-right text-emerald-400 font-bold">+50% Higher Payout</td>
+              </tr>
+              <tr className="hover:bg-white/5">
+                <td className="py-3.5 px-4 font-bold text-white flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-cyan-400" />
+                  <span>Sub-Referral Purchase (L2)</span>
+                </td>
+                <td className="py-3.5 px-4 font-mono font-bold text-slate-300">5%</td>
+                <td className="py-3.5 px-4 font-mono font-black text-amber-400">8%</td>
+                <td className="py-3.5 px-4 font-mono text-right text-emerald-400 font-bold">+60% Higher Payout</td>
+              </tr>
+              <tr className="hover:bg-white/5">
+                <td className="py-3.5 px-4 font-bold text-white flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-purple-400" />
+                  <span>Extended Network Purchase (L3)</span>
+                </td>
+                <td className="py-3.5 px-4 font-mono font-bold text-slate-300">2%</td>
+                <td className="py-3.5 px-4 font-mono font-black text-amber-400">5%</td>
+                <td className="py-3.5 px-4 font-mono text-right text-emerald-400 font-bold">+150% Higher Payout</td>
+              </tr>
+              <tr className="hover:bg-white/5">
+                <td className="py-3.5 px-4 font-bold text-white flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-[#ff8800]" />
+                  <span>Direct Referral Profit Withdrawal Royalty</span>
+                </td>
+                <td className="py-3.5 px-4 font-mono font-bold text-slate-300">8%</td>
+                <td className="py-3.5 px-4 font-mono font-black text-amber-400">10%</td>
+                <td className="py-3.5 px-4 font-mono text-right text-emerald-400 font-bold">+25% Recurring Royalty</td>
+              </tr>
+              <tr className="hover:bg-white/5">
+                <td className="py-3.5 px-4 font-bold text-white flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-amber-400" />
+                  <span>Milestone Cash Reward</span>
+                </td>
+                <td className="py-3.5 px-4 font-mono text-slate-500">—</td>
+                <td className="py-3.5 px-4 font-mono font-black text-amber-300">$10,000 USD</td>
+                <td className="py-3.5 px-4 font-mono text-right text-amber-400 font-bold">One-Time Instant Bonus</td>
+              </tr>
+              <tr className="hover:bg-white/5">
+                <td className="py-3.5 px-4 font-bold text-white flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-slate-400" />
+                  <span>Historical Rate Isolation</span>
+                </td>
+                <td className="py-3.5 px-4 text-xs text-slate-400">Default for all registrations</td>
+                <td className="py-3.5 px-4 text-xs text-amber-200">Applies to all new signups after VIP</td>
+                <td className="py-3.5 px-4 font-mono text-right text-slate-400 text-xs">Protects rate stability</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* 4. PRIMARY METRICS */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="p-5 rounded-2xl bg-[#111115] border border-[#ff8800]/40">
           <div className="flex items-center justify-between text-slate-400 text-xs font-mono mb-2">
@@ -447,7 +716,7 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
           <div className="text-3xl font-black text-white font-mono">
             ${stats.lifetimeEarnings.toFixed(2)}
           </div>
-          <div className="text-[11px] text-slate-400 mt-2">10%/5%/2% Package + 8% Payout Bonus</div>
+          <div className="text-[11px] text-slate-400 mt-2">Package Commissions + Withdrawal Royalties</div>
         </div>
 
         <div
@@ -455,39 +724,43 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
           className="p-5 rounded-2xl bg-[#111115] border border-white/10"
         >
           <div className="flex items-center justify-between text-slate-400 text-xs font-mono mb-2">
-            <span>8% Direct Payout Bonus</span>
+            <span>Direct Payout Bonus</span>
             <Percent className="w-4 h-4 text-emerald-400" />
           </div>
           <div className="text-3xl font-black text-emerald-400 font-mono">
-            ${stats.withdrawalEarnings.toFixed(2)}
+            ${(stats.withdrawalEarnings ?? 0).toFixed(2)}
           </div>
-          <div className="text-[11px] text-slate-400 mt-2">8% earned from direct referrals' withdrawals</div>
+          <div className="text-[11px] text-slate-400 mt-2">
+            {stats.isVipUnlocked ? '10%' : '8%'} earned on direct referrals' profit payouts
+          </div>
         </div>
 
         <div className="p-5 rounded-2xl bg-[#111115] border border-white/10">
           <div className="flex items-center justify-between text-slate-400 text-xs font-mono mb-2">
-            <span>Referred Network</span>
+            <span>Active Funded Referrals</span>
             <Users className="w-4 h-4 text-[#ffaa00]" />
           </div>
           <div className="text-3xl font-black text-white font-mono">
-            {stats.totalReferralsCount} Traders
+            {stats.activeFundedCount} Traders
           </div>
-          <div className="text-[11px] text-slate-400 mt-2">Active across L1, L2 & L3</div>
+          <div className="text-[11px] text-slate-400 mt-2">Hold purchased Instant Funded or Challenge</div>
         </div>
       </div>
 
-      {/* 3. COMMISSION STRUCTURE CARDS (10% L1 / 5% L2 / 2% L3 PACKAGE + 8% DIRECT PAYOUT BONUS) */}
+      {/* 5. COMMISSION STRUCTURE CARDS */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div
           data-testid="affiliate-l1-card"
           className="p-5 rounded-2xl bg-[#111115] border border-emerald-500/40 font-mono"
         >
           <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-black text-xs">
-            LEVEL 1 • 10%
+            LEVEL 1 • {stats.isVipUnlocked ? '15% VIP' : '10%'}
           </span>
-          <h4 className="text-sm font-black text-white mt-3 font-sans">Direct Referrals (10%)</h4>
+          <h4 className="text-sm font-black text-white mt-3 font-sans">
+            Direct Referrals ({stats.isVipUnlocked ? '15%' : '10%'})
+          </h4>
           <p className="text-xs text-slate-400 mt-1 mb-3 font-sans">
-            10% instant commission on every direct referral challenge purchase.
+            {stats.isVipUnlocked ? '15%' : '10%'} instant commission on every direct referral challenge purchase.
           </p>
           <div className="text-lg font-black text-emerald-400">${stats.level1Earnings.toFixed(2)}</div>
         </div>
@@ -497,11 +770,13 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
           className="p-5 rounded-2xl bg-[#111115] border border-cyan-500/40 font-mono"
         >
           <span className="px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-400 font-black text-xs">
-            LEVEL 2 • 5%
+            LEVEL 2 • {stats.isVipUnlocked ? '8% VIP' : '5%'}
           </span>
-          <h4 className="text-sm font-black text-white mt-3 font-sans">Sub-Referrals (5%)</h4>
+          <h4 className="text-sm font-black text-white mt-3 font-sans">
+            Sub-Referrals ({stats.isVipUnlocked ? '8%' : '5%'})
+          </h4>
           <p className="text-xs text-slate-400 mt-1 mb-3 font-sans">
-            5% commission on challenge packages purchased by Level 2 sub-referrals.
+            {stats.isVipUnlocked ? '8%' : '5%'} commission on challenge packages purchased by Level 2 sub-referrals.
           </p>
           <div className="text-lg font-black text-cyan-400">${stats.level2Earnings.toFixed(2)}</div>
         </div>
@@ -511,11 +786,13 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
           className="p-5 rounded-2xl bg-[#111115] border border-purple-500/40 font-mono"
         >
           <span className="px-2 py-0.5 rounded bg-purple-500/20 text-purple-400 font-black text-xs">
-            LEVEL 3 • 2%
+            LEVEL 3 • {stats.isVipUnlocked ? '5% VIP' : '2%'}
           </span>
-          <h4 className="text-sm font-black text-white mt-3 font-sans">Level 3 Network (2%)</h4>
+          <h4 className="text-sm font-black text-white mt-3 font-sans">
+            Level 3 Network ({stats.isVipUnlocked ? '5%' : '2%'})
+          </h4>
           <p className="text-xs text-slate-400 mt-1 mb-3 font-sans">
-            2% commission on challenge packages purchased by Level 3 traders.
+            {stats.isVipUnlocked ? '5%' : '2%'} commission on challenge packages purchased by Level 3 traders.
           </p>
           <div className="text-lg font-black text-purple-400">${stats.level3Earnings.toFixed(2)}</div>
         </div>
@@ -525,17 +802,21 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
           className="p-5 rounded-2xl bg-[#16120c] border-2 border-[#ff8800] font-mono"
         >
           <span className="px-2 py-0.5 rounded bg-[#ff8800] text-slate-950 font-black text-xs">
-            PAYOUT BONUS • 8%
+            PAYOUT BONUS • {stats.isVipUnlocked ? '10% VIP' : '8%'}
           </span>
-          <h4 className="text-sm font-black text-white mt-3 font-sans">Direct Payout Bonus (8%)</h4>
+          <h4 className="text-sm font-black text-white mt-3 font-sans">
+            Direct Payout Bonus ({stats.isVipUnlocked ? '10%' : '8%'})
+          </h4>
           <p className="text-xs text-slate-300 mt-1 mb-3 font-sans">
-            Extra 8% commission on direct referrals' withdrawal amounts in real-time!
+            Extra {stats.isVipUnlocked ? '10%' : '8%'} commission on direct referrals' withdrawal amounts in real-time!
           </p>
-          <div className="text-lg font-black text-[#ffaa00]">Recurring 8% Bonus</div>
+          <div className="text-lg font-black text-[#ffaa00]">
+            Recurring {stats.isVipUnlocked ? '10%' : '8%'} Bonus
+          </div>
         </div>
       </div>
 
-      {/* 4. PAYOUT FORM & AUDIT TABLE */}
+      {/* 6. PAYOUT FORM & AUDIT TABLE */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         <div className="lg:col-span-5 rounded-3xl bg-[#111115] border border-white/10 p-6 shadow-xl">
           <h3 className="text-base font-black text-white flex items-center gap-2 mb-2">
@@ -636,15 +917,16 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
             <h3 className="text-base font-black text-white flex items-center gap-2">
               <FileText className="w-5 h-5 text-[#ffaa00]" />
-              <span>3-Tier (10% / 5% / 2%) & 8% Payout Bonus Ledger</span>
+              <span>3-Tier & Payout Bonus Ledger</span>
             </h3>
-            <div className="flex gap-1 p-1 rounded-xl bg-[#09090c] border border-white/10 text-[11px] font-mono">
+            <div className="flex flex-wrap gap-1 p-1 rounded-xl bg-[#09090c] border border-white/10 text-[11px] font-mono">
               {[
                 { id: 'all', label: 'All' },
-                { id: '1', label: 'L1 (10%)' },
-                { id: '2', label: 'L2 (5%)' },
-                { id: '3', label: 'L3 (2%)' },
-                { id: 'withdrawal', label: 'Payout (8%)' },
+                { id: '1', label: 'L1' },
+                { id: '2', label: 'L2' },
+                { id: '3', label: 'L3' },
+                { id: 'withdrawal', label: 'Payout' },
+                { id: 'vip', label: 'VIP Rates' },
               ].map((t) => (
                 <button
                   key={t.id}
@@ -666,6 +948,7 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
               <thead>
                 <tr className="border-b border-white/10 text-[10px] uppercase text-slate-400">
                   <th className="py-3 pl-2">Trader</th>
+                  <th className="py-3">Tier</th>
                   <th className="py-3">Type</th>
                   <th className="py-3">Source / Package</th>
                   <th className="py-3 text-right">Earned</th>
@@ -673,37 +956,52 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
-                {filteredReferrals.map((ref) => (
-                  <tr key={ref.id} className="hover:bg-white/5">
-                    <td className="py-3 pl-2">
-                      <div className="font-bold text-white">{ref.referredUserName}</div>
-                      <div className="text-[10px] text-slate-500">{ref.referredUserEmail}</div>
-                    </td>
-                    <td className="py-3">
-                      <span
-                        className={`px-2 py-0.5 rounded text-[10px] font-black ${
-                          ref.commissionType === 'withdrawal'
-                            ? 'bg-[#ff8800]/20 text-[#ffaa00] border border-[#ff8800]/40'
-                            : 'bg-emerald-500/20 text-emerald-400'
-                        }`}
-                      >
-                        {ref.commissionType === 'withdrawal'
-                          ? '8% PAYOUT BONUS'
-                          : `L${ref.level} (${(ref.commissionRate * 100).toFixed(0)}%)`}
-                      </span>
-                    </td>
-                    <td className="py-3 text-slate-300 font-sans">
-                      <div className="font-bold text-white">{ref.packageName}</div>
-                      <div className="text-[10px] text-slate-500">${Number(ref.packagePrice).toFixed(2)}</div>
-                    </td>
-                    <td className="py-3 text-right font-black text-emerald-400">
-                      +${ref.commissionAmount.toFixed(2)}
-                    </td>
-                    <td className="py-3 text-right pr-2 text-slate-400 font-mono">
-                      {new Date(ref.createdAt).toLocaleDateString()}
-                    </td>
-                  </tr>
-                ))}
+                {filteredReferrals.map((ref) => {
+                  const isVipEntry = ref.affiliateTier === 'vip';
+                  return (
+                    <tr key={ref.id} className="hover:bg-white/5">
+                      <td className="py-3 pl-2">
+                        <div className="font-bold text-white">{ref.referredUserName}</div>
+                        <div className="text-[10px] text-slate-500">{ref.referredUserEmail}</div>
+                      </td>
+                      <td className="py-3">
+                        <span
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black uppercase ${
+                            isVipEntry
+                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                              : 'bg-slate-800 text-slate-300 border border-white/10'
+                          }`}
+                        >
+                          {isVipEntry && <Crown className="w-2.5 h-2.5 text-amber-400" />}
+                          <span>{isVipEntry ? 'VIP' : 'BASIC'}</span>
+                        </span>
+                      </td>
+                      <td className="py-3">
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-black ${
+                            ref.commissionType === 'withdrawal'
+                              ? 'bg-[#ff8800]/20 text-[#ffaa00] border border-[#ff8800]/40'
+                              : 'bg-emerald-500/20 text-emerald-400'
+                          }`}
+                        >
+                          {ref.commissionType === 'withdrawal'
+                            ? `${(ref.commissionRate * 100).toFixed(0)}% PAYOUT BONUS`
+                            : `L${ref.level} (${(ref.commissionRate * 100).toFixed(0)}%)`}
+                        </span>
+                      </td>
+                      <td className="py-3 text-slate-300 font-sans">
+                        <div className="font-bold text-white">{ref.packageName}</div>
+                        <div className="text-[10px] text-slate-500">${Number(ref.packagePrice).toFixed(2)}</div>
+                      </td>
+                      <td className="py-3 text-right font-black text-emerald-400">
+                        +${ref.commissionAmount.toFixed(2)}
+                      </td>
+                      <td className="py-3 text-right pr-2 text-slate-400 font-mono">
+                        {new Date(ref.createdAt).toLocaleDateString()}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

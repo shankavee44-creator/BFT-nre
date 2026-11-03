@@ -13,6 +13,14 @@ import {
   buildReferredNetworkTree,
   mergeCommissionLedgers,
   COMMISSION_RATES,
+  getSponsorAffiliateTier,
+  VIP_ACTIVE_TRADERS_THRESHOLD,
+  VIP_MILESTONE_REWARD_AMOUNT,
+  isUserActiveFunded,
+  BASIC_TIER_RATES,
+  VIP_TIER_RATES,
+  claimVipMilestoneReward,
+  isMilestoneRewardClaimed,
   UserAccount,
   ReferralRecord,
 } from './affiliateEngine';
@@ -377,5 +385,197 @@ test('buildReferredNetworkTree and mergeCommissionLedgers synchronize referred u
   assert.strictEqual(stats.level2Earnings, 15.00);
   assert.strictEqual(stats.availableBalance, 40.00);
 });
+
+test('VIP Tier qualification requires 1,000 active funded referrals', () => {
+  assert.strictEqual(VIP_ACTIVE_TRADERS_THRESHOLD, 1000);
+  assert.strictEqual(VIP_MILESTONE_REWARD_AMOUNT, 10000);
+
+  // Test below threshold
+  const basicTier = getSponsorAffiliateTier({
+    sponsorId: 'USR-TEST-001',
+    activeCountOverride: 450,
+  });
+  assert.strictEqual(basicTier.tier, 'basic');
+  assert.strictEqual(basicTier.isVipUnlocked, false);
+  assert.strictEqual(basicTier.activeFundedCount, 450);
+  assert.strictEqual(basicTier.remainingToVip, 550);
+  assert.strictEqual(basicTier.vipProgressPercent, 45.0);
+
+  // Test at threshold
+  const vipTier = getSponsorAffiliateTier({
+    sponsorId: 'USR-TEST-001',
+    activeCountOverride: 1000,
+  });
+  assert.strictEqual(vipTier.tier, 'vip');
+  assert.strictEqual(vipTier.isVipUnlocked, true);
+  assert.strictEqual(basicTier.milestoneRewardAmount, 10000);
+  assert.strictEqual(vipTier.remainingToVip, 0);
+  assert.strictEqual(vipTier.vipProgressPercent, 100);
+});
+
+test('Active trader definition counts only purchases > $0', () => {
+  // $0 free/demo registration does NOT count
+  const freeUser = {
+    id: 'USR-FREE-01',
+    latestPurchase: { name: 'Demo Registration', amount: 0, sku: 'BFT-DEMO' },
+  };
+  assert.strictEqual(isUserActiveFunded(freeUser), false);
+
+  // Paid challenge package counts
+  const paidUser = {
+    id: 'USR-PAID-01',
+    latestPurchase: { name: '$25K Instant Funded', amount: 250, sku: 'BFT-IF-25K' },
+  };
+  assert.strictEqual(isUserActiveFunded(paidUser), true);
+});
+
+test('Historical Rate Isolation: Basic referrals keep 10% L1, new VIP referrals earn 15% L1', () => {
+  const sponsorUser = {
+    id: 'USR-SPONSOR',
+    name: 'Top Sponsor',
+    email: 'sponsor@bft.com',
+    referralCode: 'BFT-TOP1',
+    createdAt: '2026-01-01',
+  };
+
+  // User 1 joined while sponsor was Basic tier
+  const basicBuyer = {
+    id: 'USR-BUYER-BASIC',
+    name: 'Old Trader',
+    email: 'old@bft.com',
+    referralCode: 'BFT-OLD',
+    referredBy: 'USR-SPONSOR',
+    registeredTier: 'basic' as const,
+    createdAt: '2026-01-10',
+  };
+
+  // User 2 joined after sponsor unlocked VIP tier
+  const vipBuyer = {
+    id: 'USR-BUYER-VIP',
+    name: 'New VIP Trader',
+    email: 'newvip@bft.com',
+    referralCode: 'BFT-NEWVIP',
+    referredBy: 'USR-SPONSOR',
+    registeredTier: 'vip' as const,
+    createdAt: '2026-02-01',
+  };
+
+  const usersList = [sponsorUser, basicBuyer, vipBuyer];
+
+  // Old buyer purchases $1,000 package -> earns Basic rate 10% ($100)
+  const basicRes = process3TierCommissions({
+    buyerUserId: 'USR-BUYER-BASIC',
+    buyerName: 'Old Trader',
+    buyerEmail: 'old@bft.com',
+    packageTier: 'instant',
+    packageName: 'Instant Funded ($100,000)',
+    packagePrice: 1000,
+    users: usersList,
+    existingReferrals: [],
+  });
+
+  const basicL1 = basicRes.newReferrals.find((r: any) => r.level === 1);
+  assert.ok(basicL1);
+  assert.strictEqual(basicL1.commissionRate, BASIC_TIER_RATES.LEVEL_1); // 0.10
+  assert.strictEqual(basicL1.commissionAmount, 100.00);
+  assert.strictEqual(basicL1.affiliateTier, 'basic');
+
+  // VIP buyer purchases $1,000 package -> earns VIP rate 15% ($150)
+  const vipRes = process3TierCommissions({
+    buyerUserId: 'USR-BUYER-VIP',
+    buyerName: 'New VIP Trader',
+    buyerEmail: 'newvip@bft.com',
+    packageTier: 'instant',
+    packageName: 'Instant Funded ($100,000)',
+    packagePrice: 1000,
+    users: usersList,
+    existingReferrals: [],
+  });
+
+  const vipL1 = vipRes.newReferrals.find((r: any) => r.level === 1);
+  assert.ok(vipL1);
+  assert.strictEqual(vipL1.commissionRate, VIP_TIER_RATES.LEVEL_1); // 0.15
+  assert.strictEqual(vipL1.commissionAmount, 150.00);
+  assert.strictEqual(vipL1.affiliateTier, 'vip');
+});
+
+test('processWithdrawalCommission applies 8% for Basic and 10% for VIP referrals', () => {
+  const sponsor = {
+    id: 'USR-SPONSOR-WD',
+    name: 'Sponsor WD',
+    email: 'sponsor-wd@bft.com',
+    referralCode: 'BFT-SPWD',
+    createdAt: '2026-01-01',
+  };
+
+  const basicTrader = {
+    id: 'USR-TRADER-BASIC',
+    name: 'Basic Trader',
+    email: 'trader-basic@bft.com',
+    referralCode: 'BFT-TBASIC',
+    referredBy: sponsor.id,
+    registeredTier: 'basic' as const,
+    createdAt: '2026-01-05',
+  };
+
+  const vipTrader = {
+    id: 'USR-TRADER-VIP',
+    name: 'VIP Trader',
+    email: 'trader-vip@bft.com',
+    referralCode: 'BFT-TVIP',
+    referredBy: sponsor.id,
+    registeredTier: 'vip' as const,
+    createdAt: '2026-01-20',
+  };
+
+  const users = [sponsor, basicTrader, vipTrader];
+
+  // Basic trader withdraws $1,000 -> 8% ($80)
+  const basicWd = processWithdrawalCommission({
+    traderUserId: basicTrader.id,
+    traderName: basicTrader.name,
+    traderEmail: basicTrader.email,
+    withdrawalAmount: 1000,
+    users,
+    existingReferrals: [],
+  });
+  assert.strictEqual(basicWd.commissionRecord?.commissionRate, BASIC_TIER_RATES.WITHDRAWAL_ROYALTY); // 0.08
+  assert.strictEqual(basicWd.commissionRecord?.commissionAmount, 80.00);
+  assert.strictEqual(basicWd.commissionRecord?.affiliateTier, 'basic');
+
+  // VIP trader withdraws $1,000 -> 10% ($100)
+  const vipWd = processWithdrawalCommission({
+    traderUserId: vipTrader.id,
+    traderName: vipTrader.name,
+    traderEmail: vipTrader.email,
+    withdrawalAmount: 1000,
+    users,
+    existingReferrals: [],
+  });
+  assert.strictEqual(vipWd.commissionRecord?.commissionRate, VIP_TIER_RATES.WITHDRAWAL_ROYALTY); // 0.10
+  assert.strictEqual(vipWd.commissionRecord?.commissionAmount, 100.00);
+  assert.strictEqual(vipWd.commissionRecord?.affiliateTier, 'vip');
+});
+
+test('claimVipMilestoneReward awards $10,000 only when 1,000 active referrals achieved', () => {
+  // Fails when active count < 1000
+  const failRes = claimVipMilestoneReward({
+    userId: 'USR-MILESTONE-TEST',
+    activeCountOverride: 999,
+  });
+  assert.strictEqual(failRes.success, false);
+  assert.ok(failRes.error?.includes('1,000'));
+
+  // Succeeds when active count >= 1000
+  const successRes = claimVipMilestoneReward({
+    userId: 'USR-MILESTONE-TEST-2',
+    activeCountOverride: 1000,
+  });
+  assert.strictEqual(successRes.success, true);
+  assert.strictEqual(successRes.rewardRecord?.commissionAmount, 10000);
+  assert.strictEqual(successRes.rewardRecord?.commissionRate, 1.0);
+  assert.strictEqual(successRes.rewardRecord?.affiliateTier, 'vip');
+});
+
 
 

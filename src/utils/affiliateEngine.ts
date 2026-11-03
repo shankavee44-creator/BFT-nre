@@ -546,16 +546,28 @@ export function saveAffiliatePayouts(payouts: AffiliatePayout[]): void {
 }
 
 // ==========================================
-// 4. 3-TIER COMMISSION CHAIN CALCULATION
+// 4. BASIC VS. VIP 3-TIER COMMISSION CHAIN
 // ==========================================
 
-export const COMMISSION_RATES = {
+export const BASIC_TIER_RATES = {
   LEVEL_1: 0.10, // 10% Direct Referrals
   LEVEL_2: 0.05, // 5% Sub-referrals
   LEVEL_3: 0.02, // 2% Extended Network
-  TOTAL_PACKAGE: 0.17, // 10% + 5% + 2% = 17% Total 3-Tier Package Commission
+  TOTAL_PACKAGE: 0.17, // 17%
   WITHDRAWAL_ROYALTY: 0.08, // 8% Direct Referral Withdrawal Commission
 };
+
+export const VIP_TIER_RATES = {
+  LEVEL_1: 0.15, // 15% Direct Referrals (New referrals joined after achieving VIP status)
+  LEVEL_2: 0.08, // 8% Sub-referrals
+  LEVEL_3: 0.05, // 5% Extended Network
+  TOTAL_PACKAGE: 0.28, // 28% Total Package Commission
+  WITHDRAWAL_ROYALTY: 0.10, // 10% Direct Referral Withdrawal Commission
+};
+
+export const COMMISSION_RATES = BASIC_TIER_RATES;
+export const VIP_ACTIVE_TRADERS_THRESHOLD = 1000;
+export const VIP_MILESTONE_REWARD_AMOUNT = 10000;
 
 export interface ProcessCommissionsResult {
   newReferrals: ReferralRecord[];
@@ -564,8 +576,90 @@ export interface ProcessCommissionsResult {
 }
 
 /**
+ * An "Active Trader" counts ONLY when a referred user actually purchases a Funded Account.
+ * Free/demo registrations with $0 amount or no purchase do NOT count.
+ */
+export function isUserActiveFunded(
+  user: { id: string; email?: string; fullName?: string; latestPurchase?: { name: string; sku?: string; amount: number } },
+  purchasesList?: Array<any>,
+  referralsList?: ReferralRecord[]
+): boolean {
+  const purchase = resolveReferredUserPurchase(user, purchasesList, referralsList);
+  return Boolean(purchase && Number(purchase.amount) > 0);
+}
+
+/**
+ * Counts unique referred users who hold an active purchased Funded Account (Instant Funded or Challenge).
+ */
+export function countActiveFundedReferrals(params: {
+  sponsorId: string;
+  usersList?: UserAccount[];
+  purchasesList?: Array<any>;
+  referralsList?: ReferralRecord[];
+  networkTree?: ReferredUser[];
+}): number {
+  const tree =
+    params.networkTree ||
+    buildReferredNetworkTree({
+      sponsorId: params.sponsorId,
+      usersList: params.usersList,
+      purchasesList: params.purchasesList,
+      referralsList: params.referralsList,
+    });
+
+  return tree.filter((node) => isUserActiveFunded(node, params.purchasesList, params.referralsList)).length;
+}
+
+/**
+ * Determines whether a sponsor has unlocked the VIP Tier (>= 1,000 Active Funded Referrals).
+ */
+export function getSponsorAffiliateTier(params: {
+  sponsorId: string;
+  usersList?: UserAccount[];
+  purchasesList?: Array<any>;
+  referralsList?: ReferralRecord[];
+  activeCountOverride?: number;
+}): {
+  tier: 'basic' | 'vip';
+  activeFundedCount: number;
+  vipThreshold: number;
+  remainingToVip: number;
+  vipProgressPercent: number;
+  isVipUnlocked: boolean;
+  milestoneRewardAmount: number;
+} {
+  const vipThreshold = VIP_ACTIVE_TRADERS_THRESHOLD;
+  const activeFundedCount =
+    typeof params.activeCountOverride === 'number'
+      ? params.activeCountOverride
+      : countActiveFundedReferrals({
+          sponsorId: params.sponsorId,
+          usersList: params.usersList,
+          purchasesList: params.purchasesList,
+          referralsList: params.referralsList,
+        });
+
+  const isVipUnlocked = activeFundedCount >= vipThreshold;
+  const tier: 'basic' | 'vip' = isVipUnlocked ? 'vip' : 'basic';
+  const remainingToVip = Math.max(0, vipThreshold - activeFundedCount);
+  const vipProgressPercent = Math.min(100, Number(((activeFundedCount / vipThreshold) * 100).toFixed(1)));
+
+  return {
+    tier,
+    activeFundedCount,
+    vipThreshold,
+    remainingToVip,
+    vipProgressPercent,
+    isVipUnlocked,
+    milestoneRewardAmount: VIP_MILESTONE_REWARD_AMOUNT,
+  };
+}
+
+/**
  * Registers a new user account upon Sign Up and attributes them to their Level 1 sponsor
  * using the explicit referralCode or the 30-day stored referral cookie.
+ * Captures the sponsor's affiliate tier (basic vs vip) at registration time to enforce
+ * strict Historical Rate Isolation.
  */
 export function registerNewUserAccount(params: {
   name: string;
@@ -601,10 +695,17 @@ export function registerNewUserAccount(params: {
   if (existing) {
     if (!existing.referredBy && sponsor && sponsor.id !== existing.id) {
       existing.referredBy = sponsor.id;
+      if (!existing.registeredTier && sponsor) {
+        const sponsorTier = getSponsorAffiliateTier({ sponsorId: sponsor.id, usersList: users });
+        existing.registeredTier = sponsorTier.isVipUnlocked ? 'vip' : 'basic';
+      }
       saveAffiliateUsers(users);
     }
     return { newUser: existing, sponsor, uplineChain, updatedUsers: users };
   }
+
+  const sponsorTierInfo = sponsor ? getSponsorAffiliateTier({ sponsorId: sponsor.id, usersList: users }) : null;
+  const registeredTier: 'basic' | 'vip' = sponsorTierInfo?.isVipUnlocked ? 'vip' : 'basic';
 
   const cleanPrefix = params.name.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 5) || 'TRDR';
   const newUser: UserAccount = {
@@ -614,6 +715,7 @@ export function registerNewUserAccount(params: {
     password: params.password,
     referralCode: `BFT-${cleanPrefix}${Math.floor(10 + Math.random() * 89)}`,
     referredBy: sponsor?.id,
+    registeredTier,
     createdAt: new Date().toISOString(),
   };
 
@@ -624,7 +726,8 @@ export function registerNewUserAccount(params: {
 }
 
 /**
- * Awards an extra 8% withdrawal commission to the direct referrer when a referred trader processes a payout.
+ * Awards a direct referral withdrawal commission (8% for Basic, 10% for VIP) when a referred trader processes a payout.
+ * Enforces historical rate isolation: referrals registered during Basic tier earn at 8%; referrals registered after VIP earn at 10%.
  */
 export function processWithdrawalCommission(params: {
   traderUserId: string;
@@ -641,14 +744,19 @@ export function processWithdrawalCommission(params: {
   const referrals = [...(params.existingReferrals || loadAffiliateReferrals())];
 
   const trader = users.find((u) => u.id === params.traderUserId);
-  const referrerId = trader?.referredBy || 'usr_bft_001'; // Default to active affiliate demo chain if needed
+  const referrerId = trader?.referredBy || 'usr_bft_001';
   const sponsor = users.find((u) => u.id === referrerId);
 
   if (!sponsor || sponsor.id === params.traderUserId) {
     return { allReferrals: referrals };
   }
 
-  const commissionAmount = Number((params.withdrawalAmount * COMMISSION_RATES.WITHDRAWAL_ROYALTY).toFixed(2));
+  // Determine rate based on trader's registration tier (Historical Rate Isolation)
+  const isVipReferral = trader?.registeredTier === 'vip';
+  const bonusRate = isVipReferral ? VIP_TIER_RATES.WITHDRAWAL_ROYALTY : BASIC_TIER_RATES.WITHDRAWAL_ROYALTY;
+  const bonusPercentLabel = (bonusRate * 100).toFixed(0);
+  const commissionAmount = Number((params.withdrawalAmount * bonusRate).toFixed(2));
+
   const record: ReferralRecord = {
     id: `REF-WD-${Date.now().toString().slice(-5)}`,
     referrerId: sponsor.id,
@@ -658,10 +766,11 @@ export function processWithdrawalCommission(params: {
     level: 1,
     commissionType: 'withdrawal',
     packageTier: 'instant',
-    packageName: `Profit Payout Royalty (8% of $${params.withdrawalAmount.toFixed(0)} Withdrawal)`,
+    packageName: `Profit Payout Royalty (${bonusPercentLabel}% of $${params.withdrawalAmount.toFixed(0)} Withdrawal)`,
     packagePrice: params.withdrawalAmount,
-    commissionRate: COMMISSION_RATES.WITHDRAWAL_ROYALTY,
+    commissionRate: bonusRate,
     commissionAmount,
+    affiliateTier: isVipReferral ? 'vip' : 'basic',
     status: 'paid',
     createdAt: new Date().toISOString(),
   };
@@ -964,11 +1073,18 @@ export function process3TierCommissions(params: {
     amount: packagePrice,
   });
 
-  // 1. Level 1 Referrer (Direct: 10%)
+  // Determine applicable rates based on buyer's registered tier (Historical Rate Isolation)
+  // Referrals registered during the Basic tier continue earning at Basic rates (10%/5%/2%).
+  // Only new referrals joined after achieving VIP status earn VIP rates (15%/8%/5%).
+  const isVipReferral = buyer.registeredTier === 'vip';
+  const effectiveTier: 'basic' | 'vip' = isVipReferral ? 'vip' : 'basic';
+  const rates = isVipReferral ? VIP_TIER_RATES : BASIC_TIER_RATES;
+
+  // 1. Level 1 Referrer (Direct: 10% Basic or 15% VIP)
   if (buyer.referredBy) {
     const l1Referrer = users.find((u) => u.id === buyer?.referredBy);
     if (l1Referrer && l1Referrer.id !== buyer.id) {
-      const l1Amount = Number((packagePrice * COMMISSION_RATES.LEVEL_1).toFixed(2));
+      const l1Amount = Number((packagePrice * rates.LEVEL_1).toFixed(2));
       const refL1: ReferralRecord = {
         id: `REF-${Date.now()}-L1`,
         referrerId: l1Referrer.id,
@@ -980,19 +1096,20 @@ export function process3TierCommissions(params: {
         packageTier,
         packageName: cleanDisplayPkgName,
         packagePrice,
-        commissionRate: COMMISSION_RATES.LEVEL_1,
+        commissionRate: rates.LEVEL_1,
         commissionAmount: l1Amount,
+        affiliateTier: effectiveTier,
         status: 'paid',
         createdAt: new Date().toISOString(),
       };
       newReferrals.push(refL1);
       referrals.unshift(refL1);
 
-      // 2. Level 2 Referrer (Parent of L1: 5%)
+      // 2. Level 2 Referrer (Parent of L1: 5% Basic or 8% VIP)
       if (l1Referrer.referredBy) {
         const l2Referrer = users.find((u) => u.id === l1Referrer.referredBy);
         if (l2Referrer && l2Referrer.id !== buyer.id) {
-          const l2Amount = Number((packagePrice * COMMISSION_RATES.LEVEL_2).toFixed(2));
+          const l2Amount = Number((packagePrice * rates.LEVEL_2).toFixed(2));
           const refL2: ReferralRecord = {
             id: `REF-${Date.now()}-L2`,
             referrerId: l2Referrer.id,
@@ -1004,19 +1121,20 @@ export function process3TierCommissions(params: {
             packageTier,
             packageName: cleanDisplayPkgName,
             packagePrice,
-            commissionRate: COMMISSION_RATES.LEVEL_2,
+            commissionRate: rates.LEVEL_2,
             commissionAmount: l2Amount,
+            affiliateTier: effectiveTier,
             status: 'paid',
             createdAt: new Date().toISOString(),
           };
           newReferrals.push(refL2);
           referrals.unshift(refL2);
 
-          // 3. Level 3 Referrer (Parent of L2: 2%)
+          // 3. Level 3 Referrer (Parent of L2: 2% Basic or 5% VIP)
           if (l2Referrer.referredBy) {
             const l3Referrer = users.find((u) => u.id === l2Referrer.referredBy);
             if (l3Referrer && l3Referrer.id !== buyer.id) {
-              const l3Amount = Number((packagePrice * COMMISSION_RATES.LEVEL_3).toFixed(2));
+              const l3Amount = Number((packagePrice * rates.LEVEL_3).toFixed(2));
               const refL3: ReferralRecord = {
                 id: `REF-${Date.now()}-L3`,
                 referrerId: l3Referrer.id,
@@ -1028,8 +1146,9 @@ export function process3TierCommissions(params: {
                 packageTier,
                 packageName: cleanDisplayPkgName,
                 packagePrice,
-                commissionRate: COMMISSION_RATES.LEVEL_3,
+                commissionRate: rates.LEVEL_3,
                 commissionAmount: l3Amount,
+                affiliateTier: effectiveTier,
                 status: 'paid',
                 createdAt: new Date().toISOString(),
               };
@@ -1059,10 +1178,10 @@ export function process3TierCommissions(params: {
  * 3) Pre-populated `latestPurchase` on the node
  */
 export function resolveReferredUserPurchase(
-  user: { id: string; fullName?: string; email?: string; latestPurchase?: { name: string; sku: string; amount: number } },
+  user: { id: string; fullName?: string; email?: string; latestPurchase?: { name: string; sku?: string; amount: number } },
   purchasesList?: Array<any>,
   referralsList?: ReferralRecord[]
-): { name: string; sku: string; amount: number } | undefined {
+): { name: string; sku?: string; amount: number } | undefined {
   // 1. Check explicit purchase records first
   const purchases = purchasesList || loadAffiliateUserPurchases();
   const matchedPurchase = purchases.find((p: any) => {
@@ -1254,14 +1373,23 @@ export function mergeCommissionLedgers(params: {
         ? formatPurchasedPackageLabel(item.packageName, item.packageTier, item.packagePrice)
         : item.packageName;
 
+    const isVip =
+      item.affiliateTier === 'vip' ||
+      item.commissionRate === VIP_TIER_RATES.LEVEL_1 ||
+      (item.level === 2 && item.commissionRate === VIP_TIER_RATES.LEVEL_2) ||
+      (item.level === 3 && item.commissionRate === VIP_TIER_RATES.LEVEL_3) ||
+      (item.commissionType === 'withdrawal' && item.commissionRate === VIP_TIER_RATES.WITHDRAWAL_ROYALTY);
+
+    const rates = isVip ? VIP_TIER_RATES : BASIC_TIER_RATES;
+
     const expectedRate =
       item.commissionType === 'withdrawal'
-        ? COMMISSION_RATES.WITHDRAWAL_ROYALTY
+        ? rates.WITHDRAWAL_ROYALTY
         : item.level === 1
-        ? COMMISSION_RATES.LEVEL_1
+        ? rates.LEVEL_1
         : item.level === 2
-        ? COMMISSION_RATES.LEVEL_2
-        : COMMISSION_RATES.LEVEL_3;
+        ? rates.LEVEL_2
+        : rates.LEVEL_3;
 
     const normalizedAmount =
       item.commissionAmount > 0
@@ -1276,8 +1404,9 @@ export function mergeCommissionLedgers(params: {
     result.push({
       ...item,
       packageName: cleanPkgName,
-      commissionRate: expectedRate,
+      commissionRate: item.commissionRate || expectedRate,
       commissionAmount: normalizedAmount,
+      affiliateTier: isVip ? 'vip' : 'basic',
     });
   }
 
@@ -1286,13 +1415,80 @@ export function mergeCommissionLedgers(params: {
   );
 }
 
+const MILESTONE_CLAIMED_KEY = 'bft_affiliate_milestone_claimed_v1';
+
+export function isMilestoneRewardClaimed(userId: string): boolean {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem(`${MILESTONE_CLAIMED_KEY}_${userId}`) === 'true';
+    }
+  } catch {}
+  return false;
+}
+
+export function claimVipMilestoneReward(params: {
+  userId: string;
+  userName?: string;
+  userEmail?: string;
+  referrals?: ReferralRecord[];
+  activeCountOverride?: number;
+}): { success: boolean; error?: string; rewardRecord?: ReferralRecord } {
+  const { userId, userName = 'Affiliate VIP', userEmail = '', activeCountOverride } = params;
+  if (isMilestoneRewardClaimed(userId)) {
+    return {
+      success: false,
+      error: 'The $10,000 Milestone Cash Reward has already been claimed for this account.',
+    };
+  }
+  const tierInfo = getSponsorAffiliateTier({ sponsorId: userId, activeCountOverride });
+  if (!tierInfo.isVipUnlocked) {
+    return {
+      success: false,
+      error: `VIP status requires 1,000 active funded referrals. You currently have ${tierInfo.activeFundedCount} active funded traders (${tierInfo.remainingToVip} more required).`,
+    };
+  }
+
+  const rewardRecord: ReferralRecord = {
+    id: `REF-MILESTONE-${Date.now()}`,
+    referrerId: userId,
+    referredUserId: userId,
+    referredUserName: userName,
+    referredUserEmail: userEmail,
+    level: 1,
+    commissionType: 'package',
+    packageTier: 'instant',
+    packageName: '$10,000 VIP Milestone Cash Reward (1,000 Active Funded Traders Achieved)',
+    packagePrice: VIP_MILESTONE_REWARD_AMOUNT,
+    commissionRate: 1.0,
+    commissionAmount: VIP_MILESTONE_REWARD_AMOUNT,
+    affiliateTier: 'vip',
+    status: 'paid',
+    createdAt: new Date().toISOString(),
+  };
+
+  const referrals = [...(params.referrals || loadAffiliateReferrals())];
+  referrals.unshift(rewardRecord);
+  saveAffiliateReferrals(referrals);
+
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(`${MILESTONE_CLAIMED_KEY}_${userId}`, 'true');
+    }
+  } catch {}
+
+  return { success: true, rewardRecord };
+}
+
 /**
- * Calculates aggregated stats for the current user across all 3 tiers.
+ * Calculates aggregated stats for the current user across all 3 tiers with Basic vs. VIP tiers.
  */
 export function calculateAffiliateStats(
   userId: string,
   referralsList?: ReferralRecord[],
-  payoutsList?: AffiliatePayout[]
+  payoutsList?: AffiliatePayout[],
+  usersList?: UserAccount[],
+  purchasesList?: Array<any>,
+  activeCountOverride?: number
 ): AffiliateStats {
   const allRefs = referralsList || loadAffiliateReferrals();
   const referrals = allRefs.filter(
@@ -1311,12 +1507,17 @@ export function calculateAffiliateStats(
   let l2Earnings = 0;
   let l3Count = 0;
   let l3Earnings = 0;
+  let withdrawalEarnings = 0;
 
   for (const ref of referrals) {
     if (ref.status === 'paid') {
       lifetimeEarnings += ref.commissionAmount;
     } else {
       pendingCommission += ref.commissionAmount;
+    }
+
+    if (ref.commissionType === 'withdrawal') {
+      withdrawalEarnings += ref.commissionAmount;
     }
 
     if (ref.level === 1) {
@@ -1338,17 +1539,34 @@ export function calculateAffiliateStats(
 
   const availableBalance = Math.max(0, Number((lifetimeEarnings - totalPaidOut).toFixed(2)));
 
+  const tierInfo = getSponsorAffiliateTier({
+    sponsorId: userId,
+    usersList,
+    purchasesList,
+    referralsList: allRefs,
+    activeCountOverride,
+  });
+
   return {
     lifetimeEarnings: Number(lifetimeEarnings.toFixed(2)),
     availableBalance,
     pendingCommission: Number(pendingCommission.toFixed(2)),
     totalReferralsCount: referrals.length,
+    activeFundedCount: tierInfo.activeFundedCount,
+    vipThreshold: tierInfo.vipThreshold,
+    vipProgressPercent: tierInfo.vipProgressPercent,
+    remainingToVip: tierInfo.remainingToVip,
+    affiliateTier: tierInfo.tier,
+    isVipUnlocked: tierInfo.isVipUnlocked,
+    milestoneRewardAmount: tierInfo.milestoneRewardAmount,
+    milestoneClaimed: isMilestoneRewardClaimed(userId),
     level1Count: l1Count,
     level1Earnings: Number(l1Earnings.toFixed(2)),
     level2Count: l2Count,
     level2Earnings: Number(l2Earnings.toFixed(2)),
     level3Count: l3Count,
     level3Earnings: Number(l3Earnings.toFixed(2)),
+    withdrawalEarnings: Number(withdrawalEarnings.toFixed(2)),
   };
 }
 

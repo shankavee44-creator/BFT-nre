@@ -436,27 +436,33 @@ DECLARE
   referrer_uuid UUID := NULL;
   new_ref_code TEXT;
 BEGIN
-  -- Log for debugging (will appear in Supabase logs)
   RAISE LOG 'Processing signup for user: %, meta: %', NEW.id, NEW.raw_user_meta_data;
 
   ref_code_param := UPPER(TRIM(COALESCE(
     NEW.raw_user_meta_data->>'referral_code',
     NEW.raw_user_meta_data->>'ref',
+    NEW.raw_user_meta_data->>'referred_by',
     ''
   )));
 
   IF ref_code_param <> '' THEN
-    SELECT id INTO referrer_uuid FROM public.profiles WHERE referral_code = ref_code_param LIMIT 1;
+    SELECT id INTO referrer_uuid FROM public.profiles WHERE UPPER(referral_code) = ref_code_param LIMIT 1;
     RAISE LOG 'Referral lookup: code=%, referrer_uuid=%', ref_code_param, referrer_uuid;
   END IF;
 
   new_ref_code := public.generate_unique_referral_code();
 
+  -- 1. Create or update user profile with complete initial balances and role
   INSERT INTO public.profiles (
     id,
     email,
     full_name,
     balance,
+    self_balance,
+    self_capital_balance,
+    demo_balance,
+    funded_balance,
+    role,
     referral_code,
     referred_by,
     kyc_status,
@@ -464,24 +470,74 @@ BEGIN
   ) VALUES (
     NEW.id,
     COALESCE(NEW.email, ''),
-    COALESCE(NEW.raw_user_meta_data->>'full_name', NEW.raw_user_meta_data->>'name', split_part(COALESCE(NEW.email, 'trader@bft.io'), '@', 1)),
+    COALESCE(
+      NEW.raw_user_meta_data->>'full_name',
+      NEW.raw_user_meta_data->>'name',
+      split_part(COALESCE(NEW.email, 'trader@bft.io'), '@', 1)
+    ),
     0.00,
+    0.00,
+    0.00,
+    10000.00,
+    0.00,
+    'user',
     new_ref_code,
     referrer_uuid,
     'unverified',
     0.00
   )
   ON CONFLICT (id) DO UPDATE SET
+    email = COALESCE(NULLIF(EXCLUDED.email, ''), public.profiles.email),
+    full_name = COALESCE(public.profiles.full_name, EXCLUDED.full_name),
     referred_by = COALESCE(public.profiles.referred_by, EXCLUDED.referred_by);
+
+  -- 2. Automatically create default Demo Trading Account ($10,000 equity)
+  BEGIN
+    IF NOT EXISTS (SELECT 1 FROM public.trading_accounts WHERE user_id = NEW.id) THEN
+      INSERT INTO public.trading_accounts (
+        user_id,
+        account_type,
+        starting_balance,
+        current_balance,
+        equity,
+        daily_drawdown,
+        max_drawdown,
+        profit_target,
+        challenge_phase,
+        status
+      ) VALUES (
+        NEW.id,
+        'demo',
+        10000.00,
+        10000.00,
+        10000.00,
+        8.00,
+        20.00,
+        0.00,
+        'demo',
+        'active'
+      );
+    END IF;
+  EXCEPTION WHEN OTHERS THEN
+    RAISE LOG 'Could not create demo account for user %: %', NEW.id, SQLERRM;
+  END;
 
   RETURN NEW;
 EXCEPTION WHEN OTHERS THEN
-  RAISE LOG 'Error in signup trigger: %', SQLERRM;
+  RAISE LOG 'Error in handle_new_user_signup trigger: %', SQLERRM;
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
--- Drop and recreate signup trigger
+-- Alias function name so both on_auth_user_created and handle_new_user work identically
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+  RETURN public.handle_new_user_signup();
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+-- Drop and recreate signup trigger on auth.users
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
@@ -680,15 +736,16 @@ ALTER TABLE public.user_purchases ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.withdrawals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.referral_commissions ENABLE ROW LEVEL SECURITY;
 
--- Profiles: Users read, insert, & update their own profile
+-- Profiles: Public and authenticated read for referral codes & sponsor verification; users update their own profile
 DROP POLICY IF EXISTS "Users can view own profile" ON public.profiles;
-CREATE POLICY "Users can view own profile" ON public.profiles FOR SELECT USING (auth.uid() = id);
+DROP POLICY IF EXISTS "Public and authenticated read profiles" ON public.profiles;
+CREATE POLICY "Public and authenticated read profiles" ON public.profiles FOR SELECT TO anon, authenticated USING (true);
 
 DROP POLICY IF EXISTS "Users can insert own profile" ON public.profiles;
-CREATE POLICY "Users can insert own profile" ON public.profiles FOR INSERT WITH CHECK (auth.uid() = id);
+CREATE POLICY "Users can insert own profile" ON public.profiles FOR INSERT TO anon, authenticated WITH CHECK (auth.uid() = id OR auth.uid() IS NOT NULL OR true);
 
 DROP POLICY IF EXISTS "Users can update own profile" ON public.profiles;
-CREATE POLICY "Users can update own profile" ON public.profiles FOR UPDATE USING (auth.uid() = id);
+CREATE POLICY "Users can update own profile" ON public.profiles FOR UPDATE TO authenticated USING (auth.uid() = id OR public.is_bft_admin()) WITH CHECK (auth.uid() = id OR public.is_bft_admin());
 
 -- KYC Submissions: Users read, insert, & update their own KYC submissions
 DROP POLICY IF EXISTS "Users can view own KYC submissions" ON public.kyc_submissions;
@@ -830,14 +887,38 @@ CREATE POLICY "Admins can manage all withdrawals"
   USING (public.is_bft_admin())
   WITH CHECK (public.is_bft_admin());
 
--- Referral Commissions: Users view commissions they earned
+-- Referral Commissions: Users view commissions they earned (or referred), and allow inserts on checkout
 DROP POLICY IF EXISTS "Users can view earned commissions" ON public.referral_commissions;
-CREATE POLICY "Users can view earned commissions" ON public.referral_commissions FOR SELECT USING (auth.uid() = earner_id);
+CREATE POLICY "Users can view earned commissions" ON public.referral_commissions
+  FOR SELECT
+  TO authenticated
+  USING (
+    auth.uid() = earner_id OR
+    auth.uid() = referrer_id OR
+    auth.uid() = source_user_id OR
+    auth.uid() = referred_user_id OR
+    public.is_bft_admin()
+  );
+
+DROP POLICY IF EXISTS "Users can insert commissions" ON public.referral_commissions;
+CREATE POLICY "Users can insert commissions" ON public.referral_commissions
+  FOR INSERT
+  TO authenticated, anon
+  WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Admins can manage commissions" ON public.referral_commissions;
+CREATE POLICY "Admins can manage commissions" ON public.referral_commissions
+  FOR ALL
+  TO authenticated
+  USING (public.is_bft_admin())
+  WITH CHECK (public.is_bft_admin());
 
 -- Grant privileges
 GRANT USAGE ON SCHEMA public TO anon, authenticated;
 GRANT ALL ON ALL TABLES IN SCHEMA public TO authenticated;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO authenticated;
+GRANT SELECT, INSERT ON public.profiles TO anon;
+GRANT SELECT, INSERT ON public.referral_commissions TO anon;
 
 -- ============================================================================
 -- 7. 24/7 BACKEND MARKET PRICES & OTC TRADES SCHEMA

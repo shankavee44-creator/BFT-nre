@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from './utils/supabase';
+import { supabase, ensureSupabaseProfileAndDemoAccount } from './utils/supabase';
 import { Header } from './components/Header';
 import { HeroBanner } from './components/HeroBanner';
 import { FastestPayoutAwardBanner } from './components/FastestPayoutAwardBanner';
@@ -856,6 +856,14 @@ export default function App() {
           // ignore if trigger or RLS already handled
         }
       }
+
+      await ensureSupabaseProfileAndDemoAccount({
+        userId: sessionUser.id,
+        email: resolvedProfile.email,
+        fullName: resolvedProfile.fullName,
+        referralCode: resolvedProfile.referralCode,
+        sponsorCode: resolvedProfile.referredBy,
+      }).catch(() => {});
 
       const backendSync = await apiEmailSessionSync({
         email: resolvedProfile.email,

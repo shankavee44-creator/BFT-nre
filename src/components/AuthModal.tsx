@@ -21,7 +21,7 @@ import {
   resolve3TierUplineChain,
 } from '../utils/affiliateEngine';
 import { apiEmailSessionSync, apiValidate2fa } from '../utils/apiClient';
-import { supabase } from '../utils/supabase';
+import { supabase, ensureSupabaseProfileAndDemoAccount } from '../utils/supabase';
 import { resolveOrBuildUserProfile, isTwoFactorEnabledOnProfile } from '../utils/authOtpLogic';
 import { BftLogo } from './BftLogo';
 
@@ -545,7 +545,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         return;
       }
 
-      // 2. Sync user with backend database session & finalize JWT
+      // 2. Guarantee user profile and demo trading account exist in Supabase
+      await ensureSupabaseProfileAndDemoAccount({
+        userId: user.id,
+        email: cleanEmail,
+        fullName: cleanFullName,
+        referralCode: myReferralCode,
+        sponsorCode,
+      }).catch(() => {});
+
+      // 3. Sync user with backend database session & finalize JWT
       const backendSync = await apiEmailSessionSync({
         email: cleanEmail,
         name: cleanFullName,

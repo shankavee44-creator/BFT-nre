@@ -238,6 +238,8 @@ const copyTradingAlterColumns = [
   `ALTER TABLE copy_trading_profiles ADD COLUMN max_drawdown REAL DEFAULT 4.2;`,
   `ALTER TABLE copy_trading_profiles ADD COLUMN sharpe_ratio REAL DEFAULT 1.85;`,
   `ALTER TABLE copy_trading_profiles ADD COLUMN avg_holding_time TEXT DEFAULT '4h 12m';`,
+  `ALTER TABLE commissions ADD COLUMN affiliate_tier TEXT DEFAULT 'basic';`,
+  `ALTER TABLE users ADD COLUMN registered_tier TEXT DEFAULT 'basic';`,
 ];
 for (const stmt of copyTradingAlterColumns) {
   try {
@@ -1504,24 +1506,27 @@ export function processWithdrawalRequest(params: {
     now
   );
 
-  // Real-time 8% Direct Referral Payout Bonus to Direct Sponsor
+  // Real-time Direct Referral Payout Bonus to Direct Sponsor (8% Basic, 10% VIP)
   if (user.referred_by) {
-    const bonusRate = 0.08;
+    const isVip = user.registered_tier === 'vip';
+    const bonusRate = isVip ? 0.10 : 0.08;
+    const affiliateTier = isVip ? 'vip' : 'basic';
     const bonusAmount = Number((params.requestedAmount * bonusRate).toFixed(2));
     const commId = `COMM-WD-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 
     db.prepare(`
       INSERT INTO commissions (
-        id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, status, created_at
-      ) VALUES (?, ?, ?, 'withdrawal', 1, ?, ?, ?, ?, 'paid', ?)
+        id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, affiliate_tier, status, created_at
+      ) VALUES (?, ?, ?, 'withdrawal', 1, ?, ?, ?, ?, ?, 'paid', ?)
     `).run(
       commId,
       user.referred_by,
       user.id,
-      `Direct Referral Payout Bonus (8% of $${params.requestedAmount.toFixed(2)} Withdrawal by ${user.full_name})`,
+      `Direct Referral Payout Bonus (${(bonusRate * 100).toFixed(0)}% of $${params.requestedAmount.toFixed(2)} Withdrawal by ${user.full_name})`,
       params.requestedAmount,
       bonusRate,
       bonusAmount,
+      affiliateTier,
       now
     );
   }
@@ -1653,7 +1658,17 @@ export function creditPurchaseCommissions(
   if (referralCodeUsed && buyer && !buyer.referred_by) {
     const sponsor = getUserByReferralCode(referralCodeUsed);
     if (sponsor && sponsor.id !== buyer.id) {
-      db.prepare('UPDATE users SET referred_by = ? WHERE id = ?').run(sponsor.id, buyer.id);
+      // Determine if sponsor had VIP unlocked at the time of signup
+      const sponsorNetwork = db
+        .prepare('SELECT referred_user_id FROM referrals WHERE sponsor_id = ?')
+        .all(sponsor.id) as any[];
+      let sponsorActiveCount = 0;
+      for (const node of sponsorNetwork) {
+        const pur = getLatestPurchaseForUserInDb(node.referred_user_id);
+        if (pur && Number(pur.amount) > 0) sponsorActiveCount += 1;
+      }
+      const regTier = sponsorActiveCount >= 1000 ? 'vip' : 'basic';
+      db.prepare('UPDATE users SET referred_by = ?, registered_tier = ? WHERE id = ?').run(sponsor.id, regTier, buyer.id);
       linkUplineReferrals(sponsor.id, buyer.id, now);
       buyer = getUserById(buyerUserId);
     }
@@ -1668,16 +1683,22 @@ export function creditPurchaseCommissions(
     // ignore
   }
 
+  const isVipReferral = (buyer as any).registered_tier === 'vip';
+  const effectiveTier = isVipReferral ? 'vip' : 'basic';
+  const l1Rate = isVipReferral ? 0.15 : 0.10;
+  const l2Rate = isVipReferral ? 0.08 : 0.05;
+  const l3Rate = isVipReferral ? 0.05 : 0.02;
+
   const commissionsRecorded = [];
 
-  // Level 1: 10%
+  // Level 1: 10% (Basic) or 15% (VIP)
   const l1SponsorId = buyer.referred_by;
-  const l1Amount = Number((packagePrice * 0.10).toFixed(2));
+  const l1Amount = Number((packagePrice * l1Rate).toFixed(2));
   const l1Id = `COMM-P1-${now.toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
   db.prepare(`
-    INSERT INTO commissions (id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, status, created_at)
-    VALUES (?, ?, ?, 'purchase', 1, ?, ?, 0.10, ?, 'paid', ?)
-  `).run(l1Id, l1SponsorId, buyer.id, packageName, packagePrice, l1Amount, now);
+    INSERT INTO commissions (id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, affiliate_tier, status, created_at)
+    VALUES (?, ?, ?, 'purchase', 1, ?, ?, ?, ?, ?, 'paid', ?)
+  `).run(l1Id, l1SponsorId, buyer.id, packageName, packagePrice, l1Rate, l1Amount, effectiveTier, now);
   commissionsRecorded.push({
     id: l1Id,
     level: 1,
@@ -1687,20 +1708,21 @@ export function creditPurchaseCommissions(
     referredUserEmail: buyer.email,
     packageName,
     packagePrice,
-    rate: 0.10,
+    rate: l1Rate,
     amount: l1Amount,
+    affiliateTier: effectiveTier,
   });
 
-  // Level 2: 5%
+  // Level 2: 5% (Basic) or 8% (VIP)
   const l1User = getUserById(l1SponsorId);
   if (l1User?.referred_by && l1User.referred_by !== buyer.id) {
     const l2SponsorId = l1User.referred_by;
-    const l2Amount = Number((packagePrice * 0.05).toFixed(2));
+    const l2Amount = Number((packagePrice * l2Rate).toFixed(2));
     const l2Id = `COMM-P2-${now.toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
     db.prepare(`
-      INSERT INTO commissions (id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, status, created_at)
-      VALUES (?, ?, ?, 'purchase', 2, ?, ?, 0.05, ?, 'paid', ?)
-    `).run(l2Id, l2SponsorId, buyer.id, packageName, packagePrice, l2Amount, now);
+      INSERT INTO commissions (id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, affiliate_tier, status, created_at)
+      VALUES (?, ?, ?, 'purchase', 2, ?, ?, ?, ?, ?, 'paid', ?)
+    `).run(l2Id, l2SponsorId, buyer.id, packageName, packagePrice, l2Rate, l2Amount, effectiveTier, now);
     commissionsRecorded.push({
       id: l2Id,
       level: 2,
@@ -1710,20 +1732,21 @@ export function creditPurchaseCommissions(
       referredUserEmail: buyer.email,
       packageName,
       packagePrice,
-      rate: 0.05,
+      rate: l2Rate,
       amount: l2Amount,
+      affiliateTier: effectiveTier,
     });
 
-    // Level 3: 2%
+    // Level 3: 2% (Basic) or 5% (VIP)
     const l2User = getUserById(l2SponsorId);
     if (l2User?.referred_by && l2User.referred_by !== buyer.id) {
       const l3SponsorId = l2User.referred_by;
-      const l3Amount = Number((packagePrice * 0.02).toFixed(2));
+      const l3Amount = Number((packagePrice * l3Rate).toFixed(2));
       const l3Id = `COMM-P3-${now.toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
       db.prepare(`
-        INSERT INTO commissions (id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, status, created_at)
-        VALUES (?, ?, ?, 'purchase', 3, ?, ?, 0.02, ?, 'paid', ?)
-      `).run(l3Id, l3SponsorId, buyer.id, packageName, packagePrice, l3Amount, now);
+        INSERT INTO commissions (id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, affiliate_tier, status, created_at)
+        VALUES (?, ?, ?, 'purchase', 3, ?, ?, ?, ?, ?, 'paid', ?)
+      `).run(l3Id, l3SponsorId, buyer.id, packageName, packagePrice, l3Rate, l3Amount, effectiveTier, now);
       commissionsRecorded.push({
         id: l3Id,
         level: 3,
@@ -1733,8 +1756,9 @@ export function creditPurchaseCommissions(
         referredUserEmail: buyer.email,
         packageName,
         packagePrice,
-        rate: 0.02,
+        rate: l3Rate,
         amount: l3Amount,
+        affiliateTier: effectiveTier,
       });
     }
   }
@@ -1888,6 +1912,23 @@ export function getAffiliateDashboardStats(userId: string) {
     latestPurchase: r.latestPurchase,
   }));
 
+  const activeFundedCount = networkTree.filter(
+    (n) => n.latestPurchase && Number(n.latestPurchase.amount) > 0
+  ).length;
+  const vipThreshold = 1000;
+  const isVipUnlocked = activeFundedCount >= vipThreshold;
+  const remainingToVip = Math.max(0, vipThreshold - activeFundedCount);
+  const vipProgressPercent = Math.min(100, Number(((activeFundedCount / vipThreshold) * 100).toFixed(1)));
+  const affiliateTier: 'basic' | 'vip' = isVipUnlocked ? 'vip' : 'basic';
+  const milestoneRewardAmount = 10000;
+
+  const normalizedCommissions = commissions.map((c) => ({
+    ...c,
+    affiliate_tier:
+      c.affiliate_tier ||
+      (c.rate >= 0.15 || (c.source_type === 'withdrawal' && c.rate >= 0.10) ? 'vip' : 'basic'),
+  }));
+
   return {
     totalEarnings: Number(totalEarnings.toFixed(2)),
     level1Earnings: Number(level1Earnings.toFixed(2)),
@@ -1895,10 +1936,17 @@ export function getAffiliateDashboardStats(userId: string) {
     level3Earnings: Number(level3Earnings.toFixed(2)),
     withdrawalBonusEarnings: Number(withdrawalBonusEarnings.toFixed(2)),
     teamSize: referrals.length,
+    activeFundedCount,
+    vipThreshold,
+    vipProgressPercent,
+    remainingToVip,
+    isVipUnlocked,
+    affiliateTier,
+    milestoneRewardAmount,
     level1Count: referrals.filter((r) => r.tier_level === 1).length,
     level2Count: referrals.filter((r) => r.tier_level === 2).length,
     level3Count: referrals.filter((r) => r.tier_level === 3).length,
-    recentCommissions: commissions.slice(0, 50),
+    recentCommissions: normalizedCommissions.slice(0, 50),
     referrals: enrichedReferrals.slice(0, 50),
     networkTree,
   };

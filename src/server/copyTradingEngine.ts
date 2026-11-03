@@ -55,40 +55,79 @@ export class CopyTradingEngine {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
-      const tx = db.transaction((items: CopyTraderProfileData[]) => {
-        for (const t of items) {
-          insert.run(
-            t.id,
-            t.user_id || `usr_${t.numeric_id}`,
-            t.provider_name,
-            t.country,
-            t.flag,
-            t.avatar_url,
-            t.account_category,
-            t.strategy_title,
-            t.vip_level,
-            t.starting_balance,
-            t.current_balance,
-            t.all_time_withdrawals,
-            t.daily_profit,
-            t.weekly_profit_pct,
-            t.monthly_profit_pct,
-            t.win_rate_3m,
-            t.total_trades,
-            t.starting_balance * 18,
-            t.current_copiers,
-            MAX_COPIERS_PER_TRADER,
-            t.win_rate_3m,
-            t.profit_factor,
-            t.max_drawdown,
-            t.sharpe_ratio,
-            t.avg_holding_time,
-            now
-          );
+      if (typeof (db as any).transaction === 'function') {
+        const tx = (db as any).transaction((items: CopyTraderProfileData[]) => {
+          for (const t of items) {
+            insert.run(
+              t.id,
+              t.user_id || `usr_${t.numeric_id}`,
+              t.provider_name,
+              t.country,
+              t.flag,
+              t.avatar_url,
+              t.account_category,
+              t.strategy_title,
+              t.vip_level,
+              t.starting_balance,
+              t.current_balance,
+              t.all_time_withdrawals,
+              t.daily_profit,
+              t.weekly_profit_pct,
+              t.monthly_profit_pct,
+              t.win_rate_3m,
+              t.total_trades,
+              t.starting_balance * 18,
+              t.current_copiers,
+              MAX_COPIERS_PER_TRADER,
+              t.win_rate_3m,
+              t.profit_factor,
+              t.max_drawdown,
+              t.sharpe_ratio,
+              t.avg_holding_time,
+              now
+            );
+          }
+        });
+        tx(pool);
+      } else {
+        db.exec('BEGIN TRANSACTION;');
+        try {
+          for (const t of pool) {
+            insert.run(
+              t.id,
+              t.user_id || `usr_${t.numeric_id}`,
+              t.provider_name,
+              t.country,
+              t.flag,
+              t.avatar_url,
+              t.account_category,
+              t.strategy_title,
+              t.vip_level,
+              t.starting_balance,
+              t.current_balance,
+              t.all_time_withdrawals,
+              t.daily_profit,
+              t.weekly_profit_pct,
+              t.monthly_profit_pct,
+              t.win_rate_3m,
+              t.total_trades,
+              t.starting_balance * 18,
+              t.current_copiers,
+              MAX_COPIERS_PER_TRADER,
+              t.win_rate_3m,
+              t.profit_factor,
+              t.max_drawdown,
+              t.sharpe_ratio,
+              t.avg_holding_time,
+              now
+            );
+          }
+          db.exec('COMMIT;');
+        } catch (e) {
+          db.exec('ROLLBACK;');
+          throw e;
         }
-      });
-
-      tx(pool);
+      }
     } catch (err) {
       console.warn('CopyTradingEngine seedInitialTraders warning:', err);
     }

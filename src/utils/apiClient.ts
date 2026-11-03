@@ -709,11 +709,12 @@ export async function apiPurchaseAccount(params: {
               })
               .then(undefined, () => {});
 
-            const { data: sponsorProf } = await supabase
+            const sponsorRes: any = await supabase
               .from('profiles')
               .select('id, referred_by, total_referral_earnings')
               .eq('id', currentSponsorId)
               .maybeSingle();
+            const sponsorProf = sponsorRes?.data;
             if (sponsorProf) {
               const nextTotal = Number(
                 (Number(sponsorProf.total_referral_earnings || 0) + commAmount).toFixed(2)

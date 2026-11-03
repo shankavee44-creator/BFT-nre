@@ -255,10 +255,12 @@ export interface UserAccount {
   password?: string;
   referralCode: string; // e.g. "BFT-ALEX77"
   referredBy?: string; // Parent user ID
+  registeredTier?: AffiliateTier; // 'basic' or 'vip' based on sponsor status at signup time
   createdAt: string;
 }
 
 export type ReferralLevel = 1 | 2 | 3;
+export type AffiliateTier = 'basic' | 'vip';
 
 export interface ReferralRecord {
   id: string; // e.g. "REF-1092"
@@ -267,13 +269,14 @@ export interface ReferralRecord {
   referredUserName: string;
   referredUserEmail: string;
   level: ReferralLevel; // 1 = Direct, 2 = Sub, 3 = Sub-Sub
-  commissionType?: 'package' | 'withdrawal'; // 'package' (17% total / 10-5-2) or 'withdrawal' (8% payout royalty)
+  commissionType?: 'package' | 'withdrawal'; // 'package' or 'withdrawal'
   packageTier: ChallengeTier;
   packageName: string;
   packagePrice: number;
-  commissionRate: number; // e.g. 0.17, 0.10, 0.08, 0.05, 0.02
+  commissionRate: number; // e.g. 0.10, 0.15, 0.05, 0.08, 0.02
   commissionAmount: number; // exact earned USDT
   status: 'pending' | 'paid';
+  affiliateTier?: AffiliateTier; // 'basic' or 'vip'
   createdAt: string;
 }
 
@@ -282,6 +285,8 @@ export interface ReferredUser {
   fullName: string;
   level: ReferralLevel;
   latestPurchase?: { name: string; amount: number; sku?: string };
+  isFundedActive?: boolean;
+  registeredTier?: AffiliateTier;
 }
 
 export interface AffiliatePayout {
@@ -301,10 +306,19 @@ export interface AffiliateStats {
   availableBalance: number;
   pendingCommission: number;
   totalReferralsCount: number;
+  activeFundedCount: number; // Count of referrals who actually purchased a Funded Account
+  vipThreshold: number; // 1,000 Active Funded Referrals
+  vipProgressPercent: number; // 0 - 100%
+  remainingToVip: number; // 1,000 - activeFundedCount
+  affiliateTier: AffiliateTier; // 'basic' | 'vip'
+  isVipUnlocked: boolean;
+  milestoneRewardAmount: number; // $10,000
+  milestoneClaimed?: boolean;
   level1Count: number;
   level1Earnings: number;
   level2Count: number;
   level2Earnings: number;
   level3Count: number;
   level3Earnings: number;
+  withdrawalEarnings?: number;
 }
