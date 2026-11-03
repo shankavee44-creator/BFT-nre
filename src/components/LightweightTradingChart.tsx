@@ -750,18 +750,18 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
           }}
         >
           <div
-            className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-mono text-xs font-black shadow-2xl border backdrop-blur-md animate-in fade-in zoom-in-90 slide-in-from-bottom-2 duration-300 ${
+            className={`px-3 py-1.5 rounded-xl flex items-center gap-1.5 font-mono text-xs font-black shadow-2xl border bg-zinc-950/95 animate-in fade-in zoom-in-90 slide-in-from-bottom-2 duration-300 ${
               tradeResultOverlay.isWin
-                ? 'bg-[#00E676] text-slate-950 border-[#00E676] shadow-[0_4px_20px_rgba(0,230,118,0.55)]'
+                ? 'border-emerald-500/80 text-emerald-400 shadow-[0_4px_20px_rgba(0,230,118,0.35)]'
                 : tradeResultOverlay.isTie
-                ? 'bg-[#FFB300] text-slate-950 border-[#FFB300] shadow-[0_4px_20px_rgba(255,179,0,0.55)]'
-                : 'bg-[#FF1744] text-white border-[#FF1744] shadow-[0_4px_20px_rgba(255,23,68,0.55)]'
+                ? 'border-amber-500/80 text-amber-400 shadow-[0_4px_20px_rgba(255,179,0,0.35)]'
+                : 'border-rose-500/80 text-rose-400 shadow-[0_4px_20px_rgba(255,23,68,0.35)]'
             }`}
           >
             <span className="text-[11px]">
               {tradeResultOverlay.isWin ? '▲ WIN' : tradeResultOverlay.isTie ? '► TIE' : '▼ LOSS'}
             </span>
-            <span className="tabular-nums">
+            <span className="tabular-nums font-extrabold">
               {tradeResultOverlay.isWin
                 ? `+$${Number(tradeResultOverlay.profitAmount || 0).toFixed(2)}`
                 : tradeResultOverlay.isTie
