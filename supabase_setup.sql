@@ -415,16 +415,29 @@ DECLARE
   chars TEXT := '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
   result TEXT := '';
   i INTEGER;
+  CREATE OR REPLACE FUNCTION public.generate_unique_referral_code()
+RETURNS TEXT AS $$
+DECLARE
+  chars TEXT := '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+  result TEXT := '';
+  i INTEGER;
   code_exists BOOLEAN := TRUE;
+  attempts INTEGER := 0;
 BEGIN
-  WHILE code_exists LOOP
+  WHILE code_exists AND attempts < 100 LOOP
+    attempts := attempts + 1;
     result := '';
     FOR i IN 1..6 LOOP
       result := result || substr(chars, floor(random() * length(chars) + 1)::integer, 1);
     END FOR;
-    SELECT EXISTS(SELECT 1 FROM public.profiles WHERE referral_code = result) INTO code_exists;
+    SELECT EXISTS(SELECT 1 FROM public.profiles WHERE UPPER(referral_code) = result) INTO code_exists;
   END LOOP;
+  IF code_exists THEN
+    result := UPPER(SUBSTR(MD5(RANDOM()::TEXT), 1, 6));
+  END IF;
   RETURN result;
+EXCEPTION WHEN OTHERS THEN
+  RETURN UPPER(SUBSTR(MD5(RANDOM()::TEXT), 1, 6));
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
@@ -438,58 +451,70 @@ DECLARE
 BEGIN
   RAISE LOG 'Processing signup for user: %, meta: %', NEW.id, NEW.raw_user_meta_data;
 
-  ref_code_param := UPPER(TRIM(COALESCE(
-    NEW.raw_user_meta_data->>'referral_code',
-    NEW.raw_user_meta_data->>'ref',
-    NEW.raw_user_meta_data->>'referred_by',
-    ''
-  )));
+  BEGIN
+    ref_code_param := UPPER(TRIM(COALESCE(
+      NEW.raw_user_meta_data->>'referral_code',
+      NEW.raw_user_meta_data->>'ref',
+      NEW.raw_user_meta_data->>'referred_by',
+      ''
+    )));
 
-  IF ref_code_param <> '' THEN
-    SELECT id INTO referrer_uuid FROM public.profiles WHERE UPPER(referral_code) = ref_code_param LIMIT 1;
-    RAISE LOG 'Referral lookup: code=%, referrer_uuid=%', ref_code_param, referrer_uuid;
-  END IF;
+    IF ref_code_param <> '' THEN
+      SELECT id INTO referrer_uuid FROM public.profiles WHERE UPPER(referral_code) = ref_code_param LIMIT 1;
+      RAISE LOG 'Referral lookup: code=%, referrer_uuid=%', ref_code_param, referrer_uuid;
+    END IF;
+  EXCEPTION WHEN OTHERS THEN
+    referrer_uuid := NULL;
+  END;
 
-  new_ref_code := public.generate_unique_referral_code();
+  BEGIN
+    new_ref_code := public.generate_unique_referral_code();
+  EXCEPTION WHEN OTHERS THEN
+    new_ref_code := UPPER(SUBSTR(MD5(RANDOM()::TEXT), 1, 6));
+  END;
 
   -- 1. Create or update user profile with complete initial balances and role
-  INSERT INTO public.profiles (
-    id,
-    email,
-    full_name,
-    balance,
-    self_balance,
-    self_capital_balance,
-    demo_balance,
-    funded_balance,
-    role,
-    referral_code,
-    referred_by,
-    kyc_status,
-    total_referral_earnings
-  ) VALUES (
-    NEW.id,
-    COALESCE(NEW.email, ''),
-    COALESCE(
-      NEW.raw_user_meta_data->>'full_name',
-      NEW.raw_user_meta_data->>'name',
-      split_part(COALESCE(NEW.email, 'trader@bft.io'), '@', 1)
-    ),
-    0.00,
-    0.00,
-    0.00,
-    10000.00,
-    0.00,
-    'user',
-    new_ref_code,
-    referrer_uuid,
-    'unverified',
-    0.00
-  )
-  ON CONFLICT (id) DO UPDATE SET
-    email = COALESCE(NULLIF(EXCLUDED.email, ''), public.profiles.email),
-    full_name = COALESCE(public.profiles.full_name, EXCLUDED.full_name),
-    referred_by = COALESCE(public.profiles.referred_by, EXCLUDED.referred_by);
+  BEGIN
+    INSERT INTO public.profiles (
+      id,
+      email,
+      full_name,
+      balance,
+      self_balance,
+      self_capital_balance,
+      demo_balance,
+      funded_balance,
+      role,
+      referral_code,
+      referred_by,
+      kyc_status,
+      total_referral_earnings
+    ) VALUES (
+      NEW.id,
+      COALESCE(NEW.email, ''),
+      COALESCE(
+        NEW.raw_user_meta_data->>'full_name',
+        NEW.raw_user_meta_data->>'name',
+        split_part(COALESCE(NEW.email, 'trader@bft.io'), '@', 1)
+      ),
+      0.00,
+      0.00,
+      0.00,
+      10000.00,
+      0.00,
+      'user',
+      new_ref_code,
+      referrer_uuid,
+      'unverified',
+      0.00
+    )
+    ON CONFLICT (id) DO UPDATE SET
+      email = COALESCE(NULLIF(EXCLUDED.email, ''), public.profiles.email),
+      full_name = COALESCE(public.profiles.full_name, EXCLUDED.full_name),
+      referred_by = COALESCE(public.profiles.referred_by, EXCLUDED.referred_by);
+  EXCEPTION WHEN OTHERS THEN
+    RAISE LOG 'Profile creation in trigger failed for user %: %', NEW.id, SQLERRM;
+  END;
 
   -- 2. Automatically create default Demo Trading Account ($10,000 equity)
   BEGIN

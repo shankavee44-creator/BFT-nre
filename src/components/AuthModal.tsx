@@ -444,29 +444,44 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         },
       });
 
-      // If a database trigger error occurs, retry without metadata payload
+      // If a database trigger error or 500 occurs, retry without metadata payload first
       if (
         signUpError &&
-        (signUpError.message?.includes('Database error') ||
+        ((signUpError as any).status === 500 ||
+          signUpError.message?.includes('Database error') ||
+          signUpError.message?.includes('500') ||
+          signUpError.message?.includes('saving new user') ||
           signUpError.message?.includes('AuthRetryableFetchError'))
       ) {
-        const retry = await supabase.auth.signUp({
-          email: cleanEmail,
-          password,
-        });
-        if (retry.data?.user && !retry.error) {
-          data = retry.data;
-          signUpError = null;
+        try {
+          const retry = await supabase.auth.signUp({
+            email: cleanEmail,
+            password,
+          });
+          if (retry.data?.user && !retry.error) {
+            data = retry.data;
+            signUpError = null;
+          }
+        } catch {
+          // ignore retry error
         }
       }
 
-      // If Supabase trigger or rate limit still fails, seamlessly provision via backend session
-      if (
+      // If Supabase trigger, database 500, quota, or rate limit still fails, seamlessly provision via backend session
+      const isFallbackRequired =
         signUpError &&
-        (signUpError.message?.includes('Database error') ||
+        ((signUpError as any).status === 500 ||
+          signUpError.message?.includes('Database error') ||
+          signUpError.message?.includes('500') ||
+          signUpError.message?.includes('Internal Server Error') ||
+          signUpError.message?.includes('saving new user') ||
+          signUpError.message?.includes('trigger') ||
           signUpError.message?.includes('AuthRetryableFetchError') ||
-          signUpError.message?.toLowerCase().includes('rate limit'))
-      ) {
+          signUpError.message?.toLowerCase().includes('rate limit') ||
+          signUpError.message?.toLowerCase().includes('quota') ||
+          signUpError.message?.toLowerCase().includes('connection'));
+
+      if (isFallbackRequired) {
         const backendRes = await apiEmailSessionSync({
           email: cleanEmail,
           name: cleanFullName,
