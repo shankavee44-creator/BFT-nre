@@ -229,14 +229,10 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
         }
 
         if (isMounted) {
-          if (rawComms.length > 0) {
-            setSupabaseCommissions(rawComms.map(mapCommissionRow));
-          }
-          if (rawBackendComms.length > 0) {
-            setBackendCommissions(rawBackendComms.map(mapCommissionRow));
-          }
+          setSupabaseCommissions(rawComms.map(mapCommissionRow));
+          setBackendCommissions(rawBackendComms.map(mapCommissionRow));
           if (networkCount !== null) {
-            setReferredNetworkCount((prev) => Math.max(prev, networkCount!));
+            setReferredNetworkCount(networkCount);
           }
           if (activeCount !== null) {
             setBackendActiveFundedCount(activeCount);
@@ -943,68 +939,103 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
             </div>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left font-mono text-xs">
-              <thead>
-                <tr className="border-b border-white/10 text-[10px] uppercase text-slate-400">
-                  <th className="py-3 pl-2">Trader</th>
-                  <th className="py-3">Tier</th>
-                  <th className="py-3">Type</th>
-                  <th className="py-3">Source / Package</th>
-                  <th className="py-3 text-right">Earned</th>
-                  <th className="py-3 text-right pr-2">Date</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {filteredReferrals.map((ref) => {
-                  const isVipEntry = ref.affiliateTier === 'vip';
-                  return (
-                    <tr key={ref.id} className="hover:bg-white/5">
-                      <td className="py-3 pl-2">
-                        <div className="font-bold text-white">{ref.referredUserName}</div>
-                        <div className="text-[10px] text-slate-500">{ref.referredUserEmail}</div>
-                      </td>
-                      <td className="py-3">
-                        <span
-                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black uppercase ${
-                            isVipEntry
-                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                              : 'bg-slate-800 text-slate-300 border border-white/10'
-                          }`}
-                        >
-                          {isVipEntry && <Crown className="w-2.5 h-2.5 text-amber-400" />}
-                          <span>{isVipEntry ? 'VIP' : 'BASIC'}</span>
-                        </span>
-                      </td>
-                      <td className="py-3">
-                        <span
-                          className={`px-2 py-0.5 rounded text-[10px] font-black ${
-                            ref.commissionType === 'withdrawal'
-                              ? 'bg-[#ff8800]/20 text-[#ffaa00] border border-[#ff8800]/40'
-                              : 'bg-emerald-500/20 text-emerald-400'
-                          }`}
-                        >
-                          {ref.commissionType === 'withdrawal'
-                            ? `${(ref.commissionRate * 100).toFixed(0)}% PAYOUT BONUS`
-                            : `L${ref.level} (${(ref.commissionRate * 100).toFixed(0)}%)`}
-                        </span>
-                      </td>
-                      <td className="py-3 text-slate-300 font-sans">
-                        <div className="font-bold text-white">{ref.packageName}</div>
-                        <div className="text-[10px] text-slate-500">${Number(ref.packagePrice).toFixed(2)}</div>
-                      </td>
-                      <td className="py-3 text-right font-black text-emerald-400">
-                        +${ref.commissionAmount.toFixed(2)}
-                      </td>
-                      <td className="py-3 text-right pr-2 text-slate-400 font-mono">
-                        {new Date(ref.createdAt).toLocaleDateString()}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          {filteredReferrals.length === 0 ? (
+            <div
+              data-testid="commission-ledger-empty-state"
+              className="text-center py-10 px-4 rounded-2xl bg-[#0a0a0e] border border-white/5 font-mono"
+            >
+              <div className="w-12 h-12 mx-auto mb-3 rounded-2xl bg-[#ff8800]/10 border border-[#ff8800]/20 flex items-center justify-center">
+                <FileText className="w-6 h-6 text-[#ff8800]" />
+              </div>
+              <h4 className="text-sm font-black text-white mb-1">No Referral Commissions Yet</h4>
+              <p className="text-xs text-slate-400 max-w-sm mx-auto mb-4 leading-relaxed font-sans">
+                {filterLevel === 'all'
+                  ? 'Commissions will appear here in real-time as your referred traders purchase challenge packages or withdraw profits.'
+                  : `No commissions found matching the "${filterLevel}" filter.`}
+              </p>
+              {filterLevel === 'all' && (
+                <div className="max-w-sm mx-auto p-1.5 rounded-xl bg-[#111115] border border-white/10 flex items-center gap-2">
+                  <div className="flex-1 px-2.5 py-1 text-left text-[11px] text-slate-300 font-mono truncate select-all">
+                    {referralLink}
+                  </div>
+                  <button
+                    onClick={handleCopyLink}
+                    className={`px-3 py-1.5 rounded-lg font-black text-[11px] font-mono uppercase tracking-wider flex items-center gap-1 transition-all cursor-pointer ${
+                      copiedLink
+                        ? 'bg-emerald-500 text-slate-950'
+                        : 'bg-[#ff8800] hover:bg-[#ffaa00] text-slate-950'
+                    }`}
+                  >
+                    {copiedLink ? <Check className="w-3 h-3 stroke-[3]" /> : <Copy className="w-3 h-3" />}
+                    <span>{copiedLink ? 'Copied' : 'Copy'}</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left font-mono text-xs">
+                <thead>
+                  <tr className="border-b border-white/10 text-[10px] uppercase text-slate-400">
+                    <th className="py-3 pl-2">Trader</th>
+                    <th className="py-3">Tier</th>
+                    <th className="py-3">Type</th>
+                    <th className="py-3">Source / Package</th>
+                    <th className="py-3 text-right">Earned</th>
+                    <th className="py-3 text-right pr-2">Date</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {filteredReferrals.map((ref) => {
+                    const isVipEntry = ref.affiliateTier === 'vip';
+                    return (
+                      <tr key={ref.id} className="hover:bg-white/5">
+                        <td className="py-3 pl-2">
+                          <div className="font-bold text-white">{ref.referredUserName}</div>
+                          <div className="text-[10px] text-slate-500">{ref.referredUserEmail}</div>
+                        </td>
+                        <td className="py-3">
+                          <span
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black uppercase ${
+                              isVipEntry
+                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                                : 'bg-slate-800 text-slate-300 border border-white/10'
+                            }`}
+                          >
+                            {isVipEntry && <Crown className="w-2.5 h-2.5 text-amber-400" />}
+                            <span>{isVipEntry ? 'VIP' : 'BASIC'}</span>
+                          </span>
+                        </td>
+                        <td className="py-3">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-black ${
+                              ref.commissionType === 'withdrawal'
+                                ? 'bg-[#ff8800]/20 text-[#ffaa00] border border-[#ff8800]/40'
+                                : 'bg-emerald-500/20 text-emerald-400'
+                            }`}
+                          >
+                            {ref.commissionType === 'withdrawal'
+                              ? `${(ref.commissionRate * 100).toFixed(0)}% PAYOUT BONUS`
+                              : `L${ref.level} (${(ref.commissionRate * 100).toFixed(0)}%)`}
+                          </span>
+                        </td>
+                        <td className="py-3 text-slate-300 font-sans">
+                          <div className="font-bold text-white">{ref.packageName}</div>
+                          <div className="text-[10px] text-slate-500">${Number(ref.packagePrice).toFixed(2)}</div>
+                        </td>
+                        <td className="py-3 text-right font-black text-emerald-400">
+                          +${ref.commissionAmount.toFixed(2)}
+                        </td>
+                        <td className="py-3 text-right pr-2 text-slate-400 font-mono">
+                          {new Date(ref.createdAt).toLocaleDateString()}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1012,6 +1043,8 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
         userId={userProfile.id}
         userEmail={userProfile.email}
         referrals={allMergedCommissions}
+        referralLink={referralLink}
+        referralCode={referralCode}
         onNetworkLoaded={(count) => {
           if (count > 0) setReferredNetworkCount(count);
         }}

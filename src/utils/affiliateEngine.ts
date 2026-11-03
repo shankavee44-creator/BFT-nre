@@ -213,240 +213,10 @@ export function isSelfReferral(referralCode: string, currentUserId: string, user
 // 2. INITIAL DATABASE SEED DATA
 // ==========================================
 
-export const INITIAL_USERS: UserAccount[] = [
-  {
-    id: 'USR-MASTER-88',
-    name: 'Viktor Vance',
-    email: 'viktor.v@quant-prop.io',
-    referralCode: 'BFT-VIKTOR88',
-    createdAt: '2026-08-01',
-  },
-  {
-    id: 'USR-PARENT-55',
-    name: 'Elena Rostova',
-    email: 'elena.rostova@alpha-traders.com',
-    referralCode: 'BFT-ELENA55',
-    referredBy: 'USR-MASTER-88',
-    createdAt: '2026-08-20',
-  },
-  {
-    id: 'usr_bft_001', // Logged in user: Alex Mercer
-    name: 'Alex Mercer',
-    email: 'trader.pro@bft-capital.com',
-    referralCode: 'BFT-ALEX77',
-    referredBy: 'USR-PARENT-55',
-    createdAt: '2026-09-01',
-  },
-  {
-    id: 'USR-SUB-101', // Level 1 direct referral of Alex
-    name: 'Marco Rossi',
-    email: 'marco.rossi@milan-fx.it',
-    referralCode: 'BFT-MARCO101',
-    referredBy: 'usr_bft_001',
-    createdAt: '2026-09-15',
-  },
-  {
-    id: 'USR-SUB-102', // Level 1 direct referral of Alex
-    name: 'Liam Davies',
-    email: 'liam.davies@london-capital.uk',
-    referralCode: 'BFT-LIAM102',
-    referredBy: 'usr_bft_001',
-    createdAt: '2026-09-28',
-  },
-  {
-    id: 'USR-GRAND-201', // Level 2 referral of Alex (referred by Marco)
-    name: 'Sophia Chen',
-    email: 'sophia.chen@sg-wealth.sg',
-    referralCode: 'BFT-SOPHIA201',
-    referredBy: 'USR-SUB-101',
-    createdAt: '2026-10-02',
-  },
-  {
-    id: 'USR-GRAND-202', // Level 2 referral of Alex (referred by Liam)
-    name: 'Lucas Bernard',
-    email: 'lucas.b@paris-quant.fr',
-    referralCode: 'BFT-LUCAS202',
-    referredBy: 'USR-SUB-102',
-    createdAt: '2026-10-10',
-  },
-  {
-    id: 'USR-LEAF-301', // Level 3 referral of Alex (referred by Sophia)
-    name: 'David Miller',
-    email: 'd.miller@austin-trader.us',
-    referralCode: 'BFT-DAVID301',
-    referredBy: 'USR-GRAND-201',
-    createdAt: '2026-10-14',
-  },
-  {
-    id: 'USR-LEAF-302', // Level 3 referral of Alex (referred by Lucas)
-    name: 'Kaito Tanaka',
-    email: 'kaito.t@tokyo-options.jp',
-    referralCode: 'BFT-KAITO302',
-    referredBy: 'USR-GRAND-202',
-    createdAt: '2026-10-18',
-  },
-];
-
-export const INITIAL_REFERRALS: ReferralRecord[] = [
-  {
-    id: 'REF-1001',
-    referrerId: 'usr_bft_001',
-    referredUserId: 'USR-SUB-101',
-    referredUserName: 'Marco Rossi',
-    referredUserEmail: 'm***i@milan-fx.it',
-    level: 1,
-    commissionType: 'package',
-    packageTier: 'one-step',
-    packageName: 'One-Step Challenge ($10,000)',
-    packagePrice: 89,
-    commissionRate: 0.10,
-    commissionAmount: 8.90,
-    status: 'paid',
-    createdAt: '2026-09-18T14:22:00Z',
-  },
-  {
-    id: 'REF-1002',
-    referrerId: 'usr_bft_001',
-    referredUserId: 'USR-SUB-102',
-    referredUserName: 'Liam Davies',
-    referredUserEmail: 'l***s@london-capital.uk',
-    level: 1,
-    commissionType: 'package',
-    packageTier: 'instant',
-    packageName: 'Instant Funded ($25,000)',
-    packagePrice: 499,
-    commissionRate: 0.10,
-    commissionAmount: 49.90,
-    status: 'paid',
-    createdAt: '2026-09-29T10:15:00Z',
-  },
-  {
-    id: 'REF-1003',
-    referrerId: 'usr_bft_001',
-    referredUserId: 'USR-GRAND-201',
-    referredUserName: 'Sophia Chen',
-    referredUserEmail: 's***n@sg-wealth.sg',
-    level: 2,
-    commissionType: 'package',
-    packageTier: 'two-step',
-    packageName: 'Two-Step Challenge ($50,000)',
-    packagePrice: 279,
-    commissionRate: 0.05,
-    commissionAmount: 13.95,
-    status: 'paid',
-    createdAt: '2026-10-04T18:40:00Z',
-  },
-  {
-    id: 'REF-1004',
-    referrerId: 'usr_bft_001',
-    referredUserId: 'USR-GRAND-202',
-    referredUserName: 'Lucas Bernard',
-    referredUserEmail: 'l***d@paris-quant.fr',
-    level: 2,
-    commissionType: 'package',
-    packageTier: 'instant',
-    packageName: 'Instant Funded ($10,000)',
-    packagePrice: 249,
-    commissionRate: 0.05,
-    commissionAmount: 12.45,
-    status: 'paid',
-    createdAt: '2026-10-12T09:30:00Z',
-  },
-  {
-    id: 'REF-1005',
-    referrerId: 'usr_bft_001',
-    referredUserId: 'USR-LEAF-301',
-    referredUserName: 'David Miller',
-    referredUserEmail: 'd***r@austin-trader.us',
-    level: 3,
-    commissionType: 'package',
-    packageTier: 'instant',
-    packageName: 'Instant Funded ($50,000)',
-    packagePrice: 899,
-    commissionRate: 0.02,
-    commissionAmount: 17.98,
-    status: 'paid',
-    createdAt: '2026-10-15T16:05:00Z',
-  },
-  {
-    id: 'REF-1006',
-    referrerId: 'usr_bft_001',
-    referredUserId: 'USR-LEAF-302',
-    referredUserName: 'Kaito Tanaka',
-    referredUserEmail: 'k***a@tokyo-options.jp',
-    level: 3,
-    commissionType: 'package',
-    packageTier: 'one-step',
-    packageName: 'One-Step Challenge ($100,000)',
-    packagePrice: 549,
-    commissionRate: 0.02,
-    commissionAmount: 10.98,
-    status: 'paid',
-    createdAt: '2026-10-20T11:55:00Z',
-  },
-  {
-    id: 'REF-1007',
-    referrerId: 'usr_bft_001',
-    referredUserId: 'USR-SUB-101',
-    referredUserName: 'Marco Rossi',
-    referredUserEmail: 'm***i@milan-fx.it',
-    level: 1,
-    commissionType: 'package',
-    packageTier: 'two-step',
-    packageName: 'Two-Step Challenge ($100,000)',
-    packagePrice: 469,
-    commissionRate: 0.10,
-    commissionAmount: 46.90,
-    status: 'paid',
-    createdAt: '2026-10-22T08:14:00Z',
-  },
-  {
-    id: 'REF-1008',
-    referrerId: 'usr_bft_001',
-    referredUserId: 'USR-SUB-102',
-    referredUserName: 'Liam Davies',
-    referredUserEmail: 'l***s@london-capital.uk',
-    level: 1,
-    commissionType: 'withdrawal',
-    packageTier: 'instant',
-    packageName: 'Direct Referral Payout Bonus (8% of $500 Withdrawal)',
-    packagePrice: 500,
-    commissionRate: 0.08,
-    commissionAmount: 40.00,
-    status: 'paid',
-    createdAt: '2026-10-24T15:30:00Z',
-  },
-  {
-    id: 'REF-1009',
-    referrerId: 'usr_bft_001',
-    referredUserId: 'USR-SUB-101',
-    referredUserName: 'Marco Rossi',
-    referredUserEmail: 'm***i@milan-fx.it',
-    level: 1,
-    commissionType: 'withdrawal',
-    packageTier: 'two-step',
-    packageName: 'Direct Referral Payout Bonus (8% of $450 Withdrawal)',
-    packagePrice: 450,
-    commissionRate: 0.08,
-    commissionAmount: 36.00,
-    status: 'paid',
-    createdAt: '2026-10-26T11:20:00Z',
-  },
-];
-
-export const INITIAL_PAYOUTS: AffiliatePayout[] = [
-  {
-    id: 'AFF-PAY-801',
-    userId: 'usr_bft_001',
-    amount: 60.00,
-    method: 'USDT (TRC-20)',
-    details: 'TYsDj4BmVp8QW8r6F32Xnm9ZkE4G1A7L2',
-    status: 'completed',
-    requestedAt: '2026-10-01T12:00:00Z',
-    processedAt: '2026-10-01T12:03:12Z',
-    txHash: 'c7901b44d32a90e84bfa1098b64e521098acbf229e1',
-  },
-];
+// Production launch: Start with completely clean referral and user records
+export const INITIAL_USERS: UserAccount[] = [];
+export const INITIAL_REFERRALS: ReferralRecord[] = [];
+export const INITIAL_PAYOUTS: AffiliatePayout[] = [];
 
 // ==========================================
 // 3. STORAGE ACCESSORS FOR AFFILIATE DATA
@@ -458,16 +228,51 @@ const AFFILIATE_KEYS = {
   PAYOUTS: 'bft_affiliate_payouts_v2',
 };
 
+const LEGACY_DEMO_USER_IDS = new Set([
+  'USR-MASTER-88',
+  'USR-PARENT-55',
+  'usr_bft_001',
+  'USR-SUB-101',
+  'USR-SUB-102',
+  'USR-GRAND-201',
+  'USR-GRAND-202',
+  'USR-LEAF-301',
+  'USR-LEAF-302',
+]);
+
+const LEGACY_DEMO_REFERRAL_IDS = new Set([
+  'REF-1001',
+  'REF-1002',
+  'REF-1003',
+  'REF-1004',
+  'REF-1005',
+  'REF-1006',
+  'REF-1007',
+  'REF-1008',
+  'REF-1009',
+  'COMM-001',
+  'COMM-002',
+  'COMM-003',
+  'COMM-004',
+  'COMM-005',
+  'COMM-006',
+]);
+
 export function loadAffiliateUsers(): UserAccount[] {
   try {
     if (typeof localStorage !== 'undefined') {
       const raw = localStorage.getItem(AFFILIATE_KEYS.USERS);
-      if (raw) return JSON.parse(raw);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((u: any) => u && !LEGACY_DEMO_USER_IDS.has(u.id));
+        }
+      }
     }
   } catch {
     // fallback
   }
-  return INITIAL_USERS;
+  return [];
 }
 
 export function saveAffiliateUsers(users: UserAccount[]): void {
@@ -480,16 +285,7 @@ export function saveAffiliateUsers(users: UserAccount[]): void {
   }
 }
 
-const LEGACY_DEMO_REFERRAL_IDS = new Set([
-  'REF-1001',
-  'REF-1002',
-  'REF-1003',
-  'REF-1004',
-  'REF-1005',
-  'REF-1006',
-]);
-
-const LEGACY_DEMO_PAYOUT_IDS = new Set(['AFF-PAY-881']);
+const LEGACY_DEMO_PAYOUT_IDS = new Set(['AFF-PAY-881', 'AFF-PAY-801']);
 
 export function loadAffiliateReferrals(): ReferralRecord[] {
   try {
@@ -498,7 +294,13 @@ export function loadAffiliateReferrals(): ReferralRecord[] {
       if (raw) {
         const parsed: ReferralRecord[] = JSON.parse(raw);
         if (Array.isArray(parsed)) {
-          return parsed.filter((r) => !LEGACY_DEMO_REFERRAL_IDS.has(r.id));
+          return parsed.filter(
+            (r) =>
+              r &&
+              !LEGACY_DEMO_REFERRAL_IDS.has(r.id) &&
+              !r.id.startsWith('REF-L') &&
+              r.referrerId !== 'usr_bft_001'
+          );
         }
       }
     }
@@ -744,7 +546,10 @@ export function processWithdrawalCommission(params: {
   const referrals = [...(params.existingReferrals || loadAffiliateReferrals())];
 
   const trader = users.find((u) => u.id === params.traderUserId);
-  const referrerId = trader?.referredBy || 'usr_bft_001';
+  const referrerId = trader?.referredBy;
+  if (!referrerId) {
+    return { allReferrals: referrals };
+  }
   const sponsor = users.find((u) => u.id === referrerId);
 
   if (!sponsor || sponsor.id === params.traderUserId) {
@@ -885,62 +690,7 @@ export function formatPurchaseAmountDisplay(amount?: number | null): string {
   return Number.isInteger(num) ? `$${num}` : `$${num.toFixed(2)}`;
 }
 
-export const INITIAL_USER_PURCHASES: AffiliateUserPurchaseRecord[] = [
-  {
-    userId: 'USR-SUB-101',
-    userEmail: 'marco.rossi@milan-fx.it',
-    userName: 'Marco Rossi',
-    packageName: '$100K 2-Step Challenge',
-    packageSku: 'BFT-2S-100K',
-    amount: 469,
-    createdAt: '2026-10-22T08:14:00Z',
-  },
-  {
-    userId: 'USR-SUB-102',
-    userEmail: 'liam.davies@london-capital.uk',
-    userName: 'Liam Davies',
-    packageName: '$25K Instant Funded',
-    packageSku: 'BFT-IF-25K',
-    amount: 499,
-    createdAt: '2026-09-29T10:15:00Z',
-  },
-  {
-    userId: 'USR-GRAND-201',
-    userEmail: 'sophia.chen@sg-wealth.sg',
-    userName: 'Sophia Chen',
-    packageName: '$50K 2-Step Challenge',
-    packageSku: 'BFT-2S-50K',
-    amount: 279,
-    createdAt: '2026-10-04T18:40:00Z',
-  },
-  {
-    userId: 'USR-GRAND-202',
-    userEmail: 'lucas.b@paris-quant.fr',
-    userName: 'Lucas Bernard',
-    packageName: '$10K Instant Funded',
-    packageSku: 'BFT-IF-10K',
-    amount: 249,
-    createdAt: '2026-10-12T09:30:00Z',
-  },
-  {
-    userId: 'USR-LEAF-301',
-    userEmail: 'd.miller@austin-trader.us',
-    userName: 'David Miller',
-    packageName: '$50K Instant Funded',
-    packageSku: 'BFT-IF-50K',
-    amount: 899,
-    createdAt: '2026-10-15T16:05:00Z',
-  },
-  {
-    userId: 'USR-LEAF-302',
-    userEmail: 'kaito.t@tokyo-options.jp',
-    userName: 'Kaito Tanaka',
-    packageName: '$100K 1-Step Challenge',
-    packageSku: 'BFT-1S-100K',
-    amount: 549,
-    createdAt: '2026-10-20T11:55:00Z',
-  },
-];
+export const INITIAL_USER_PURCHASES: AffiliateUserPurchaseRecord[] = [];
 
 export function loadAffiliateUserPurchases(): AffiliateUserPurchaseRecord[] {
   try {
@@ -948,13 +698,21 @@ export function loadAffiliateUserPurchases(): AffiliateUserPurchaseRecord[] {
       const raw = localStorage.getItem(AFFILIATE_PURCHASES_STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.filter(
+            (p: any) =>
+              p &&
+              !LEGACY_DEMO_USER_IDS.has(p.userId) &&
+              !LEGACY_DEMO_USER_IDS.has(p.user_id) &&
+              p.userId !== 'usr_bft_001'
+          );
+        }
       }
     }
   } catch {
     // ignore
   }
-  return INITIAL_USER_PURCHASES;
+  return [];
 }
 
 export function saveAffiliateUserPurchases(records: AffiliateUserPurchaseRecord[]): void {
@@ -1278,11 +1036,8 @@ export function buildReferredNetworkTree(params: {
     });
   }
 
-  // 2. Traverse local 3-tier user tree for sponsorId (and also fallback to usr_bft_001 if sponsor has no external nodes)
+  // 2. Traverse local 3-tier user tree strictly for sponsorId (no mock user fallbacks)
   const effectiveSponsorIds = new Set<string>([sponsorId]);
-  if (nodeMap.size === 0) {
-    effectiveSponsorIds.add('usr_bft_001');
-  }
 
   const l1Users = users.filter((u) => u.referredBy && effectiveSponsorIds.has(u.referredBy));
   const l1Ids = new Set(l1Users.map((u) => u.id));
@@ -1353,17 +1108,12 @@ export function mergeCommissionLedgers(params: {
   const seenKeys = new Set<string>();
   const result: ReferralRecord[] = [];
 
-  const hasExplicitSponsorRecords =
-    validSponsorIds.size > 0 &&
-    combined.some((item) => item && validSponsorIds.has(item.referrerId));
-
   for (const item of combined) {
     if (!item) continue;
-    // Match sponsor ID if validSponsorIds is non-empty, or accept usr_bft_001 fallback records only if sponsor has no explicit records
+    // Strictly match sponsor ID (no mock usr_bft_001 fallback records)
     const matchesSponsor =
       validSponsorIds.size === 0 ||
-      validSponsorIds.has(item.referrerId) ||
-      (!hasExplicitSponsorRecords && item.referrerId === 'usr_bft_001');
+      validSponsorIds.has(item.referrerId);
     if (!matchesSponsor) continue;
 
     const cleanPkgName =
@@ -1491,12 +1241,8 @@ export function calculateAffiliateStats(
   activeCountOverride?: number
 ): AffiliateStats {
   const allRefs = referralsList || loadAffiliateReferrals();
-  const referrals = allRefs.filter(
-    (r) => r.referrerId === userId || (userId && r.referrerId === 'usr_bft_001' && !allRefs.some((x) => x.referrerId === userId))
-  );
-  const payouts = (payoutsList || loadAffiliatePayouts()).filter(
-    (p) => p.userId === userId || p.userId === 'usr_bft_001'
-  );
+  const referrals = allRefs.filter((r) => r.referrerId === userId);
+  const payouts = (payoutsList || loadAffiliatePayouts()).filter((p) => p.userId === userId);
 
   let lifetimeEarnings = 0;
   let pendingCommission = 0;

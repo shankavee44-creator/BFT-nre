@@ -577,5 +577,40 @@ test('claimVipMilestoneReward awards $10,000 only when 1,000 active referrals ac
   assert.strictEqual(successRes.rewardRecord?.affiliateTier, 'vip');
 });
 
+test('production launch: brand new user has strictly empty referrals and zero stats without mock data leak', () => {
+  const newUserId = 'b1c2d3e4-1111-2222-3333-444455556666';
+
+  // 1. buildReferredNetworkTree returns empty array
+  const network = buildReferredNetworkTree({
+    sponsorId: newUserId,
+    externalNodes: [],
+    referralsList: [],
+  });
+  assert.strictEqual(network.length, 0);
+
+  // 2. mergeCommissionLedgers returns empty array
+  const commissions = mergeCommissionLedgers({
+    sponsorIds: [newUserId],
+    localReferrals: [],
+    supabaseReferrals: [],
+    backendReferrals: [],
+  });
+  assert.strictEqual(commissions.length, 0);
+
+  // 3. calculateAffiliateStats returns clean zero stats
+  const stats = calculateAffiliateStats(newUserId, [], [], undefined, undefined, 0);
+  assert.strictEqual(stats.lifetimeEarnings, 0);
+  assert.strictEqual(stats.availableBalance, 0);
+  assert.strictEqual(stats.pendingCommission, 0);
+  assert.strictEqual(stats.totalReferralsCount, 0);
+  assert.strictEqual(stats.level1Earnings, 0);
+  assert.strictEqual(stats.level2Earnings, 0);
+  assert.strictEqual(stats.level3Earnings, 0);
+  assert.strictEqual(stats.withdrawalEarnings, 0);
+  assert.strictEqual(stats.activeFundedCount, 0);
+  assert.strictEqual(stats.isVipUnlocked, false);
+});
+
+
 
 

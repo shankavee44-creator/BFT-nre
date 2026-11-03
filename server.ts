@@ -237,8 +237,8 @@ async function startServer() {
   const copyTradingEngine = CopyTradingEngine.getInstance();
   copyTradingEngine.start();
 
-  const supabaseUrl = process.env.VITE_SUPABASE_URL;
-  const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY;
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || 'https://kwmjonjcwdwvaijcrtjw.supabase.co';
+  const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || 'sb_publishable_G151L79Inh_SPks_HrujZQ_fmaGh-_6';
 
   const safeParseFetchJson = async (res: Response, fallback: any = null) => {
     try {
@@ -2115,15 +2115,45 @@ async function startServer() {
       const user =
         (qUserId ? getUserById(qUserId) : null) ||
         (qEmail ? getUserByEmail(qEmail) : null) ||
-        getAuthenticatedUser(req) ||
-        getUserById('usr_bft_001');
+        getAuthenticatedUser(req);
 
-      const targetId = user?.id || qUserId || 'usr_bft_001';
+      const targetId = user?.id || qUserId;
+      if (!targetId) {
+        return res.json({
+          ok: true,
+          stats: {
+            lifetimeEarnings: 0,
+            availableBalance: 0,
+            pendingCommission: 0,
+            totalReferralsCount: 0,
+            activeFundedCount: 0,
+            vipThreshold: 1000,
+            vipProgressPercent: 0,
+            remainingToVip: 1000,
+            affiliateTier: 'basic',
+            isVipUnlocked: false,
+            milestoneRewardAmount: 10000,
+            milestoneClaimed: false,
+            level1Count: 0,
+            level1Earnings: 0,
+            level2Count: 0,
+            level2Earnings: 0,
+            level3Count: 0,
+            level3Earnings: 0,
+            withdrawalEarnings: 0,
+            teamSize: 0,
+            recentCommissions: [],
+            networkTree: [],
+          },
+          referralCode: user?.referral_code || '',
+        });
+      }
+
       const stats = getAffiliateDashboardStats(targetId);
       return res.json({
         ok: true,
         stats,
-        referralCode: user?.referral_code || 'BFT-ALEX77',
+        referralCode: user?.referral_code || '',
       });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err?.message || 'Failed to load affiliate dashboard' });

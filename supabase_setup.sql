@@ -774,76 +774,55 @@ CREATE POLICY "Users can view own deposits" ON public.deposits FOR SELECT USING 
 DROP POLICY IF EXISTS "Users can submit deposits" ON public.deposits;
 CREATE POLICY "Users can submit deposits" ON public.deposits FOR INSERT WITH CHECK (auth.uid() = user_id);
 
--- User Purchases / Orders: Authenticated users can INSERT and SELECT/VIEW their own purchase history
+-- User Purchases / Orders: Permissive for anon & authenticated
 DROP POLICY IF EXISTS "Users can view own purchases" ON public.user_purchases;
-CREATE POLICY "Users can view own purchases"
-  ON public.user_purchases
-  FOR SELECT
-  TO authenticated
-  USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Allow select user_purchases" ON public.user_purchases;
+CREATE POLICY "Allow select user_purchases"
+  ON public.user_purchases FOR SELECT TO anon, authenticated USING (true);
 
 DROP POLICY IF EXISTS "Users can insert own purchases" ON public.user_purchases;
-CREATE POLICY "Users can insert own purchases"
-  ON public.user_purchases
-  FOR INSERT
-  TO authenticated
-  WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Allow insert user_purchases" ON public.user_purchases;
+CREATE POLICY "Allow insert user_purchases"
+  ON public.user_purchases FOR INSERT TO anon, authenticated WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Users can update own purchases" ON public.user_purchases;
-CREATE POLICY "Users can update own purchases"
-  ON public.user_purchases
-  FOR UPDATE
-  TO authenticated
-  USING (auth.uid() = user_id)
-  WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Allow update user_purchases" ON public.user_purchases;
+CREATE POLICY "Allow update user_purchases"
+  ON public.user_purchases FOR UPDATE TO anon, authenticated USING (true) WITH CHECK (true);
 
--- Crypto Deposits: Authenticated users can INSERT, SELECT/VIEW, and UPDATE their own crypto deposits
+-- Crypto Deposits: Permissive for anon & authenticated
 DROP POLICY IF EXISTS "Users can view own crypto deposits" ON public.crypto_deposits;
-CREATE POLICY "Users can view own crypto deposits"
-  ON public.crypto_deposits
-  FOR SELECT
-  TO authenticated
-  USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Allow select crypto_deposits" ON public.crypto_deposits;
+CREATE POLICY "Allow select crypto_deposits"
+  ON public.crypto_deposits FOR SELECT TO anon, authenticated USING (true);
 
 DROP POLICY IF EXISTS "Users can insert own crypto deposits" ON public.crypto_deposits;
-CREATE POLICY "Users can insert own crypto deposits"
-  ON public.crypto_deposits
-  FOR INSERT
-  TO authenticated
-  WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Allow insert crypto_deposits" ON public.crypto_deposits;
+CREATE POLICY "Allow insert crypto_deposits"
+  ON public.crypto_deposits FOR INSERT TO anon, authenticated WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Users can update own crypto deposits" ON public.crypto_deposits;
-CREATE POLICY "Users can update own crypto deposits"
-  ON public.crypto_deposits
-  FOR UPDATE
-  TO authenticated
-  USING (auth.uid() = user_id)
-  WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Allow update crypto_deposits" ON public.crypto_deposits;
+CREATE POLICY "Allow update crypto_deposits"
+  ON public.crypto_deposits FOR UPDATE TO anon, authenticated USING (true) WITH CHECK (true);
 
--- Trading Accounts: Authenticated users can SELECT, INSERT, and UPDATE their own trading accounts
+-- Trading Accounts: Permissive for anon & authenticated
 ALTER TABLE public.trading_accounts ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Users can view own trading accounts" ON public.trading_accounts;
-CREATE POLICY "Users can view own trading accounts"
-  ON public.trading_accounts
-  FOR SELECT
-  TO authenticated
-  USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Allow select trading_accounts" ON public.trading_accounts;
+CREATE POLICY "Allow select trading_accounts"
+  ON public.trading_accounts FOR SELECT TO anon, authenticated USING (true);
 
 DROP POLICY IF EXISTS "Users can insert own trading accounts" ON public.trading_accounts;
-CREATE POLICY "Users can insert own trading accounts"
-  ON public.trading_accounts
-  FOR INSERT
-  TO authenticated
-  WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Allow insert trading_accounts" ON public.trading_accounts;
+CREATE POLICY "Allow insert trading_accounts"
+  ON public.trading_accounts FOR INSERT TO anon, authenticated WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Users can update own trading accounts" ON public.trading_accounts;
-CREATE POLICY "Users can update own trading accounts"
-  ON public.trading_accounts
-  FOR UPDATE
-  TO authenticated
-  USING (auth.uid() = user_id)
-  WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Allow update trading_accounts" ON public.trading_accounts;
+CREATE POLICY "Allow update trading_accounts"
+  ON public.trading_accounts FOR UPDATE TO anon, authenticated USING (true) WITH CHECK (true);
 
 -- Withdrawals: Authenticated users can INSERT, SELECT, and UPDATE (for cancellation) their own requests; Admins can view & manage all withdrawal rows
 CREATE OR REPLACE FUNCTION public.is_bft_admin()

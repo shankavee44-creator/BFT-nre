@@ -70,9 +70,13 @@ function mapToSupabaseRow(trade: BinaryTrade, userId: string): Record<string, an
   else if (tier === 'two-step') accountType = 'TWO_STEP';
   else if (tier === 'instant') accountType = 'INSTANT';
 
+  const durationMs = trade.durationSeconds ? trade.durationSeconds * 1000 : 60000;
+  const startTime = trade.startTime || Date.now();
+
   return {
     id: ensureTradeUuid(trade.id),
     user_id: userId,
+    account_id: trade.accountId || 'BFT-LIVE-DB',
     symbol: trade.asset,
     trade_type: trade.direction,
     amount: trade.investment,
@@ -80,7 +84,8 @@ function mapToSupabaseRow(trade: BinaryTrade, userId: string): Record<string, an
     exit_price: trade.closePrice ?? trade.strikePrice,
     payout_multiplier: 1 + (trade.payoutPercentage / 100),
     status: trade.status === 'active' ? 'OPEN' : trade.status.toUpperCase(),
-    created_at: new Date(trade.startTime).toISOString(),
+    created_at: new Date(startTime).toISOString(),
+    expires_at: new Date(startTime + durationMs).toISOString(),
     account_type: accountType,
   };
 }

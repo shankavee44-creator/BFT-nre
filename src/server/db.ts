@@ -350,74 +350,7 @@ function seedInitialData() {
     now
   );
 
-  // Insert Direct Referrals of Alex Mercer (Level 1)
-  const l1Users = [
-    { id: 'USR-SUB-101', name: 'Marco Rossi', email: 'marco.rossi@milan-fx.it', ref: 'BFT-MARCO101' },
-    { id: 'USR-SUB-102', name: 'Liam Davies', email: 'liam.davies@london-capital.uk', ref: 'BFT-LIAM102' },
-  ];
-  for (const u of l1Users) {
-    db.prepare(`
-      INSERT INTO users (id, email, full_name, referral_code, referred_by, kyc_status, profile_locked, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, 'verified', 1, ?, ?)
-    `).run(u.id, u.email, u.name, u.ref, 'usr_bft_001', now - 86400000 * 15, now);
-
-    db.prepare(`
-      INSERT INTO referrals (id, sponsor_id, referred_user_id, tier_level, created_at)
-      VALUES (?, ?, ?, 1, ?)
-    `).run(`REF-L1-${u.id}`, 'usr_bft_001', u.id, now - 86400000 * 15);
-  }
-
-  // Insert Level 2 Referrals
-  const l2Users = [
-    { id: 'USR-GRAND-201', name: 'Sophia Chen', email: 'sophia.chen@sg-wealth.sg', ref: 'BFT-SOPHIA201', parent: 'USR-SUB-101' },
-    { id: 'USR-GRAND-202', name: 'Lucas Bernard', email: 'lucas.b@paris-quant.fr', ref: 'BFT-LUCAS202', parent: 'USR-SUB-102' },
-  ];
-  for (const u of l2Users) {
-    db.prepare(`
-      INSERT INTO users (id, email, full_name, referral_code, referred_by, kyc_status, profile_locked, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, 'verified', 1, ?, ?)
-    `).run(u.id, u.email, u.name, u.ref, u.parent, now - 86400000 * 10, now);
-
-    db.prepare(`
-      INSERT INTO referrals (id, sponsor_id, referred_user_id, tier_level, created_at)
-      VALUES (?, ?, ?, 2, ?)
-    `).run(`REF-L2-${u.id}`, 'usr_bft_001', u.id, now - 86400000 * 10);
-  }
-
-  // Insert Level 3 Referrals
-  const l3Users = [
-    { id: 'USR-LEAF-301', name: 'David Miller', email: 'd.miller@austin-trader.us', ref: 'BFT-DAVID301', parent: 'USR-GRAND-201' },
-    { id: 'USR-LEAF-302', name: 'Emma Watson', email: 'emma.w@toronto-fx.ca', ref: 'BFT-EMMA302', parent: 'USR-GRAND-202' },
-  ];
-  for (const u of l3Users) {
-    db.prepare(`
-      INSERT INTO users (id, email, full_name, referral_code, referred_by, kyc_status, profile_locked, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, 'verified', 1, ?, ?)
-    `).run(u.id, u.email, u.name, u.ref, u.parent, now - 86400000 * 5, now);
-
-    db.prepare(`
-      INSERT INTO referrals (id, sponsor_id, referred_user_id, tier_level, created_at)
-      VALUES (?, ?, ?, 3, ?)
-    `).run(`REF-L3-${u.id}`, 'usr_bft_001', u.id, now - 86400000 * 5);
-  }
-
-  // Insert Initial Commissions for Alex Mercer
-  const seedCommissions = [
-    { id: 'COMM-001', subId: 'USR-SUB-101', type: 'purchase', level: 1, pkg: '$10,000 Two-Step', price: 99.00, rate: 0.10, amt: 9.90, ts: now - 86400000 * 12 },
-    { id: 'COMM-002', subId: 'USR-SUB-102', type: 'purchase', level: 1, pkg: '$25,000 Instant Funded', price: 299.00, rate: 0.10, amt: 29.90, ts: now - 86400000 * 9 },
-    { id: 'COMM-003', subId: 'USR-GRAND-201', type: 'purchase', level: 2, pkg: '$50,000 One-Step', price: 289.00, rate: 0.05, amt: 14.45, ts: now - 86400000 * 7 },
-    { id: 'COMM-004', subId: 'USR-GRAND-202', type: 'purchase', level: 2, pkg: '$10,000 Instant Funded', price: 149.00, rate: 0.05, amt: 7.45, ts: now - 86400000 * 5 },
-    { id: 'COMM-005', subId: 'USR-LEAF-301', type: 'purchase', level: 3, pkg: '$100,000 Two-Step', price: 499.00, rate: 0.02, amt: 9.98, ts: now - 86400000 * 4 },
-    { id: 'COMM-006', subId: 'USR-SUB-101', type: 'withdrawal', level: 1, pkg: 'Direct Referral Payout Bonus (8% of $500)', price: 500.00, rate: 0.08, amt: 40.00, ts: now - 86400000 * 2 },
-  ];
-
-  for (const c of seedCommissions) {
-    db.prepare(`
-      INSERT INTO commissions (
-        id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, status, created_at
-      ) VALUES (?, 'usr_bft_001', ?, ?, ?, ?, ?, ?, ?, 'paid', ?)
-    `).run(c.id, c.subId, c.type, c.level, c.pkg, c.price, c.rate, c.amt, c.ts);
-  }
+  // Production launch: Referrals and commissions ledger starts completely clean from live user registrations and purchases
 
   // Insert Historical Withdrawal for Alex Mercer
   db.prepare(`
@@ -1828,7 +1761,26 @@ export function getLatestPurchaseForUserInDb(userId: string) {
 }
 
 export function getAffiliateDashboardStats(userId: string) {
-  let targetId = userId || 'usr_bft_001';
+  let targetId = (userId || '').trim();
+  if (!targetId) {
+    return {
+      stats: {
+        totalEarned: 0,
+        unpaidEarnings: 0,
+        paidEarnings: 0,
+        level1Earnings: 0,
+        level2Earnings: 0,
+        level3Earnings: 0,
+        withdrawalEarnings: 0,
+        teamSize: 0,
+        activeFundedCount: 0,
+        isVipUnlocked: false,
+        recentCommissions: [],
+        networkTree: [],
+      },
+    };
+  }
+
   let commissions = db
     .prepare(
       `SELECT c.*, u.full_name as referred_user_name, u.email as referred_user_email
@@ -1849,27 +1801,7 @@ export function getAffiliateDashboardStats(userId: string) {
     )
     .all(targetId) as any[];
 
-  // Fallback to default usr_bft_001 network if the queried user has no referrals/commissions yet in SQLite
-  if (commissions.length === 0 && referrals.length === 0 && targetId !== 'usr_bft_001') {
-    commissions = db
-      .prepare(
-        `SELECT c.*, u.full_name as referred_user_name, u.email as referred_user_email
-         FROM commissions c
-         LEFT JOIN users u ON c.referred_user_id = u.id
-         WHERE c.sponsor_id = 'usr_bft_001'
-         ORDER BY c.created_at DESC`
-      )
-      .all() as any[];
-    referrals = db
-      .prepare(
-        `SELECT r.*, u.full_name, u.email, u.created_at as joined_at
-         FROM referrals r
-         JOIN users u ON r.referred_user_id = u.id
-         WHERE r.sponsor_id = 'usr_bft_001'
-         ORDER BY r.tier_level ASC, r.created_at DESC`
-      )
-      .all() as any[];
-  }
+  // Production: Only return real referrals and commissions for targetId without mock fallbacks
 
   let totalEarnings = 0;
   let level1Earnings = 0;

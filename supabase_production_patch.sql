@@ -280,172 +280,132 @@ ALTER TABLE public.referral_commissions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.withdrawals ENABLE ROW LEVEL SECURITY;
 
 -- 8.1 PROFILES POLICIES
--- Allow SELECT for all users so referral lookups, sponsor verification, and leaderboards succeed
 DROP POLICY IF EXISTS "Users can view own profile" ON public.profiles;
 DROP POLICY IF EXISTS "Public and authenticated read profiles" ON public.profiles;
 CREATE POLICY "Public and authenticated read profiles"
-  ON public.profiles
-  FOR SELECT
-  TO anon, authenticated
-  USING (true);
+  ON public.profiles FOR SELECT TO anon, authenticated USING (true);
 
 DROP POLICY IF EXISTS "Users can insert own profile" ON public.profiles;
 CREATE POLICY "Users can insert own profile"
-  ON public.profiles
-  FOR INSERT
-  TO anon, authenticated
-  WITH CHECK (auth.uid() = id OR auth.uid() IS NOT NULL OR true);
+  ON public.profiles FOR INSERT TO anon, authenticated WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Users can update own profile" ON public.profiles;
 CREATE POLICY "Users can update own profile"
-  ON public.profiles
-  FOR UPDATE
-  TO authenticated
-  USING (auth.uid() = id OR public.is_bft_admin())
-  WITH CHECK (auth.uid() = id OR public.is_bft_admin());
+  ON public.profiles FOR UPDATE TO anon, authenticated USING (true) WITH CHECK (true);
 
 -- 8.2 TRADING ACCOUNTS POLICIES
 DROP POLICY IF EXISTS "Users can view own trading accounts" ON public.trading_accounts;
-CREATE POLICY "Users can view own trading accounts"
-  ON public.trading_accounts
-  FOR SELECT
-  TO authenticated
-  USING (auth.uid() = user_id OR public.is_bft_admin());
+DROP POLICY IF EXISTS "Allow select trading_accounts" ON public.trading_accounts;
+CREATE POLICY "Allow select trading_accounts"
+  ON public.trading_accounts FOR SELECT TO anon, authenticated USING (true);
 
 DROP POLICY IF EXISTS "Users can insert own trading accounts" ON public.trading_accounts;
-CREATE POLICY "Users can insert own trading accounts"
-  ON public.trading_accounts
-  FOR INSERT
-  TO authenticated
-  WITH CHECK (auth.uid() = user_id OR public.is_bft_admin());
+DROP POLICY IF EXISTS "Allow insert trading_accounts" ON public.trading_accounts;
+CREATE POLICY "Allow insert trading_accounts"
+  ON public.trading_accounts FOR INSERT TO anon, authenticated WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Users can update own trading accounts" ON public.trading_accounts;
-CREATE POLICY "Users can update own trading accounts"
-  ON public.trading_accounts
-  FOR UPDATE
-  TO authenticated
-  USING (auth.uid() = user_id OR public.is_bft_admin())
-  WITH CHECK (auth.uid() = user_id OR public.is_bft_admin());
+DROP POLICY IF EXISTS "Allow update trading_accounts" ON public.trading_accounts;
+CREATE POLICY "Allow update trading_accounts"
+  ON public.trading_accounts FOR UPDATE TO anon, authenticated USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Admins can delete trading accounts" ON public.trading_accounts;
-CREATE POLICY "Admins can delete trading accounts"
-  ON public.trading_accounts
-  FOR DELETE
-  TO authenticated
-  USING (public.is_bft_admin());
+DROP POLICY IF EXISTS "Allow delete trading_accounts" ON public.trading_accounts;
+CREATE POLICY "Allow delete trading_accounts"
+  ON public.trading_accounts FOR DELETE TO anon, authenticated USING (true);
 
 -- 8.3 CRYPTO DEPOSITS POLICIES
 DROP POLICY IF EXISTS "Users can view own crypto deposits" ON public.crypto_deposits;
-CREATE POLICY "Users can view own crypto deposits"
-  ON public.crypto_deposits
-  FOR SELECT
-  TO authenticated
-  USING (auth.uid() = user_id OR public.is_bft_admin());
+DROP POLICY IF EXISTS "Allow select crypto_deposits" ON public.crypto_deposits;
+CREATE POLICY "Allow select crypto_deposits"
+  ON public.crypto_deposits FOR SELECT TO anon, authenticated USING (true);
 
 DROP POLICY IF EXISTS "Users can insert own crypto deposits" ON public.crypto_deposits;
-CREATE POLICY "Users can insert own crypto deposits"
-  ON public.crypto_deposits
-  FOR INSERT
-  TO authenticated
-  WITH CHECK (auth.uid() = user_id OR public.is_bft_admin());
+DROP POLICY IF EXISTS "Allow insert crypto_deposits" ON public.crypto_deposits;
+CREATE POLICY "Allow insert crypto_deposits"
+  ON public.crypto_deposits FOR INSERT TO anon, authenticated WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Users can update own crypto deposits" ON public.crypto_deposits;
-CREATE POLICY "Users can update own crypto deposits"
-  ON public.crypto_deposits
-  FOR UPDATE
-  TO authenticated
-  USING (auth.uid() = user_id OR public.is_bft_admin())
-  WITH CHECK (auth.uid() = user_id OR public.is_bft_admin());
+DROP POLICY IF EXISTS "Allow update crypto_deposits" ON public.crypto_deposits;
+CREATE POLICY "Allow update crypto_deposits"
+  ON public.crypto_deposits FOR UPDATE TO anon, authenticated USING (true) WITH CHECK (true);
 
 -- 8.4 USER PURCHASES POLICIES
 DROP POLICY IF EXISTS "Users can view own purchases" ON public.user_purchases;
-CREATE POLICY "Users can view own purchases"
-  ON public.user_purchases
-  FOR SELECT
-  TO authenticated
-  USING (auth.uid() = user_id OR public.is_bft_admin());
+DROP POLICY IF EXISTS "Allow select user_purchases" ON public.user_purchases;
+CREATE POLICY "Allow select user_purchases"
+  ON public.user_purchases FOR SELECT TO anon, authenticated USING (true);
 
 DROP POLICY IF EXISTS "Users can insert own purchases" ON public.user_purchases;
-CREATE POLICY "Users can insert own purchases"
-  ON public.user_purchases
-  FOR INSERT
-  TO authenticated
-  WITH CHECK (auth.uid() = user_id OR public.is_bft_admin());
+DROP POLICY IF EXISTS "Allow insert user_purchases" ON public.user_purchases;
+CREATE POLICY "Allow insert user_purchases"
+  ON public.user_purchases FOR INSERT TO anon, authenticated WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Users can update own purchases" ON public.user_purchases;
-CREATE POLICY "Users can update own purchases"
-  ON public.user_purchases
-  FOR UPDATE
-  TO authenticated
-  USING (auth.uid() = user_id OR public.is_bft_admin())
-  WITH CHECK (auth.uid() = user_id OR public.is_bft_admin());
+DROP POLICY IF EXISTS "Allow update user_purchases" ON public.user_purchases;
+CREATE POLICY "Allow update user_purchases"
+  ON public.user_purchases FOR UPDATE TO anon, authenticated USING (true) WITH CHECK (true);
 
 -- 8.5 REFERRAL COMMISSIONS POLICIES
 DROP POLICY IF EXISTS "Users can view earned commissions" ON public.referral_commissions;
-CREATE POLICY "Users can view earned commissions"
-  ON public.referral_commissions
-  FOR SELECT
-  TO authenticated
-  USING (
-    auth.uid() = earner_id OR
-    auth.uid() = referrer_id OR
-    auth.uid() = source_user_id OR
-    auth.uid() = referred_user_id OR
-    public.is_bft_admin()
-  );
+DROP POLICY IF EXISTS "Allow select referral_commissions" ON public.referral_commissions;
+CREATE POLICY "Allow select referral_commissions"
+  ON public.referral_commissions FOR SELECT TO anon, authenticated USING (true);
 
 DROP POLICY IF EXISTS "Users can insert commissions" ON public.referral_commissions;
-CREATE POLICY "Users can insert commissions"
-  ON public.referral_commissions
-  FOR INSERT
-  TO authenticated, anon
-  WITH CHECK (true);
+DROP POLICY IF EXISTS "Allow insert referral_commissions" ON public.referral_commissions;
+CREATE POLICY "Allow insert referral_commissions"
+  ON public.referral_commissions FOR INSERT TO anon, authenticated WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Admins can manage commissions" ON public.referral_commissions;
-CREATE POLICY "Admins can manage commissions"
-  ON public.referral_commissions
-  FOR ALL
-  TO authenticated
-  USING (public.is_bft_admin())
-  WITH CHECK (public.is_bft_admin());
+DROP POLICY IF EXISTS "Allow update referral_commissions" ON public.referral_commissions;
+CREATE POLICY "Allow update referral_commissions"
+  ON public.referral_commissions FOR UPDATE TO anon, authenticated USING (true) WITH CHECK (true);
 
--- 8.6 WITHDRAWALS POLICIES
+-- 8.6 USER TRADES POLICIES
+DROP POLICY IF EXISTS "Users can view own trades" ON public.user_trades;
+DROP POLICY IF EXISTS "Allow select user_trades" ON public.user_trades;
+CREATE POLICY "Allow select user_trades"
+  ON public.user_trades FOR SELECT TO anon, authenticated USING (true);
+
+DROP POLICY IF EXISTS "Users can insert own trades" ON public.user_trades;
+DROP POLICY IF EXISTS "Allow insert user_trades" ON public.user_trades;
+CREATE POLICY "Allow insert user_trades"
+  ON public.user_trades FOR INSERT TO anon, authenticated WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow update user_trades" ON public.user_trades;
+CREATE POLICY "Allow update user_trades"
+  ON public.user_trades FOR UPDATE TO anon, authenticated USING (true) WITH CHECK (true);
+
+-- 8.7 WITHDRAWALS POLICIES
 DROP POLICY IF EXISTS "Users can view own withdrawals" ON public.withdrawals;
-CREATE POLICY "Users can view own withdrawals"
-  ON public.withdrawals
-  FOR SELECT
-  TO authenticated
-  USING (auth.uid() = user_id OR public.is_bft_admin());
+DROP POLICY IF EXISTS "Allow select withdrawals" ON public.withdrawals;
+CREATE POLICY "Allow select withdrawals"
+  ON public.withdrawals FOR SELECT TO anon, authenticated USING (true);
 
 DROP POLICY IF EXISTS "Users can submit withdrawals" ON public.withdrawals;
-CREATE POLICY "Users can submit withdrawals"
-  ON public.withdrawals
-  FOR INSERT
-  TO authenticated
-  WITH CHECK (auth.uid() = user_id OR public.is_bft_admin());
+DROP POLICY IF EXISTS "Allow insert withdrawals" ON public.withdrawals;
+CREATE POLICY "Allow insert withdrawals"
+  ON public.withdrawals FOR INSERT TO anon, authenticated WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Users can update own pending withdrawals" ON public.withdrawals;
-CREATE POLICY "Users can update own pending withdrawals"
-  ON public.withdrawals
-  FOR UPDATE
-  TO authenticated
-  USING (auth.uid() = user_id OR public.is_bft_admin())
-  WITH CHECK (auth.uid() = user_id OR public.is_bft_admin());
+DROP POLICY IF EXISTS "Allow update withdrawals" ON public.withdrawals;
+CREATE POLICY "Allow update withdrawals"
+  ON public.withdrawals FOR UPDATE TO anon, authenticated USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Admins can manage all withdrawals" ON public.withdrawals;
-CREATE POLICY "Admins can manage all withdrawals"
-  ON public.withdrawals
-  FOR ALL
-  TO authenticated
-  USING (public.is_bft_admin())
-  WITH CHECK (public.is_bft_admin());
 
 -- Grant privileges to authenticated and anon roles
 GRANT USAGE ON SCHEMA public TO anon, authenticated;
-GRANT ALL ON ALL TABLES IN SCHEMA public TO authenticated;
-GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO authenticated;
-GRANT SELECT, INSERT ON public.profiles TO anon;
-GRANT SELECT, INSERT ON public.referral_commissions TO anon;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.profiles TO anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.trading_accounts TO anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.crypto_deposits TO anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.user_purchases TO anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.referral_commissions TO anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.user_trades TO anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.withdrawals TO anon, authenticated;
 
 -- ============================================================================
 -- 9. AUTOMATIC USER PROFILE & TRADING ACCOUNT CREATION TRIGGER
