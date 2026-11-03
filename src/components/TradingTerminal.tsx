@@ -3566,7 +3566,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       </div>
 
       {/* Main Trading Stage: Left Sidebar + Central Chart + Right Execution Panel */}
-      <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative">
+      <div className="flex-1 flex flex-col md:flex-row overflow-y-auto md:overflow-hidden relative touch-scroll terminal-scroll-area">
         {/* 2. LEFT-SIDE ICON NAVIGATION BAR */}
         <div className="hidden md:flex w-14 bg-[#1e222d] border-r border-[#2a2e39] flex flex-col items-center justify-between py-3 shrink-0 z-10">
           <div className="flex flex-col items-center gap-3">
@@ -3757,7 +3757,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         </div>
 
         {/* 3. CENTRAL SUPER-SMOOTH OTC ALGORITHMIC CHART ENGINE */}
-        <div className="flex-1 flex flex-col relative overflow-hidden bg-[#0a0a0a] min-h-0">
+        <div className="flex-1 flex flex-col relative overflow-y-auto md:overflow-hidden bg-[#0a0a0a] min-h-0 touch-scroll">
           {/* 1. TOP MULTI-ASSET SCROLLING TICKER BAR (Quotex Style) */}
           <div
             data-testid="top-multi-asset-ticker-bar"
@@ -4509,7 +4509,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
           <div
             ref={chartContainerRef}
             data-testid="otc-chart-container"
-            className="flex-1 relative w-full h-full min-h-0 select-none overflow-hidden"
+            className="flex-1 min-h-[350px] sm:min-h-[420px] md:min-h-0 relative w-full h-full select-none overflow-hidden"
           >
             <LightweightTradingChart
               asset={selectedAsset}
