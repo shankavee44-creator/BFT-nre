@@ -31,6 +31,39 @@ export function generate30DayPerformance(
   const baseWinRate = account.winRate > 0 ? account.winRate : 68;
   const currentNetProfit = account.currentBalance - account.initialBalance;
 
+  if ((account.tradesCount || 0) === 0 && Math.abs(currentNetProfit) < 0.01 && activeTrades.length === 0) {
+    const now = new Date();
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      const dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      points.push({
+        date: dateStr,
+        dayNumber: 30 - i,
+        dailyPnL: 0,
+        cumulativeProfit: 0,
+        winRate: 0,
+        tradesCount: 0,
+        wins: 0,
+        losses: 0,
+        drawdownPercent: 0,
+      });
+    }
+    return {
+      points,
+      stats: {
+        totalProfit: 0,
+        averageDailyProfit: 0,
+        overallWinRate: 0,
+        profitFactor: 0,
+        bestDayProfit: 0,
+        worstDayProfit: 0,
+        maxWinStreak: 0,
+        totalTrades30Days: 0,
+      },
+    };
+  }
+
   // Generate 30 days of trading curve ending at current account state
   let cumulative = 0;
   let totalWins = 0;

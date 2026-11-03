@@ -23,7 +23,11 @@ import {
   type DrawingLineStyle,
   type ChartDrawingObject,
 } from '../utils/drawingToolsEngine';
-import { isValidPriceForAsset, validateCandlesForAsset } from '../utils/priceFeedEngine';
+import {
+  isValidPriceForAsset,
+  validateCandlesForAsset,
+  getSynchronizedNowMs,
+} from '../utils/priceFeedEngine';
 import { TradeBadge } from './TradeBadge';
 
 export interface LightweightTradingChartProps {
@@ -156,7 +160,7 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
   const [resultBadgeCoords, setResultBadgeCoords] = useState<{ y: number; x: number } | null>(null);
   const [currentPriceY, setCurrentPriceY] = useState<number>(0);
   const [candleCountdown, setCandleCountdown] = useState<string>('00:30');
-  const [now, setNow] = useState<number>(() => Date.now());
+  const [now, setNow] = useState<number>(() => getSynchronizedNowMs());
   const [isScrolledFromLive, setIsScrolledFromLive] = useState<boolean>(false);
 
   const assetActiveTrades = useMemo(() => {
@@ -166,10 +170,10 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
     );
   }, [activeTrades, asset.symbol]);
 
-  // 1s tick interval for live timers (avoids 10x/sec full component re-render on mobile)
+  // 1s tick interval for live timers synchronized to authoritative server clock
   useEffect(() => {
     const timer = setInterval(() => {
-      setNow(Date.now());
+      setNow(getSynchronizedNowMs());
     }, 1000);
     return () => clearInterval(timer);
   }, []);
@@ -180,7 +184,7 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
     const lastBar = candles.length > 0 ? candles[candles.length - 1] : null;
     if (!lastBar) return;
 
-    const barStartTime = Number(lastBar.time) || Date.now();
+    const barStartTime = Number(lastBar.time) || getSynchronizedNowMs();
     const barEndTime = barStartTime + tfSec * 1000;
     const remainingMs = Math.max(0, barEndTime - now);
     const remSec = Math.floor(remainingMs / 1000);
@@ -262,7 +266,7 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
         const closeP = Number(tradeResultOverlay.closePrice) || Number(tradeResultOverlay.strikePrice) || 0;
         const ry = series.priceToCoordinate(closeP);
         let rx = defaultX;
-        const endTimeSec = Math.floor((tradeResultOverlay.endTime || Date.now()) / 1000) as UTCTimestamp;
+        const endTimeSec = Math.floor((tradeResultOverlay.endTime || getSynchronizedNowMs()) / 1000) as UTCTimestamp;
         const cx = timeScale.timeToCoordinate(endTimeSec);
         if (typeof cx === 'number' && !Number.isNaN(cx)) {
           rx = Math.round(cx);
@@ -405,7 +409,7 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 2. Strict Symbol Binding & Fast O(1) Live Tick Streaming
+  // 2. Strict Symbol Binding & Fast O(1) Live Tick Streaming with Automatic Bucket Catch-Up
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
@@ -445,13 +449,21 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
 
     const windowStartCandle = candles.length > 120 ? candles[candles.length - 120] : candles[0];
     const formattedFirstCandle = formatSingleCandle(windowStartCandle, asset.pipDecimals);
+    const formattedLatestCandle = formatSingleCandle(candles[candles.length - 1], asset.pipDecimals);
+    const prevLastBar = lastFormattedBarRef.current;
+    const isBucketAdvancedOrResynced =
+      !prevLastBar ||
+      !formattedLatestCandle ||
+      (formattedLatestCandle.time as number) !== (prevLastBar.time as number);
+
     const isSeriesAnchorShifted =
       !firstFormattedBarRef.current ||
       !formattedFirstCandle ||
       firstFormattedBarRef.current.time !== formattedFirstCandle.time ||
-      firstFormattedBarRef.current.open !== formattedFirstCandle.open;
+      firstFormattedBarRef.current.open !== formattedFirstCandle.open ||
+      isBucketAdvancedOrResynced;
 
-    // Full series rebuild when symbol, chartType, timeframe, or series anchor changes
+    // Full series rebuild when symbol, chartType, timeframe, or bucket boundary advances
     if (
       isChartTypeChanged ||
       isSymbolChanged ||
@@ -487,7 +499,6 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
       lastLoadedChartTypeRef.current = chartType;
 
       try {
-        seriesRef.current.setData([]);
         if (chartType === 'line') {
           seriesRef.current.setData(bars.map((b: FormattedBar) => ({ time: b.time, value: b.close })));
         } else {

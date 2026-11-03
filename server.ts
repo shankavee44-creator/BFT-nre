@@ -9,6 +9,7 @@ import { generateSecret, verify, generateURI } from 'otplib';
 import QRCode from 'qrcode';
 import {
   DIRECT_USDT_TRC20_CONFIG,
+  DEPOSIT_EXPIRY_MS,
   TRONGRID_API_KEY,
   TRONGRID_TRC20_ENDPOINT,
   validateDirectDepositAmount,
@@ -22,6 +23,9 @@ import {
   fetchTronGridTrc20Transfers,
   matchPendingDepositToTronGridTx,
   parseChallengePackageFromDeposit,
+  isCryptoDepositExpired,
+  evaluateDepositStatusWithExpiry,
+  verifyGatewayOrBlockchainPayment,
   type TronGridTrc20Transaction,
 } from './src/config/directDeposit.ts';
 import {
@@ -49,6 +53,7 @@ import {
   updateUserKycStatus,
   processWithdrawalRequest,
   creditPurchaseCommissions,
+  syncSupabaseProfilesToAffiliateTree,
   getAffiliateDashboardStats,
   getWeeklyLeaderboardQuery,
   getCountryFlag,
@@ -60,9 +65,12 @@ import {
   createCryptoDepositRecord,
   createUserPurchaseRecord,
   getUserPurchases,
+  getTransactions,
   getCryptoDeposits,
   getPendingCryptoDeposits,
   getCompletedCryptoDepositTxHashes,
+  expireStalePendingDepositsInDb,
+  failCryptoDepositInDb,
   completeCryptoDepositInDb,
   verifyAndCompletePendingCryptoDepositsInDb,
   getAdminDeposits,
@@ -229,7 +237,6 @@ async function startServer() {
   const copyTradingEngine = CopyTradingEngine.getInstance();
   copyTradingEngine.start();
 
-  // Polling for manual user_purchases to provision accounts
   const supabaseUrl = process.env.VITE_SUPABASE_URL;
   const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY;
 
@@ -244,18 +251,26 @@ async function startServer() {
   };
 
   /**
-   * Automated USDT TRC-20 transaction verification using TronGrid API
+   * Automated USDT TRC-20 transaction verification & 1-Hour Expiry Engine using TronGrid API
    * Endpoint: https://api.trongrid.io/v1/accounts/TWr3rLWrWGBcfwix5osJwAwMXmpcu4PNSp/transactions/trc20
-   * Checks pending rows in crypto_deposits where status = 'pending', matches amount & target wallet,
-   * updates deposit status to 'completed', and activates challenge package or credits self-funded balance.
+   * 1) Sweeps any pending deposits older than 60 minutes (1 hour) and transitions them to 'failed' in SQLite & Supabase.
+   * 2) Checks remaining pending rows against confirmed TRC-20 blockchain transfers.
+   * 3) Updates confirmed deposits to 'completed'/'active' and provisions accounts ONLY when verified.
    */
   const verifyPendingCryptoDepositsWithTronGrid = async (options?: {
     userId?: string;
     overrideTransactions?: TronGridTrc20Transaction[];
     forceFetch?: boolean;
+    nowMs?: number;
   }) => {
+    const nowMs = options?.nowMs ?? Date.now();
+
+    // Step 1: Run 1-hour expiry sweep in local SQLite first
+    const localExpirySweep = expireStalePendingDepositsInDb(nowMs, DEPOSIT_EXPIRY_MS);
+
     const localPending = getPendingCryptoDeposits(options?.userId);
     let supaPending: any[] = [];
+    let supaExpiredCount = 0;
 
     if (supabaseUrl && supabaseAnonKey) {
       try {
@@ -271,7 +286,60 @@ async function startServer() {
         if (supaRes.ok) {
           const rows = await safeParseFetchJson(supaRes, []);
           if (Array.isArray(rows)) {
-            supaPending = rows;
+            const activeRows: any[] = [];
+            for (const sRow of rows) {
+              if (isCryptoDepositExpired(sRow, nowMs, DEPOSIT_EXPIRY_MS)) {
+                supaExpiredCount += 1;
+                // Automatically transition 1-hour expired Supabase deposit to 'failed'
+                fetch(
+                  `${supabaseUrl}/rest/v1/crypto_deposits?id=eq.${encodeURIComponent(String(sRow.id))}`,
+                  {
+                    method: 'PATCH',
+                    headers: {
+                      apikey: supabaseAnonKey,
+                      Authorization: `Bearer ${supabaseAnonKey}`,
+                      'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ status: 'failed' }),
+                  }
+                ).catch(() => {});
+
+                if (sRow.user_id) {
+                  fetch(
+                    `${supabaseUrl}/rest/v1/user_purchases?user_id=eq.${encodeURIComponent(
+                      String(sRow.user_id)
+                    )}&amount=eq.${encodeURIComponent(String(sRow.amount))}&status=eq.pending`,
+                    {
+                      method: 'PATCH',
+                      headers: {
+                        apikey: supabaseAnonKey,
+                        Authorization: `Bearer ${supabaseAnonKey}`,
+                        'Content-Type': 'application/json',
+                      },
+                      body: JSON.stringify({ status: 'failed' }),
+                    }
+                  ).catch(() => {});
+
+                  fetch(
+                    `${supabaseUrl}/rest/v1/transactions?user_id=eq.${encodeURIComponent(
+                      String(sRow.user_id)
+                    )}&amount=eq.${encodeURIComponent(String(sRow.amount))}&status=eq.pending`,
+                    {
+                      method: 'PATCH',
+                      headers: {
+                        apikey: supabaseAnonKey,
+                        Authorization: `Bearer ${supabaseAnonKey}`,
+                        'Content-Type': 'application/json',
+                      },
+                      body: JSON.stringify({ status: 'failed' }),
+                    }
+                  ).catch(() => {});
+                }
+              } else {
+                activeRows.push(sRow);
+              }
+            }
+            supaPending = activeRows;
           }
         }
       } catch {
@@ -291,6 +359,7 @@ async function startServer() {
         tronGridEndpoint: TRONGRID_TRC20_ENDPOINT,
         checkedCount: 0,
         matchedCount: 0,
+        expiredCount: localExpirySweep.expiredCount + supaExpiredCount,
         completedDeposits: [],
         remainingPendingCount: 0,
         transactionsFetched: 0,
@@ -318,16 +387,20 @@ async function startServer() {
     // 1. Verify and complete pending records in local SQLite crypto_deposits
     const localResult = verifyAndCompletePendingCryptoDepositsInDb(transactions, {
       userId: options?.userId,
+      nowMs,
     });
 
-    // Also sync any completed local records to Supabase crypto_deposits if applicable
+    // Also sync any completed local records to Supabase crypto_deposits / transactions / user_purchases
     if (supabaseUrl && supabaseAnonKey && localResult.completedDeposits.length > 0) {
       for (const comp of localResult.completedDeposits) {
         const dep = comp.deposit;
-        if (dep && isValidUuid(dep.user_id)) {
+        if (dep) {
+          const targetUuid = isValidUuid(dep.user_id)
+            ? dep.user_id
+            : toValidUuid(dep.user_id);
           fetch(
             `${supabaseUrl}/rest/v1/crypto_deposits?user_id=eq.${encodeURIComponent(
-              dep.user_id
+              targetUuid
             )}&amount=eq.${encodeURIComponent(String(dep.amount))}&status=eq.pending`,
             {
               method: 'PATCH',
@@ -336,14 +409,47 @@ async function startServer() {
                 Authorization: `Bearer ${supabaseAnonKey}`,
                 'Content-Type': 'application/json',
               },
-              body: JSON.stringify({ status: 'completed' }),
+              body: JSON.stringify({ status: 'completed', tx_hash: comp.txHash }),
+            }
+          ).catch(() => {});
+
+          fetch(
+            `${supabaseUrl}/rest/v1/user_purchases?user_id=eq.${encodeURIComponent(
+              targetUuid
+            )}&amount=eq.${encodeURIComponent(String(dep.amount))}&status=eq.pending`,
+            {
+              method: 'PATCH',
+              headers: {
+                apikey: supabaseAnonKey,
+                Authorization: `Bearer ${supabaseAnonKey}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                status: comp.accountType === 'challenge' ? 'active' : 'completed',
+                tx_hash: comp.txHash,
+              }),
+            }
+          ).catch(() => {});
+
+          fetch(
+            `${supabaseUrl}/rest/v1/transactions?user_id=eq.${encodeURIComponent(
+              targetUuid
+            )}&amount=eq.${encodeURIComponent(String(dep.amount))}&status=eq.pending`,
+            {
+              method: 'PATCH',
+              headers: {
+                apikey: supabaseAnonKey,
+                Authorization: `Bearer ${supabaseAnonKey}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ status: 'completed', tx_hash: comp.txHash }),
             }
           ).catch(() => {});
         }
       }
     }
 
-    // 2. Verify and complete any pending rows that exist only in Supabase crypto_deposits
+    // 2. Verify and complete any non-expired pending rows that exist only in Supabase crypto_deposits
     const claimedTxIds = getCompletedCryptoDepositTxHashes();
     const supabaseCompleted: any[] = [];
 
@@ -361,9 +467,12 @@ async function startServer() {
             account_type: sRow.account_type,
             tx_hash: sRow.tx_hash,
             status: sRow.status || 'pending',
+            created_at: sRow.created_at,
           },
           transactions,
-          claimedTxIds
+          claimedTxIds,
+          nowMs,
+          DEPOSIT_EXPIRY_MS
         );
 
         if (matchedTx) {
@@ -376,7 +485,7 @@ async function startServer() {
                 Authorization: `Bearer ${supabaseAnonKey}`,
                 'Content-Type': 'application/json',
               },
-              body: JSON.stringify({ status: 'completed' }),
+              body: JSON.stringify({ status: 'completed', tx_hash: matchedTx.transaction_id }),
             });
 
             const sUserId = String(sRow.user_id || 'usr_bft_001');
@@ -435,6 +544,7 @@ async function startServer() {
       tronGridEndpoint: TRONGRID_TRC20_ENDPOINT,
       checkedCount: localResult.checkedCount + supaPending.length,
       matchedCount: allCompleted.length,
+      expiredCount: localExpirySweep.expiredCount + localResult.expiredCount + supaExpiredCount,
       completedDeposits: allCompleted,
       remainingPendingCount: localResult.remainingPendingCount,
       transactionsFetched: transactions.length,
@@ -442,7 +552,7 @@ async function startServer() {
     };
   };
 
-  // Run automated TronGrid TRC-20 verification every 15 seconds
+  // Run automated TronGrid TRC-20 verification & 1-Hour Expiry Sweep every 15 seconds
   setInterval(() => {
     verifyPendingCryptoDepositsWithTronGrid().catch((err) => {
       console.warn('Background TronGrid TRC-20 verification error:', err);
@@ -453,29 +563,49 @@ async function startServer() {
   if (supabaseUrl && supabaseAnonKey) {
     setInterval(async () => {
       try {
-        let res = await fetch(`${supabaseUrl}/rest/v1/user_purchases?is_provisioned=eq.false`, {
+        let res = await fetch(`${supabaseUrl}/rest/v1/user_purchases?select=*&order=created_at.desc&limit=25`, {
           headers: {
             apikey: supabaseAnonKey,
             Authorization: `Bearer ${supabaseAnonKey}`,
-            Prefer: 'return=representation',
           },
         });
-        if (!res.ok) {
-          // Fallback if is_provisioned column is not present on the live table
-          res = await fetch(`${supabaseUrl}/rest/v1/user_purchases?select=*&order=created_at.desc&limit=25`, {
-            headers: {
-              apikey: supabaseAnonKey,
-              Authorization: `Bearer ${supabaseAnonKey}`,
-            },
-          });
-        }
         if (!res.ok) return;
         const purchases = await safeParseFetchJson(res, []);
         if (!Array.isArray(purchases)) return;
 
+        const nowMs = Date.now();
         for (const p of purchases) {
           const pid = String(p?.id || '');
-          if (!pid || provisionedSupaPurchaseIds.has(pid) || p?.is_provisioned === true) continue;
+          if (!pid) continue;
+
+          // Enforce 1-hour expiry on pending user_purchases rows
+          if (isCryptoDepositExpired(p, nowMs, DEPOSIT_EXPIRY_MS)) {
+            await fetch(`${supabaseUrl}/rest/v1/user_purchases?id=eq.${encodeURIComponent(pid)}`, {
+              method: 'PATCH',
+              headers: {
+                apikey: supabaseAnonKey,
+                Authorization: `Bearer ${supabaseAnonKey}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ status: 'failed' }),
+            }).catch(() => {});
+            continue;
+          }
+
+          // Strictly block provisioning for unverified ('pending' / 'failed' / 'declined') purchases
+          const rawStatus = String(p?.status || 'pending').trim().toLowerCase();
+          const hasConfirmedTx =
+            Boolean(p?.tx_hash) &&
+            String(p.tx_hash).trim().length >= 16 &&
+            !String(p.tx_hash).trim().toLowerCase().startsWith('trc20_');
+          if (
+            (rawStatus !== 'completed' && rawStatus !== 'active' && rawStatus !== 'approved') ||
+            !hasConfirmedTx
+          ) {
+            continue;
+          }
+
+          if (provisionedSupaPurchaseIds.has(pid) || p?.is_provisioned === true) continue;
           provisionedSupaPurchaseIds.add(pid);
 
           const parsedPkg = parseChallengePackageFromDeposit({
@@ -1127,17 +1257,26 @@ async function startServer() {
   });
 
   // ============================================================================
-  // LIVE MARKET FEEDS & SERVER-SIDE REST PROXY
+  // LIVE MARKET FEEDS, SNAPSHOTS & REAL-TIME GLOBAL STREAM (SSE)
   // ============================================================================
+
+  const setNoCacheMarketHeaders = (res: express.Response) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+  };
 
   // GET /api/market/live-prices - Authoritative server-side proxy for live Crypto & Interbank FX prices
   app.get('/api/market/live-prices', (_req, res) => {
     try {
+      setNoCacheMarketHeaders(res);
+      const now = Date.now();
       const prices = marketEngine.getAllPrices();
       const forexRates = marketEngine.getForexRates();
       return res.json({
         ok: true,
-        timestamp: Date.now(),
+        timestamp: now,
+        serverTime: now,
         source: marketEngine.getFeedSource(),
         prices,
         forexRates,
@@ -1147,21 +1286,111 @@ async function startServer() {
     }
   });
 
-  // GET /api/market/ticker - Fast single-symbol server-side proxy lookup
+  // GET /api/market/ticker - Fast single-symbol server-side proxy lookup with active candle
   app.get('/api/market/ticker', (req, res) => {
     try {
-      const symbol = String(req.query.symbol || 'BTC/USD (OTC)').trim();
-      const price = marketEngine.getPrice(symbol);
+      setNoCacheMarketHeaders(res);
+      const symbol = String(req.query.symbol || 'EUR/USD (OTC)').trim();
+      const tfSec = Number(req.query.timeframe) || 60;
+      const snap = marketEngine.getMarketSnapshot(symbol, tfSec, 10);
       return res.json({
         ok: true,
-        symbol,
-        price: price ?? null,
-        timestamp: Date.now(),
-        source: marketEngine.getFeedSource(),
+        symbol: snap.symbol,
+        price: snap.price,
+        prevPrice: snap.prevPrice,
+        activeCandle: snap.activeCandle,
+        timestamp: snap.serverTime,
+        serverTime: snap.serverTime,
+        source: snap.source,
       });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err?.message || 'Failed to get ticker price.' });
     }
+  });
+
+  // GET /api/market/snapshot & /api/market/candles - Authoritative global candle array & live server timestamp
+  app.get(['/api/market/snapshot', '/api/market/candles'], (req, res) => {
+    try {
+      setNoCacheMarketHeaders(res);
+      const symbol = String(req.query.symbol || 'EUR/USD (OTC)').trim();
+      const rawTf = String(req.query.timeframe || '60').trim();
+      let tfSec = Number(rawTf);
+      if (Number.isNaN(tfSec) || tfSec <= 0) {
+        if (rawTf.endsWith('s')) tfSec = parseInt(rawTf, 10) || 60;
+        else if (rawTf.endsWith('m')) tfSec = (parseInt(rawTf, 10) || 1) * 60;
+        else if (rawTf.endsWith('h')) tfSec = (parseInt(rawTf, 10) || 1) * 3600;
+        else if (rawTf === '1D' || rawTf === 'D') tfSec = 86400;
+        else tfSec = 60;
+      }
+      const count = Math.max(20, Math.min(1500, Number(req.query.count) || 250));
+      const snapshot = marketEngine.getMarketSnapshot(symbol, tfSec, count);
+      return res.json(snapshot);
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || 'Failed to get market snapshot.' });
+    }
+  });
+
+  // GET /api/market/stream - Unified Server-Sent Events (SSE) real-time global market stream with heartbeat
+  app.get('/api/market/stream', (req, res) => {
+    setNoCacheMarketHeaders(res);
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    if (typeof res.flushHeaders === 'function') {
+      res.flushHeaders();
+    }
+
+    const symbol = String(req.query.symbol || 'EUR/USD (OTC)').trim();
+    const tfSec = Math.max(5, Number(req.query.timeframe) || 60);
+
+    // 1. Immediately push initial live server snapshot so new users sync without waiting
+    try {
+      const initSnap = marketEngine.getMarketSnapshot(symbol, tfSec, 150);
+      res.write(`event: init\ndata: ${JSON.stringify(initSnap)}\n\n`);
+    } catch {
+      // ignore write error
+    }
+
+    let lastSentMs = 0;
+    const unsubscribe = marketEngine.subscribe(({ serverTime, prices }) => {
+      if (serverTime - lastSentMs < 450) return;
+      lastSentMs = serverTime;
+      try {
+        const snap = marketEngine.getMarketSnapshot(symbol, tfSec, 2);
+        const payload = {
+          serverTime,
+          symbol: snap.symbol,
+          price: snap.price,
+          prevPrice: snap.prevPrice,
+          activeCandle: snap.activeCandle,
+          prices,
+        };
+        res.write(`event: tick\ndata: ${JSON.stringify(payload)}\n\n`);
+      } catch {
+        // ignore write error
+      }
+    });
+
+    const heartbeatTimer = setInterval(() => {
+      try {
+        const snap = marketEngine.getMarketSnapshot(symbol, tfSec, 2);
+        res.write(
+          `event: heartbeat\ndata: ${JSON.stringify({
+            serverTime: Date.now(),
+            symbol: snap.symbol,
+            price: snap.price,
+            activeCandle: snap.activeCandle,
+          })}\n\n`
+        );
+      } catch {
+        // ignore
+      }
+    }, 3000);
+
+    req.on('close', () => {
+      clearInterval(heartbeatTimer);
+      unsubscribe();
+    });
   });
 
   // ============================================================================
@@ -1360,12 +1589,46 @@ async function startServer() {
     }
   });
 
-  // POST / ALL /api/accounts/purchase - Purchase challenge or instant funded account & run TronGrid TRC-20 verification
+  // POST / ALL /api/accounts/purchase - Purchase challenge or instant funded account & run TronGrid TRC-20 / Gateway verification
   app.all(
     ['/api/accounts/purchase', '/functions/v1/accounts-purchase', '/functions/v1/purchase-account', '/purchase-package', '/functions/v1/purchase-package'],
     async (req, res) => {
     try {
-      const user = getAuthenticatedUser(req) || getUserById('usr_bft_001');
+      const reqUserId = String(req.body?.userId || '').trim();
+      const reqEmail = String(req.body?.email || '').trim();
+      const reqFullName = String(req.body?.fullName || '').trim();
+      if (supabaseUrl && supabaseAnonKey) {
+        try {
+          const profRes = await fetch(`${supabaseUrl}/rest/v1/profiles?select=id,email,full_name,referral_code,referred_by`, {
+            headers: {
+              apikey: supabaseAnonKey,
+              Authorization: `Bearer ${supabaseAnonKey}`,
+            },
+          });
+          if (profRes.ok) {
+            const profList = await profRes.json();
+            if (Array.isArray(profList)) {
+              syncSupabaseProfilesToAffiliateTree(profList);
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+      let user =
+        getAuthenticatedUser(req) ||
+        (reqUserId ? getUserById(reqUserId) : null) ||
+        (reqEmail ? getUserByEmail(reqEmail) : null);
+      if (!user && (reqUserId || reqEmail)) {
+        user = ensureUserInDb({
+          id: reqUserId || `usr_${Date.now().toString(36)}`,
+          email: reqEmail || `${reqUserId}@bft.io`,
+          fullName: reqFullName || undefined,
+        });
+      }
+      if (!user) {
+        user = getUserById('usr_bft_001');
+      }
       if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
 
       const tier = String(req.body?.tier || 'two-step');
@@ -1373,7 +1636,6 @@ async function startServer() {
       const size = Number(req.body?.size || 10000);
       const price = Number(req.body?.price || 99.00);
       const referralCode = req.body?.referralCode ? String(req.body.referralCode).trim() : null;
-      const dailyWithdrawalsUnlocked = Boolean(req.body?.dailyWithdrawalsUnlocked);
       const txHash = req.body?.txHash ? String(req.body.txHash).trim() : undefined;
       const accountType = resolveDepositAccountType(req.body?.accountType || 'challenge');
       const packageName = String(
@@ -1387,116 +1649,158 @@ async function startServer() {
       });
 
       const limits = getDynamicAccountLimits(tier, 'phase_1');
-
-      const accountId = `BFT-${Math.floor(10000 + Math.random() * 89999)}`;
       const now = Date.now();
-      const nowIso = new Date(now).toISOString().split('T')[0];
 
-      // Account creation is deferred until payment verification completes
-      // db.prepare(`...`).run(...) removed
-
-
-      // Save pending record into crypto_deposits table
+      // 1. Save pending record into crypto_deposits, transactions, and user_purchases (NEVER 'completed' before verification!)
       let cryptoDeposit: any = null;
       try {
         cryptoDeposit = createCryptoDepositRecord({
           userId: user.id,
-          accountId,
           walletAddress: DIRECT_USDT_WALLET_ADDRESS,
           amount: price,
           packageName,
           sku,
           accountType,
           txHash: txHash || undefined,
+          createdAtMs: now,
         });
       } catch (depErr) {
         console.warn('Purchase crypto_deposits record warning:', depErr);
       }
 
-      // Save record into user_purchases table
       let purchaseRecord: any = null;
       try {
         purchaseRecord = createUserPurchaseRecord({
           id: cryptoDeposit?.id || `PUR-${now.toString(36).toUpperCase()}`,
           userId: user.id,
-          accountId,
+          accountId: null,
           packageId: sku,
           packageName,
           packageSku: sku,
           amount: price,
           packageAmount: price,
           accountType,
-          status: 'completed',
+          status: 'pending',
           txHash: txHash || null,
+          createdAtMs: now,
         });
       } catch (purErr) {
         console.warn('Purchase user_purchases record warning:', purErr);
       }
 
+      let targetSupaUuid: string | null = null;
       if (supabaseUrl && supabaseAnonKey) {
-        const targetSupaUuid = await ensureSupabaseProfileInRest(supabaseUrl, supabaseAnonKey, {
+        targetSupaUuid = await ensureSupabaseProfileInRest(supabaseUrl, supabaseAnonKey, {
           id: user.id,
           email: user.email,
           full_name: user.full_name,
         });
-          const supaPayload = buildSupabaseCryptoDepositRow({
-            userId: targetSupaUuid,
-            walletAddress: DIRECT_USDT_WALLET_ADDRESS,
-            amount: price,
-            packageName,
-            sku,
-            accountType,
-            status: 'completed',
-            txHash: txHash || undefined,
-          });
-          fetch(`${supabaseUrl}/rest/v1/crypto_deposits`, {
-            method: 'POST',
-            headers: {
-              apikey: supabaseAnonKey,
-              Authorization: `Bearer ${supabaseAnonKey}`,
-              'Content-Type': 'application/json',
-              Prefer: 'return=minimal',
-            },
-            body: JSON.stringify(supaPayload),
-          }).catch(() => {});
 
-          const { fullPayload, corePayload } = buildSupabaseUserPurchasePayload({
-            userId: targetSupaUuid,
-            packageId: sku,
-            packageName,
-            packageSku: sku,
-            amount: price,
-            packageAmount: price,
-            accountType,
-            status: 'completed',
-            txHash: txHash || null,
-          });
-          fetch(`${supabaseUrl}/rest/v1/user_purchases`, {
-            method: 'POST',
-            headers: {
-              apikey: supabaseAnonKey,
-              Authorization: `Bearer ${supabaseAnonKey}`,
-              'Content-Type': 'application/json',
-              Prefer: 'return=minimal',
-            },
-            body: JSON.stringify(fullPayload),
+        const supaPendingDepositPayload = buildSupabaseCryptoDepositRow({
+          userId: targetSupaUuid,
+          walletAddress: DIRECT_USDT_WALLET_ADDRESS,
+          amount: price,
+          packageName,
+          sku,
+          accountType,
+          status: 'pending',
+          txHash: txHash || undefined,
+        });
+        fetch(`${supabaseUrl}/rest/v1/crypto_deposits`, {
+          method: 'POST',
+          headers: {
+            apikey: supabaseAnonKey,
+            Authorization: `Bearer ${supabaseAnonKey}`,
+            'Content-Type': 'application/json',
+            Prefer: 'return=minimal',
+          },
+          body: JSON.stringify(supaPendingDepositPayload),
+        }).catch(() => {});
+
+        fetch(`${supabaseUrl}/rest/v1/transactions`, {
+          method: 'POST',
+          headers: {
+            apikey: supabaseAnonKey,
+            Authorization: `Bearer ${supabaseAnonKey}`,
+            'Content-Type': 'application/json',
+            Prefer: 'return=minimal',
+          },
+          body: JSON.stringify(supaPendingDepositPayload),
+        }).catch(() => {});
+
+        const { fullPayload, corePayload } = buildSupabaseUserPurchasePayload({
+          userId: targetSupaUuid,
+          packageId: sku,
+          packageName,
+          packageSku: sku,
+          amount: price,
+          packageAmount: price,
+          accountType,
+          status: 'pending',
+          txHash: txHash || null,
+        });
+        fetch(`${supabaseUrl}/rest/v1/user_purchases`, {
+          method: 'POST',
+          headers: {
+            apikey: supabaseAnonKey,
+            Authorization: `Bearer ${supabaseAnonKey}`,
+            'Content-Type': 'application/json',
+            Prefer: 'return=minimal',
+          },
+          body: JSON.stringify(fullPayload),
+        })
+          .then((r) => {
+            if (!r.ok) {
+              return fetch(`${supabaseUrl}/rest/v1/user_purchases`, {
+                method: 'POST',
+                headers: {
+                  apikey: supabaseAnonKey,
+                  Authorization: `Bearer ${supabaseAnonKey}`,
+                  'Content-Type': 'application/json',
+                  Prefer: 'return=minimal',
+                },
+                body: JSON.stringify(corePayload),
+              });
+            }
           })
-            .then((r) => {
-              if (!r.ok) {
-                return fetch(`${supabaseUrl}/rest/v1/user_purchases`, {
-                  method: 'POST',
-                  headers: {
-                    apikey: supabaseAnonKey,
-                    Authorization: `Bearer ${supabaseAnonKey}`,
-                    'Content-Type': 'application/json',
-                    Prefer: 'return=minimal',
-                  },
-                  body: JSON.stringify(corePayload),
-                });
-              }
-            })
-            .catch(() => {});
+          .catch(() => {});
+      }
 
+      // 2. Trigger immediate TronGrid TRC-20 verification pass
+      let verificationResult: any = null;
+      try {
+        verificationResult = await verifyPendingCryptoDepositsWithTronGrid({
+          userId: user.id,
+          nowMs: now,
+        });
+      } catch (verifyErr) {
+        console.warn('Purchase TronGrid verification warning:', verifyErr);
+      }
+
+      if (cryptoDeposit?.id) {
+        cryptoDeposit =
+          (db.prepare('SELECT * FROM crypto_deposits WHERE id = ?').get(cryptoDeposit.id) as any) ||
+          cryptoDeposit;
+        purchaseRecord =
+          (db.prepare('SELECT * FROM user_purchases WHERE id = ?').get(cryptoDeposit.id) as any) ||
+          purchaseRecord;
+      }
+
+      const isVerifiedOnChain =
+        cryptoDeposit?.status === 'completed' || cryptoDeposit?.status === 'active';
+
+      let provisionedAccount: any = null;
+      let commissions: any[] = [];
+
+      // 3. ONLY provision account and distribute 3-Tier commissions if blockchain/gateway confirmed payment!
+      if (isVerifiedOnChain) {
+        provisionedAccount = cryptoDeposit?.account_id
+          ? getAccountById(cryptoDeposit.account_id)
+          : null;
+
+        commissions = creditPurchaseCommissions(user.id, packageName, price, referralCode);
+
+        if (supabaseUrl && supabaseAnonKey && targetSupaUuid) {
           const supaAccountPayload = {
             user_id: targetSupaUuid,
             account_type: limits.accountType,
@@ -1519,56 +1823,71 @@ async function startServer() {
             },
             body: JSON.stringify(supaAccountPayload),
           }).catch(() => {});
+
+          for (const comm of commissions) {
+            const commRow = {
+              referrer_id: comm.sponsorId,
+              referred_user_id: comm.referredUserId || user.id,
+              level: comm.level,
+              package_name: packageName,
+              package_amount: price,
+              amount: comm.amount,
+              source_type: 'package',
+              description: packageName,
+            };
+            fetch(`${supabaseUrl}/rest/v1/referral_commissions`, {
+              method: 'POST',
+              headers: {
+                apikey: supabaseAnonKey,
+                Authorization: `Bearer ${supabaseAnonKey}`,
+                'Content-Type': 'application/json',
+                Prefer: 'return=minimal',
+              },
+              body: JSON.stringify(commRow),
+            }).catch(() => {});
+          }
         }
-
-      // Trigger immediate TronGrid TRC-20 verification pass
-      let verificationResult: any = null;
-      try {
-        verificationResult = await verifyPendingCryptoDepositsWithTronGrid({
-          userId: user.id,
-        });
-      } catch (verifyErr) {
-        console.warn('Purchase TronGrid verification warning:', verifyErr);
       }
 
-      if (cryptoDeposit?.id) {
-        cryptoDeposit =
-          (db.prepare('SELECT * FROM crypto_deposits WHERE id = ?').get(cryptoDeposit.id) as any) ||
-          cryptoDeposit;
-      }
+      const effectiveStatus = isVerifiedOnChain
+        ? 'completed'
+        : cryptoDeposit?.status === 'failed'
+        ? 'failed'
+        : 'pending';
 
-      // Automatically distribute 3-Tier commissions (10% L1, 5% L2, 2% L3) in real-time
-      const commissions = creditPurchaseCommissions(user.id, tierName, price, referralCode);
-
-      const newAccount = getAccountById(accountId);
       const normalizedPurchase = mapPurchaseRecord(
         purchaseRecord || {
           id: cryptoDeposit?.id || `PUR-${now.toString(36).toUpperCase()}`,
           user_id: user.id,
-          account_id: accountId,
+          account_id: provisionedAccount?.id || null,
           package_id: sku,
           package_name: packageName,
           package_sku: sku,
           amount: price,
           package_amount: price,
           account_type: accountType,
-          status: 'completed',
+          status: effectiveStatus,
           created_at: now,
-        }
+        },
+        now
       );
 
       return res.json({
         ok: true,
-        account: null, // Account pending verification
+        verified: isVerifiedOnChain,
+        account: provisionedAccount,
         deposit: cryptoDeposit,
         purchase: normalizedPurchase,
         commissions,
         verification: verificationResult,
-        status: 'pending',
-        message: 'Transaction recorded. Verifying on blockchain...',
+        status: effectiveStatus,
+        expiresAt: (cryptoDeposit?.created_at || now) + DEPOSIT_EXPIRY_MS,
+        message: isVerifiedOnChain
+          ? 'Blockchain payment confirmed! Your funded trading account has been provisioned.'
+          : 'Order recorded in pending status. Your account will only be provisioned once the TRC-20 blockchain or Cryptomus gateway confirms your payment (expires in 60 minutes if unpaid).',
       });
     } catch (err: any) {
-      return res.status(500).json({ ok: false, error: err?.message || 'Failed to activate evaluation package.' });
+      return res.status(500).json({ ok: false, error: err?.message || 'Failed to record evaluation package order.' });
     }
   });
 
@@ -1770,12 +2089,45 @@ async function startServer() {
   });
 
   // GET /api/affiliate/dashboard - Live 3-Tier Multi-Level Affiliate Dashboard metrics
-  app.get('/api/affiliate/dashboard', (req, res) => {
-    const user = getAuthenticatedUser(req);
-    if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
+  app.get('/api/affiliate/dashboard', async (req, res) => {
+    try {
+      if (supabaseUrl && supabaseAnonKey) {
+        try {
+          const profRes = await fetch(`${supabaseUrl}/rest/v1/profiles?select=id,email,full_name,referral_code,referred_by`, {
+            headers: {
+              apikey: supabaseAnonKey,
+              Authorization: `Bearer ${supabaseAnonKey}`,
+            },
+          });
+          if (profRes.ok) {
+            const profList = await profRes.json();
+            if (Array.isArray(profList)) {
+              syncSupabaseProfilesToAffiliateTree(profList);
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
 
-    const stats = getAffiliateDashboardStats(user.id);
-    return res.json({ ok: true, stats, referralCode: user.referral_code });
+      const qUserId = String(req.query.userId || '').trim();
+      const qEmail = String(req.query.email || '').trim();
+      const user =
+        (qUserId ? getUserById(qUserId) : null) ||
+        (qEmail ? getUserByEmail(qEmail) : null) ||
+        getAuthenticatedUser(req) ||
+        getUserById('usr_bft_001');
+
+      const targetId = user?.id || qUserId || 'usr_bft_001';
+      const stats = getAffiliateDashboardStats(targetId);
+      return res.json({
+        ok: true,
+        stats,
+        referralCode: user?.referral_code || 'BFT-ALEX77',
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || 'Failed to load affiliate dashboard' });
+    }
   });
 
   // GET /api/leaderboard - Weekly leaderboard query (Kasun Perera normalized at #9, resets Monday)
@@ -1819,12 +2171,16 @@ async function startServer() {
       network: DIRECT_USDT_TRC20_CONFIG.network,
       minDepositUsdt: DIRECT_USDT_TRC20_CONFIG.minDepositUsdt,
       maxDepositUsdt: DIRECT_USDT_TRC20_CONFIG.maxDepositUsdt,
+      depositExpiryMs: DEPOSIT_EXPIRY_MS,
     });
   });
 
   app.all(
     ['/api/deposit/submit', '/api/crypto-deposits', '/functions/v1/deposit-submit', '/functions/v1/crypto-deposits', '/verify-deposit', '/functions/v1/verify-deposit', '/submit-deposit', '/functions/v1/submit-deposit'],
-    async (req, res) => {
+    async (req, res, next) => {
+    if (req.method === 'GET') {
+      return next();
+    }
     try {
       const user = getAuthenticatedUser(req);
       const rawAmount = Number(req.body?.amount);
@@ -1860,7 +2216,7 @@ async function startServer() {
 
       const deposit = createCryptoDepositRecord({
         userId,
-        accountId: accountType === 'self_funded' ? accountId || 'BFT-PERS-001' : accountId,
+        accountId: accountType === 'self_funded' ? accountId || 'BFT-PERS-001' : undefined,
         walletAddress: DIRECT_USDT_WALLET_ADDRESS,
         amount,
         packageName,
@@ -1882,8 +2238,21 @@ async function startServer() {
           packageName,
           sku,
           accountType,
+          status: 'pending',
+          txHash: txHash || undefined,
         });
         fetch(`${supabaseUrl}/rest/v1/crypto_deposits`, {
+          method: 'POST',
+          headers: {
+            apikey: supabaseAnonKey,
+            Authorization: `Bearer ${supabaseAnonKey}`,
+            'Content-Type': 'application/json',
+            Prefer: 'return=minimal',
+          },
+          body: JSON.stringify(supaPayload),
+        }).catch(() => {});
+
+        fetch(`${supabaseUrl}/rest/v1/transactions`, {
           method: 'POST',
           headers: {
             apikey: supabaseAnonKey,
@@ -1906,7 +2275,8 @@ async function startServer() {
       const latestDeposit =
         (db.prepare('SELECT * FROM crypto_deposits WHERE id = ?').get(deposit.id) as any) ||
         deposit;
-      const isVerifiedCompleted = latestDeposit.status === 'completed';
+      const isVerifiedCompleted =
+        latestDeposit.status === 'completed' || latestDeposit.status === 'active';
 
       let updatedAccount: any = null;
       if (isVerifiedCompleted) {
@@ -1917,15 +2287,20 @@ async function startServer() {
           matchedEntry?.account ||
           (latestDeposit.account_id ? getAccountById(latestDeposit.account_id) : null);
       } else {
-        updatedAccount = latestDeposit.account_id
-          ? getAccountById(latestDeposit.account_id)
-          : ensurePersonalLiveAccountForUser(userId);
+        updatedAccount =
+          accountType === 'self_funded'
+            ? latestDeposit.account_id
+              ? getAccountById(latestDeposit.account_id)
+              : ensurePersonalLiveAccountForUser(userId)
+            : null;
       }
 
       return res.json({
         ok: true,
         deposit: latestDeposit,
         verified: isVerifiedCompleted,
+        status: latestDeposit.status || 'pending',
+        expiresAt: (latestDeposit.created_at || Date.now()) + DEPOSIT_EXPIRY_MS,
         creditedAmountUsdt: isVerifiedCompleted && accountType === 'self_funded' ? amount : 0,
         updatedAccount,
         verification: verificationResult,
@@ -1934,6 +2309,139 @@ async function startServer() {
       return res.status(500).json({
         ok: false,
         error: err?.message || 'Failed to process direct USDT (TRC-20) deposit.',
+      });
+    }
+  });
+
+  /**
+   * POST /api/webhooks/cryptomus (and /api/crypto-deposits/webhook, /api/payment/webhook)
+   * Cryptomus / TRC-20 Payment Gateway Callback & Webhook Verification Endpoint.
+   * Only provisions accounts or credits balances when gateway status is 'paid' / 'confirmed' / 'paid_over'
+   * and deposit has not expired past the 1-hour (60-minute) window.
+   */
+  app.post(
+    ['/api/webhooks/cryptomus', '/api/crypto-deposits/webhook', '/api/payment/webhook'],
+    async (req, res) => {
+      try {
+        const payload = req.body || {};
+        const orderId = String(payload.order_id || payload.deposit_id || payload.id || '').trim();
+        if (!orderId) {
+          return res.status(400).json({
+            ok: false,
+            error: 'Missing order_id / deposit_id in gateway webhook payload.',
+          });
+        }
+
+        expireStalePendingDepositsInDb();
+
+        const deposit = db
+          .prepare('SELECT * FROM crypto_deposits WHERE id = ?')
+          .get(orderId) as any;
+        if (!deposit) {
+          return res.status(404).json({
+            ok: false,
+            error: `Deposit order ${orderId} not found.`,
+          });
+        }
+
+        const claimedTxIds = getCompletedCryptoDepositTxHashes();
+        const evaluation = verifyGatewayOrBlockchainPayment({
+          deposit,
+          cryptomusPayload: payload,
+          claimedTxIds,
+        });
+
+        if (evaluation.status === 'failed') {
+          const failedRow = failCryptoDepositInDb(deposit.id, evaluation.reason);
+          if (supabaseUrl && supabaseAnonKey && deposit.user_id) {
+            const targetUuid = isValidUuid(deposit.user_id)
+              ? deposit.user_id
+              : toValidUuid(deposit.user_id);
+            fetch(
+              `${supabaseUrl}/rest/v1/crypto_deposits?user_id=eq.${encodeURIComponent(
+                targetUuid
+              )}&amount=eq.${encodeURIComponent(String(deposit.amount))}&status=eq.pending`,
+              {
+                method: 'PATCH',
+                headers: {
+                  apikey: supabaseAnonKey,
+                  Authorization: `Bearer ${supabaseAnonKey}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ status: 'failed' }),
+              }
+            ).catch(() => {});
+          }
+          return res.json({
+            ok: true,
+            verified: false,
+            status: 'failed',
+            deposit: failedRow,
+            reason: evaluation.reason,
+          });
+        }
+
+        if (evaluation.verified && evaluation.matchedTxHash) {
+          const completed = completeCryptoDepositInDb(deposit.id, evaluation.matchedTxHash);
+          if (supabaseUrl && supabaseAnonKey && deposit.user_id) {
+            const targetUuid = isValidUuid(deposit.user_id)
+              ? deposit.user_id
+              : toValidUuid(deposit.user_id);
+            fetch(
+              `${supabaseUrl}/rest/v1/crypto_deposits?user_id=eq.${encodeURIComponent(
+                targetUuid
+              )}&amount=eq.${encodeURIComponent(String(deposit.amount))}&status=eq.pending`,
+              {
+                method: 'PATCH',
+                headers: {
+                  apikey: supabaseAnonKey,
+                  Authorization: `Bearer ${supabaseAnonKey}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  status: 'completed',
+                  tx_hash: evaluation.matchedTxHash,
+                }),
+              }
+            ).catch(() => {});
+          }
+          return res.json({
+            ok: true,
+            verified: true,
+            status: 'completed',
+            deposit: completed.deposit,
+            account: completed.account,
+            txHash: evaluation.matchedTxHash,
+          });
+        }
+
+        return res.json({
+          ok: true,
+          verified: false,
+          status: evaluation.status,
+          deposit,
+          reason: evaluation.reason,
+        });
+      } catch (err: any) {
+        return res.status(400).json({
+          ok: false,
+          error: err?.message || 'Gateway webhook verification failed.',
+        });
+      }
+    }
+  );
+
+  app.all(['/api/crypto-deposits/expire-stale', '/api/deposit/expire-stale'], async (_req, res) => {
+    try {
+      const sweep = expireStalePendingDepositsInDb();
+      return res.json({
+        ok: true,
+        ...sweep,
+      });
+    } catch (err: any) {
+      return res.status(500).json({
+        ok: false,
+        error: err?.message || 'Failed to run 1-hour expiry sweep.',
       });
     }
   });
@@ -1956,11 +2464,13 @@ async function startServer() {
       });
 
       const deposits = getCryptoDeposits({ userId: user?.id || userIdFilter });
+      const transactions = getTransactions({ userId: user?.id || userIdFilter });
       const accounts = user?.id ? getAccountsForUser(user.id) : [];
 
       return res.json({
         ...result,
         deposits,
+        transactions,
         accounts,
       });
     } catch (err: any) {
@@ -1971,18 +2481,26 @@ async function startServer() {
     }
   });
 
-  app.get(['/api/deposit/history', '/api/crypto-deposits'], (req, res) => {
+  app.get(['/api/deposit/history', '/api/crypto-deposits', '/api/transactions'], (req, res) => {
     try {
       const user = getAuthenticatedUser(req);
+      const queryUserId =
+        typeof req.query.userId === 'string' && req.query.userId.trim()
+          ? req.query.userId.trim()
+          : undefined;
       const accountId = typeof req.query.accountId === 'string' ? req.query.accountId.trim() : '';
       const cryptoDeposits = getCryptoDeposits({
-        userId: user?.id,
+        userId: user?.id || queryUserId,
         accountId: accountId || undefined,
+      });
+      const transactions = getTransactions({
+        userId: user?.id || queryUserId,
       });
       return res.json({
         ok: true,
         deposits: cryptoDeposits,
         cryptoDeposits,
+        transactions,
         totalCreditedUsdt: accountId ? creditedBalancesByAccount.get(accountId) || 0 : 0,
       });
     } catch (err: any) {
@@ -2703,35 +3221,106 @@ async function startServer() {
   // ============================================================================
   app.get('/api/copy-trading/traders', (req, res) => {
     try {
-      const category = (req.query.category as 'instant_funded' | 'self_capital') || 'instant_funded';
-      const traders = copyTradingEngine.getLeaderboard(category);
-      return res.json({ ok: true, traders });
+      const category =
+        (req.query.category as 'instant_funded' | 'self_capital' | 'all') || 'instant_funded';
+      const searchQuery = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+      const limit = Number(req.query.limit) || 10;
+      const result = copyTradingEngine.getLeaderboard(category, searchQuery, limit);
+      return res.json({
+        ok: true,
+        traders: result.traders,
+        totalPoolCount: result.totalPoolCount,
+        isSearchActive: result.isSearchActive,
+        rotation: result.rotation,
+      });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err?.message || 'Failed to fetch copy traders.' });
+    }
+  });
+
+  app.post('/api/copy-trading/register-provider', (req, res) => {
+    try {
+      const user = getAuthenticatedUser(req);
+      const userId = String(user?.id || req.body?.userId || 'usr_bft_001').trim();
+      const providerName = String(
+        req.body?.providerName || user?.full_name || 'Verified BFT Master'
+      ).trim();
+      const category =
+        req.body?.category === 'self_capital' ? 'self_capital' : 'instant_funded';
+      const strategyTitle = String(
+        req.body?.strategyTitle || 'Institutional OTC Alpha'
+      ).trim();
+      const winRate3m = Number(req.body?.winRate3m ?? 0);
+      const startingBalance = Number(
+        req.body?.startingBalance || (category === 'instant_funded' ? 50000 : 5000)
+      );
+
+      const regResult = copyTradingEngine.registerCustomProvider({
+        userId,
+        providerName,
+        countryCode: req.body?.countryCode ? String(req.body.countryCode) : 'US',
+        country: user?.country || req.body?.country || 'United States',
+        flag: getCountryFlag(user?.country || req.body?.country || 'United States'),
+        category,
+        strategyTitle,
+        startingBalance,
+        winRate3m,
+      });
+
+      if (!regResult.ok) {
+        return res.status(400).json({
+          ok: false,
+          error: regResult.error,
+          code: 'WIN_RATE_BELOW_60',
+        });
+      }
+
+      return res.json({
+        ok: true,
+        provider: regResult.provider,
+        message: 'Successfully registered as a Copy Master / Provider.',
+      });
+    } catch (err: any) {
+      return res.status(500).json({
+        ok: false,
+        error: err?.message || 'Failed to register Copy Master.',
+      });
     }
   });
 
   app.post('/api/copy-trading/copy', (req, res) => {
     try {
       const user = getAuthenticatedUser(req);
-      if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
+      const userId = String(user?.id || req.body?.userId || 'usr_bft_001').trim();
 
-      const { 
-        providerId, 
-        allocatedCapital, 
-        maxLossLimit, 
-        takeProfitLimit, 
-        tradeSizingType, 
-        sizingMultiplier 
-      } = req.body;
+      const {
+        providerId,
+        allocatedCapital,
+        perTradeAllocationType,
+        perTradeAllocationValue,
+        maxLossLimit,
+        takeProfitLimit,
+        tradeSizingType,
+        sizingMultiplier,
+      } = req.body || {};
 
       if (!providerId) return res.status(400).json({ ok: false, error: 'Provider ID required.' });
 
-      const id = `SUB-${user.id}-${providerId}-${Date.now().toString(36)}`;
-      
-      // Update if already exists or insert new
-      const existing = db.prepare('SELECT id FROM copy_trading_subscriptions WHERE user_id = ? AND provider_id = ?').get(user.id, providerId) as any;
-      
+      ensureUserInDb({
+        id: userId,
+        email: user?.email || `${userId.toLowerCase().replace(/[^a-z0-9]/g, '')}@client-bft.com`,
+        fullName: user?.full_name || 'Pro Funded Trader',
+      });
+
+      const id = `SUB-${userId}-${providerId}-${Date.now().toString(36)}`;
+      const cleanAllocated = Math.max(1, Number(allocatedCapital || perTradeAllocationValue || 100));
+      const cleanMaxLoss = Math.max(5, Number(maxLossLimit || 50));
+      const cleanTakeProfit = Math.max(5, Number(takeProfitLimit || 150));
+
+      const existing = db
+        .prepare('SELECT id FROM copy_trading_subscriptions WHERE user_id = ? AND provider_id = ?')
+        .get(userId, providerId) as any;
+
       if (existing) {
         db.prepare(`
           UPDATE copy_trading_subscriptions SET
@@ -2744,10 +3333,10 @@ async function startServer() {
             created_at = ?
           WHERE id = ?
         `).run(
-          Number(allocatedCapital || 100),
-          Number(maxLossLimit || 0),
-          Number(takeProfitLimit || 0),
-          tradeSizingType || 'proportionate',
+          cleanAllocated,
+          cleanMaxLoss,
+          cleanTakeProfit,
+          tradeSizingType || (perTradeAllocationType === 'percentage' ? 'proportionate' : 'fixed'),
           Number(sizingMultiplier || 1.0),
           Date.now(),
           existing.id
@@ -2760,36 +3349,44 @@ async function startServer() {
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
         `).run(
           id,
-          user.id,
+          userId,
           providerId,
-          Number(allocatedCapital || 100),
-          Number(maxLossLimit || 0),
-          Number(takeProfitLimit || 0),
-          tradeSizingType || 'proportionate',
+          cleanAllocated,
+          cleanMaxLoss,
+          cleanTakeProfit,
+          tradeSizingType || (perTradeAllocationType === 'percentage' ? 'proportionate' : 'fixed'),
           Number(sizingMultiplier || 1.0),
           Date.now()
         );
       }
 
-      const updatedSub = db.prepare(`
-        SELECT 
-          provider_id, 
-          allocated_capital, 
-          max_loss_limit, 
-          take_profit_limit, 
-          trade_sizing_type, 
-          sizing_multiplier, 
-          current_pnl, 
-          status, 
-          created_at 
-        FROM copy_trading_subscriptions 
-        WHERE user_id = ? AND provider_id = ?
-      `).get(user.id, providerId) as any;
+      const updatedSub = db
+        .prepare(`
+          SELECT 
+            id,
+            provider_id, 
+            allocated_capital, 
+            max_loss_limit, 
+            take_profit_limit, 
+            trade_sizing_type, 
+            sizing_multiplier, 
+            current_pnl, 
+            status, 
+            created_at 
+          FROM copy_trading_subscriptions 
+          WHERE user_id = ? AND provider_id = ?
+        `)
+        .get(userId, providerId) as any;
 
-      return res.json({ 
-        ok: true, 
-        message: 'Successfully subscribed to copy trader with risk settings.',
-        subscription: updatedSub
+      return res.json({
+        ok: true,
+        message: 'Successfully subscribed to copy trader with risk settings (100% Profit Keep / 0% Commission).',
+        subscription: {
+          ...updatedSub,
+          per_trade_allocation_type: perTradeAllocationType || 'amount',
+          per_trade_allocation_value: Number(perTradeAllocationValue || cleanAllocated),
+          commission_pct: 0,
+        },
       });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err?.message || 'Failed to copy trader.' });
@@ -2799,15 +3396,15 @@ async function startServer() {
   app.post('/api/copy-trading/cancel', (req, res) => {
     try {
       const user = getAuthenticatedUser(req);
-      if (!user) return res.status(401).json({ ok: false, error: 'Unauthenticated' });
+      const userId = String(user?.id || req.body?.userId || 'usr_bft_001').trim();
 
-      const { providerId } = req.body;
+      const { providerId } = req.body || {};
       if (!providerId) return res.status(400).json({ ok: false, error: 'Provider ID required.' });
 
       db.prepare(`
         DELETE FROM copy_trading_subscriptions 
         WHERE user_id = ? AND provider_id = ?
-      `).run(user.id, providerId);
+      `).run(userId, providerId);
 
       return res.json({ ok: true, message: 'Successfully cancelled copy trading subscription.' });
     } catch (err: any) {
@@ -2818,26 +3415,30 @@ async function startServer() {
   app.get('/api/copy-trading/subscriptions', (req, res) => {
     try {
       const user = getAuthenticatedUser(req);
-      if (!user) return res.json({ ok: true, subscriptions: [] });
+      const userId = String(user?.id || req.query?.userId || 'usr_bft_001').trim();
 
-      const subs = db.prepare(`
-        SELECT 
-          provider_id, 
-          allocated_capital, 
-          max_loss_limit, 
-          take_profit_limit, 
-          trade_sizing_type, 
-          sizing_multiplier, 
-          current_pnl, 
-          status, 
-          created_at 
-        FROM copy_trading_subscriptions 
-        WHERE user_id = ?
-      `).all(user.id) as any[];
+      const subs = db
+        .prepare(`
+          SELECT 
+            id,
+            provider_id, 
+            allocated_capital, 
+            max_loss_limit, 
+            take_profit_limit, 
+            trade_sizing_type, 
+            sizing_multiplier, 
+            current_pnl, 
+            status, 
+            created_at 
+          FROM copy_trading_subscriptions 
+          WHERE user_id = ?
+        `)
+        .all(userId) as any[];
 
-      return res.json({ 
-        ok: true, 
-        subscriptions: subs.map(s => ({
+      return res.json({
+        ok: true,
+        subscriptions: subs.map((s) => ({
+          id: s.id,
           provider_id: s.provider_id,
           allocated_capital: s.allocated_capital,
           max_loss_limit: s.max_loss_limit,
@@ -2846,8 +3447,9 @@ async function startServer() {
           sizing_multiplier: s.sizing_multiplier,
           current_pnl: s.current_pnl,
           status: s.status,
-          created_at: s.created_at
-        })) 
+          commission_pct: 0,
+          created_at: s.created_at,
+        })),
       });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err?.message || 'Failed to fetch subscriptions.' });
@@ -2901,7 +3503,6 @@ async function startServer() {
       server: { 
         middlewareMode: true,
         hmr: false,
-        watch: { usePolling: true, interval: 100 }
       },
       appType: 'spa',
     });

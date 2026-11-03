@@ -103,7 +103,13 @@ import {
   mapPurchaseRecord,
   mergeRealtimePurchase,
   NormalizedPurchaseRecord,
+  expireStaleSupabaseCryptoDeposits,
 } from '../utils/supabaseRealtimeSync';
+import {
+  DEPOSIT_EXPIRY_MS,
+  evaluateDepositStatusWithExpiry,
+  formatDepositCountdown,
+} from '../config/directDeposit';
 
 interface UserDashboardProps {
   userProfile: UserProfile;
@@ -204,7 +210,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     (userProfile.kycDocumentType as KYCDocumentType) || 'ID Card'
   );
   const [documentNumber, setDocumentNumber] = useState<string>(
-    userProfile.kycDocumentNumber || 'ID-89401293'
+    userProfile.kycDocumentNumber || ''
   );
   const [extractedDocName, setExtractedDocName] = useState<string>(
     userProfile.kycExtractedName || userProfile.fullName || ''
@@ -535,6 +541,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         }
 
         if (effectiveUserUuid) {
+          await expireStaleSupabaseCryptoDeposits(effectiveUserUuid).catch(() => {});
           // Query Supabase user_purchases, crypto_deposits, and withdrawals tables
           const [purchasesRes, cryptoDepsRes, wdsRes] = await Promise.all([
             supabase
@@ -1176,26 +1183,44 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         }))
       : [{ day: 'Start', profit: 0 }];
 
+  const grossWinAmount = effectiveTrades
+    .filter((t) => t.status === 'won')
+    .reduce((sum, t) => sum + Math.max(0, t.pnl || 0), 0);
+  const grossLossAmount = effectiveTrades
+    .filter((t) => t.status === 'lost')
+    .reduce((sum, t) => sum + Math.abs(Math.min(0, t.pnl || -t.investment)), 0);
+  const profitFactorDisplay =
+    grossLossAmount > 0
+      ? (grossWinAmount / grossLossAmount).toFixed(2)
+      : grossWinAmount > 0
+      ? grossWinAmount.toFixed(2)
+      : '0.00';
+
+  const computeBucketStats = (bucketTrades: BinaryTrade[]) => {
+    const settled = bucketTrades.filter((t) => t.status === 'won' || t.status === 'lost');
+    const wins = settled.filter((t) => t.status === 'won').length;
+    return {
+      trades: bucketTrades.length,
+      winRate: settled.length > 0 ? Number(((wins / settled.length) * 100).toFixed(1)) : 0,
+    };
+  };
+
   const durationStats = [
     {
       duration: '30s',
-      trades: effectiveTrades.filter((t) => t.durationSeconds <= 30).length,
-      winRate: 0,
+      ...computeBucketStats(effectiveTrades.filter((t) => t.durationSeconds <= 30)),
     },
     {
       duration: '60s',
-      trades: effectiveTrades.filter((t) => t.durationSeconds > 30 && t.durationSeconds <= 60).length,
-      winRate: 0,
+      ...computeBucketStats(effectiveTrades.filter((t) => t.durationSeconds > 30 && t.durationSeconds <= 60)),
     },
     {
       duration: '3m',
-      trades: effectiveTrades.filter((t) => t.durationSeconds > 60 && t.durationSeconds <= 180).length,
-      winRate: 0,
+      ...computeBucketStats(effectiveTrades.filter((t) => t.durationSeconds > 60 && t.durationSeconds <= 180)),
     },
     {
       duration: '5m',
-      trades: effectiveTrades.filter((t) => t.durationSeconds > 180).length,
-      winRate: 0,
+      ...computeBucketStats(effectiveTrades.filter((t) => t.durationSeconds > 180)),
     },
   ];
 
@@ -1253,7 +1278,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                   {userProfile.fullName || 'New BFT Trader'}
                 </h1>
                 <span className="text-xs font-mono text-[#ff8800] bg-[#ff8800]/15 border border-[#ff8800]/40 px-2.5 py-0.5 rounded-full font-bold">
-                  Ref Code: {userProfile.referralCode || 'BFT-ALEX77'}
+                  Ref Code: {userProfile.referralCode || (userProfile.id ? `BFT-${String(userProfile.id).replace(/[^a-zA-Z0-9]/g, '').slice(0, 6).toUpperCase()}` : 'BFT-TRADER')}
                 </span>
                 {isProfileLocked && (
                   <span
@@ -1822,17 +1847,27 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {displayPurchases.map((rawPurchase) => {
                   const purchase = mapPurchaseRecord(rawPurchase);
-                  const accountForPurchase =
-                    accounts.find(
-                      (a) =>
-                        (purchase.account_id && a.id === purchase.account_id) ||
-                        getPackageSku(a) === purchase.package_sku
-                    ) ||
-                    (purchase.account_type === 'self_funded'
-                      ? accounts.find((a) => isPersonalLiveAccount(a))
-                      : accounts.find((a) => !isPersonalLiveAccount(a) && !isDemoAccount(a)));
+                  const evalExpiry = evaluateDepositStatusWithExpiry(
+                    rawPurchase,
+                    nowTick,
+                    DEPOSIT_EXPIRY_MS
+                  );
+                  const liveStatus = evalExpiry.effectiveStatus;
                   const isCompleted =
-                    purchase.status === 'completed' || purchase.status === 'approved';
+                    liveStatus === 'completed' ||
+                    liveStatus === 'active' ||
+                    liveStatus === 'approved';
+                  const isFailed = liveStatus === 'failed' || liveStatus === 'declined';
+                  const accountForPurchase = isCompleted
+                    ? accounts.find(
+                        (a) =>
+                          (purchase.account_id && a.id === purchase.account_id) ||
+                          getPackageSku(a) === purchase.package_sku
+                      ) ||
+                      (purchase.account_type === 'self_funded'
+                        ? accounts.find((a) => isPersonalLiveAccount(a))
+                        : accounts.find((a) => !isPersonalLiveAccount(a) && !isDemoAccount(a)))
+                    : null;
                   return (
                     <div
                       key={purchase.id}
@@ -1852,12 +1887,12 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                             className={`px-2 py-0.5 rounded text-[9px] font-black uppercase border ${
                               isCompleted
                                 ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
-                                : purchase.status === 'declined'
+                                : isFailed
                                 ? 'bg-rose-500/20 text-rose-400 border-rose-500/40'
                                 : 'bg-[#ff8800] text-slate-950 border-amber-300 font-extrabold'
                             }`}
                           >
-                            {purchase.status}
+                            {liveStatus}
                           </span>
                         </div>
                         <div className="text-xs text-slate-400 flex flex-wrap items-center gap-2">
@@ -1876,6 +1911,19 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                             ID: {String(purchase.id).slice(0, 10)}
                           </span>
                         </div>
+                        {liveStatus === 'pending' && (
+                          <div className="inline-flex items-center gap-1 text-[10px] text-[#ffaa00] bg-[#ff8800]/10 border border-[#ff8800]/30 px-2 py-0.5 rounded font-bold mt-1">
+                            <Clock className="w-3 h-3 animate-pulse" />
+                            <span>
+                              1h Expiry: {formatDepositCountdown(evalExpiry.remainingMs)} remaining
+                            </span>
+                          </div>
+                        )}
+                        {isFailed && (
+                          <div className="text-[10px] text-rose-400 font-bold mt-0.5">
+                            Expired (&gt;60m without blockchain confirmation)
+                          </div>
+                        )}
                       </div>
                       <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0">
                         <div className="text-xs text-slate-400 text-right">
@@ -1883,7 +1931,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                             ? new Date(purchase.created_at).toLocaleDateString()
                             : 'Today'}
                         </div>
-                        {accountForPurchase && (
+                        {accountForPurchase && isCompleted && (
                           <button
                             type="button"
                             onClick={() => {
@@ -1911,11 +1959,11 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                   SUPABASE DATABASE REAL-TIME LEDGER
                 </span>
                 <h3 className="text-lg font-black text-white mt-1">
-                  Manual Admin Verification Tracker
+                  Crypto Deposits &amp; Withdrawals Verification Tracker
                 </h3>
               </div>
               <span className="text-xs text-slate-400">
-                Live Status from Supabase (<code className="text-[#ff8800]">deposits</code> & <code className="text-[#ff8800]">withdrawals</code> tables)
+                Live Status from Supabase (<code className="text-[#ff8800]">crypto_deposits</code>, <code className="text-[#ff8800]">transactions</code> &amp; <code className="text-[#ff8800]">withdrawals</code>)
               </span>
             </div>
 
@@ -1924,9 +1972,9 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               <div className="p-4 rounded-2xl bg-[#111115] border border-white/10 space-y-3">
                 <div className="flex items-center justify-between">
                   <h4 className="text-xs font-bold uppercase text-white flex items-center gap-1.5">
-                    <UploadCloud className="w-4 h-4 text-[#ff8800]" /> Deposits ({supabaseDeposits.length})
+                    <UploadCloud className="w-4 h-4 text-[#ff8800]" /> Crypto Deposits ({supabaseDeposits.length})
                   </h4>
-                  <span className="text-[10px] text-slate-400">Manual Approval</span>
+                  <span className="text-[10px] text-slate-400">Gateway / 1h Expiry</span>
                 </div>
 
                 {supabaseDeposits.length === 0 ? (
@@ -1935,47 +1983,75 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                   </div>
                 ) : (
                   <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-                    {supabaseDeposits.map((dep) => (
-                      <div
-                        key={dep.id}
-                        data-testid={`supabase-deposit-row-${dep.id}`}
-                        className="p-3 rounded-xl bg-[#16161c] border border-white/10 flex items-center justify-between text-xs"
-                      >
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-black text-[#00e676]">+${Number(dep.amount).toFixed(2)} USDT</span>
-                            <span
-                              data-testid={`deposit-status-badge-${dep.id}`}
-                              className={`px-2 py-0.5 rounded text-[9px] font-black uppercase border ${
-                                dep.status === 'approved' || dep.status === 'completed'
-                                  ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
-                                  : dep.status === 'rejected'
-                                  ? 'bg-rose-500/20 text-rose-400 border-rose-500/40'
-                                  : 'bg-[#ff8800] text-slate-950 border-amber-300 font-extrabold'
-                              }`}
-                            >
-                              {dep.status === 'pending' ? 'Pending Approval' : dep.status}
-                            </span>
-                          </div>
-                          <div className="text-[10px] text-slate-400 mt-1 flex items-center gap-2">
-                            <span>ID: {dep.id.slice(0, 8)}...</span>
-                            {dep.slip_url && (
-                              <a
-                                href={dep.slip_url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-cyan-400 hover:underline flex items-center gap-0.5"
+                    {supabaseDeposits.map((dep) => {
+                      const evalDep = evaluateDepositStatusWithExpiry(
+                        dep,
+                        nowTick,
+                        DEPOSIT_EXPIRY_MS
+                      );
+                      const depStatus = evalDep.effectiveStatus;
+                      const isDepSuccess =
+                        depStatus === 'approved' ||
+                        depStatus === 'completed' ||
+                        depStatus === 'active';
+                      const isDepFailed =
+                        depStatus === 'failed' ||
+                        depStatus === 'declined' ||
+                        depStatus === 'rejected';
+                      return (
+                        <div
+                          key={dep.id}
+                          data-testid={`supabase-deposit-row-${dep.id}`}
+                          className="p-3 rounded-xl bg-[#16161c] border border-white/10 flex items-center justify-between text-xs"
+                        >
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="font-black text-[#00e676]">
+                                +${Number(dep.amount || dep.package_amount || 0).toFixed(2)} USDT
+                              </span>
+                              <span
+                                data-testid={`deposit-status-badge-${dep.id}`}
+                                className={`px-2 py-0.5 rounded text-[9px] font-black uppercase border ${
+                                  isDepSuccess
+                                    ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                                    : isDepFailed
+                                    ? 'bg-rose-500/20 text-rose-400 border-rose-500/40'
+                                    : 'bg-[#ff8800] text-slate-950 border-amber-300 font-extrabold'
+                                }`}
                               >
-                                View Slip ↗
-                              </a>
-                            )}
+                                {depStatus}
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-slate-400 mt-1 flex flex-wrap items-center gap-2">
+                              <span>ID: {String(dep.id).slice(0, 8)}...</span>
+                              {depStatus === 'pending' && (
+                                <span className="text-[#ffaa00] font-bold">
+                                  • 1h Timer: {formatDepositCountdown(evalDep.remainingMs)}
+                                </span>
+                              )}
+                              {isDepFailed && (
+                                <span className="text-rose-400 font-bold">
+                                  • Expired (&gt;1h timeout)
+                                </span>
+                              )}
+                              {dep.slip_url && (
+                                <a
+                                  href={dep.slip_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-cyan-400 hover:underline flex items-center gap-0.5"
+                                >
+                                  View Slip ↗
+                                </a>
+                              )}
+                            </div>
+                          </div>
+                          <div className="text-[10px] text-slate-500">
+                            {dep.created_at ? new Date(dep.created_at).toLocaleDateString() : 'Today'}
                           </div>
                         </div>
-                        <div className="text-[10px] text-slate-500">
-                          {dep.created_at ? new Date(dep.created_at).toLocaleDateString() : 'Today'}
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -2981,7 +3057,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             </div>
             <div className="p-4 rounded-2xl bg-[#0a0a0a] border border-white/10">
               <span className="text-slate-400 text-[11px] block uppercase">Profit Factor</span>
-              <span className="text-2xl font-black text-[#ff8800] block mt-1">2.48</span>
+              <span className="text-2xl font-black text-[#ff8800] block mt-1">{profitFactorDisplay}</span>
               <span className="text-[10px] text-slate-500">Gross Win / Gross Loss</span>
             </div>
             <div className="p-4 rounded-2xl bg-[#0a0a0a] border border-white/10">

@@ -8,6 +8,10 @@ import {
   registerNewUserAccount,
   validateSponsorReferralCode,
   processWithdrawalCommission,
+  formatPurchasedPackageLabel,
+  formatPurchaseAmountDisplay,
+  buildReferredNetworkTree,
+  mergeCommissionLedgers,
   COMMISSION_RATES,
   UserAccount,
   ReferralRecord,
@@ -269,4 +273,109 @@ test('registerNewUserAccount attributes new user to sponsor and processWithdrawa
   assert.strictEqual(wdComm.commissionRecord.commissionAmount, 40.00);
   assert.strictEqual(wdComm.commissionRecord.commissionType, 'withdrawal');
 });
+
+test('formatPurchasedPackageLabel & formatPurchaseAmountDisplay format package names and exact amounts', () => {
+  assert.strictEqual(
+    formatPurchasedPackageLabel('Instant Funded ($25,000)', 'BFT-IF-25K', 250),
+    '$25K Instant Funded'
+  );
+  assert.strictEqual(
+    formatPurchasedPackageLabel('One-Step Challenge ($50,000)', 'BFT-1S-50K', 289),
+    '$50K 1-Step Challenge'
+  );
+  assert.strictEqual(
+    formatPurchasedPackageLabel('Two-Step Challenge ($100,000)', 'BFT-2S-100K', 469),
+    '$100K 2-Step Challenge'
+  );
+  assert.strictEqual(formatPurchaseAmountDisplay(250), '$250');
+  assert.strictEqual(formatPurchaseAmountDisplay(289.5), '$289.50');
+  assert.strictEqual(formatPurchaseAmountDisplay(0), '$0');
+});
+
+test('buildReferredNetworkTree and mergeCommissionLedgers synchronize referred user purchases and 3-tier commissions in real-time', () => {
+  const sponsorId = 'USR-SPONSOR-ROOT';
+  const mockUsers: UserAccount[] = [
+    {
+      id: sponsorId,
+      name: 'Root Sponsor',
+      email: 'root@bft.com',
+      referralCode: 'BFT-ROOT99',
+      createdAt: '2026-01-01',
+    },
+    {
+      id: 'USR-L1-BUYER',
+      name: 'Chamika Kavindu',
+      email: 'chamika@bft.com',
+      referralCode: 'BFT-CHAM1',
+      referredBy: sponsorId,
+      createdAt: '2026-01-02',
+    },
+    {
+      id: 'USR-L2-BUYER',
+      name: 'Nethan Rathnayaka',
+      email: 'nethan@bft.com',
+      referralCode: 'BFT-NETH2',
+      referredBy: 'USR-L1-BUYER',
+      createdAt: '2026-01-03',
+    },
+  ];
+
+  // L1 user purchases "$25K Instant Funded" for $250
+  const l1Purchase = process3TierCommissions({
+    buyerUserId: 'USR-L1-BUYER',
+    buyerName: 'Chamika Kavindu',
+    buyerEmail: 'chamika@bft.com',
+    packageTier: 'instant',
+    packageName: 'Instant Funded ($25,000)',
+    packagePrice: 250,
+    packageSku: 'BFT-IF-25K',
+    users: mockUsers,
+    existingReferrals: [],
+  });
+
+  // L2 user purchases "$50K 1-Step Challenge" for $300
+  const l2Purchase = process3TierCommissions({
+    buyerUserId: 'USR-L2-BUYER',
+    buyerName: 'Nethan Rathnayaka',
+    buyerEmail: 'nethan@bft.com',
+    packageTier: 'one-step',
+    packageName: 'One-Step Challenge ($50,000)',
+    packagePrice: 300,
+    packageSku: 'BFT-1S-50K',
+    users: l1Purchase.updatedUsers,
+    existingReferrals: l1Purchase.allReferrals,
+  });
+
+  const tree = buildReferredNetworkTree({
+    sponsorId,
+    usersList: l2Purchase.updatedUsers,
+    referralsList: l2Purchase.allReferrals,
+  });
+
+  const l1Node = tree.find((n) => n.id === 'USR-L1-BUYER');
+  const l2Node = tree.find((n) => n.id === 'USR-L2-BUYER');
+
+  assert.ok(l1Node, 'L1 referred trader should be in network tree');
+  assert.strictEqual(l1Node.level, 1);
+  assert.strictEqual(l1Node.latestPurchase?.name, '$25K Instant Funded');
+  assert.strictEqual(l1Node.latestPurchase?.amount, 250);
+
+  assert.ok(l2Node, 'L2 referred trader should be in network tree');
+  assert.strictEqual(l2Node.level, 2);
+  assert.strictEqual(l2Node.latestPurchase?.name, '$50K 1-Step Challenge');
+  assert.strictEqual(l2Node.latestPurchase?.amount, 300);
+
+  const ledger = mergeCommissionLedgers({
+    sponsorIds: [sponsorId],
+    localReferrals: l2Purchase.allReferrals,
+  });
+
+  // Root sponsor earned 10% of $250 ($25.00) from L1 + 5% of $300 ($15.00) from L2 = $40.00
+  assert.strictEqual(ledger.length, 2);
+  const stats = calculateAffiliateStats(sponsorId, ledger, []);
+  assert.strictEqual(stats.level1Earnings, 25.00);
+  assert.strictEqual(stats.level2Earnings, 15.00);
+  assert.strictEqual(stats.availableBalance, 40.00);
+});
+
 

@@ -14,6 +14,8 @@ import {
   ShieldCheck,
   AlertCircle,
   ExternalLink,
+  Clock,
+  Ban,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { EvaluationPackage, TradingAccount, PromoCodeType, UserProfile } from '../types';
@@ -21,19 +23,20 @@ import { calculateDiscountedPrice } from '../utils/propRules';
 import { getStoredReferralCode } from '../utils/affiliateEngine';
 import {
   DIRECT_USDT_TRC20_CONFIG,
+  DEPOSIT_EXPIRY_MS,
   buildPackageSku,
   buildCryptoDepositPayload,
   fetchTronGridTrc20Transfers,
   matchPendingDepositToTronGridTx,
   mapPurchaseRecord,
   NormalizedPurchaseRecord,
+  evaluateDepositStatusWithExpiry,
+  formatDepositCountdown,
 } from '../config/directDeposit';
 import { apiPurchaseAccount, apiVerifyCryptoDeposits } from '../utils/apiClient';
 import { supabase } from '../utils/supabase';
 import {
-  insertSupabaseUserPurchase,
   insertSupabaseTradingAccount,
-  insertSupabaseCryptoDeposit,
 } from '../utils/supabaseRealtimeSync';
 
 interface PaymentModalProps {
@@ -67,7 +70,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   onCommissionsProcessed,
   applyBreachDiscount = false,
 }) => {
-  const [step, setStep] = useState<'checkout' | 'verifying' | 'completed'>('checkout');
+  const [step, setStep] = useState<'checkout' | 'verifying' | 'pending_verification' | 'completed'>('checkout');
   const [promoCode, setPromoCode] = useState<PromoCodeType>(activePromoCode);
   const [unlockDailyWithdrawals, setUnlockDailyWithdrawals] = useState<boolean>(
     initialDailyWithdrawals
@@ -84,6 +87,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   const [qrImgFailed, setQrImgFailed] = useState<boolean>(false);
   const [isVerifyingTronGrid, setIsVerifyingTronGrid] = useState<boolean>(false);
   const [tronGridStatusNote, setTronGridStatusNote] = useState<string | null>(null);
+  const [nowTickMs, setNowTickMs] = useState<number>(() => Date.now());
 
   useEffect(() => {
     setPromoCode(activePromoCode);
@@ -97,6 +101,14 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     const code = getStoredReferralCode();
     if (code) setActiveReferralCode(code);
   }, []);
+
+  useEffect(() => {
+    if (step !== 'pending_verification') return;
+    const timer = setInterval(() => {
+      setNowTickMs(Date.now());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [step]);
 
   if (!packageToBuy) return null;
 
@@ -114,6 +126,10 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     tier: packageToBuy.tier,
     sizeOrAmount: packageToBuy.size,
   });
+
+  const expiryState = savedDepositRecord
+    ? evaluateDepositStatusWithExpiry(savedDepositRecord, nowTickMs, DEPOSIT_EXPIRY_MS)
+    : { effectiveStatus: 'pending' as const, isExpired: false, remainingMs: DEPOSIT_EXPIRY_MS };
 
   const handleCopyAddress = () => {
     navigator.clipboard.writeText(trc20Address);
@@ -142,30 +158,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         txHash: txHashInput.trim() || undefined,
       });
 
-      // 1. Insert transaction details (user_id, package_id, amount, status) into Supabase user_purchases & crypto_deposits
-      let supaPurchaseRow: NormalizedPurchaseRecord | null = null;
-      try {
-        const supaInsertRes = await insertSupabaseUserPurchase({
-          userId: userProfile?.id,
-          userEmail: userProfile?.email,
-          walletAddress: trc20Address,
-          packageId: packageSku,
-          packageName,
-          packageSku,
-          amount: finalPrice,
-          packageAmount: finalPrice,
-          accountType,
-          status: 'completed',
-          txHash: txHashInput.trim() || null,
-        });
-        if (supaInsertRes.ok && supaInsertRes.row) {
-          supaPurchaseRow = supaInsertRes.row;
-        }
-      } catch {
-        // Fallback handled by backend /api/accounts/purchase
-      }
-
-      // 2. Save record in backend user_purchases & crypto_deposits tables. Account creation is deferred until verification.
+      // Record order in backend & Supabase (crypto_deposits, transactions, user_purchases) with 'pending' status.
+      // Account provisioning is strictly blocked until gateway/blockchain confirmation returns 'confirmed' or 'paid'.
       const res = await apiPurchaseAccount({
         userId: userProfile?.id,
         email: userProfile?.email,
@@ -183,12 +177,17 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
 
       if (!res.ok) {
         throw new Error(
-          res.error || 'Direct payment confirmation failed. Please verify your transfer.'
+          res.error || 'Direct payment submission failed. Please verify your transfer details.'
         );
       }
 
-      if (res.account && !res.account.supabaseAccountId) {
-        // Persist purchased trading account into Supabase tables if not already persisted
+      const isVerifiedPaid = Boolean(
+        res.verified &&
+          (res.status === 'completed' || res.status === 'active') &&
+          res.account
+      );
+
+      if (isVerifiedPaid && res.account && !res.account.supabaseAccountId) {
         insertSupabaseTradingAccount({
           account: res.account,
           userId: userProfile?.id,
@@ -196,48 +195,67 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         }).catch(() => {});
       }
 
+      const createdAtIso = new Date().toISOString();
       const finalPurchaseRecord = mapPurchaseRecord(
-        res.purchase ||
-          supaPurchaseRow || {
-            id: res.deposit?.id || `PUR-${Date.now().toString(36).toUpperCase()}`,
-            user_id: userProfile?.id || res.account?.ownerId || 'usr_bft_001',
-            account_id: res.account?.id || null,
-            package_id: packageSku,
-            package_name: packageName,
-            package_sku: packageSku,
-            amount: finalPrice,
-            package_amount: finalPrice,
-            account_type: accountType,
-            status: res.status || 'pending',
-            created_at: new Date().toISOString(),
-          }
+        res.purchase || {
+          id: res.deposit?.id || `PUR-${Date.now().toString(36).toUpperCase()}`,
+          user_id: userProfile?.id || 'usr_bft_001',
+          account_id: isVerifiedPaid ? res.account?.id || null : null,
+          package_id: packageSku,
+          package_name: packageName,
+          package_sku: packageSku,
+          amount: finalPrice,
+          package_amount: finalPrice,
+          account_type: accountType,
+          status: isVerifiedPaid ? 'completed' : 'pending',
+          created_at: createdAtIso,
+        }
       );
 
-      if (res.account) setGeneratedAccount(res.account);
-      setSavedDepositRecord(
-        res.deposit || {
-          ...cryptoPayload,
-          id: finalPurchaseRecord.id,
-          status: res.status || 'pending',
-        }
-      );
+      const depositRecord = res.deposit || {
+        ...cryptoPayload,
+        id: finalPurchaseRecord.id,
+        status: isVerifiedPaid ? 'completed' : 'pending',
+        created_at: Date.now(),
+        expires_at: Date.now() + DEPOSIT_EXPIRY_MS,
+      };
+
+      setSavedDepositRecord(depositRecord);
       onPurchaseRecorded?.(finalPurchaseRecord);
-      
-      if (res.status === 'completed') {
+
+      if (isVerifiedPaid && res.account) {
+        setGeneratedAccount(res.account);
         setStep('completed');
-        if (res.account) {
-          onCommissionsProcessed?.({
-            buyerUserId: res.account.id,
-            buyerName: userProfile?.fullName || `Trader ${res.account.id.slice(-4)}`,
-            buyerEmail: userProfile?.email || `trader.${res.account.id.toLowerCase()}@client-bft.com`,
-            packageTier: packageToBuy.tier,
-            packageName,
-            packagePrice: finalPrice,
-            referralCodeUsed: activeReferralCode,
-          });
+        const actualBuyerId = userProfile?.id || res.account.ownerId || res.account.id;
+        onCommissionsProcessed?.({
+          buyerUserId: actualBuyerId,
+          buyerName: userProfile?.fullName || `Trader ${res.account.id.slice(-4)}`,
+          buyerEmail: userProfile?.email || `trader.${res.account.id.toLowerCase()}@client-bft.com`,
+          packageTier: packageToBuy.tier,
+          packageName,
+          packagePrice: finalPrice,
+          referralCodeUsed: activeReferralCode,
+        });
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('bft-affiliate-updated', {
+              detail: {
+                buyerUserId: actualBuyerId,
+                packageName,
+                packagePrice: finalPrice,
+                packageSku,
+              },
+            })
+          );
         }
       } else {
-        setTronGridStatusNote('Verification in progress. Your account will be activated once the payment is confirmed on the blockchain.');
+        setGeneratedAccount(null);
+        setNowTickMs(Date.now());
+        setStep('pending_verification');
+        setTronGridStatusNote(
+          res.message ||
+            'Order logged as PENDING in crypto_deposits & transactions. Account provisioning is locked until Cryptomus / TRC-20 blockchain verification returns confirmed/paid. Unpaid orders automatically expire to FAILED after 60 minutes.'
+        );
       }
     } catch (err: any) {
       setStep('checkout');
@@ -252,15 +270,46 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     setIsVerifyingTronGrid(true);
     setTronGridStatusNote(null);
     try {
-      // 1. Check backend TronGrid verification endpoint
-      const verifyRes = await apiVerifyCryptoDeposits();
+      const currentEval = savedDepositRecord
+        ? evaluateDepositStatusWithExpiry(savedDepositRecord, Date.now(), DEPOSIT_EXPIRY_MS)
+        : null;
+
+      if (currentEval?.isExpired || currentEval?.effectiveStatus === 'failed') {
+        setSavedDepositRecord((prev: any) => (prev ? { ...prev, status: 'failed' } : prev));
+        setTronGridStatusNote(
+          'Payment window expired (> 60 minutes without blockchain confirmation). Order status has been updated to FAILED and reserved state released.'
+        );
+        setIsVerifyingTronGrid(false);
+        return;
+      }
+
+      // 1. Check backend TronGrid / Cryptomus verification endpoint
+      const verifyRes = await apiVerifyCryptoDeposits({
+        userId: userProfile?.id,
+        email: userProfile?.email,
+      });
+
       if (verifyRes?.ok && Array.isArray(verifyRes.deposits) && savedDepositRecord?.id) {
         const updated = verifyRes.deposits.find((d: any) => d.id === savedDepositRecord.id);
         if (updated) {
           setSavedDepositRecord(updated);
-          if (updated.status === 'completed') {
+          if (updated.status === 'failed') {
             setTronGridStatusNote(
-              `Verified on TronGrid TRC-20! Deposit status updated to completed.`
+              'Order expired after 60 minutes without network confirmation. Status updated to FAILED.'
+            );
+            setIsVerifyingTronGrid(false);
+            return;
+          }
+          if (updated.status === 'completed' || updated.status === 'active') {
+            const compEntry = Array.isArray(verifyRes.completedDeposits)
+              ? verifyRes.completedDeposits.find((c: any) => c.deposit?.id === updated.id)
+              : null;
+            if (compEntry?.account) {
+              setGeneratedAccount(compEntry.account);
+              setStep('completed');
+            }
+            setTronGridStatusNote(
+              'Verified on TronGrid TRC-20! Deposit status updated to completed and account provisioned.'
             );
             setIsVerifyingTronGrid(false);
             return;
@@ -268,7 +317,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         }
       }
 
-      // 2. Also check Supabase crypto_deposits where status = 'pending' directly against TronGrid API
+      // 2. Also check TronGrid API directly
       const fetched = await fetchTronGridTrc20Transfers({
         walletAddress: trc20Address,
         apiKey: DIRECT_USDT_TRC20_CONFIG.tronGridApiKey,
@@ -285,8 +334,11 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
             account_type: accountType,
             tx_hash: txHashInput.trim() || savedDepositRecord.tx_hash,
             status: savedDepositRecord.status || 'pending',
+            created_at: savedDepositRecord.created_at,
           },
-          fetched.transactions
+          fetched.transactions,
+          new Set(),
+          Date.now()
         );
 
         if (matched) {
@@ -301,7 +353,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
             if (supaUserId) {
               await supabase
                 .from('crypto_deposits')
-                .update({ status: 'completed' })
+                .update({ status: 'completed', tx_hash: matched.transaction_id })
                 .eq('user_id', supaUserId)
                 .eq('status', 'pending')
                 .eq('amount', finalPrice);
@@ -316,10 +368,12 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       }
 
       setTronGridStatusNote(
-        `Checked TronGrid (${DIRECT_USDT_TRC20_CONFIG.walletAddress.slice(0, 8)}...): awaiting matching $${finalPrice.toFixed(2)} USDT TRC-20 transfer.`
+        `Unverified: No confirmed $${finalPrice.toFixed(2)} USDT (TRC-20) blockchain transfer found yet for ${DIRECT_USDT_TRC20_CONFIG.walletAddress.slice(0, 8)}... Order remains in PENDING status and account is NOT provisioned.`
       );
     } catch {
-      setTronGridStatusNote('TronGrid verification check completed; awaiting confirmation.');
+      setTronGridStatusNote(
+        'Gateway verification check completed: payment still unconfirmed. Order remains PENDING.'
+      );
     } finally {
       setIsVerifyingTronGrid(false);
     }
@@ -586,9 +640,134 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
               Recording Pending USDT (TRC-20) Deposit...
             </h3>
             <p className="text-xs text-slate-300 max-w-xs mx-auto leading-relaxed mb-6 font-mono">
-              Saving pending deposit record of ${finalPrice.toFixed(2)} USDT ({packageSku}) to
-              crypto_deposits...
+              Logging transaction (${finalPrice.toFixed(2)} USDT · {packageSku}) to
+              crypto_deposits &amp; transactions and checking Cryptomus / TRC-20 gateway...
             </p>
+          </div>
+        )}
+
+        {step === 'pending_verification' && (
+          <div data-testid="payment-pending-verification-view">
+            <div className="text-center mb-5">
+              <div
+                className={`w-16 h-16 rounded-full border-2 flex items-center justify-center mx-auto mb-4 ${
+                  expiryState.effectiveStatus === 'failed'
+                    ? 'bg-rose-950/80 border-rose-500 text-rose-400'
+                    : 'bg-amber-950/80 border-[#ff8800] text-[#ff8800]'
+                }`}
+              >
+                {expiryState.effectiveStatus === 'failed' ? (
+                  <Ban className="w-8 h-8" />
+                ) : (
+                  <Clock className="w-8 h-8 animate-pulse" />
+                )}
+              </div>
+              <div
+                className={`text-xs font-mono font-bold uppercase ${
+                  expiryState.effectiveStatus === 'failed' ? 'text-rose-400' : 'text-[#ff8800]'
+                }`}
+              >
+                crypto_deposits &amp; transactions · Status: {expiryState.effectiveStatus}
+              </div>
+              <h3 className="text-xl font-black text-white mt-1">
+                {expiryState.effectiveStatus === 'failed'
+                  ? 'Payment Expired (1-Hour Timeout)'
+                  : 'Awaiting Blockchain / Gateway Confirmation'}
+              </h3>
+              <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                {expiryState.effectiveStatus === 'failed'
+                  ? 'This deposit remained pending for over 60 minutes without network confirmation and was automatically marked as FAILED.'
+                  : 'Security Notice: Funded & challenge accounts are NEVER provisioned on an unverified click. Your account will activate automatically once Cryptomus or the TRC-20 blockchain confirms your payment.'}
+              </p>
+            </div>
+
+            {tronGridStatusNote && (
+              <div
+                data-testid="payment-gateway-status-note"
+                className={`mb-4 p-3 rounded-xl border text-[11px] font-mono ${
+                  expiryState.effectiveStatus === 'failed'
+                    ? 'bg-rose-950/60 border-rose-500/40 text-rose-200'
+                    : 'bg-amber-950/50 border-[#ff8800]/40 text-amber-200'
+                }`}
+              >
+                {tronGridStatusNote}
+              </div>
+            )}
+
+            <div className="p-4 rounded-xl bg-[#111115] border border-white/15 mb-5 space-y-2.5 font-mono tabular-nums text-xs">
+              <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                <span className="text-slate-400 font-sans">Order ID</span>
+                <span className="text-white font-bold">
+                  {savedDepositRecord?.id || 'PENDING'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                <span className="text-slate-400 font-sans">Package &amp; SKU</span>
+                <span className="text-slate-200 font-bold">
+                  {packageName} ({packageSku})
+                </span>
+              </div>
+              <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                <span className="text-slate-400 font-sans">Required Transfer</span>
+                <span className="text-[#00e676] font-bold">${finalPrice.toFixed(2)} USDT</span>
+              </div>
+              <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                <span className="text-slate-400 font-sans">Live Transaction Status</span>
+                <span
+                  data-testid="purchase-deposit-status"
+                  className={`px-2 py-0.5 rounded text-[10px] font-black uppercase border ${
+                    expiryState.effectiveStatus === 'failed'
+                      ? 'bg-rose-500/20 text-rose-400 border-rose-500/40'
+                      : 'bg-[#ff8800]/20 text-[#ff8800] border-[#ff8800]/40'
+                  }`}
+                >
+                  {expiryState.effectiveStatus}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400 font-sans">1-Hour Expiry Window</span>
+                <span
+                  data-testid="payment-expiry-countdown"
+                  className={`font-bold ${
+                    expiryState.effectiveStatus === 'failed'
+                      ? 'text-rose-400'
+                      : 'text-[#ffaa00]'
+                  }`}
+                >
+                  {expiryState.effectiveStatus === 'failed'
+                    ? '00:00 (EXPIRED -> FAILED)'
+                    : `${formatDepositCountdown(expiryState.remainingMs)} remaining`}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2.5">
+              {expiryState.effectiveStatus !== 'failed' && (
+                <button
+                  type="button"
+                  onClick={handleVerifyOnTronGrid}
+                  disabled={isVerifyingTronGrid}
+                  data-testid="verify-trongrid-purchase-btn"
+                  className="w-full py-3 px-4 rounded-xl bg-[#00e676] hover:bg-[#00c853] disabled:opacity-60 text-slate-950 font-mono text-xs font-black flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isVerifyingTronGrid ? 'animate-spin' : ''}`} />
+                  <span>
+                    {isVerifyingTronGrid
+                      ? 'Checking Cryptomus / TronGrid Node...'
+                      : 'Verify Blockchain Confirmation Now'}
+                  </span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={onClose}
+                data-testid="close-pending-payment-btn"
+                className="w-full py-3 px-4 rounded-xl bg-white/10 hover:bg-white/15 text-slate-200 font-mono text-xs font-bold flex items-center justify-center gap-2 cursor-pointer transition-colors"
+              >
+                <span>Close &amp; Monitor in Deposit History</span>
+              </button>
+            </div>
           </div>
         )}
 

@@ -42,6 +42,9 @@ export function ensureTradeUuid(tradeId: string): string {
  * Supabase Auth session with a valid UUID. If no valid UUID can be resolved, returns null.
  */
 export async function getEffectiveSupabaseUserId(userId?: string | null): Promise<string | null> {
+  if (userId && isValidUuid(userId)) {
+    return userId.trim();
+  }
   try {
     const { data } = await supabase.auth.getSession();
     const sessionUserId = data?.session?.user?.id;

@@ -112,8 +112,8 @@ export function resolveUserLeaderboardPosition(
   const higherCount = traders.filter((t) => t.profit > cleanProfit).length;
   const computedRank = higherCount + 1;
 
-  // Position Display Logic ("1000+"): For any trader ranked below 20th place (position 21 and beyond), display "1000+"
-  if (computedRank > 20) {
+  // Position Display Logic ("1000+"): For any trader ranked below 20th place or below the leaderboard cutoff, display "1000+"
+  if (computedRank > 20 || (traders.length > 0 && computedRank > traders.length)) {
     return {
       isUnranked: true,
       rankLabel: '1000+',

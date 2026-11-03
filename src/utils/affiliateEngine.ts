@@ -4,9 +4,10 @@ import type {
   AffiliatePayout,
   AffiliateStats,
   ChallengeTier,
+  ReferredUser,
 } from '../types/index.ts';
 
-export type { UserAccount, ReferralRecord, AffiliatePayout, AffiliateStats };
+export type { UserAccount, ReferralRecord, AffiliatePayout, AffiliateStats, ReferredUser };
 
 // ==========================================
 // 1. COOKIE & CLIENT PERSISTENCE (30-DAY TTL)
@@ -479,16 +480,32 @@ export function saveAffiliateUsers(users: UserAccount[]): void {
   }
 }
 
+const LEGACY_DEMO_REFERRAL_IDS = new Set([
+  'REF-1001',
+  'REF-1002',
+  'REF-1003',
+  'REF-1004',
+  'REF-1005',
+  'REF-1006',
+]);
+
+const LEGACY_DEMO_PAYOUT_IDS = new Set(['AFF-PAY-881']);
+
 export function loadAffiliateReferrals(): ReferralRecord[] {
   try {
     if (typeof localStorage !== 'undefined') {
       const raw = localStorage.getItem(AFFILIATE_KEYS.REFERRALS);
-      if (raw) return JSON.parse(raw);
+      if (raw) {
+        const parsed: ReferralRecord[] = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((r) => !LEGACY_DEMO_REFERRAL_IDS.has(r.id));
+        }
+      }
     }
   } catch {
     // fallback
   }
-  return INITIAL_REFERRALS;
+  return [];
 }
 
 export function saveAffiliateReferrals(referrals: ReferralRecord[]): void {
@@ -505,12 +522,17 @@ export function loadAffiliatePayouts(): AffiliatePayout[] {
   try {
     if (typeof localStorage !== 'undefined') {
       const raw = localStorage.getItem(AFFILIATE_KEYS.PAYOUTS);
-      if (raw) return JSON.parse(raw);
+      if (raw) {
+        const parsed: AffiliatePayout[] = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((p) => !LEGACY_DEMO_PAYOUT_IDS.has(p.id));
+        }
+      }
     }
   } catch {
     // fallback
   }
-  return INITIAL_PAYOUTS;
+  return [];
 }
 
 export function saveAffiliatePayouts(payouts: AffiliatePayout[]): void {
@@ -662,6 +684,209 @@ export function processWithdrawalCommission(params: {
  *
  * Enforces strict fraud prevention: Self-referrals are rejected.
  */
+export interface AffiliateUserPurchaseRecord {
+  userId: string;
+  userEmail?: string;
+  userName?: string;
+  packageName: string;
+  packageSku: string;
+  amount: number;
+  createdAt: string;
+}
+
+const AFFILIATE_PURCHASES_STORAGE_KEY = 'bft_affiliate_user_purchases_v2';
+
+/**
+ * Formats any raw package name or SKU into the clean canonical display format
+ * expected by the Full Referred Network Tree table (e.g. "$25K Instant Funded", "$50K 1-Step Challenge").
+ */
+export function formatPurchasedPackageLabel(
+  rawName?: string | null,
+  rawSku?: string | null,
+  fallbackAmount?: number | null
+): string {
+  const name = String(rawName || '').trim();
+  const sku = String(rawSku || '').trim().toUpperCase();
+  const combined = `${name} ${sku}`.trim();
+
+  if (!combined) return 'No Purchase';
+
+  // Ignore withdrawal bonus descriptions when resolving package purchases
+  if (/payout bonus|withdrawal|royalty/i.test(name)) {
+    return 'No Purchase';
+  }
+
+  // Strip "Level X Commission: " prefix if present
+  const cleanedName = name.replace(/^Level\s*\d+\s*Commission:\s*/i, '').trim();
+
+  // Extract account size (e.g. $25,000, $25K, 50K, $100,000)
+  let sizeLabel = '';
+  const kMatch = combined.match(/\$?\b(5|10|25|50|100|200)\s*[kK]\b/);
+  const fullNumMatch = combined.match(/\$?\b(5,000|10,000|25,000|50,000|100,000|200,000|5000|10000|25000|50000|100000|200000)\b/);
+
+  if (kMatch) {
+    sizeLabel = `$${kMatch[1]}K`;
+  } else if (fullNumMatch) {
+    const numeric = Number(fullNumMatch[1].replace(/,/g, ''));
+    if (numeric >= 1000) {
+      sizeLabel = `$${Math.round(numeric / 1000)}K`;
+    }
+  } else if (fallbackAmount && fallbackAmount > 0) {
+    // Infer standard BFT package size from price if size isn't in the string
+    const amt = Math.round(Number(fallbackAmount));
+    if (amt === 49 || amt === 59) sizeLabel = '$5K';
+    else if (amt === 89 || amt === 99 || amt === 149 || amt === 249) sizeLabel = '$10K';
+    else if (amt === 189 || amt === 199 || amt === 250 || amt === 299 || amt === 499) sizeLabel = '$25K';
+    else if (amt === 279 || amt === 289 || amt === 349 || amt === 399 || amt === 899) sizeLabel = '$50K';
+    else if (amt === 469 || amt === 499 || amt === 549 || amt === 599 || amt === 999) sizeLabel = '$100K';
+  }
+
+  // Determine package tier label
+  let tierLabel = '';
+  if (/instant\s*funded|bft-if|instant/i.test(combined)) {
+    tierLabel = 'Instant Funded';
+  } else if (/one[-\s]*step|1[-\s]*step|bft-1s/i.test(combined)) {
+    tierLabel = '1-Step Challenge';
+  } else if (/two[-\s]*step|2[-\s]*step|bft-2s/i.test(combined)) {
+    tierLabel = '2-Step Challenge';
+  } else if (/self[-\s]*funded|personal\s*live|bft-self/i.test(combined)) {
+    tierLabel = 'Self-Funded Live';
+  } else if (/challenge/i.test(combined)) {
+    tierLabel = 'Challenge';
+  }
+
+  if (sizeLabel && tierLabel) {
+    return `${sizeLabel} ${tierLabel}`;
+  }
+  if (tierLabel) {
+    return tierLabel;
+  }
+  if (cleanedName) {
+    return cleanedName;
+  }
+  return sku || 'Challenge Package';
+}
+
+/**
+ * Formats the exact purchase amount paid by a referred user (e.g., "$250" or "$250.50", or "$0" if no purchase).
+ */
+export function formatPurchaseAmountDisplay(amount?: number | null): string {
+  const num = Number(amount || 0);
+  if (!Number.isFinite(num) || num <= 0) return '$0';
+  return Number.isInteger(num) ? `$${num}` : `$${num.toFixed(2)}`;
+}
+
+export const INITIAL_USER_PURCHASES: AffiliateUserPurchaseRecord[] = [
+  {
+    userId: 'USR-SUB-101',
+    userEmail: 'marco.rossi@milan-fx.it',
+    userName: 'Marco Rossi',
+    packageName: '$100K 2-Step Challenge',
+    packageSku: 'BFT-2S-100K',
+    amount: 469,
+    createdAt: '2026-10-22T08:14:00Z',
+  },
+  {
+    userId: 'USR-SUB-102',
+    userEmail: 'liam.davies@london-capital.uk',
+    userName: 'Liam Davies',
+    packageName: '$25K Instant Funded',
+    packageSku: 'BFT-IF-25K',
+    amount: 499,
+    createdAt: '2026-09-29T10:15:00Z',
+  },
+  {
+    userId: 'USR-GRAND-201',
+    userEmail: 'sophia.chen@sg-wealth.sg',
+    userName: 'Sophia Chen',
+    packageName: '$50K 2-Step Challenge',
+    packageSku: 'BFT-2S-50K',
+    amount: 279,
+    createdAt: '2026-10-04T18:40:00Z',
+  },
+  {
+    userId: 'USR-GRAND-202',
+    userEmail: 'lucas.b@paris-quant.fr',
+    userName: 'Lucas Bernard',
+    packageName: '$10K Instant Funded',
+    packageSku: 'BFT-IF-10K',
+    amount: 249,
+    createdAt: '2026-10-12T09:30:00Z',
+  },
+  {
+    userId: 'USR-LEAF-301',
+    userEmail: 'd.miller@austin-trader.us',
+    userName: 'David Miller',
+    packageName: '$50K Instant Funded',
+    packageSku: 'BFT-IF-50K',
+    amount: 899,
+    createdAt: '2026-10-15T16:05:00Z',
+  },
+  {
+    userId: 'USR-LEAF-302',
+    userEmail: 'kaito.t@tokyo-options.jp',
+    userName: 'Kaito Tanaka',
+    packageName: '$100K 1-Step Challenge',
+    packageSku: 'BFT-1S-100K',
+    amount: 549,
+    createdAt: '2026-10-20T11:55:00Z',
+  },
+];
+
+export function loadAffiliateUserPurchases(): AffiliateUserPurchaseRecord[] {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem(AFFILIATE_PURCHASES_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return INITIAL_USER_PURCHASES;
+}
+
+export function saveAffiliateUserPurchases(records: AffiliateUserPurchaseRecord[]): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(AFFILIATE_PURCHASES_STORAGE_KEY, JSON.stringify(records));
+    }
+  } catch {
+    // ignore
+  }
+}
+
+export function recordAffiliateUserPurchase(params: {
+  userId: string;
+  userEmail?: string;
+  userName?: string;
+  packageName: string;
+  packageSku?: string;
+  amount: number;
+}): AffiliateUserPurchaseRecord[] {
+  const existing = [...loadAffiliateUserPurchases()];
+  const formattedName = formatPurchasedPackageLabel(params.packageName, params.packageSku, params.amount);
+  const newRec: AffiliateUserPurchaseRecord = {
+    userId: params.userId,
+    userEmail: params.userEmail,
+    userName: params.userName,
+    packageName: formattedName !== 'No Purchase' ? formattedName : params.packageName,
+    packageSku: params.packageSku || 'BFT-PKG',
+    amount: Number(params.amount || 0),
+    createdAt: new Date().toISOString(),
+  };
+  const filtered = existing.filter(
+    (p) =>
+      p.userId !== params.userId &&
+      (!params.userEmail || !p.userEmail || p.userEmail.toLowerCase() !== params.userEmail.toLowerCase())
+  );
+  const updated = [newRec, ...filtered];
+  saveAffiliateUserPurchases(updated);
+  return updated;
+}
+
 export function process3TierCommissions(params: {
   buyerUserId: string;
   buyerName: string;
@@ -669,6 +894,7 @@ export function process3TierCommissions(params: {
   packageTier: ChallengeTier;
   packageName: string;
   packagePrice: number;
+  packageSku?: string;
   referralCodeUsed?: string | null;
   users?: UserAccount[];
   existingReferrals?: ReferralRecord[];
@@ -680,15 +906,24 @@ export function process3TierCommissions(params: {
     packageTier,
     packageName,
     packagePrice,
+    packageSku,
     referralCodeUsed,
   } = params;
+
+  const cleanDisplayPkgName =
+    formatPurchasedPackageLabel(packageName, packageSku, packagePrice) !== 'No Purchase'
+      ? formatPurchasedPackageLabel(packageName, packageSku, packagePrice)
+      : packageName;
 
   const users = [...(params.users || loadAffiliateUsers())];
   const referrals = [...(params.existingReferrals || loadAffiliateReferrals())];
   const newReferrals: ReferralRecord[] = [];
 
-  // Ensure buyer user exists or is registered
-  let buyer = users.find((u) => u.id === buyerUserId);
+  // Ensure buyer user exists or is registered (match by ID or email)
+  let buyer =
+    users.find((u) => u.id === buyerUserId) ||
+    (buyerEmail ? users.find((u) => u.email.toLowerCase() === buyerEmail.trim().toLowerCase()) : undefined);
+
   if (!buyer) {
     // Check if referral code was used to find parent
     let parentId: string | undefined = undefined;
@@ -714,15 +949,25 @@ export function process3TierCommissions(params: {
     const parent = users.find(
       (u) => u.referralCode.toUpperCase() === referralCodeUsed.toUpperCase()
     );
-    if (parent && parent.id !== buyerUserId) {
+    if (parent && parent.id !== buyer.id) {
       buyer.referredBy = parent.id;
     }
   }
 
-  // 1. Level 1 Referrer (Direct)
+  // Record the buyer's package purchase so the Full Referred Network Tree immediately reflects it
+  recordAffiliateUserPurchase({
+    userId: buyer.id,
+    userEmail: buyer.email,
+    userName: buyer.name,
+    packageName: cleanDisplayPkgName,
+    packageSku: packageSku || `BFT-${packageTier.toUpperCase()}`,
+    amount: packagePrice,
+  });
+
+  // 1. Level 1 Referrer (Direct: 10%)
   if (buyer.referredBy) {
     const l1Referrer = users.find((u) => u.id === buyer?.referredBy);
-    if (l1Referrer && l1Referrer.id !== buyerUserId) {
+    if (l1Referrer && l1Referrer.id !== buyer.id) {
       const l1Amount = Number((packagePrice * COMMISSION_RATES.LEVEL_1).toFixed(2));
       const refL1: ReferralRecord = {
         id: `REF-${Date.now()}-L1`,
@@ -733,7 +978,7 @@ export function process3TierCommissions(params: {
         level: 1,
         commissionType: 'package',
         packageTier,
-        packageName,
+        packageName: cleanDisplayPkgName,
         packagePrice,
         commissionRate: COMMISSION_RATES.LEVEL_1,
         commissionAmount: l1Amount,
@@ -743,10 +988,10 @@ export function process3TierCommissions(params: {
       newReferrals.push(refL1);
       referrals.unshift(refL1);
 
-      // 2. Level 2 Referrer (Parent of L1)
+      // 2. Level 2 Referrer (Parent of L1: 5%)
       if (l1Referrer.referredBy) {
         const l2Referrer = users.find((u) => u.id === l1Referrer.referredBy);
-        if (l2Referrer && l2Referrer.id !== buyerUserId) {
+        if (l2Referrer && l2Referrer.id !== buyer.id) {
           const l2Amount = Number((packagePrice * COMMISSION_RATES.LEVEL_2).toFixed(2));
           const refL2: ReferralRecord = {
             id: `REF-${Date.now()}-L2`,
@@ -757,7 +1002,7 @@ export function process3TierCommissions(params: {
             level: 2,
             commissionType: 'package',
             packageTier,
-            packageName,
+            packageName: cleanDisplayPkgName,
             packagePrice,
             commissionRate: COMMISSION_RATES.LEVEL_2,
             commissionAmount: l2Amount,
@@ -767,10 +1012,10 @@ export function process3TierCommissions(params: {
           newReferrals.push(refL2);
           referrals.unshift(refL2);
 
-          // 3. Level 3 Referrer (Parent of L2)
+          // 3. Level 3 Referrer (Parent of L2: 2%)
           if (l2Referrer.referredBy) {
             const l3Referrer = users.find((u) => u.id === l2Referrer.referredBy);
-            if (l3Referrer && l3Referrer.id !== buyerUserId) {
+            if (l3Referrer && l3Referrer.id !== buyer.id) {
               const l3Amount = Number((packagePrice * COMMISSION_RATES.LEVEL_3).toFixed(2));
               const refL3: ReferralRecord = {
                 id: `REF-${Date.now()}-L3`,
@@ -781,7 +1026,7 @@ export function process3TierCommissions(params: {
                 level: 3,
                 commissionType: 'package',
                 packageTier,
-                packageName,
+                packageName: cleanDisplayPkgName,
                 packagePrice,
                 commissionRate: COMMISSION_RATES.LEVEL_3,
                 commissionAmount: l3Amount,
@@ -808,6 +1053,240 @@ export function process3TierCommissions(params: {
 }
 
 /**
+ * Resolves the latest package purchase for a referred user from all available sources:
+ * 1) Direct purchase records (`user_purchases` / `AffiliateUserPurchaseRecord`)
+ * 2) Commission ledger entries (`ReferralRecord[]` where `referredUserId === user.id` and `commissionType === 'package'`)
+ * 3) Pre-populated `latestPurchase` on the node
+ */
+export function resolveReferredUserPurchase(
+  user: { id: string; fullName?: string; email?: string; latestPurchase?: { name: string; sku: string; amount: number } },
+  purchasesList?: Array<any>,
+  referralsList?: ReferralRecord[]
+): { name: string; sku: string; amount: number } | undefined {
+  // 1. Check explicit purchase records first
+  const purchases = purchasesList || loadAffiliateUserPurchases();
+  const matchedPurchase = purchases.find((p: any) => {
+    const pUserId = String(p.userId || p.user_id || '').trim();
+    const pEmail = String(p.userEmail || p.user_email || p.email || '').trim().toLowerCase();
+    if (pUserId && pUserId === user.id) return true;
+    if (user.email && pEmail && pEmail === user.email.trim().toLowerCase()) return true;
+    return false;
+  });
+
+  if (matchedPurchase) {
+    const amount = Number(matchedPurchase.package_amount ?? matchedPurchase.amount ?? matchedPurchase.price ?? 0);
+    const rawName = matchedPurchase.packageName || matchedPurchase.package_name || 'Challenge Package';
+    const rawSku = matchedPurchase.packageSku || matchedPurchase.package_sku || matchedPurchase.sku || 'BFT-PKG';
+    if (amount > 0) {
+      const formattedLabel = formatPurchasedPackageLabel(rawName, rawSku, amount);
+      return {
+        name: formattedLabel !== 'No Purchase' ? formattedLabel : rawName,
+        sku: rawSku,
+        amount,
+      };
+    }
+  }
+
+  // 2. Check existing latestPurchase on the node
+  if (user.latestPurchase && Number(user.latestPurchase.amount) > 0) {
+    const formattedLabel = formatPurchasedPackageLabel(
+      user.latestPurchase.name,
+      user.latestPurchase.sku,
+      user.latestPurchase.amount
+    );
+    return {
+      name: formattedLabel !== 'No Purchase' ? formattedLabel : user.latestPurchase.name,
+      sku: user.latestPurchase.sku || 'BFT-PKG',
+      amount: Number(user.latestPurchase.amount),
+    };
+  }
+
+  // 3. Check 3-tier commission ledger records (any package commission triggered by this referred user)
+  const referrals = referralsList || loadAffiliateReferrals();
+  const matchedComm = referrals.find(
+    (r) =>
+      r.commissionType !== 'withdrawal' &&
+      r.packagePrice > 0 &&
+      (r.referredUserId === user.id ||
+        (user.fullName &&
+          r.referredUserName &&
+          r.referredUserName.trim().toLowerCase() === user.fullName.trim().toLowerCase()))
+  );
+
+  if (matchedComm) {
+    const formattedLabel = formatPurchasedPackageLabel(
+      matchedComm.packageName,
+      matchedComm.packageTier,
+      matchedComm.packagePrice
+    );
+    return {
+      name: formattedLabel !== 'No Purchase' ? formattedLabel : matchedComm.packageName,
+      sku: matchedComm.packageTier ? `BFT-${matchedComm.packageTier.toUpperCase()}` : 'BFT-PKG',
+      amount: Number(matchedComm.packagePrice),
+    };
+  }
+
+  return undefined;
+}
+
+/**
+ * Builds the complete 3-tier ReferredUser[] network tree (L1, L2, L3) for a sponsor,
+ * merging nodes from Supabase/backend/local users and enriching every node with its
+ * actual purchased package name and exact amount paid.
+ */
+export function buildReferredNetworkTree(params: {
+  sponsorId: string;
+  externalNodes?: ReferredUser[];
+  usersList?: UserAccount[];
+  purchasesList?: Array<any>;
+  referralsList?: ReferralRecord[];
+}): ReferredUser[] {
+  const { sponsorId, externalNodes = [], usersList, purchasesList, referralsList } = params;
+  const users = usersList || loadAffiliateUsers();
+  const referrals = referralsList || loadAffiliateReferrals();
+  const purchases = [...(purchasesList || []), ...loadAffiliateUserPurchases()];
+
+  const nodeMap = new Map<string, ReferredUser>();
+
+  // 1. Add external nodes (from Supabase or backend API)
+  for (const ext of externalNodes) {
+    if (!ext || !ext.id) continue;
+    nodeMap.set(ext.id, {
+      id: ext.id,
+      fullName: ext.fullName || 'Trader',
+      level: ext.level,
+      latestPurchase: resolveReferredUserPurchase(ext, purchases, referrals),
+    });
+  }
+
+  // 2. Traverse local 3-tier user tree for sponsorId (and also fallback to usr_bft_001 if sponsor has no external nodes)
+  const effectiveSponsorIds = new Set<string>([sponsorId]);
+  if (nodeMap.size === 0) {
+    effectiveSponsorIds.add('usr_bft_001');
+  }
+
+  const l1Users = users.filter((u) => u.referredBy && effectiveSponsorIds.has(u.referredBy));
+  const l1Ids = new Set(l1Users.map((u) => u.id));
+  const l2Users = users.filter((u) => u.referredBy && l1Ids.has(u.referredBy));
+  const l2Ids = new Set(l2Users.map((u) => u.id));
+  const l3Users = users.filter((u) => u.referredBy && l2Ids.has(u.referredBy));
+
+  const addLocalUser = (u: UserAccount, level: 1 | 2 | 3) => {
+    const existing = nodeMap.get(u.id);
+    const resolvedPurchase = resolveReferredUserPurchase(
+      {
+        id: u.id,
+        fullName: u.name,
+        email: u.email,
+        latestPurchase: existing?.latestPurchase,
+      },
+      purchases,
+      referrals
+    );
+    nodeMap.set(u.id, {
+      id: u.id,
+      fullName: existing?.fullName && existing.fullName !== 'Trader' ? existing.fullName : u.name,
+      level: existing?.level || level,
+      latestPurchase: resolvedPurchase,
+    });
+  };
+
+  if (externalNodes.length === 0 || effectiveSponsorIds.has(sponsorId)) {
+    for (const u of l1Users) addLocalUser(u, 1);
+    for (const u of l2Users) addLocalUser(u, 2);
+    for (const u of l3Users) addLocalUser(u, 3);
+  }
+
+  // 3. Also ensure any user who generated a commission for this sponsor in `referrals` is present in the network tree
+  for (const r of referrals) {
+    if (effectiveSponsorIds.has(r.referrerId) && r.referredUserId && !nodeMap.has(r.referredUserId)) {
+      const level = (r.level === 1 || r.level === 2 || r.level === 3 ? r.level : 1) as 1 | 2 | 3;
+      const node: ReferredUser = {
+        id: r.referredUserId,
+        fullName: r.referredUserName || `Trader ${r.referredUserId.slice(0, 6)}`,
+        level,
+      };
+      node.latestPurchase = resolveReferredUserPurchase(node, purchases, referrals);
+      nodeMap.set(node.id, node);
+    }
+  }
+
+  return Array.from(nodeMap.values()).sort((a, b) => a.level - b.level);
+}
+
+/**
+ * Merges and deduplicates commission records across multiple sources (local state, Supabase, backend API)
+ * and normalizes package names and tier rates (10% L1, 5% L2, 2% L3, 8% Payout Bonus).
+ */
+export function mergeCommissionLedgers(params: {
+  sponsorIds: string[];
+  localReferrals?: ReferralRecord[];
+  supabaseReferrals?: ReferralRecord[];
+  backendReferrals?: ReferralRecord[];
+}): ReferralRecord[] {
+  const validSponsorIds = new Set(params.sponsorIds.filter(Boolean));
+  const combined = [
+    ...(params.supabaseReferrals || []),
+    ...(params.backendReferrals || []),
+    ...(params.localReferrals || []),
+  ];
+
+  const seenKeys = new Set<string>();
+  const result: ReferralRecord[] = [];
+
+  const hasExplicitSponsorRecords =
+    validSponsorIds.size > 0 &&
+    combined.some((item) => item && validSponsorIds.has(item.referrerId));
+
+  for (const item of combined) {
+    if (!item) continue;
+    // Match sponsor ID if validSponsorIds is non-empty, or accept usr_bft_001 fallback records only if sponsor has no explicit records
+    const matchesSponsor =
+      validSponsorIds.size === 0 ||
+      validSponsorIds.has(item.referrerId) ||
+      (!hasExplicitSponsorRecords && item.referrerId === 'usr_bft_001');
+    if (!matchesSponsor) continue;
+
+    const cleanPkgName =
+      item.commissionType === 'withdrawal'
+        ? item.packageName
+        : formatPurchasedPackageLabel(item.packageName, item.packageTier, item.packagePrice) !== 'No Purchase'
+        ? formatPurchasedPackageLabel(item.packageName, item.packageTier, item.packagePrice)
+        : item.packageName;
+
+    const expectedRate =
+      item.commissionType === 'withdrawal'
+        ? COMMISSION_RATES.WITHDRAWAL_ROYALTY
+        : item.level === 1
+        ? COMMISSION_RATES.LEVEL_1
+        : item.level === 2
+        ? COMMISSION_RATES.LEVEL_2
+        : COMMISSION_RATES.LEVEL_3;
+
+    const normalizedAmount =
+      item.commissionAmount > 0
+        ? Number(item.commissionAmount.toFixed(2))
+        : Number((Number(item.packagePrice || 0) * expectedRate).toFixed(2));
+
+    const dedupKey = `${item.referredUserId}-${item.level}-${item.commissionType}-${Number(item.packagePrice).toFixed(2)}-${normalizedAmount.toFixed(2)}`;
+    if (seenKeys.has(item.id) || seenKeys.has(dedupKey)) continue;
+    seenKeys.add(item.id);
+    seenKeys.add(dedupKey);
+
+    result.push({
+      ...item,
+      packageName: cleanPkgName,
+      commissionRate: expectedRate,
+      commissionAmount: normalizedAmount,
+    });
+  }
+
+  return result.sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
+}
+
+/**
  * Calculates aggregated stats for the current user across all 3 tiers.
  */
 export function calculateAffiliateStats(
@@ -815,11 +1294,12 @@ export function calculateAffiliateStats(
   referralsList?: ReferralRecord[],
   payoutsList?: AffiliatePayout[]
 ): AffiliateStats {
-  const referrals = (referralsList || loadAffiliateReferrals()).filter(
-    (r) => r.referrerId === userId
+  const allRefs = referralsList || loadAffiliateReferrals();
+  const referrals = allRefs.filter(
+    (r) => r.referrerId === userId || (userId && r.referrerId === 'usr_bft_001' && !allRefs.some((x) => x.referrerId === userId))
   );
   const payouts = (payoutsList || loadAffiliatePayouts()).filter(
-    (p) => p.userId === userId
+    (p) => p.userId === userId || p.userId === 'usr_bft_001'
   );
 
   let lifetimeEarnings = 0;
@@ -939,3 +1419,4 @@ function generateSampleTxHash(): string {
   }
   return hash;
 }
+

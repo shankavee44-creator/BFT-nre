@@ -186,7 +186,7 @@ test('Personal Live Trading Account (Self-Funded Balance): supports direct depos
   assert.equal(afterDeposit.currentBalance, 1750);
   assert.equal(afterDeposit.depositedCapital, 1750);
 
-  // Withdraw $500 of deposited capital (even with $0 profit) -> succeeds with 100% retention and 10% fee ($450 net)
+  // Withdraw $500 of deposited capital (even with $0 profit) -> succeeds with 100% retention and 3% fee ($15 fee, $485 net)
   const withdrawalRes = processWithdrawalRequest({
     userId: 'usr_bft_001',
     accountId: 'BFT-PERS-001',
@@ -196,12 +196,12 @@ test('Personal Live Trading Account (Self-Funded Balance): supports direct depos
     paymentMethod: 'crypto_trc20',
   });
   assert.equal(withdrawalRes.breakdown.profitShareRate, 1.0);
-  assert.equal(withdrawalRes.breakdown.feeAmount, 50);
-  assert.equal(withdrawalRes.breakdown.netPayout, 450);
+  assert.equal(withdrawalRes.breakdown.feeAmount, 15);
+  assert.equal(withdrawalRes.breakdown.netPayout, 485);
   assert.equal(withdrawalRes.breakdown.isPersonalLive, true);
   assert.equal((withdrawalRes.withdrawal as any).profit_share_rate, 1.0);
-  assert.equal((withdrawalRes.withdrawal as any).fee_amount, 50);
-  assert.equal((withdrawalRes.withdrawal as any).net_payout, 450);
+  assert.equal((withdrawalRes.withdrawal as any).fee_amount, 15);
+  assert.equal((withdrawalRes.withdrawal as any).net_payout, 485);
 });
 
 

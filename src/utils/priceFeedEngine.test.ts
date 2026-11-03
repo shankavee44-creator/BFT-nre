@@ -9,6 +9,7 @@ import {
   getAssetTimeOffsetMs,
   calculateCandleCloseDynamics,
   calculateRiskManagementOffset,
+  setServerTimeOffset,
 } from './priceFeedEngine';
 import { AssetInfo } from '../types';
 import {
@@ -528,3 +529,51 @@ test('Risk-Management Offset: subtle probability adjustment and strike-zone tigh
   });
   assert.ok(Number.isFinite(nextLivePrice) && nextLivePrice > 0);
 });
+
+test('Global Price Consistency: long-active user and newly-joined user see 100% identical candles and live prices without refreshing', () => {
+  resetAssetMarketState();
+
+  const baseServerTime = Date.now();
+  setServerTimeOffset(baseServerTime);
+  const asset = findAssetBySymbol('EUR/USD (OTC)');
+
+  // 1. User A joins at baseServerTime and steps live through 3 minutes (crossing multiple 5s, 15s, and 60s candle buckets)
+  let currentServerTime = baseServerTime;
+  const userAInitial = aggregateCandlesForTimeframe(asset, 60);
+  assert.equal(userAInitial.length, 1500);
+
+  let userALastPrice = 0;
+  for (let step = 1; step <= 72; step++) {
+    currentServerTime = baseServerTime + step * 2500; // 72 * 2.5s = 180s (3 full 1m candles)
+    setServerTimeOffset(currentServerTime);
+    userALastPrice = stepOrganicLiveTick(asset, {
+      timeframeSeconds: 60,
+      nowMs: currentServerTime,
+    });
+  }
+  const userACandlesAfter3Min = aggregateCandlesForTimeframe(asset, 60);
+
+  // 2. User B joins fresh at currentServerTime (simulating a brand-new user opening the Trading page without any prior state)
+  resetAssetMarketState();
+  setServerTimeOffset(currentServerTime);
+  const userBPrice = stepOrganicLiveTick(asset, {
+    timeframeSeconds: 60,
+    nowMs: currentServerTime,
+  });
+  const userBCandlesFresh = aggregateCandlesForTimeframe(asset, 60);
+
+  // 3. Verify 100% identical live price and candle series between long-active User A and newly-joined User B
+  assert.equal(userALastPrice, userBPrice, 'Long-active user and newly-joined user must see identical live price');
+  assert.equal(userACandlesAfter3Min.length, userBCandlesFresh.length);
+
+  for (let i = 0; i < userACandlesAfter3Min.length; i++) {
+    const ca = userACandlesAfter3Min[i];
+    const cb = userBCandlesFresh[i];
+    assert.equal(ca.time, cb.time, `Candle[${i}] timestamp mismatch`);
+    assert.equal(ca.open, cb.open, `Candle[${i}] open mismatch`);
+    assert.equal(ca.close, cb.close, `Candle[${i}] close mismatch`);
+    assert.equal(ca.high, cb.high, `Candle[${i}] high mismatch`);
+    assert.equal(ca.low, cb.low, `Candle[${i}] low mismatch`);
+  }
+});
+

@@ -190,3 +190,28 @@ test('Database Trade Execution & Settlement - Atomic Balance Updates', () => {
   assert.equal(settledTrade.status, 'won');
 });
 
+test('LiveMarketFeedEngine - Heartbeat auto-reconnection and resync listener catch-up', async () => {
+  const engine = new LiveMarketFeedEngine();
+  let resyncReceived = false;
+  let lastResyncSymbol = '';
+
+  const unsub = engine.addResyncListener((payload) => {
+    resyncReceived = true;
+    lastResyncSymbol = payload.symbol;
+    assert.ok(payload.candles.length >= 100);
+    assert.ok(payload.price > 0);
+  });
+
+  await engine.syncActiveSymbolSnapshot('EUR/USD (OTC)', 60);
+  assert.equal(resyncReceived, true);
+  assert.equal(lastResyncSymbol, 'EUR/USD');
+
+  const prevReconnects = engine.getStatus().reconnectCount || 0;
+  engine.reconnectAndCatchUp();
+  assert.equal(engine.getStatus().reconnectCount, prevReconnects + 1);
+
+  unsub();
+  engine.destroy();
+});
+
+

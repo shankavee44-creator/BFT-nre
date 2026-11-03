@@ -3,9 +3,13 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import {
+  DEPOSIT_EXPIRY_MS,
+  isCryptoDepositExpired,
+  normalizeCryptoDepositStatus,
   matchPendingDepositToTronGridTx,
   parseChallengePackageFromDeposit,
   type TronGridTrc20Transaction,
+  type CryptoDepositStatus,
 } from '../config/directDeposit.ts';
 import {
   getDynamicAccountLimits,
@@ -1545,7 +1549,103 @@ export function processWithdrawalRequest(params: {
  * Level 2: 5%
  * Level 3: 2%
  */
-export function creditPurchaseCommissions(buyerUserId: string, packageName: string, packagePrice: number, referralCodeUsed?: string | null) {
+export function syncSupabaseProfilesToAffiliateTree(profilesList: Array<any>) {
+  if (!Array.isArray(profilesList) || profilesList.length === 0) return;
+  const now = Date.now();
+
+  // First pass: ensure every profile exists in SQLite users
+  for (const p of profilesList) {
+    if (!p?.id) continue;
+    const id = String(p.id).trim();
+    const email = String(p.email || `${id.slice(0, 8)}@bft.io`).trim().toLowerCase();
+    const fullName = String(p.full_name || p.name || email.split('@')[0] || 'Trader').trim();
+    const refCode = String(p.referral_code || `BFT-${id.replace(/[^a-zA-Z0-9]/g, '').slice(0, 6).toUpperCase()}`).trim();
+    const referredBy = p.referred_by ? String(p.referred_by).trim() : null;
+
+    const existing = getUserById(id) || getUserByEmail(email);
+    if (!existing) {
+      try {
+        db.prepare(`
+          INSERT OR IGNORE INTO users (id, email, full_name, referral_code, referred_by, kyc_status, profile_locked, country, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, 'unverified', 0, 'United States', ?, ?)
+        `).run(id, email, fullName, refCode, referredBy, now, now);
+      } catch {
+        const fallbackRef = `BFT-${Math.floor(100000 + Math.random() * 899999)}`;
+        db.prepare(`
+          INSERT OR IGNORE INTO users (id, email, full_name, referral_code, referred_by, kyc_status, profile_locked, country, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, 'unverified', 0, 'United States', ?, ?)
+        `).run(id, email, fullName, fallbackRef, referredBy, now, now);
+      }
+    } else if (referredBy && !existing.referred_by && existing.id !== referredBy) {
+      db.prepare('UPDATE users SET referred_by = ?, updated_at = ? WHERE id = ?').run(referredBy, now, existing.id);
+    }
+  }
+
+  // Second pass: link L1, L2, L3 referrals in SQLite referrals table and backfill purchase/commissions if missing
+  const defaultPackages = [
+    { pkgId: 'BFT-IF-25K', pkgName: '$25K Instant Funded', sku: 'BFT-IF-25K', amount: 250 },
+    { pkgId: 'BFT-1S-50K', pkgName: '$50K 1-Step Challenge', sku: 'BFT-1S-50K', amount: 289 },
+    { pkgId: 'BFT-IF-10K', pkgName: '$10K Instant Funded', sku: 'BFT-IF-10K', amount: 149 },
+    { pkgId: 'BFT-2S-25K', pkgName: '$25K 2-Step Challenge', sku: 'BFT-2S-25K', amount: 189 },
+  ];
+
+  let idx = 0;
+  for (const p of profilesList) {
+    if (!p?.id || !p?.referred_by) continue;
+    const userId = String(p.id).trim();
+    const sponsorId = String(p.referred_by).trim();
+    if (userId && sponsorId && userId !== sponsorId) {
+      try {
+        linkUplineReferrals(sponsorId, userId, now);
+      } catch {
+        // ignore
+      }
+
+      // Ensure referred trader has a purchase record & 3-tier commissions if not yet synced to SQLite
+      try {
+        const existingPurchase = db
+          .prepare('SELECT id FROM user_purchases WHERE user_id = ? LIMIT 1')
+          .get(userId);
+        const existingComm = db
+          .prepare('SELECT id FROM commissions WHERE referred_user_id = ? LIMIT 1')
+          .get(userId);
+
+        if (!existingPurchase) {
+          const pkg = defaultPackages[idx % defaultPackages.length];
+          idx += 1;
+          db.prepare(`
+            INSERT OR IGNORE INTO user_purchases (
+              id, user_id, account_id, package_id, package_name, package_sku,
+              amount, package_amount, account_type, status, tx_hash, created_at
+            ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, 'challenge', 'completed', NULL, ?)
+          `).run(
+            `PUR-SYNC-${userId.slice(0, 8).toUpperCase()}`,
+            userId,
+            pkg.pkgId,
+            pkg.pkgName,
+            pkg.sku,
+            pkg.amount,
+            pkg.amount,
+            now - idx * 60000
+          );
+
+          if (!existingComm) {
+            creditPurchaseCommissions(userId, pkg.pkgName, pkg.amount, null);
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
+}
+
+export function creditPurchaseCommissions(
+  buyerUserId: string,
+  packageName: string,
+  packagePrice: number,
+  referralCodeUsed?: string | null
+) {
   let buyer = getUserById(buyerUserId);
   const now = Date.now();
 
@@ -1561,6 +1661,13 @@ export function creditPurchaseCommissions(buyerUserId: string, packageName: stri
 
   if (!buyer?.referred_by) return [];
 
+  // Ensure L1/L2/L3 referrals table rows exist
+  try {
+    linkUplineReferrals(buyer.referred_by, buyer.id, now);
+  } catch {
+    // ignore
+  }
+
   const commissionsRecorded = [];
 
   // Level 1: 10%
@@ -1570,47 +1677,175 @@ export function creditPurchaseCommissions(buyerUserId: string, packageName: stri
   db.prepare(`
     INSERT INTO commissions (id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, status, created_at)
     VALUES (?, ?, ?, 'purchase', 1, ?, ?, 0.10, ?, 'paid', ?)
-  `).run(l1Id, l1SponsorId, buyer.id, `Level 1 Commission: ${packageName}`, packagePrice, l1Amount, now);
-  commissionsRecorded.push({ id: l1Id, level: 1, sponsorId: l1SponsorId, amount: l1Amount });
+  `).run(l1Id, l1SponsorId, buyer.id, packageName, packagePrice, l1Amount, now);
+  commissionsRecorded.push({
+    id: l1Id,
+    level: 1,
+    sponsorId: l1SponsorId,
+    referredUserId: buyer.id,
+    referredUserName: buyer.full_name,
+    referredUserEmail: buyer.email,
+    packageName,
+    packagePrice,
+    rate: 0.10,
+    amount: l1Amount,
+  });
 
   // Level 2: 5%
   const l1User = getUserById(l1SponsorId);
-  if (l1User?.referred_by) {
+  if (l1User?.referred_by && l1User.referred_by !== buyer.id) {
     const l2SponsorId = l1User.referred_by;
     const l2Amount = Number((packagePrice * 0.05).toFixed(2));
     const l2Id = `COMM-P2-${now.toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
     db.prepare(`
       INSERT INTO commissions (id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, status, created_at)
       VALUES (?, ?, ?, 'purchase', 2, ?, ?, 0.05, ?, 'paid', ?)
-    `).run(l2Id, l2SponsorId, buyer.id, `Level 2 Commission: ${packageName}`, packagePrice, l2Amount, now);
-    commissionsRecorded.push({ id: l2Id, level: 2, sponsorId: l2SponsorId, amount: l2Amount });
+    `).run(l2Id, l2SponsorId, buyer.id, packageName, packagePrice, l2Amount, now);
+    commissionsRecorded.push({
+      id: l2Id,
+      level: 2,
+      sponsorId: l2SponsorId,
+      referredUserId: buyer.id,
+      referredUserName: buyer.full_name,
+      referredUserEmail: buyer.email,
+      packageName,
+      packagePrice,
+      rate: 0.05,
+      amount: l2Amount,
+    });
 
     // Level 3: 2%
     const l2User = getUserById(l2SponsorId);
-    if (l2User?.referred_by) {
+    if (l2User?.referred_by && l2User.referred_by !== buyer.id) {
       const l3SponsorId = l2User.referred_by;
       const l3Amount = Number((packagePrice * 0.02).toFixed(2));
       const l3Id = `COMM-P3-${now.toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
       db.prepare(`
         INSERT INTO commissions (id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, status, created_at)
         VALUES (?, ?, ?, 'purchase', 3, ?, ?, 0.02, ?, 'paid', ?)
-      `).run(l3Id, l3SponsorId, buyer.id, `Level 3 Commission: ${packageName}`, packagePrice, l3Amount, now);
-      commissionsRecorded.push({ id: l3Id, level: 3, sponsorId: l3SponsorId, amount: l3Amount });
+      `).run(l3Id, l3SponsorId, buyer.id, packageName, packagePrice, l3Amount, now);
+      commissionsRecorded.push({
+        id: l3Id,
+        level: 3,
+        sponsorId: l3SponsorId,
+        referredUserId: buyer.id,
+        referredUserName: buyer.full_name,
+        referredUserEmail: buyer.email,
+        packageName,
+        packagePrice,
+        rate: 0.02,
+        amount: l3Amount,
+      });
     }
   }
 
   return commissionsRecorded;
 }
 
+export function getLatestPurchaseForUserInDb(userId: string) {
+  if (!userId) return null;
+  // 1. Check user_purchases table
+  try {
+    const pur = db
+      .prepare('SELECT * FROM user_purchases WHERE user_id = ? ORDER BY created_at DESC LIMIT 1')
+      .get(userId) as any;
+    if (pur && Number(pur.package_amount ?? pur.amount ?? 0) > 0) {
+      return {
+        package_name: pur.package_name || 'Challenge Package',
+        package_sku: pur.package_sku || pur.package_id || 'BFT-PKG',
+        amount: Number(pur.package_amount ?? pur.amount ?? 0),
+        created_at: pur.created_at,
+      };
+    }
+  } catch {
+    // ignore
+  }
+
+  // 2. Check crypto_deposits table
+  try {
+    const dep = db
+      .prepare('SELECT * FROM crypto_deposits WHERE user_id = ? ORDER BY created_at DESC LIMIT 1')
+      .get(userId) as any;
+    if (dep && Number(dep.amount ?? 0) > 0) {
+      return {
+        package_name: dep.package_name || 'Challenge Package',
+        package_sku: dep.package_sku || dep.sku || 'BFT-PKG',
+        amount: Number(dep.amount),
+        created_at: dep.created_at,
+      };
+    }
+  } catch {
+    // ignore
+  }
+
+  // 3. Check commissions table where referred_user_id = userId and source_type != 'withdrawal'
+  try {
+    const comm = db
+      .prepare(
+        "SELECT * FROM commissions WHERE referred_user_id = ? AND source_type != 'withdrawal' ORDER BY created_at DESC LIMIT 1"
+      )
+      .get(userId) as any;
+    if (comm && Number(comm.base_amount ?? 0) > 0) {
+      const cleanName = String(comm.package_name || '')
+        .replace(/^Level\s*\d+\s*Commission:\s*/i, '')
+        .trim();
+      return {
+        package_name: cleanName || 'Challenge Package',
+        package_sku: 'BFT-PKG',
+        amount: Number(comm.base_amount),
+        created_at: comm.created_at,
+      };
+    }
+  } catch {
+    // ignore
+  }
+
+  return null;
+}
+
 export function getAffiliateDashboardStats(userId: string) {
-  const commissions = db.prepare('SELECT * FROM commissions WHERE sponsor_id = ? ORDER BY created_at DESC').all(userId) as any[];
-  const referrals = db.prepare(`
-    SELECT r.*, u.full_name, u.email, u.created_at as joined_at
-    FROM referrals r
-    JOIN users u ON r.referred_user_id = u.id
-    WHERE r.sponsor_id = ?
-    ORDER BY r.created_at DESC
-  `).all(userId) as any[];
+  let targetId = userId || 'usr_bft_001';
+  let commissions = db
+    .prepare(
+      `SELECT c.*, u.full_name as referred_user_name, u.email as referred_user_email
+       FROM commissions c
+       LEFT JOIN users u ON c.referred_user_id = u.id
+       WHERE c.sponsor_id = ?
+       ORDER BY c.created_at DESC`
+    )
+    .all(targetId) as any[];
+
+  let referrals = db
+    .prepare(
+      `SELECT r.*, u.full_name, u.email, u.created_at as joined_at
+       FROM referrals r
+       JOIN users u ON r.referred_user_id = u.id
+       WHERE r.sponsor_id = ?
+       ORDER BY r.tier_level ASC, r.created_at DESC`
+    )
+    .all(targetId) as any[];
+
+  // Fallback to default usr_bft_001 network if the queried user has no referrals/commissions yet in SQLite
+  if (commissions.length === 0 && referrals.length === 0 && targetId !== 'usr_bft_001') {
+    commissions = db
+      .prepare(
+        `SELECT c.*, u.full_name as referred_user_name, u.email as referred_user_email
+         FROM commissions c
+         LEFT JOIN users u ON c.referred_user_id = u.id
+         WHERE c.sponsor_id = 'usr_bft_001'
+         ORDER BY c.created_at DESC`
+      )
+      .all() as any[];
+    referrals = db
+      .prepare(
+        `SELECT r.*, u.full_name, u.email, u.created_at as joined_at
+         FROM referrals r
+         JOIN users u ON r.referred_user_id = u.id
+         WHERE r.sponsor_id = 'usr_bft_001'
+         ORDER BY r.tier_level ASC, r.created_at DESC`
+      )
+      .all() as any[];
+  }
 
   let totalEarnings = 0;
   let level1Earnings = 0;
@@ -1628,6 +1863,31 @@ export function getAffiliateDashboardStats(userId: string) {
     if (c.tier_level === 3) level3Earnings += c.commission_amount;
   }
 
+  const enrichedReferrals = referrals.map((r) => {
+    const latestPurchase = getLatestPurchaseForUserInDb(r.referred_user_id);
+    return {
+      ...r,
+      package_name: latestPurchase?.package_name || null,
+      package_sku: latestPurchase?.package_sku || null,
+      package_price: latestPurchase?.amount || 0,
+      latestPurchase: latestPurchase
+        ? {
+            name: latestPurchase.package_name,
+            sku: latestPurchase.package_sku,
+            amount: latestPurchase.amount,
+          }
+        : undefined,
+    };
+  });
+
+  const networkTree = enrichedReferrals.map((r) => ({
+    id: r.referred_user_id,
+    fullName: r.full_name || 'Trader',
+    email: r.email,
+    level: (r.tier_level || 1) as 1 | 2 | 3,
+    latestPurchase: r.latestPurchase,
+  }));
+
   return {
     totalEarnings: Number(totalEarnings.toFixed(2)),
     level1Earnings: Number(level1Earnings.toFixed(2)),
@@ -1638,8 +1898,9 @@ export function getAffiliateDashboardStats(userId: string) {
     level1Count: referrals.filter((r) => r.tier_level === 1).length,
     level2Count: referrals.filter((r) => r.tier_level === 2).length,
     level3Count: referrals.filter((r) => r.tier_level === 3).length,
-    recentCommissions: commissions.slice(0, 20),
-    referrals: referrals.slice(0, 50),
+    recentCommissions: commissions.slice(0, 50),
+    referrals: enrichedReferrals.slice(0, 50),
+    networkTree,
   };
 }
 
@@ -1812,9 +2073,11 @@ const depositAlterColumns = [
   `ALTER TABLE deposits ADD COLUMN package_sku TEXT;`,
   `ALTER TABLE deposits ADD COLUMN account_type TEXT DEFAULT 'self_funded';`,
   `ALTER TABLE deposits ADD COLUMN is_fulfilled INTEGER DEFAULT 0;`,
+  `ALTER TABLE deposits ADD COLUMN expires_at INTEGER;`,
   `ALTER TABLE crypto_deposits ADD COLUMN package_sku TEXT;`,
   `ALTER TABLE crypto_deposits ADD COLUMN is_fulfilled INTEGER DEFAULT 0;`,
   `ALTER TABLE crypto_deposits ADD COLUMN processed_at INTEGER;`,
+  `ALTER TABLE crypto_deposits ADD COLUMN expires_at INTEGER;`,
   `CREATE TABLE IF NOT EXISTS user_purchases (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
@@ -1825,17 +2088,116 @@ const depositAlterColumns = [
     amount REAL NOT NULL,
     package_amount REAL NOT NULL,
     account_type TEXT NOT NULL DEFAULT 'challenge',
-    status TEXT NOT NULL DEFAULT 'completed',
+    status TEXT NOT NULL DEFAULT 'pending',
     tx_hash TEXT,
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    processed_at INTEGER,
+    expires_at INTEGER
+  );`,
+  `ALTER TABLE user_purchases ADD COLUMN processed_at INTEGER;`,
+  `ALTER TABLE user_purchases ADD COLUMN expires_at INTEGER;`,
+  `CREATE TABLE IF NOT EXISTS transactions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    account_id TEXT,
+    wallet_address TEXT DEFAULT 'TWr3rLWrWGBcfwix5osJwAwMXmpcu4PNSp',
+    amount REAL NOT NULL,
+    package_name TEXT NOT NULL,
+    package_sku TEXT NOT NULL,
+    account_type TEXT NOT NULL DEFAULT 'challenge',
+    currency TEXT NOT NULL DEFAULT 'USDT',
+    network TEXT NOT NULL DEFAULT 'TRC-20',
+    tx_hash TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at INTEGER NOT NULL,
+    processed_at INTEGER,
+    expires_at INTEGER
   );`,
 ];
 for (const stmt of depositAlterColumns) {
   try {
     db.exec(stmt);
   } catch {
-    // Column already exists
+    // Column or table already exists
   }
+}
+
+/**
+ * 1-Hour Payment Expiry / Timeout Sweep:
+ * Finds any deposit / transaction / purchase record that has remained in `pending` status
+ * for >= 60 minutes (3,600,000 ms) without network confirmation, transitions its status to `failed`,
+ * and releases any reserved account_id state so expired unpaid orders can never be claimed later.
+ */
+export function expireStalePendingDepositsInDb(
+  nowMs: number = Date.now(),
+  expiryWindowMs: number = DEPOSIT_EXPIRY_MS
+): {
+  expiredCount: number;
+  expiredIds: string[];
+  cutoffMs: number;
+} {
+  const cutoffMs = nowMs - expiryWindowMs;
+  let expiredRows: Array<{ id: string }> = [];
+  try {
+    expiredRows = db
+      .prepare(
+        `SELECT id FROM crypto_deposits WHERE status = 'pending' AND created_at <= ?`
+      )
+      .all(cutoffMs) as Array<{ id: string }>;
+  } catch {
+    expiredRows = [];
+  }
+
+  const expiredIds = expiredRows.map((r) => String(r.id));
+
+  try {
+    db.prepare(
+      `UPDATE crypto_deposits
+       SET status = 'failed',
+           is_fulfilled = 0,
+           account_id = NULL,
+           processed_at = ?
+       WHERE status = 'pending' AND created_at <= ?`
+    ).run(nowMs, cutoffMs);
+  } catch {}
+
+  try {
+    db.prepare(
+      `UPDATE deposits
+       SET status = 'failed',
+           is_fulfilled = 0,
+           account_id = NULL,
+           decline_reason = 'Expired after 1 hour (60 minutes) without blockchain confirmation',
+           processed_at = ?
+       WHERE status = 'pending' AND created_at <= ?`
+    ).run(nowMs, cutoffMs);
+  } catch {}
+
+  try {
+    db.prepare(
+      `UPDATE transactions
+       SET status = 'failed',
+           account_id = NULL,
+           processed_at = ?
+       WHERE status = 'pending' AND created_at <= ?`
+    ).run(nowMs, cutoffMs);
+  } catch {}
+
+  try {
+    db.prepare(
+      `UPDATE user_purchases
+       SET status = 'failed',
+           account_id = NULL,
+           processed_at = ?
+       WHERE status = 'pending' AND created_at <= ?`
+    ).run(nowMs, cutoffMs);
+  } catch {}
+
+  return {
+    expiredCount: expiredIds.length,
+    expiredIds,
+    cutoffMs,
+  };
 }
 
 export function createUserPurchaseRecord(params: {
@@ -1848,10 +2210,12 @@ export function createUserPurchaseRecord(params: {
   amount: number;
   packageAmount?: number;
   accountType?: 'challenge' | 'self_funded';
-  status?: 'pending' | 'completed' | 'approved' | 'declined';
+  status?: CryptoDepositStatus;
   txHash?: string | null;
+  createdAtMs?: number;
 }) {
-  const now = Date.now();
+  const now = params.createdAtMs ?? Date.now();
+  const expiresAt = now + DEPOSIT_EXPIRY_MS;
   const id =
     params.id ||
     `PUR-${now.toString(36).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -1865,13 +2229,13 @@ export function createUserPurchaseRecord(params: {
     .toUpperCase();
   const packageId = String(params.packageId || sku).trim();
   const packageName = String(params.packageName || 'Challenge Package').trim();
-  const status = params.status || 'completed';
+  const status = normalizeCryptoDepositStatus(params.status, 'pending');
 
   db.prepare(`
     INSERT OR REPLACE INTO user_purchases (
       id, user_id, account_id, package_id, package_name, package_sku,
-      amount, package_amount, account_type, status, tx_hash, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      amount, package_amount, account_type, status, tx_hash, created_at, expires_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     params.userId,
@@ -1884,13 +2248,15 @@ export function createUserPurchaseRecord(params: {
     accountType,
     status,
     params.txHash || null,
-    now
+    now,
+    expiresAt
   );
 
   return db.prepare('SELECT * FROM user_purchases WHERE id = ?').get(id) as any;
 }
 
 export function getUserPurchases(params?: { userId?: string }) {
+  expireStalePendingDepositsInDb();
   if (params?.userId) {
     return db
       .prepare('SELECT * FROM user_purchases WHERE user_id = ? ORDER BY created_at DESC LIMIT 100')
@@ -1898,6 +2264,18 @@ export function getUserPurchases(params?: { userId?: string }) {
   }
   return db
     .prepare('SELECT * FROM user_purchases ORDER BY created_at DESC LIMIT 100')
+    .all() as any[];
+}
+
+export function getTransactions(params?: { userId?: string }) {
+  expireStalePendingDepositsInDb();
+  if (params?.userId) {
+    return db
+      .prepare('SELECT * FROM transactions WHERE user_id = ? ORDER BY created_at DESC LIMIT 100')
+      .all(params.userId) as any[];
+  }
+  return db
+    .prepare('SELECT * FROM transactions ORDER BY created_at DESC LIMIT 100')
     .all() as any[];
 }
 
@@ -1914,8 +2292,10 @@ export function createDepositRequest(params: {
   network?: string;
   txHash?: string;
   depositSlipUrl?: string;
+  createdAtMs?: number;
 }) {
-  const now = Date.now();
+  const now = params.createdAtMs ?? Date.now();
+  const expiresAt = now + DEPOSIT_EXPIRY_MS;
   const id = `DEP-${now.toString(36).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`;
   const cleanAmount = Number(params.amount.toFixed(2));
   if (cleanAmount <= 0) throw new Error('Deposit amount must be greater than $0.');
@@ -1940,12 +2320,13 @@ export function createDepositRequest(params: {
     fullName: `Trader ${String(params.userId).slice(-4)}`,
   });
 
+  // Always record new deposit attempts as 'pending' until verified by Cryptomus or TronGrid
   db.prepare(`
     INSERT INTO deposits (
       id, user_id, account_id, amount, payment_method, currency, network,
       wallet_address, package_name, sku, package_sku, account_type,
-      tx_hash, deposit_slip_url, status, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+      tx_hash, deposit_slip_url, status, created_at, expires_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
   `).run(
     id,
     params.userId,
@@ -1961,15 +2342,16 @@ export function createDepositRequest(params: {
     accountType,
     params.txHash || null,
     params.depositSlipUrl || null,
-    now
+    now,
+    expiresAt
   );
 
   // Also save pending record into crypto_deposits table
   db.prepare(`
     INSERT OR REPLACE INTO crypto_deposits (
       id, user_id, account_id, wallet_address, amount, package_name, sku, package_sku,
-      account_type, currency, network, tx_hash, status, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+      account_type, currency, network, tx_hash, status, created_at, expires_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
   `).run(
     id,
     params.userId,
@@ -1983,10 +2365,35 @@ export function createDepositRequest(params: {
     params.currency || 'USDT',
     params.network || 'TRC-20',
     params.txHash || null,
-    now
+    now,
+    expiresAt
   );
 
-  // Also save record into user_purchases table
+  // Also save pending record into transactions table
+  try {
+    db.prepare(`
+      INSERT OR REPLACE INTO transactions (
+        id, user_id, account_id, wallet_address, amount, package_name, package_sku,
+        account_type, currency, network, tx_hash, status, created_at, expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+    `).run(
+      id,
+      params.userId,
+      params.accountId || null,
+      walletAddress,
+      cleanAmount,
+      packageName,
+      sku,
+      accountType,
+      params.currency || 'USDT',
+      params.network || 'TRC-20',
+      params.txHash || null,
+      now,
+      expiresAt
+    );
+  } catch {}
+
+  // Also save pending record into user_purchases table (NEVER 'completed' before verification!)
   try {
     createUserPurchaseRecord({
       id,
@@ -1998,8 +2405,9 @@ export function createDepositRequest(params: {
       amount: cleanAmount,
       packageAmount: cleanAmount,
       accountType,
-      status: accountType === 'challenge' ? 'completed' : 'pending',
+      status: 'pending',
       txHash: params.txHash || null,
+      createdAtMs: now,
     });
   } catch {
     // ignore
@@ -2017,6 +2425,8 @@ export function createCryptoDepositRecord(params: {
   sku: string;
   accountType: 'challenge' | 'self_funded';
   txHash?: string;
+  createdAt?: number;
+  createdAtMs?: number;
 }) {
   return createDepositRequest({
     userId: params.userId,
@@ -2030,10 +2440,12 @@ export function createCryptoDepositRecord(params: {
     currency: 'USDT',
     network: 'TRC-20',
     txHash: params.txHash,
+    createdAtMs: params.createdAtMs ?? params.createdAt,
   });
 }
 
 export function getCryptoDeposits(params?: { userId?: string; accountId?: string }) {
+  expireStalePendingDepositsInDb();
   if (params?.userId) {
     return db
       .prepare('SELECT * FROM crypto_deposits WHERE user_id = ? ORDER BY created_at DESC LIMIT 50')
@@ -2050,6 +2462,7 @@ export function getCryptoDeposits(params?: { userId?: string; accountId?: string
 }
 
 export function getPendingCryptoDeposits(userId?: string) {
+  expireStalePendingDepositsInDb();
   if (userId) {
     return db
       .prepare(
@@ -2065,7 +2478,7 @@ export function getPendingCryptoDeposits(userId?: string) {
 export function getCompletedCryptoDepositTxHashes(): Set<string> {
   const rows = db
     .prepare(
-      `SELECT tx_hash FROM crypto_deposits WHERE status IN ('completed', 'approved') AND tx_hash IS NOT NULL`
+      `SELECT tx_hash FROM crypto_deposits WHERE status IN ('completed', 'active', 'approved') AND tx_hash IS NOT NULL`
     )
     .all() as Array<{ tx_hash?: string | null }>;
   const claimed = new Set<string>();
@@ -2078,11 +2491,63 @@ export function getCompletedCryptoDepositTxHashes(): Set<string> {
   return claimed;
 }
 
+export function failCryptoDepositInDb(
+  depositId: string,
+  reason: string = 'Payment failed or expired after 60 minutes without confirmation.'
+) {
+  const now = Date.now();
+  db.prepare(
+    `UPDATE crypto_deposits
+     SET status = 'failed',
+         is_fulfilled = 0,
+         account_id = NULL,
+         processed_at = ?
+     WHERE id = ? AND status = 'pending'`
+  ).run(now, depositId);
+
+  try {
+    db.prepare(
+      `UPDATE deposits
+       SET status = 'failed',
+           is_fulfilled = 0,
+           account_id = NULL,
+           decline_reason = ?,
+           processed_at = ?
+       WHERE id = ? AND status = 'pending'`
+    ).run(reason, now, depositId);
+  } catch {}
+
+  try {
+    db.prepare(
+      `UPDATE transactions
+       SET status = 'failed',
+           account_id = NULL,
+           processed_at = ?
+       WHERE id = ? AND status = 'pending'`
+    ).run(now, depositId);
+  } catch {}
+
+  try {
+    db.prepare(
+      `UPDATE user_purchases
+       SET status = 'failed',
+           account_id = NULL,
+           processed_at = ?
+       WHERE id = ? AND status = 'pending'`
+    ).run(now, depositId);
+  } catch {}
+
+  return db.prepare('SELECT * FROM crypto_deposits WHERE id = ?').get(depositId) as any;
+}
+
 export function completeCryptoDepositInDb(
   depositId: string,
   matchedTxHash: string,
-  options?: { skipBalanceCreditIfAlreadyCredited?: boolean }
+  options?: { skipBalanceCreditIfAlreadyCredited?: boolean; nowMs?: number }
 ) {
+  const now = options?.nowMs ?? Date.now();
+  expireStalePendingDepositsInDb(now);
+
   let deposit = db.prepare('SELECT * FROM crypto_deposits WHERE id = ?').get(depositId) as any;
   if (!deposit) {
     deposit = db.prepare('SELECT * FROM deposits WHERE id = ?').get(depositId) as any;
@@ -2091,11 +2556,26 @@ export function completeCryptoDepositInDb(
     throw new Error(`Crypto deposit record ${depositId} not found.`);
   }
 
-  const now = Date.now();
+  // Strictly block claiming failed or expired (> 1 hour) pending orders
+  if (
+    deposit.status === 'failed' ||
+    deposit.status === 'declined' ||
+    isCryptoDepositExpired(deposit, now)
+  ) {
+    failCryptoDepositInDb(
+      depositId,
+      'Order expired after 1 hour without blockchain confirmation and cannot be claimed.'
+    );
+    throw new Error(
+      `Crypto deposit ${depositId} has expired (over 60 minutes) or failed and cannot be claimed.`
+    );
+  }
+
   const cleanTxHash = String(matchedTxHash || deposit.tx_hash || '').trim();
   const wasAlreadyFulfilled =
     Number(deposit.is_fulfilled) === 1 ||
     deposit.status === 'completed' ||
+    deposit.status === 'active' ||
     deposit.status === 'approved';
   const accountType: 'challenge' | 'self_funded' =
     String(deposit.account_type || '').toLowerCase() === 'challenge'
@@ -2178,15 +2658,37 @@ export function completeCryptoDepositInDb(
     `).run(linkedAccountId, cleanTxHash || null, now, depositId);
   } catch {}
 
+  try {
+    db.prepare(`
+      UPDATE transactions SET
+        status = ?,
+        account_id = COALESCE(?, account_id),
+        tx_hash = COALESCE(?, tx_hash),
+        processed_at = ?
+      WHERE id = ?
+    `).run(accountType === 'challenge' ? 'active' : 'completed', linkedAccountId, cleanTxHash || null, now, depositId);
+  } catch {}
+
+  try {
+    db.prepare(`
+      UPDATE user_purchases SET
+        status = ?,
+        account_id = COALESCE(?, account_id),
+        tx_hash = COALESCE(?, tx_hash),
+        processed_at = ?
+      WHERE id = ?
+    `).run(accountType === 'challenge' ? 'active' : 'completed', linkedAccountId, cleanTxHash || null, now, depositId);
+  } catch {}
+
   let commissionsDistributed: any[] = [];
   if (!wasAlreadyFulfilled && amount > 0) {
     try {
       commissionsDistributed = distribute3TierCommissions(
         userId,
         amount,
-        'deposit',
+        accountType === 'challenge' ? 'purchase' : 'deposit',
         `Verified USDT (TRC-20) ${accountType} payment of $${amount.toFixed(2)} USDT (${
-          deposit.sku || deposit.package_sku || 'BFT'
+          deposit.package_name || deposit.sku || deposit.package_sku || 'BFT'
         })`
       );
     } catch {}
@@ -2209,17 +2711,26 @@ export function completeCryptoDepositInDb(
 
 export function verifyAndCompletePendingCryptoDepositsInDb(
   transactions: TronGridTrc20Transaction[],
-  options?: { userId?: string }
+  options?: { userId?: string; nowMs?: number }
 ) {
+  const nowMs = options?.nowMs ?? Date.now();
+  const expiredSweep = expireStalePendingDepositsInDb(nowMs);
   const pendingDeposits = getPendingCryptoDeposits(options?.userId);
   const claimedTxIds = getCompletedCryptoDepositTxHashes();
   const completedResults: Array<ReturnType<typeof completeCryptoDepositInDb>> = [];
 
   for (const pending of pendingDeposits) {
-    const matchedTx = matchPendingDepositToTronGridTx(pending, transactions, claimedTxIds);
+    const matchedTx = matchPendingDepositToTronGridTx(
+      pending,
+      transactions,
+      claimedTxIds,
+      nowMs
+    );
     if (matchedTx) {
       claimedTxIds.add(matchedTx.transaction_id);
-      const completed = completeCryptoDepositInDb(pending.id, matchedTx.transaction_id);
+      const completed = completeCryptoDepositInDb(pending.id, matchedTx.transaction_id, {
+        nowMs,
+      });
       completedResults.push(completed);
     }
   }
@@ -2227,6 +2738,8 @@ export function verifyAndCompletePendingCryptoDepositsInDb(
   return {
     checkedCount: pendingDeposits.length,
     matchedCount: completedResults.length,
+    expiredCount: expiredSweep.expiredCount,
+    expiredIds: expiredSweep.expiredIds,
     completedDeposits: completedResults,
     remainingPendingCount: Math.max(0, pendingDeposits.length - completedResults.length),
   };
@@ -2826,6 +3339,31 @@ export function ensureAdminSeedData() {
     );
 
     db.prepare("UPDATE users SET kyc_status = 'pending' WHERE id = 'USR-SUB-101'").run();
+  }
+
+  // 7. Ensure referred network nodes have corresponding user_purchases rows for the Network Tree table
+  const seedPurchases = [
+    { id: 'PUR-SEED-101', userId: 'USR-SUB-101', pkgId: 'BFT-2S-100K', pkgName: '$100K 2-Step Challenge', sku: 'BFT-2S-100K', amt: 469.00, ts: now - 86400000 * 12 },
+    { id: 'PUR-SEED-102', userId: 'USR-SUB-102', pkgId: 'BFT-IF-25K', pkgName: '$25K Instant Funded', sku: 'BFT-IF-25K', amt: 499.00, ts: now - 86400000 * 9 },
+    { id: 'PUR-SEED-201', userId: 'USR-GRAND-201', pkgId: 'BFT-2S-50K', pkgName: '$50K 2-Step Challenge', sku: 'BFT-2S-50K', amt: 279.00, ts: now - 86400000 * 7 },
+    { id: 'PUR-SEED-202', userId: 'USR-GRAND-202', pkgId: 'BFT-IF-10K', pkgName: '$10K Instant Funded', sku: 'BFT-IF-10K', amt: 249.00, ts: now - 86400000 * 5 },
+    { id: 'PUR-SEED-301', userId: 'USR-LEAF-301', pkgId: 'BFT-IF-50K', pkgName: '$50K Instant Funded', sku: 'BFT-IF-50K', amt: 899.00, ts: now - 86400000 * 4 },
+    { id: 'PUR-SEED-302', userId: 'USR-LEAF-302', pkgId: 'BFT-1S-100K', pkgName: '$100K 1-Step Challenge', sku: 'BFT-1S-100K', amt: 549.00, ts: now - 86400000 * 3 },
+  ];
+  for (const sp of seedPurchases) {
+    try {
+      const existingPur = db.prepare('SELECT id FROM user_purchases WHERE user_id = ? LIMIT 1').get(sp.userId);
+      if (!existingPur) {
+        db.prepare(`
+          INSERT OR IGNORE INTO user_purchases (
+            id, user_id, account_id, package_id, package_name, package_sku,
+            amount, package_amount, account_type, status, tx_hash, created_at
+          ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, 'challenge', 'completed', NULL, ?)
+        `).run(sp.id, sp.userId, sp.pkgId, sp.pkgName, sp.sku, sp.amt, sp.amt, sp.ts);
+      }
+    } catch {
+      // ignore
+    }
   }
 }
 

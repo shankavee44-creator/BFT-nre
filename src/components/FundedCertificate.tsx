@@ -58,7 +58,6 @@ export const FundedCertificate: React.FC<FundedCertificateProps> = ({
   const [renderLoading, setRenderLoading] = useState(false);
   const [isExportingPng, setIsExportingPng] = useState(false);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
-  const [previewSample, setPreviewSample] = useState(false);
   const [copiedId, setCopiedId] = useState(false);
 
   // 1. Fetch user's full_name, passed_date, and trading account status dynamically from Supabase
@@ -213,7 +212,6 @@ export const FundedCertificate: React.FC<FundedCertificateProps> = ({
   }, [userProfile, accounts, allEligibleAccounts, supabaseStatus]);
 
   const isEligible = eligibility.eligible;
-  const isPreviewOrEligible = isEligible || previewSample;
 
   // Active account selection
   const activeAccount = React.useMemo(() => {
@@ -228,7 +226,7 @@ export const FundedCertificate: React.FC<FundedCertificateProps> = ({
   const effectiveFullName =
     (supabaseFullName && supabaseFullName.trim()) ||
     (userProfile.fullName && userProfile.fullName.trim()) ||
-    (userProfile.email ? userProfile.email.split('@')[0] : 'ALEX MORGAN');
+    (userProfile.email ? userProfile.email.split('@')[0] : 'Official BFT Trader');
 
   const effectivePassedDate =
     supabasePassedDate ||
@@ -238,7 +236,7 @@ export const FundedCertificate: React.FC<FundedCertificateProps> = ({
 
   const formattedDate = formatCertificateDate(effectivePassedDate);
   const formattedSubtitle = formatCertificateSubtitle(formattedDate);
-  const certificateSerial = `BFT-CERT-${(activeAccount?.id || userProfile.id || '78291')
+  const certificateSerial = `BFT-CERT-${(activeAccount?.id || userProfile.id || '000001')
     .replace(/[^a-zA-Z0-9]/g, '')
     .slice(-6)
     .toUpperCase()}`;
@@ -263,15 +261,15 @@ export const FundedCertificate: React.FC<FundedCertificateProps> = ({
     }
   }, [effectiveFullName, effectivePassedDate]);
 
-  // Redraw when parameters or preview toggle change
+  // Redraw when parameters change
   useEffect(() => {
-    if (isPreviewOrEligible) {
+    if (isEligible) {
       const timer = setTimeout(() => {
         drawCertificate();
       }, 50);
       return () => clearTimeout(timer);
     }
-  }, [isPreviewOrEligible, drawCertificate]);
+  }, [isEligible, drawCertificate]);
 
   // 3. PNG High-Res Download Action
   const handleDownloadPng = async () => {
@@ -366,7 +364,7 @@ export const FundedCertificate: React.FC<FundedCertificateProps> = ({
       </div>
 
       {/* Main Certificate Display Section */}
-      {isPreviewOrEligible ? (
+      {isEligible ? (
         <div className="space-y-6">
           {/* Certificate Toolbar & Actions */}
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 p-4 rounded-2xl bg-[#0e1015] border border-white/10">
@@ -392,12 +390,6 @@ export const FundedCertificate: React.FC<FundedCertificateProps> = ({
                   <ShieldCheck className="w-4 h-4 text-amber-400" />
                   <span>Resolution: <strong className="text-white">1920 × 1357 (Ultra-HD)</strong></span>
                 </div>
-              )}
-
-              {previewSample && !isEligible && (
-                <span className="px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-mono">
-                  Sample Preview Mode
-                </span>
               )}
             </div>
 
@@ -518,20 +510,9 @@ export const FundedCertificate: React.FC<FundedCertificateProps> = ({
             </div>
           </div>
 
-          {/* Buttons: Preview Sample or Start Challenge */}
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-2">
-            <button
-              onClick={() => {
-                soundEngine.playUiClick();
-                setPreviewSample(true);
-              }}
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-white/10 hover:bg-white/15 border border-white/20 text-white text-xs font-bold transition-all cursor-pointer"
-            >
-              <Eye className="w-4 h-4 text-amber-400" />
-              <span>Preview Sample Certificate</span>
-            </button>
-
-            {onOpenChallengeModal && (
+          {/* Action Button: Start Challenge */}
+          {onOpenChallengeModal && (
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-2">
               <button
                 onClick={() => {
                   soundEngine.playUiClick();
@@ -542,8 +523,8 @@ export const FundedCertificate: React.FC<FundedCertificateProps> = ({
                 <span>Start Evaluation Challenge</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       )}
     </div>

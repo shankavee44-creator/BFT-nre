@@ -1,7 +1,12 @@
-import { supabase } from './supabase.ts';
-import type { Candle, AssetInfo, AssetCategory } from '../types/index.ts';
+import type { Candle, AssetInfo } from '../types/index.ts';
 import { normalizeAssetSymbol, findAssetBySymbol, DEFAULT_ASSETS } from './storage.ts';
-import { getOrCreateMasterHistory, setMarketBroadcastListener, appendLiveTick } from './priceFeedEngine.ts';
+import {
+  setMarketBroadcastListener,
+  appendLiveTick,
+  setServerTimeOffset,
+  getSynchronizedNowMs,
+  syncAssetStoreWithServerTime,
+} from './priceFeedEngine.ts';
 import { safeJsonResponse } from './apiClient.ts';
 
 export interface MarketTickPayload {
@@ -9,6 +14,7 @@ export interface MarketTickPayload {
   price: number;
   prevPrice: number;
   timestamp: number;
+  serverTime?: number;
   candle?: Candle;
 }
 
@@ -17,7 +23,10 @@ export interface MarketSnapshot {
   lastPrice: number;
   prevPrice: number;
   updatedAt: number;
+  serverTime?: number;
+  activeCandle?: Candle;
   candles5s?: Candle[];
+  candles?: Candle[];
 }
 
 export type MarketTickCallback = (payload: MarketTickPayload) => void;
@@ -35,19 +44,24 @@ export class SupabaseMarketSyncEngine {
   }
 
   /**
-   * Initializes REST polling against `/api/market/live-prices` instead of WebSockets
-   * to prevent ERR_CONNECTION_TIMED_OUT errors in firewall/cloud environments.
+   * Initializes live server synchronization against `/api/market/live-prices` with `cache: 'no-store'`
+   * and synchronizes the local clock offset with `serverTime`.
    */
   public initRealtimeChannel() {
     if (this.pollInterval || typeof window === 'undefined') return;
 
     const pollServerPrices = async () => {
       try {
-        const res = await fetch('/api/market/live-prices');
+        const res = await fetch(`/api/market/live-prices?_t=${Date.now()}`, {
+          cache: 'no-store',
+        });
         if (!res.ok) return;
         const data = await safeJsonResponse(res);
         if (data?.ok && data.prices && typeof data.prices === 'object') {
-          const now = Date.now();
+          if (data.serverTime || data.timestamp) {
+            setServerTimeOffset(Number(data.serverTime || data.timestamp));
+          }
+          const now = getSynchronizedNowMs();
           Object.entries(data.prices).forEach(([symbol, priceVal]) => {
             const price = Number(priceVal);
             if (!Number.isNaN(price) && price > 0) {
@@ -56,6 +70,7 @@ export class SupabaseMarketSyncEngine {
                 price,
                 prevPrice: price,
                 timestamp: now,
+                serverTime: data.serverTime || now,
               });
             }
           });
@@ -66,7 +81,7 @@ export class SupabaseMarketSyncEngine {
     };
 
     pollServerPrices();
-    this.pollInterval = setInterval(pollServerPrices, 2500);
+    this.pollInterval = setInterval(pollServerPrices, 2000);
   }
 
   /**
@@ -74,15 +89,21 @@ export class SupabaseMarketSyncEngine {
    */
   public async fetchAllOtcAssets(): Promise<AssetInfo[]> {
     try {
-      const res = await fetch('/api/market/live-prices');
+      const res = await fetch(`/api/market/live-prices?_t=${Date.now()}`, {
+        cache: 'no-store',
+      });
       if (res.ok) {
         const data = await safeJsonResponse(res);
         if (data?.ok && data.prices && typeof data.prices === 'object') {
+          if (data.serverTime || data.timestamp) {
+            setServerTimeOffset(Number(data.serverTime || data.timestamp));
+          }
+          const now = getSynchronizedNowMs();
           for (const asset of DEFAULT_ASSETS) {
             const canonical = normalizeAssetSymbol(asset.symbol);
             const livePrice = Number(data.prices[canonical] ?? data.prices[asset.symbol]);
             if (!Number.isNaN(livePrice) && livePrice > 0) {
-              appendLiveTick(asset, livePrice, true);
+              appendLiveTick(asset, livePrice, true, now);
             }
           }
         }
@@ -94,7 +115,7 @@ export class SupabaseMarketSyncEngine {
   }
 
   /**
-   * Synchronizes asset updates via REST polling (no WebSocket channels opened).
+   * Synchronizes asset updates via live server state.
    */
   public initGlobalMarketSync(_onUpdate?: (asset: Partial<AssetInfo>) => void) {
     this.initRealtimeChannel();
@@ -115,14 +136,14 @@ export class SupabaseMarketSyncEngine {
    */
   public async broadcastTick(payload: MarketTickPayload): Promise<void> {
     const symKey = normalizeAssetSymbol(payload.symbol);
-    const now = Date.now();
+    const now = getSynchronizedNowMs();
 
     this.notifySubscribers(payload);
     this.lastBroadcastMs[symKey] = now;
   }
 
   /**
-   * Handles incoming remote ticks from server REST sync
+   * Handles incoming remote ticks from server sync
    */
   private handleRemoteTick(payload: MarketTickPayload) {
     if (!payload || !payload.symbol || typeof payload.price !== 'number') return;
@@ -130,7 +151,7 @@ export class SupabaseMarketSyncEngine {
     const canonical = normalizeAssetSymbol(payload.symbol);
     const asset = findAssetBySymbol(canonical);
     if (asset) {
-      appendLiveTick(asset, payload.price, true);
+      appendLiveTick(asset, payload.price, true, payload.timestamp);
     }
 
     this.notifySubscribers(payload);
@@ -154,21 +175,41 @@ export class SupabaseMarketSyncEngine {
   }
 
   /**
-   * Fetches latest synchronized market state snapshot from `/api/market/live-prices`
+   * Fetches latest synchronized market state snapshot from `/api/market/snapshot` (with no-store cache)
    */
-  public async fetchMarketSnapshot(symbol: string): Promise<MarketSnapshot | null> {
+  public async fetchMarketSnapshot(symbol: string, timeframeSeconds: number = 60): Promise<MarketSnapshot | null> {
     const canonical = normalizeAssetSymbol(symbol);
+    const asset = findAssetBySymbol(canonical);
     try {
-      const res = await fetch('/api/market/live-prices');
+      const res = await fetch(
+        `/api/market/snapshot?symbol=${encodeURIComponent(canonical)}&timeframe=${encodeURIComponent(
+          String(timeframeSeconds)
+        )}&count=250&_t=${Date.now()}`,
+        {
+          cache: 'no-store',
+        }
+      );
       if (res.ok) {
         const data = await safeJsonResponse(res);
-        const price = Number(data?.prices?.[canonical] ?? data?.prices?.[symbol]);
+        const price = Number(data?.price);
         if (!Number.isNaN(price) && price > 0) {
+          if (data?.serverTime) {
+            setServerTimeOffset(Number(data.serverTime));
+          }
+          const syncedCandles = syncAssetStoreWithServerTime(
+            asset,
+            timeframeSeconds,
+            data?.serverTime,
+            price
+          );
           return {
             symbol: canonical,
             lastPrice: price,
-            prevPrice: price,
-            updatedAt: Date.now(),
+            prevPrice: Number(data?.prevPrice) || price,
+            updatedAt: getSynchronizedNowMs(),
+            serverTime: Number(data?.serverTime) || getSynchronizedNowMs(),
+            activeCandle: data?.activeCandle,
+            candles: syncedCandles,
           };
         }
       }

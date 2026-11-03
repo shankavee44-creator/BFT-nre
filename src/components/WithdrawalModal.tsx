@@ -125,13 +125,13 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
   const [quotexMethod, setQuotexMethod] = useState<QuotexPaymentMethodOption>('USDT');
   const [paymentMethod, setPaymentMethod] = useState<WithdrawalPaymentMethod>('crypto_trc20');
   const [network, setNetwork] = useState<QuotexCryptoNetwork>('BSC (BEP20)');
-  const [purseAddress, setPurseAddress] = useState<string>('0x71C94F8B92E1048A3B99D2E54C1A82F901D3E84A');
+  const [purseAddress, setPurseAddress] = useState<string>('');
 
   // Bank fallback fields when Bank Transfer is chosen
-  const [bankName, setBankName] = useState<string>('Barclays Bank UK PLC');
-  const [accountHolder, setAccountHolder] = useState<string>(userProfile?.fullName || 'Alex Mercer');
-  const [accountNumber, setAccountNumber] = useState<string>('GB29NWBK60161331926819');
-  const [swiftCode, setSwiftCode] = useState<string>('BARCGB22XXX');
+  const [bankName, setBankName] = useState<string>('');
+  const [accountHolder, setAccountHolder] = useState<string>(userProfile?.fullName || '');
+  const [accountNumber, setAccountNumber] = useState<string>('');
+  const [swiftCode, setSwiftCode] = useState<string>('');
 
   // Accordion & UI States
   const [expandedFaqIds, setExpandedFaqIds] = useState<Record<string, boolean>>({
@@ -326,19 +326,11 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
       setPaymentMethod('bank_transfer');
     } else {
       setPaymentMethod('crypto_trc20');
-      if (nextMethod === 'USDT' && network === 'TRON (TRC-20)' && purseAddress.startsWith('0x')) {
-        setPurseAddress('TYsDj4BmVp8QW8r6F32Xnm9ZkE4G1A7L2');
-      }
     }
   };
 
   const handleChangeNetwork = (nextNet: QuotexCryptoNetwork) => {
     setNetwork(nextNet);
-    if (nextNet === 'TRON (TRC-20)' && purseAddress.startsWith('0x')) {
-      setPurseAddress('TYsDj4BmVp8QW8r6F32Xnm9ZkE4G1A7L2');
-    } else if (nextNet !== 'TRON (TRC-20)' && purseAddress.startsWith('T')) {
-      setPurseAddress('0x71C94F8B92E1048A3B99D2E54C1A82F901D3E84A');
-    }
   };
 
   // Breakdown calculation (includes 10% Withdrawal Fee deduction)

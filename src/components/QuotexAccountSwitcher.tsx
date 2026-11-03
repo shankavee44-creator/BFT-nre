@@ -201,9 +201,6 @@ export const QuotexAccountSwitcher: React.FC<QuotexAccountSwitcherProps> = ({
           aria-label="Notifications"
         >
           <Bell className="w-4 h-4" />
-          <span className="absolute -top-1 -right-1 px-1.5 py-0.2 rounded-full bg-rose-500 text-white font-black text-[9px] font-mono shadow-md">
-            34
-          </span>
         </button>
       </div>
 

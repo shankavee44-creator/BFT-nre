@@ -21,12 +21,19 @@ import {
   mapPurchaseRecord,
   mergeRealtimePurchase,
   computeCryptoDepositVerificationCredit,
+  DEPOSIT_EXPIRY_MS,
+  isCryptoDepositExpired,
+  evaluateDepositStatusWithExpiry,
+  formatDepositCountdown,
+  verifyGatewayOrBlockchainPayment,
 } from './directDeposit';
 import {
   createCryptoDepositRecord,
   getCryptoDeposits,
   getPendingCryptoDeposits,
   verifyAndCompletePendingCryptoDepositsInDb,
+  expireStalePendingDepositsInDb,
+  completeCryptoDepositInDb,
   getAccountById,
   ensurePersonalLiveAccountForUser,
   createUserPurchaseRecord,
@@ -365,6 +372,7 @@ test('buildSupabaseUserPurchasePayload, mapPurchaseRecord, mergeRealtimePurchase
   assert.ok(userPurchases.some((p) => p.id === created.id));
 
   // Verify real-time merge deduplicates and updates status
+  const freshIso = new Date().toISOString();
   const mappedPending = mapPurchaseRecord({
     id: 'PUR-RT-01',
     user_id: 'usr_bft_001',
@@ -372,8 +380,10 @@ test('buildSupabaseUserPurchasePayload, mapPurchaseRecord, mergeRealtimePurchase
     package_name: '1-Step Blitz ($10,000)',
     amount: 89.4,
     status: 'pending',
-    created_at: '2026-11-01T12:00:00.000Z',
+    created_at: freshIso,
   });
+  assert.equal(mappedPending.status, 'pending');
+
   const mappedCompleted = mapPurchaseRecord({
     id: 'PUR-RT-01',
     user_id: 'usr_bft_001',
@@ -381,11 +391,139 @@ test('buildSupabaseUserPurchasePayload, mapPurchaseRecord, mergeRealtimePurchase
     package_name: '1-Step Blitz ($10,000)',
     amount: 89.4,
     status: 'completed',
-    created_at: '2026-11-01T12:00:00.000Z',
+    created_at: freshIso,
   });
 
   const merged = mergeRealtimePurchase([mappedPending], mappedCompleted);
   assert.equal(merged.length, 1);
   assert.equal(merged[0].status, 'completed');
 });
+
+test('verifyGatewayOrBlockchainPayment blocks fake "I Made Payment" clicks and unverified tx_hash values, keeping status pending without provisioning accounts', () => {
+  const nowMs = Date.now();
+
+  // 1. User clicks "I Made Payment" with no blockchain transfers and a fake tx_hash
+  const fakeClickAttempt = verifyGatewayOrBlockchainPayment({
+    deposit: {
+      id: 'DEP-FAKE-CLICK-01',
+      wallet_address: 'TWr3rLWrWGBcfwix5osJwAwMXmpcu4PNSp',
+      amount: 149.0,
+      tx_hash: 'fake_user_typed_tx_hash_1234567890abcdef',
+      status: 'pending',
+      created_at: nowMs - 5 * 60 * 1000, // 5 mins ago
+    },
+    tronGridTransfers: [],
+    nowMs,
+  });
+
+  assert.equal(fakeClickAttempt.verified, false);
+  assert.equal(fakeClickAttempt.status, 'pending');
+  assert.equal(fakeClickAttempt.shouldProvisionAccount, false);
+  assert.equal(fakeClickAttempt.shouldCreditBalance, false);
+
+  // 2. Cryptomus webhook callback returns 'paid' / 'confirmed' -> verified & provisions account
+  const cryptomusPaidAttempt = verifyGatewayOrBlockchainPayment({
+    deposit: {
+      id: 'DEP-CRYPTOMUS-01',
+      wallet_address: 'TWr3rLWrWGBcfwix5osJwAwMXmpcu4PNSp',
+      amount: 149.0,
+      status: 'pending',
+      created_at: nowMs - 10 * 60 * 1000,
+    },
+    gatewayPayload: {
+      status: 'paid',
+      txid: 'cryptomus_onchain_tx_998877665544',
+      is_final: true,
+    },
+    nowMs,
+  });
+
+  assert.equal(cryptomusPaidAttempt.verified, true);
+  assert.equal(cryptomusPaidAttempt.status, 'completed');
+  assert.equal(cryptomusPaidAttempt.shouldProvisionAccount, true);
+  assert.equal(cryptomusPaidAttempt.shouldCreditBalance, true);
+  assert.equal(cryptomusPaidAttempt.matchedTxId, 'cryptomus_onchain_tx_998877665544');
+});
+
+test('1-hour payment expiry logic automatically transitions pending deposits > 60 minutes to failed and blocks late claims', () => {
+  const nowMs = Date.now();
+  const thirtyMinsAgo = nowMs - 30 * 60 * 1000;
+  const sixtyFiveMinsAgo = nowMs - 65 * 60 * 1000;
+
+  // 1. Deposit at 30 minutes is still pending with ~30:00 countdown
+  assert.equal(
+    isCryptoDepositExpired({ status: 'pending', created_at: thirtyMinsAgo }, nowMs, DEPOSIT_EXPIRY_MS),
+    false
+  );
+  const activePendingEval = evaluateDepositStatusWithExpiry(
+    { status: 'pending', created_at: thirtyMinsAgo },
+    nowMs,
+    DEPOSIT_EXPIRY_MS
+  );
+  assert.equal(activePendingEval.effectiveStatus, 'pending');
+  assert.equal(activePendingEval.isExpired, false);
+  assert.equal(formatDepositCountdown(activePendingEval.remainingMs), '30:00');
+
+  // 2. Deposit at 65 minutes (> 1 hour) automatically transitions to 'failed'
+  assert.equal(
+    isCryptoDepositExpired(
+      { status: 'pending', created_at: sixtyFiveMinsAgo },
+      nowMs,
+      DEPOSIT_EXPIRY_MS
+    ),
+    true
+  );
+  const expiredEval = evaluateDepositStatusWithExpiry(
+    { status: 'pending', created_at: sixtyFiveMinsAgo },
+    nowMs,
+    DEPOSIT_EXPIRY_MS
+  );
+  assert.equal(expiredEval.effectiveStatus, 'failed');
+  assert.equal(expiredEval.isExpired, true);
+  assert.equal(expiredEval.remainingMs, 0);
+
+  // 3. Database 1-hour expiry sweep marks >60m pending rows as 'failed' and blocks late completion
+  const expiredUserId = `usr_exp_test_${Date.now()}`;
+  const staleDeposit = createCryptoDepositRecord({
+    userId: expiredUserId,
+    amount: 299.0,
+    packageName: 'Instant Funding ($50,000)',
+    sku: 'BFT-INF-50K',
+    accountType: 'challenge',
+    createdAt: sixtyFiveMinsAgo,
+  });
+  assert.equal(staleDeposit.status, 'pending');
+
+  // Even if a matching transfer appears on TronGrid after 65 minutes, matchPendingDepositToTronGridTx rejects it
+  const lateTransfer: TronGridTrc20Transaction = {
+    transaction_id: `tx_late_after_1h_${Date.now()}`,
+    to: 'TWr3rLWrWGBcfwix5osJwAwMXmpcu4PNSp',
+    value: '299000000',
+    token_info: { symbol: 'USDT', decimals: 6 },
+  };
+  const lateMatch = matchPendingDepositToTronGridTx(
+    staleDeposit,
+    [lateTransfer],
+    new Set(),
+    nowMs
+  );
+  assert.equal(lateMatch, null);
+
+  // Running expireStalePendingDepositsInDb transitions the row to 'failed' in SQLite
+  const expirySweep = expireStalePendingDepositsInDb(nowMs, DEPOSIT_EXPIRY_MS);
+  assert.ok(expirySweep.expiredCount >= 1);
+  assert.ok(expirySweep.expiredIds.includes(staleDeposit.id));
+
+  const userDepsAfterSweep = getCryptoDeposits({ userId: expiredUserId });
+  const updatedStale = userDepsAfterSweep.find((d) => d.id === staleDeposit.id);
+  assert.equal(updatedStale?.status, 'failed');
+  assert.equal(updatedStale?.account_id, null);
+
+  // Attempting to call completeCryptoDepositInDb on an expired/failed deposit throws an error and is strictly blocked
+  assert.throws(
+    () => completeCryptoDepositInDb(staleDeposit.id, lateTransfer.transaction_id),
+    /expired.*cannot be claimed/i
+  );
+});
+
 

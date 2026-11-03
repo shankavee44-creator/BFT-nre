@@ -123,6 +123,8 @@ import {
   getAssetMarketState,
   getAssetTimeOffsetMs,
   isValidPriceForAsset,
+  getSynchronizedNowMs,
+  syncAssetStoreWithServerTime,
 } from '../utils/priceFeedEngine';
 import {
   calculateVisibleWindow,
@@ -624,26 +626,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   const [soundEnabled, setSoundEnabled] = useState(soundEngine.isEnabled());
 
   // Real-time Price Alerts state
-  const [alerts, setAlerts] = useState<PriceAlert[]>([
-    {
-      id: 'ALT-EURUSD-UP',
-      symbol: 'EUR/USD (OTC)',
-      targetPrice: 1.0865,
-      condition: 'ABOVE',
-      createdAt: Date.now() - 3600000,
-      triggered: false,
-      active: true,
-    },
-    {
-      id: 'ALT-EURUSD-DN',
-      symbol: 'EUR/USD (OTC)',
-      targetPrice: 1.0825,
-      condition: 'BELOW',
-      createdAt: Date.now() - 1800000,
-      triggered: false,
-      active: true,
-    },
-  ]);
+  const [alerts, setAlerts] = useState<PriceAlert[]>([]);
   const [activeAlertToast, setActiveAlertToast] = useState<string | null>(null);
 
   // Precise Inline Trade Outcome Badge State (Anchored at exact trade entry/expiration coordinate)
@@ -869,12 +852,13 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       setIsLoadingChart(true);
     }
 
-    const store = getOrCreateMasterHistory(selectedAsset);
     const prevSec = TIMEFRAME_SECONDS[prevTimeframeRef.current];
     const nextSec = TIMEFRAME_SECONDS[timeframe];
     prevTimeframeRef.current = timeframe;
 
-    const aggregated = aggregateCandlesForTimeframe(selectedAsset, nextSec);
+    // Immediately sync local store with server-aligned timestamp without loading stale cached state
+    const aggregated = syncAssetStoreWithServerTime(selectedAsset, nextSec);
+    const store = getOrCreateMasterHistory(selectedAsset);
 
     // Safety: only set candles if it matches the current asset symbol
     if (selectedAssetRef.current.symbol === selectedAsset.symbol) {
@@ -889,7 +873,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
     // Immediately synchronize candle expiry countdown for the newly selected timeframe and asset phase
     const symbolOffsetSec = Math.floor(getAssetTimeOffsetMs(selectedAsset.symbol, nextSec) / 1000);
-    const immediateCountdown = calculateCandleCountdown(Date.now(), nextSec, symbolOffsetSec);
+    const immediateCountdown = calculateCandleCountdown(getSynchronizedNowMs(), nextSec, symbolOffsetSec);
     setCandleCountdown(immediateCountdown);
 
     // Preserve relative historical scroll position when switching timeframes on same asset;
@@ -918,10 +902,12 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     saveChartType(chartType);
   }, [chartType]);
 
-  // 1a-2. Live External Market REST Feed Subscription (Binance REST + Interbank FX + Authoritative Backend)
+  // 1a-2. Unified Global Real-Time Market Stream Subscription (SSE + Snapshot Resync + Heartbeat Auto-Recovery)
   useEffect(() => {
     const activeSymNormalized = normalizeAssetSymbol(selectedAsset.symbol);
-    liveMarketFeed.setActiveSymbol(selectedAsset.symbol);
+    const activeTfSeconds = TIMEFRAME_SECONDS[timeframe];
+
+    liveMarketFeed.setActiveSymbol(selectedAsset.symbol, activeTfSeconds);
     const unsubStatus = liveMarketFeed.addStatusListener((status) => {
       setFeedStatus(status);
     });
@@ -931,7 +917,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       if (normalizeAssetSymbol(selectedAssetRef.current.symbol) !== activeSymNormalized) return;
       if (!isValidPriceForAsset(selectedAssetRef.current, price)) return;
 
-      const nowMs = Date.now();
+      const nowMs = getSynchronizedNowMs();
       const minThrottleMs =
         typeof window !== 'undefined' && window.innerWidth < 768 ? 380 : 220;
       if (nowMs - lastUiTickUpdateMsRef.current < minThrottleMs) return;
@@ -957,21 +943,48 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     const unsubLiveTicks = liveMarketFeed.addTickListener((tick) => {
       const matchedAsset = findAssetBySymbol(tick.symbol);
       if (matchedAsset && isValidPriceForAsset(matchedAsset, tick.price)) {
-        appendLiveTick(matchedAsset, tick.price, true);
+        appendLiveTick(matchedAsset, tick.price, true, tick.timestamp);
       }
       if (normalizeAssetSymbol(tick.symbol) === activeSymNormalized) {
         applyIncomingTickForSelectedAsset(tick.price);
       }
     });
 
-    // Subscribe to synchronized market broadcast ticks from backend REST sync
+    // Subscribe to full snapshot & auto-reconnection catch-up events from the server stream
+    const unsubResync = liveMarketFeed.addResyncListener((resync) => {
+      if (normalizeAssetSymbol(resync.symbol) !== activeSymNormalized) return;
+      if (!isValidPriceForAsset(selectedAssetRef.current, resync.price)) return;
+
+      setCurrentPrice(resync.price);
+      setSmoothPrice(resync.price);
+      targetPriceRef.current = resync.price;
+
+      const sec = TIMEFRAME_SECONDS[timeframe];
+      const freshCandles =
+        resync.timeframeSeconds === sec && resync.candles && resync.candles.length > 0
+          ? resync.candles
+          : aggregateCandlesForTimeframe(selectedAssetRef.current, sec);
+
+      setCandlesAssetSymbol(selectedAssetRef.current.symbol);
+      setCandles(freshCandles);
+      isLoadingChartRef.current = false;
+      setIsLoadingChart(false);
+
+      const nowMs = getSynchronizedNowMs();
+      const symbolOffsetSec = Math.floor(
+        getAssetTimeOffsetMs(selectedAssetRef.current.symbol, sec) / 1000
+      );
+      setCandleCountdown(calculateCandleCountdown(nowMs, sec, symbolOffsetSec));
+    });
+
+    // Subscribe to synchronized market broadcast ticks from backend sync
     const unsubscribe = supabaseMarketSync.subscribeTicks((payload) => {
       if (normalizeAssetSymbol(payload.symbol) === activeSymNormalized) {
         applyIncomingTickForSelectedAsset(payload.price);
       }
     });
 
-    // Subscribe to Deriv WebSocket feed if it's a Deriv asset; otherwise OTC assets use internal simulated generator / REST feed
+    // Subscribe to Deriv WebSocket feed if it's a Deriv asset; otherwise OTC assets use unified server stream
     const isDerivAsset =
       selectedAsset.symbol.includes('R_') || selectedAsset.category.includes('Deriv');
     let unsubDeriv = () => {};
@@ -991,8 +1004,8 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
     let isCancelled = false;
 
-    // Fetch latest snapshot on mount / asset pair switch for instant state recovery
-    supabaseMarketSync.fetchMarketSnapshot(selectedAsset.symbol).then((snapshot) => {
+    // Fetch latest authoritative server snapshot on mount / asset pair switch for instant state alignment
+    supabaseMarketSync.fetchMarketSnapshot(selectedAsset.symbol, activeTfSeconds).then((snapshot) => {
       if (
         isCancelled ||
         normalizeAssetSymbol(selectedAssetRef.current.symbol) !== activeSymNormalized
@@ -1011,7 +1024,10 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         targetPriceRef.current = snapshot.lastPrice;
 
         const sec = TIMEFRAME_SECONDS[timeframe];
-        const liveCandlesSeries = aggregateCandlesForTimeframe(selectedAssetRef.current, sec);
+        const liveCandlesSeries =
+          snapshot.candles && snapshot.candles.length > 0
+            ? snapshot.candles
+            : aggregateCandlesForTimeframe(selectedAssetRef.current, sec);
         setCandlesAssetSymbol(selectedAssetRef.current.symbol);
         setCandles(liveCandlesSeries);
         isLoadingChartRef.current = false;
@@ -1023,6 +1039,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       isCancelled = true;
       unsubStatus();
       unsubLiveTicks();
+      unsubResync();
       unsubscribe();
       unsubDeriv();
       derivClient.unsubscribeAll();
@@ -1126,7 +1143,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     };
   }, []);
 
-  // 1d. Real-Time Price Pulse Interval (Throttled on Mobile Viewports to Prevent Lag)
+  // 1d. Real-Time Price Pulse Interval Synchronized to Server Clock (Throttled on Mobile Viewports to Prevent Lag)
   useEffect(() => {
     const isMobileViewport =
       typeof window !== 'undefined' && window.innerWidth < 768;
@@ -1138,7 +1155,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       if (!activeAsset || activeAsset.symbol !== selectedAsset.symbol) return;
 
       const sec = TIMEFRAME_SECONDS[timeframe];
-      const nowMs = Date.now();
+      const nowMs = getSynchronizedNowMs();
       const assetActiveTrades = activeTradesRef.current.filter(
         (t) => t.asset === activeAsset.symbol && t.status === 'active'
       );
@@ -5633,7 +5650,11 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         isOpen={isCopyTradingOpen}
         onClose={() => setIsCopyTradingOpen(false)}
         accounts={accounts || []}
+        activeAccount={effectiveAccount}
+        trades={trades}
+        userProfile={userProfile}
         onNavigateToPricing={onNavigateToPricing}
+        onOpenDepositModal={onOpenDepositModal}
       />
 
       {/* Indicator Settings Modal */}

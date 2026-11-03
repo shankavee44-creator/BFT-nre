@@ -781,7 +781,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       userId: distributeUserId,
       amount: amt,
       sourceType: distributeSource,
-      details: distributeDetails || `Admin test ${distributeSource} commission`,
+      details: distributeDetails || `Manual ${distributeSource} commission`,
     });
     setIsActionLoading(false);
 
@@ -792,36 +792,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       fetchAllAdminData();
     } else {
       showFeedback('error', res.error || 'Failed to distribute commission.');
-    }
-  };
-
-  // Quick Test Deposit Creation
-  const handleCreateTestDeposit = async () => {
-    const targetUser = usersList.find((u) => u.id !== 'admin_sys') || usersList[0];
-    if (!targetUser) {
-      showFeedback('error', 'No users found to create test deposit.');
-      return;
-    }
-    const targetAcc = targetUser.accounts?.[0]?.id || 'BFT-91823';
-
-    setIsActionLoading(true);
-    const res = await apiAdminCreateDeposit({
-      userId: targetUser.id,
-      accountId: targetAcc,
-      amount: 500,
-      paymentMethod: 'USDT (TRC-20)',
-      txHash: `0x_tron_test_${Date.now().toString(16)}`,
-      depositSlipUrl: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=600&auto=format&fit=crop',
-    });
-    setIsActionLoading(false);
-
-    if (res.ok) {
-      showFeedback('success', `Test deposit of $500.00 created for ${targetUser.email}.`);
-      setDepositFilter('pending');
-      setActiveTab('deposits');
-      fetchAllAdminData();
-    } else {
-      showFeedback('error', res.error || 'Failed to create test deposit.');
     }
   };
 
@@ -1076,14 +1046,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             className="p-2 rounded-xl bg-[#14141d] hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white transition-colors cursor-pointer"
           >
             <RefreshCw className="w-4 h-4" />
-          </button>
-
-          <button
-            onClick={handleCreateTestDeposit}
-            className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#1a1824] hover:bg-[#252234] border border-[#ff8800]/40 text-[#ffaa00] text-xs font-bold transition-colors cursor-pointer"
-          >
-            <DollarSign className="w-3.5 h-3.5" />
-            <span>+ Test Deposit ($500)</span>
           </button>
 
           <button
@@ -2102,7 +2064,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
                   {commissionsList.length === 0 && (
                     <div className="text-center py-8 text-slate-500 text-xs">
-                      No commissions distributed yet. Trigger a manual commission or approve a deposit to test!
+                      No referral commissions recorded yet.
                     </div>
                   )}
                 </div>

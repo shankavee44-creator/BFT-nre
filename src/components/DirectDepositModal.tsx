@@ -12,24 +12,26 @@ import {
   ExternalLink,
   History,
   ArrowRight,
+  Clock,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { TradingAccount, UserProfile } from '../types';
 import { isPersonalLiveAccount } from '../utils/propRules';
 import {
   DIRECT_USDT_TRC20_CONFIG,
+  DEPOSIT_EXPIRY_MS,
   CryptoDepositAccountType,
   buildPackageSku,
   buildCryptoDepositPayload,
   validateDirectDepositAmount,
-  fetchTronGridTrc20Transfers,
-  matchPendingDepositToTronGridTx,
   mapPurchaseRecord,
   NormalizedPurchaseRecord,
+  evaluateDepositStatusWithExpiry,
+  formatDepositCountdown,
 } from '../config/directDeposit';
 import { apiSubmitCryptoDeposit, apiVerifyCryptoDeposits, safeJsonResponse } from '../utils/apiClient';
 import { supabase } from '../utils/supabase';
-import { insertSupabaseUserPurchase, insertSupabaseCryptoDeposit } from '../utils/supabaseRealtimeSync';
+import { expireStaleSupabaseCryptoDeposits } from '../utils/supabaseRealtimeSync';
 
 interface DirectDepositModalProps {
   isOpen: boolean;
@@ -64,6 +66,7 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
   const [depositHistory, setDepositHistory] = useState<any[]>([]);
   const [qrImgFailed, setQrImgFailed] = useState<boolean>(false);
   const [isVerifyingTronGrid, setIsVerifyingTronGrid] = useState<boolean>(false);
+  const [nowTickMs, setNowTickMs] = useState<number>(() => Date.now());
 
   const personalLiveAccount = accounts.find((acc) => isPersonalLiveAccount(acc)) || null;
   const targetAccount =
@@ -90,6 +93,14 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
       accountType === 'challenge' && targetAccount?.size ? targetAccount.size : numericAmount,
   });
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const timer = setInterval(() => {
+      setNowTickMs(Date.now());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [isOpen]);
+
   // Load crypto_deposits history when modal is opened or tab switched
   useEffect(() => {
     if (!isOpen) return;
@@ -101,6 +112,7 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
         const { data: sessionData } = await supabase.auth.getSession();
         const supaUserId = sessionData?.session?.user?.id || userProfile?.id;
         if (supaUserId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(supaUserId)) {
+          await expireStaleSupabaseCryptoDeposits(supaUserId).catch(() => {});
           const { data: supaRows } = await supabase
             .from('crypto_deposits')
             .select('*')
@@ -109,19 +121,22 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
             .limit(50);
           if (Array.isArray(supaRows) && supaRows.length > 0) {
             setDepositHistory(
-              supaRows.map((r: any) => ({
-                id: String(r.id),
-                user_id: r.user_id,
-                wallet_address: r.wallet_address || depositoryAddress,
-                amount: Number(r.amount || 0),
-                package_name: r.package_name || 'Self Funded Capital Deposit',
-                sku: r.package_sku || r.sku || 'BFT-SELF-CAPITAL',
-                package_sku: r.package_sku || r.sku || 'BFT-SELF-CAPITAL',
-                account_type: r.account_type || 'self_funded',
-                status: r.status || 'pending',
-                tx_hash: r.tx_hash || null,
-                created_at: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
-              }))
+              supaRows.map((r: any) => {
+                const evalExpiry = evaluateDepositStatusWithExpiry(r, Date.now(), DEPOSIT_EXPIRY_MS);
+                return {
+                  id: String(r.id),
+                  user_id: r.user_id,
+                  wallet_address: r.wallet_address || depositoryAddress,
+                  amount: Number(r.amount || 0),
+                  package_name: r.package_name || 'Self Funded Capital Deposit',
+                  sku: r.package_sku || r.sku || 'BFT-SELF-CAPITAL',
+                  package_sku: r.package_sku || r.sku || 'BFT-SELF-CAPITAL',
+                  account_type: r.account_type || 'self_funded',
+                  status: evalExpiry.effectiveStatus,
+                  tx_hash: r.tx_hash || null,
+                  created_at: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
+                };
+              })
             );
             return;
           }
@@ -140,7 +155,15 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
         if (res.ok) {
           const data = await safeJsonResponse(res);
           if (Array.isArray(data.deposits)) {
-            setDepositHistory(data.deposits);
+            setDepositHistory(
+              data.deposits.map((d: any) => {
+                const evalExpiry = evaluateDepositStatusWithExpiry(d, Date.now(), DEPOSIT_EXPIRY_MS);
+                return {
+                  ...d,
+                  status: evalExpiry.effectiveStatus,
+                };
+              })
+            );
           }
         }
       } catch {
@@ -197,32 +220,8 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
         txHash: txHashInput.trim() || undefined,
       });
 
-      // 1. Insert transaction details into Supabase user_purchases (apiSubmitCryptoDeposit handles crypto_deposits)
-      let supaPurchaseRow: NormalizedPurchaseRecord | null = null;
-      try {
-        const supaInsertRes = await insertSupabaseUserPurchase({
-          userId: userProfile?.id,
-          userEmail: userProfile?.email,
-          accountId: targetAccount?.id || null,
-          walletAddress: depositoryAddress,
-          packageId: computedSku,
-          packageName: computedPackageName,
-          packageSku: computedSku,
-          amount: cleanAmount,
-          packageAmount: cleanAmount,
-          accountType,
-          status: 'pending',
-          txHash: txHashInput.trim() || null,
-          skipCryptoDepositInsert: true,
-        });
-        if (supaInsertRes.ok && supaInsertRes.row) {
-          supaPurchaseRow = supaInsertRes.row;
-        }
-      } catch {
-        // ignore
-      }
-
-      // 2. Submit to crypto_deposits & verify against TronGrid (credits self_capital_balance ONLY if self_funded & completed)
+      // Submit to crypto_deposits & transactions as 'pending', and check gateway/blockchain verification.
+      // Never credit balances on an unverified click.
       const data = await apiSubmitCryptoDeposit({
         userId: userProfile?.id,
         email: userProfile?.email,
@@ -239,16 +238,20 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
         throw new Error(data.error || 'Failed to save pending deposit record.');
       }
 
+      const isVerifiedPaid = Boolean(
+        data.verified && (data.deposit?.status === 'completed' || data.deposit?.status === 'active')
+      );
+
       const savedRecord = data.deposit || {
         ...cryptoPayload,
-        id: supaPurchaseRow?.id || `DEP-${Date.now().toString(36).toUpperCase()}`,
-        status: 'pending',
+        id: `DEP-${Date.now().toString(36).toUpperCase()}`,
+        status: isVerifiedPaid ? 'completed' : 'pending',
         created_at: Date.now(),
+        expires_at: Date.now() + DEPOSIT_EXPIRY_MS,
       };
 
-      const statusLabel = savedRecord.status || 'pending';
+      const statusLabel = isVerifiedPaid ? savedRecord.status || 'completed' : 'pending';
       const normalizedPurchase = mapPurchaseRecord({
-        ...(supaPurchaseRow || {}),
         ...savedRecord,
         package_id: computedSku,
         package_sku: computedSku,
@@ -261,21 +264,21 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
       onPurchaseRecorded?.(normalizedPurchase);
 
       setSuccessMessage(
-        statusLabel === 'completed'
+        isVerifiedPaid
           ? `TronGrid TRC-20 transfer verified! Deposit ${savedRecord.id} marked completed (${savedRecord.sku} • ${savedRecord.account_type} • $${cleanAmount.toFixed(2)} USDT).${
               accountType === 'self_funded'
                 ? ` Credited +$${cleanAmount.toFixed(2)} to your Self-Capital Balance.`
                 : ''
             }`
-          : `Pending record saved to crypto_deposits (${savedRecord.sku} • ${savedRecord.account_type} • $${cleanAmount.toFixed(2)} USDT). Automated TronGrid TRC-20 verification is monitoring ${depositoryAddress}.`
+          : `Pending record saved to crypto_deposits & transactions (${savedRecord.sku} • ${savedRecord.account_type} • $${cleanAmount.toFixed(2)} USDT • Status: PENDING). Balance crediting and account provisioning only occur after Cryptomus / TRC-20 blockchain confirmation. Unpaid pending orders automatically expire to FAILED after 60 minutes.`
       );
       setTxHashInput('');
 
       // Prepend to deposit history
-      setDepositHistory((prev) => [savedRecord, ...prev]);
+      setDepositHistory((prev) => [{ ...savedRecord, status: statusLabel }, ...prev]);
 
-      // Notify parent account handler ONLY when verified AND accountType === 'self_funded'
-      if (targetAccount && statusLabel === 'completed' && accountType === 'self_funded') {
+      // Notify parent account handler ONLY when verified on-chain AND accountType === 'self_funded'
+      if (targetAccount && isVerifiedPaid && accountType === 'self_funded') {
         onCreditAccountDeposit(targetAccount.id, cleanAmount, savedRecord);
       }
     } catch (err: any) {
@@ -289,13 +292,20 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
     setIsVerifyingTronGrid(true);
     setErrorMessage(null);
     try {
-      // 1. Trigger TronGrid verification for pending rows in crypto_deposits (automatically credits self_capital_balance if self_funded)
       const verifyData = await apiVerifyCryptoDeposits({
         userId: userProfile?.id,
         email: userProfile?.email,
       });
       if (verifyData?.ok && Array.isArray(verifyData.deposits)) {
-        setDepositHistory(verifyData.deposits);
+        setDepositHistory(
+          verifyData.deposits.map((d: any) => {
+            const evalExpiry = evaluateDepositStatusWithExpiry(d, Date.now(), DEPOSIT_EXPIRY_MS);
+            return {
+              ...d,
+              status: evalExpiry.effectiveStatus,
+            };
+          })
+        );
       }
 
       if ((verifyData?.matchedCount ?? 0) > 0 && Array.isArray(verifyData.completedDeposits)) {
@@ -311,11 +321,16 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
         return;
       }
 
+      const expiredNote =
+        (verifyData?.expiredCount ?? 0) > 0
+          ? ` (${verifyData.expiredCount} expired pending order(s) > 60m marked as FAILED).`
+          : '';
+
       setSuccessMessage(
         `Checked TronGrid TRC-20 endpoint for ${depositoryAddress}: ${
           verifyData?.remainingPendingCount ??
           depositHistory.filter((d) => d.status === 'pending').length
-        } pending deposit(s) awaiting matching blockchain transfer.`
+        } pending deposit(s) awaiting matching blockchain transfer.${expiredNote}`
       );
     } catch (err: any) {
       setErrorMessage(err?.message || 'TronGrid TRC-20 verification failed.');
@@ -676,48 +691,79 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
                 No crypto_deposits records found yet.
               </div>
             ) : (
-              depositHistory.map((item) => (
-                <div
-                  key={item.id}
-                  className="p-3.5 rounded-xl bg-[#141720] border border-white/10 flex items-center justify-between text-xs font-mono tabular-nums"
-                >
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-white">
-                        ${Number(item.amount).toFixed(2)} USDT
-                      </span>
-                      <span aria-hidden="true">·</span>
-                      <span className="text-[#ff8800] font-bold">
-                        {item.sku || 'BFT-SELF'}
-                      </span>
-                      <span aria-hidden="true">·</span>
-                      <span className="text-emerald-400">
-                        {item.account_type || 'self_funded'}
-                      </span>
+              depositHistory.map((item) => {
+                const evalExpiry = evaluateDepositStatusWithExpiry(
+                  item,
+                  nowTickMs,
+                  DEPOSIT_EXPIRY_MS
+                );
+                const liveStatus = evalExpiry.effectiveStatus;
+                const isSuccessStatus =
+                  liveStatus === 'completed' || liveStatus === 'active' || liveStatus === 'approved';
+                const isFailedStatus = liveStatus === 'failed' || liveStatus === 'declined';
+                return (
+                  <div
+                    key={item.id}
+                    data-testid={`crypto-deposit-history-row-${item.id}`}
+                    className="p-3.5 rounded-xl bg-[#141720] border border-white/10 flex items-center justify-between text-xs font-mono tabular-nums"
+                  >
+                    <div className="space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-bold text-white">
+                          ${Number(item.amount).toFixed(2)} USDT
+                        </span>
+                        <span aria-hidden="true">·</span>
+                        <span className="text-[#ff8800] font-bold">
+                          {item.sku || item.package_sku || 'BFT-SELF'}
+                        </span>
+                        <span aria-hidden="true">·</span>
+                        <span className="text-emerald-400">
+                          {item.account_type || 'self_funded'}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-slate-300">
+                        {item.package_name || 'USDT (TRC-20) Deposit'}
+                      </div>
+                      <div className="text-[10px] text-slate-500">
+                        Wallet: {item.wallet_address || depositoryAddress}
+                      </div>
+                      {liveStatus === 'pending' && (
+                        <div
+                          data-testid={`deposit-expiry-countdown-${item.id}`}
+                          className="inline-flex items-center gap-1 text-[10px] text-[#ffaa00] bg-[#ff8800]/10 border border-[#ff8800]/30 px-2 py-0.5 rounded font-bold mt-1"
+                        >
+                          <Clock className="w-3 h-3 animate-pulse" />
+                          <span>
+                            1h Expiry: {formatDepositCountdown(evalExpiry.remainingMs)} remaining
+                          </span>
+                        </div>
+                      )}
+                      {isFailedStatus && (
+                        <div className="text-[10px] text-rose-400 font-bold mt-0.5">
+                          Expired (&gt;60m unconfirmed) — Reserved state released
+                        </div>
+                      )}
                     </div>
-                    <div className="text-[11px] text-slate-300">
-                      {item.package_name || 'USDT (TRC-20) Deposit'}
-                    </div>
-                    <div className="text-[10px] text-slate-500">
-                      Wallet: {item.wallet_address || depositoryAddress}
+                    <div className="text-right">
+                      <span
+                        data-testid={`crypto-deposit-status-${item.id}`}
+                        className={`px-2 py-0.5 rounded text-[10px] font-black uppercase border ${
+                          isSuccessStatus
+                            ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                            : isFailedStatus
+                            ? 'bg-rose-500/20 text-rose-400 border-rose-500/40'
+                            : 'bg-[#ff8800]/20 text-[#ff8800] border-[#ff8800]/40'
+                        }`}
+                      >
+                        {liveStatus}
+                      </span>
+                      <span className="text-[10px] text-slate-400 block mt-1">
+                        {item.network || 'TRC-20'}
+                      </span>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <span
-                      className={`text-xs font-bold uppercase ${
-                        item.status === 'completed' || item.status === 'approved'
-                          ? 'text-emerald-400'
-                          : 'text-amber-400'
-                      }`}
-                    >
-                      {item.status || 'pending'}
-                    </span>
-                    <span className="text-[10px] text-slate-400 block mt-0.5">
-                      {item.network || 'TRC-20'}
-                    </span>
-                  </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         )}

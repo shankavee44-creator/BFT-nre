@@ -4,6 +4,19 @@
  */
 export type CryptoDepositAccountType = 'challenge' | 'self_funded';
 
+export type CryptoDepositStatus =
+  | 'pending'
+  | 'completed'
+  | 'active'
+  | 'failed'
+  | 'approved'
+  | 'declined';
+
+/**
+ * 1-Hour (60-minute) strict expiry timeout for unconfirmed pending crypto deposits.
+ */
+export const DEPOSIT_EXPIRY_MS = 60 * 60 * 1000; // 3,600,000 ms (60 minutes)
+
 export interface CryptoDepositRecordInput {
   userId?: string;
   accountId?: string | null;
@@ -13,7 +26,7 @@ export interface CryptoDepositRecordInput {
   sku: string;
   accountType: CryptoDepositAccountType;
   txHash?: string;
-  status?: 'pending' | 'completed' | 'approved' | 'declined';
+  status?: CryptoDepositStatus;
 }
 
 export interface TronGridTrc20TokenInfo {
@@ -32,6 +45,25 @@ export interface TronGridTrc20Transaction {
   type?: string;
   value: string | number;
   amount?: number;
+  confirmed?: boolean;
+}
+
+export interface CryptomusWebhookPayload {
+  uuid?: string;
+  order_id?: string;
+  deposit_id?: string;
+  amount?: string | number;
+  payment_amount?: string | number;
+  payer_amount?: string | number;
+  currency?: string;
+  network?: string;
+  status?: string;
+  is_final?: boolean;
+  txid?: string;
+  tx_hash?: string;
+  sign?: string;
+  address?: string;
+  wallet_address?: string;
 }
 
 export interface PendingCryptoDepositRow {
@@ -46,7 +78,9 @@ export interface PendingCryptoDepositRow {
   account_type?: CryptoDepositAccountType | string;
   tx_hash?: string | null;
   status: string;
-  created_at?: number | string;
+  created_at?: number | string | null;
+  createdAt?: number | string | null;
+  expires_at?: number | string | null;
 }
 
 export const TRONGRID_API_KEY = '79784292-381c-42f7-b834-0f6d41b7b2e5';
@@ -91,13 +125,182 @@ export const DIRECT_USDT_TRC20_CONFIG = {
   maxDepositUsdt: 100000,
 
   /**
+   * Strict 1-hour (60-minute) confirmation window before pending deposits expire to 'failed'
+   */
+  depositExpiryMs: DEPOSIT_EXPIRY_MS,
+
+  /**
    * TronScan Explorer transaction verification template
    */
   explorerTxUrl: 'https://tronscan.org/#/transaction/',
   explorerAddressUrl: 'https://tronscan.org/#/address/',
 } as const;
 
+function DIRECT_USDT_TRC20_CONFIG_WALLET(): 'TWr3rLWrWGBcfwix5osJwAwMXmpcu4PNSp' {
+  return OKX_USDT_TRC20_WALLET;
+}
+
 export type DirectDepositConfig = typeof DIRECT_USDT_TRC20_CONFIG;
+
+/**
+ * Pure helper: normalizes any raw status string into a canonical CryptoDepositStatus.
+ */
+export function normalizeCryptoDepositStatus(
+  rawStatus?: string | null,
+  defaultStatus: CryptoDepositStatus = 'pending'
+): CryptoDepositStatus {
+  const s = String(rawStatus || '')
+    .trim()
+    .toLowerCase();
+  if (!s) return defaultStatus;
+  if (s === 'pending' || s === 'waiting' || s === 'check' || s === 'process' || s === 'confirm_check') {
+    return 'pending';
+  }
+  if (s === 'active') {
+    return 'active';
+  }
+  if (s === 'completed' || s === 'paid' || s === 'paid_over' || s === 'confirmed') {
+    return 'completed';
+  }
+  if (s === 'approved') {
+    return 'approved';
+  }
+  if (
+    s === 'failed' ||
+    s === 'fail' ||
+    s === 'expired' ||
+    s === 'cancel' ||
+    s === 'cancelled' ||
+    s === 'system_fail' ||
+    s === 'wrong_amount'
+  ) {
+    return 'failed';
+  }
+  if (s === 'declined' || s === 'rejected') {
+    return 'declined';
+  }
+  return defaultStatus;
+}
+
+/**
+ * Pure helper: parses `created_at` / `createdAt` (number in ms, seconds, or ISO string) into epoch milliseconds.
+ */
+export function parseDepositCreatedAtMs(
+  createdAt: unknown,
+  fallbackNowMs: number = Date.now()
+): number {
+  if (typeof createdAt === 'number' && Number.isFinite(createdAt) && createdAt > 0) {
+    // Handle both seconds (10 digits) and milliseconds (13 digits)
+    return createdAt < 1e11 ? Math.round(createdAt * 1000) : Math.round(createdAt);
+  }
+  if (typeof createdAt === 'string' && createdAt.trim()) {
+    const trimmed = createdAt.trim();
+    if (/^\d+$/.test(trimmed)) {
+      const num = Number(trimmed);
+      if (Number.isFinite(num) && num > 0) {
+        return num < 1e11 ? Math.round(num * 1000) : Math.round(num);
+      }
+    }
+    const parsed = Date.parse(trimmed);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return fallbackNowMs;
+}
+
+/**
+ * Pure helper: checks whether a deposit has remained in `pending` status for >= 1 hour (60 minutes)
+ * without network confirmation.
+ */
+export function isCryptoDepositExpired(
+  deposit: {
+    status?: string | null;
+    created_at?: number | string | null;
+    createdAt?: number | string | null;
+  } | null | undefined,
+  nowMs: number = Date.now(),
+  expiryWindowMs: number = DEPOSIT_EXPIRY_MS
+): boolean {
+  if (!deposit || typeof deposit !== 'object') return false;
+  const rawStatus = String(deposit.status ?? 'pending').trim().toLowerCase();
+  const normalizedStatus = normalizeCryptoDepositStatus(rawStatus, 'pending');
+  if (normalizedStatus !== 'pending') {
+    return false;
+  }
+  const rawCreated = deposit.created_at ?? deposit.createdAt;
+  if (rawCreated === undefined || rawCreated === null || rawCreated === '') {
+    return false;
+  }
+  const createdMs = parseDepositCreatedAtMs(rawCreated, nowMs);
+  return nowMs - createdMs >= expiryWindowMs;
+}
+
+/**
+ * Pure helper: returns the remaining milliseconds before a pending deposit expires (0 if expired or not pending).
+ */
+export function getDepositRemainingTimeMs(
+  deposit: {
+    status?: string | null;
+    created_at?: number | string | null;
+    createdAt?: number | string | null;
+  } | null | undefined,
+  nowMs: number = Date.now(),
+  expiryWindowMs: number = DEPOSIT_EXPIRY_MS
+): number {
+  if (!deposit || typeof deposit !== 'object') return 0;
+  const normalizedStatus = normalizeCryptoDepositStatus(deposit.status, 'pending');
+  if (normalizedStatus !== 'pending') return 0;
+  const rawCreated = deposit.created_at ?? deposit.createdAt;
+  const createdMs = parseDepositCreatedAtMs(rawCreated, nowMs);
+  const expiresAtMs = createdMs + expiryWindowMs;
+  return Math.max(0, expiresAtMs - nowMs);
+}
+
+/**
+ * Pure helper: formats remaining milliseconds into MM:SS countdown string (e.g. "59:42" or "00:00").
+ */
+export function formatDepositCountdown(remainingMs: number): string {
+  const safeMs = Math.max(0, Math.floor(Number(remainingMs) || 0));
+  const totalSeconds = Math.floor(safeMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+/**
+ * Pure helper: evaluates a deposit record and automatically transitions its status from `pending` to `failed`
+ * if more than 1 hour (60 minutes) has elapsed without blockchain confirmation.
+ */
+export function evaluateDepositStatusWithExpiry<T extends Record<string, any>>(
+  deposit: T,
+  nowMs: number = Date.now(),
+  expiryWindowMs: number = DEPOSIT_EXPIRY_MS
+): T & {
+  status: CryptoDepositStatus;
+  effectiveStatus: CryptoDepositStatus;
+  isExpired: boolean;
+  remainingMs: number;
+  expiresAtMs: number;
+} {
+  const rawCreated = deposit?.created_at ?? deposit?.createdAt;
+  const createdMs = parseDepositCreatedAtMs(rawCreated, nowMs);
+  const expiresAtMs = createdMs + expiryWindowMs;
+  const expired = isCryptoDepositExpired(deposit, nowMs, expiryWindowMs);
+  const currentStatus = normalizeCryptoDepositStatus(deposit?.status, 'pending');
+  const effectiveStatus: CryptoDepositStatus = expired ? 'failed' : currentStatus;
+  const remainingMs =
+    effectiveStatus === 'pending' ? Math.max(0, expiresAtMs - nowMs) : 0;
+
+  return {
+    ...deposit,
+    status: effectiveStatus,
+    effectiveStatus,
+    isExpired: expired || effectiveStatus === 'failed',
+    remainingMs,
+    expiresAtMs,
+  };
+}
 
 export function isValidTrc20Address(address: string): boolean {
   return (
@@ -161,6 +364,7 @@ export function buildCryptoDepositPayload(input: CryptoDepositRecordInput) {
   const sku =
     String(input.sku || '').trim().toUpperCase() ||
     buildPackageSku({ accountType, sizeOrAmount: exactAmount });
+  const status = normalizeCryptoDepositStatus(input.status, 'pending');
 
   return {
     user_id: input.userId || 'usr_bft_001',
@@ -174,7 +378,7 @@ export function buildCryptoDepositPayload(input: CryptoDepositRecordInput) {
     currency: 'USDT',
     network: 'TRC-20',
     tx_hash: input.txHash ? String(input.txHash).trim() : null,
-    status: (input.status || 'pending') as 'pending' | 'completed' | 'approved' | 'declined',
+    status,
   };
 }
 
@@ -205,7 +409,6 @@ export function buildSupabaseCryptoDepositCoreRow(input: CryptoDepositRecordInpu
   };
 }
 
-
 export interface UserPurchaseRecordInput {
   id?: string;
   userId: string;
@@ -215,7 +418,7 @@ export interface UserPurchaseRecordInput {
   amount: number;
   packageAmount?: number;
   accountType?: CryptoDepositAccountType | string;
-  status?: 'pending' | 'completed' | 'approved' | 'declined' | string;
+  status?: CryptoDepositStatus | string;
   txHash?: string | null;
   accountId?: string | null;
 }
@@ -229,7 +432,7 @@ export interface NormalizedPurchaseRecord {
   amount: number;
   package_amount: number;
   account_type: CryptoDepositAccountType;
-  status: 'pending' | 'completed' | 'approved' | 'declined';
+  status: CryptoDepositStatus;
   tx_hash: string | null;
   account_id: string | null;
   created_at: string;
@@ -257,15 +460,10 @@ export function buildSupabaseUserPurchasePayload(input: UserPurchaseRecordInput)
     String(input.packageSku || input.packageId || '').trim().toUpperCase() ||
     buildPackageSku({ accountType, sizeOrAmount: cleanPackageAmount });
   const packageId = String(input.packageId || packageSku).trim();
-  const rawStatus = String(input.status || 'completed').trim().toLowerCase();
-  const status: 'pending' | 'completed' | 'approved' | 'declined' =
-    rawStatus === 'pending'
-      ? 'pending'
-      : rawStatus === 'approved'
-      ? 'approved'
-      : rawStatus === 'declined' || rawStatus === 'rejected'
-      ? 'declined'
-      : 'completed';
+  const status: CryptoDepositStatus = normalizeCryptoDepositStatus(
+    input.status,
+    'completed'
+  );
 
   return {
     fullPayload: {
@@ -290,8 +488,13 @@ export function buildSupabaseUserPurchasePayload(input: UserPurchaseRecordInput)
 /**
  * Pure helper: normalizes a raw row from `user_purchases`, `crypto_deposits`, or `/api/purchases`
  * into a unified `NormalizedPurchaseRecord` for real-time UI rendering.
+ * Also applies the 1-hour expiry rule: any `pending` record older than 60 minutes is normalized to `failed`.
  */
-export function mapPurchaseRecord(row: Record<string, any> | null | undefined): NormalizedPurchaseRecord {
+export function mapPurchaseRecord(
+  row: Record<string, any> | null | undefined,
+  nowMs: number = Date.now(),
+  expiryWindowMs: number = DEPOSIT_EXPIRY_MS
+): NormalizedPurchaseRecord {
   const r = row && typeof row === 'object' ? row : {};
   const rawAmount = Number(r.amount ?? r.package_amount ?? r.price ?? 0);
   const amount = Number.isFinite(rawAmount) && rawAmount > 0 ? Number(rawAmount.toFixed(2)) : 0;
@@ -322,28 +525,27 @@ export function mapPurchaseRecord(row: Record<string, any> | null | undefined): 
   }
 
   const packageId = String(r.package_id ?? r.packageId ?? inferredSku).trim();
-  const rawStatus = String(r.status || 'completed').trim().toLowerCase();
-  const status: 'pending' | 'completed' | 'approved' | 'declined' =
-    rawStatus === 'pending'
-      ? 'pending'
-      : rawStatus === 'approved'
-      ? 'approved'
-      : rawStatus === 'declined' || rawStatus === 'rejected'
-      ? 'declined'
-      : 'completed';
 
-  let createdIso = new Date().toISOString();
+  let createdIso = new Date(nowMs).toISOString();
   if (typeof r.created_at === 'number' && Number.isFinite(r.created_at)) {
-    createdIso = new Date(r.created_at).toISOString();
+    createdIso = new Date(parseDepositCreatedAtMs(r.created_at, nowMs)).toISOString();
   } else if (typeof r.created_at === 'string' && r.created_at.trim()) {
     const parsedTs = Date.parse(r.created_at);
     createdIso = Number.isFinite(parsedTs) ? new Date(parsedTs).toISOString() : r.created_at;
   } else if (typeof r.createdAt === 'number' && Number.isFinite(r.createdAt)) {
-    createdIso = new Date(r.createdAt).toISOString();
+    createdIso = new Date(parseDepositCreatedAtMs(r.createdAt, nowMs)).toISOString();
   }
 
+  const initialStatus = normalizeCryptoDepositStatus(r.status, 'completed');
+  const isExpired = isCryptoDepositExpired(
+    { status: initialStatus, created_at: r.created_at ?? r.createdAt },
+    nowMs,
+    expiryWindowMs
+  );
+  const status: CryptoDepositStatus = isExpired ? 'failed' : initialStatus;
+
   return {
-    id: String(r.id || `PUR-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`),
+    id: String(r.id || `PUR-${nowMs}-${Math.random().toString(36).slice(2, 6)}`),
     user_id: String(r.user_id ?? r.userId ?? 'usr_bft_001'),
     package_id: packageId,
     package_name: packageName,
@@ -369,7 +571,7 @@ export function mergeRealtimePurchase(
   eventType: 'INSERT' | 'UPDATE' | 'DELETE' | string = 'INSERT',
   oldRow?: Record<string, any> | null
 ): NormalizedPurchaseRecord[] {
-  const list = Array.isArray(existing) ? existing.map(mapPurchaseRecord) : [];
+  const list = Array.isArray(existing) ? existing.map((r) => mapPurchaseRecord(r)) : [];
 
   if (eventType === 'DELETE') {
     const targetId = String(oldRow?.id ?? incomingRow?.id ?? '');
@@ -404,13 +606,18 @@ export function mergeRealtimePurchase(
   if (nearDuplicateIdx >= 0) {
     const updated = [...list];
     const curr = updated[nearDuplicateIdx];
+    const nextStatus: CryptoDepositStatus =
+      mapped.status === 'failed' || mapped.status === 'declined'
+        ? mapped.status
+        : curr.status === 'active' || mapped.status === 'active'
+        ? 'active'
+        : curr.status === 'completed' || mapped.status === 'completed'
+        ? 'completed'
+        : mapped.status;
     updated[nearDuplicateIdx] = {
       ...curr,
       ...mapped,
-      status:
-        curr.status === 'completed' || mapped.status === 'completed'
-          ? 'completed'
-          : mapped.status,
+      status: nextStatus,
     };
     return updated.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
   }
@@ -476,6 +683,7 @@ export function isIncomingUsdtTrc20Transfer(
   targetWallet: string = DIRECT_USDT_TRC20_CONFIG.walletAddress
 ): boolean {
   if (!tx || typeof tx !== 'object') return false;
+  if (tx.confirmed === false) return false;
   const expectedWallet = String(targetWallet || DIRECT_USDT_TRC20_CONFIG.walletAddress).trim();
   const toWallet = String(tx.to || '').trim();
   if (!toWallet || toWallet !== expectedWallet) {
@@ -494,6 +702,8 @@ export function isIncomingUsdtTrc20Transfer(
 
 /**
  * Matches a pending crypto_deposits row against recent TronGrid TRC-20 transfers.
+ * Enforces the 1-hour expiry rule: if the pending deposit is older than 60 minutes,
+ * it cannot be matched or claimed and immediately returns `null`.
  * Matches target wallet (TWr3rLWrWGBcfwix5osJwAwMXmpcu4PNSp) and exact transaction amount
  * (within 0.01 USDT tolerance for floating-point rounding), ensuring each blockchain
  * transaction_id is only claimed once.
@@ -501,9 +711,14 @@ export function isIncomingUsdtTrc20Transfer(
 export function matchPendingDepositToTronGridTx(
   deposit: PendingCryptoDepositRow,
   transactions: TronGridTrc20Transaction[],
-  claimedTxIds: Set<string> = new Set()
+  claimedTxIds: Set<string> = new Set(),
+  nowMs: number = Date.now(),
+  expiryWindowMs: number = DEPOSIT_EXPIRY_MS
 ): TronGridTrc20Transaction | null {
   if (!deposit || String(deposit.status).toLowerCase() !== 'pending') {
+    return null;
+  }
+  if (isCryptoDepositExpired(deposit, nowMs, expiryWindowMs)) {
     return null;
   }
   if (!Array.isArray(transactions) || transactions.length === 0) {
@@ -522,7 +737,7 @@ export function matchPendingDepositToTronGridTx(
   const hasExplicitBlockchainHash =
     userTxHash.length >= 16 && !userTxHash.toLowerCase().startsWith('trc20_');
 
-  // 1. If the deposit has an explicit blockchain tx_hash, check for an exact hash + wallet + amount match first
+  // 1. If the deposit has an explicit blockchain tx_hash, require an exact hash + wallet + amount match on-chain
   if (hasExplicitBlockchainHash) {
     for (const tx of transactions) {
       const txId = String(tx.transaction_id || '').trim();
@@ -535,6 +750,8 @@ export function matchPendingDepositToTronGridTx(
         return tx;
       }
     }
+    // If the user supplied a specific hash that does NOT exist on-chain (e.g. fake hash), do not match!
+    return null;
   }
 
   // 2. Match by target wallet + transaction amount on unclaimed TRC-20 transfers
@@ -550,6 +767,185 @@ export function matchPendingDepositToTronGridTx(
   }
 
   return null;
+}
+
+export interface GatewayPaymentVerificationResult {
+  verified: boolean;
+  status: CryptoDepositStatus;
+  source: 'cryptomus_webhook' | 'trongrid_blockchain' | 'expired_timeout' | 'unverified';
+  matchedTxHash: string | null;
+  matchedTxId: string | null;
+  matchedAmount: number;
+  shouldProvisionAccount: boolean;
+  shouldCreditBalance: boolean;
+  reason: string;
+}
+
+/**
+ * Pure helper: validates a payment strictly via Cryptomus gateway callback/webhook OR
+ * TronGrid TRC-20 blockchain node confirmation.
+ * - Never approves an order simply because the user clicked "I Made Payment" or entered an unverified tx_hash.
+ * - Automatically fails orders that have remained `pending` for >= 1 hour (60 minutes).
+ */
+export function verifyGatewayOrBlockchainPayment(params: {
+  deposit: PendingCryptoDepositRow;
+  tronGridTransactions?: TronGridTrc20Transaction[];
+  tronGridTransfers?: TronGridTrc20Transaction[];
+  cryptomusPayload?: CryptomusWebhookPayload | null;
+  gatewayPayload?: CryptomusWebhookPayload | null;
+  claimedTxIds?: Set<string>;
+  nowMs?: number;
+  expiryWindowMs?: number;
+}): GatewayPaymentVerificationResult {
+  const nowMs = params.nowMs ?? Date.now();
+  const expiryWindowMs = params.expiryWindowMs ?? DEPOSIT_EXPIRY_MS;
+  const deposit = params.deposit;
+
+  if (!deposit || typeof deposit !== 'object') {
+    return {
+      verified: false,
+      status: 'failed',
+      source: 'unverified',
+      matchedTxHash: null,
+      matchedTxId: null,
+      matchedAmount: 0,
+      shouldProvisionAccount: false,
+      shouldCreditBalance: false,
+      reason: 'Deposit record not found.',
+    };
+  }
+
+  const currentStatus = normalizeCryptoDepositStatus(deposit.status, 'pending');
+  if (currentStatus === 'failed' || currentStatus === 'declined') {
+    return {
+      verified: false,
+      status: currentStatus,
+      source: 'expired_timeout',
+      matchedTxHash: null,
+      matchedTxId: null,
+      matchedAmount: 0,
+      shouldProvisionAccount: false,
+      shouldCreditBalance: false,
+      reason: 'Deposit order has already failed or expired.',
+    };
+  }
+
+  if (isCryptoDepositExpired(deposit, nowMs, expiryWindowMs)) {
+    return {
+      verified: false,
+      status: 'failed',
+      source: 'expired_timeout',
+      matchedTxHash: null,
+      matchedTxId: null,
+      matchedAmount: 0,
+      shouldProvisionAccount: false,
+      shouldCreditBalance: false,
+      reason: 'Deposit expired after 60 minutes without network confirmation.',
+    };
+  }
+
+  const expectedAmount = Number(Number(deposit.amount || 0).toFixed(2));
+  const cb = params.cryptomusPayload ?? params.gatewayPayload;
+
+  // 1. Check Cryptomus gateway callback / webhook payload if provided
+  if (cb && typeof cb === 'object') {
+    const rawGatewayStatus = String(cb.status || '')
+      .trim()
+      .toLowerCase();
+    const paidAmount = Number(
+      cb.payment_amount ?? cb.payer_amount ?? cb.amount ?? expectedAmount
+    );
+    const txHash = String(cb.txid || cb.tx_hash || cb.uuid || '').trim();
+
+    if (
+      rawGatewayStatus === 'fail' ||
+      rawGatewayStatus === 'cancel' ||
+      rawGatewayStatus === 'system_fail' ||
+      rawGatewayStatus === 'wrong_amount' ||
+      rawGatewayStatus === 'expired'
+    ) {
+      return {
+        verified: false,
+        status: 'failed',
+        source: 'cryptomus_webhook',
+        matchedTxHash: txHash || null,
+        matchedTxId: txHash || null,
+        matchedAmount: 0,
+        shouldProvisionAccount: false,
+        shouldCreditBalance: false,
+        reason: `Gateway reported payment status: ${rawGatewayStatus}.`,
+      };
+    }
+
+    const isGatewayPaid =
+      rawGatewayStatus === 'paid' ||
+      rawGatewayStatus === 'paid_over' ||
+      rawGatewayStatus === 'confirmed';
+
+    if (isGatewayPaid && Number.isFinite(paidAmount) && paidAmount + 0.01 >= expectedAmount && txHash.length >= 8) {
+      if (params.claimedTxIds && params.claimedTxIds.has(txHash)) {
+        return {
+          verified: false,
+          status: 'pending',
+          source: 'cryptomus_webhook',
+          matchedTxHash: null,
+          matchedTxId: null,
+          matchedAmount: 0,
+          shouldProvisionAccount: false,
+          shouldCreditBalance: false,
+          reason: 'Transaction hash has already been claimed by another order.',
+        };
+      }
+      return {
+        verified: true,
+        status: 'completed',
+        source: 'cryptomus_webhook',
+        matchedTxHash: txHash,
+        matchedTxId: txHash,
+        matchedAmount: Number(paidAmount.toFixed(2)),
+        shouldProvisionAccount: true,
+        shouldCreditBalance: true,
+        reason: 'Payment confirmed by Cryptomus gateway.',
+      };
+    }
+  }
+
+  // 2. Check TronGrid TRC-20 blockchain transfers
+  const transfers = params.tronGridTransactions ?? params.tronGridTransfers ?? [];
+  const matchedTx = matchPendingDepositToTronGridTx(
+    deposit,
+    transfers,
+    params.claimedTxIds || new Set(),
+    nowMs,
+    expiryWindowMs
+  );
+
+  if (matchedTx) {
+    const matchedAmount = parseTrc20TransferAmount(matchedTx);
+    return {
+      verified: true,
+      status: 'completed',
+      source: 'trongrid_blockchain',
+      matchedTxHash: matchedTx.transaction_id,
+      matchedTxId: matchedTx.transaction_id,
+      matchedAmount: Number(matchedAmount.toFixed(2)),
+      shouldProvisionAccount: true,
+      shouldCreditBalance: true,
+      reason: 'Payment confirmed on TRON (TRC-20) blockchain.',
+    };
+  }
+
+  return {
+    verified: false,
+    status: 'pending',
+    source: 'unverified',
+    matchedTxHash: null,
+    matchedTxId: null,
+    matchedAmount: 0,
+    shouldProvisionAccount: false,
+    shouldCreditBalance: false,
+    reason: 'Awaiting blockchain confirmation. Order remains pending until confirmed on-chain.',
+  };
 }
 
 /**

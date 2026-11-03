@@ -29,6 +29,8 @@ import {
 import {
   calculateAffiliateStats,
   requestAffiliatePayout,
+  mergeCommissionLedgers,
+  formatPurchasedPackageLabel,
 } from '../utils/affiliateEngine';
 import { soundEngine } from '../utils/soundEffects';
 import { apiGetAffiliateDashboard } from '../utils/apiClient';
@@ -49,7 +51,9 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
   payouts,
   onAddPayout,
 }) => {
-  const referralCode = userProfile.referralCode || 'BFT-ALEX77';
+  const referralCode =
+    userProfile.referralCode ||
+    (userProfile.id ? `BFT-${String(userProfile.id).replace(/[^a-zA-Z0-9]/g, '').slice(0, 6).toUpperCase()}` : 'BFT-TRADER');
   const baseUrl = typeof window !== 'undefined' ? window.location.origin : 'https://bft.com';
   const referralLink = `${baseUrl}/?ref=${referralCode}`;
 
@@ -60,11 +64,13 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
 
   const [payoutAmount, setPayoutAmount] = useState<number>(50);
   const [payoutMethod, setPayoutMethod] = useState<'USDT (TRC-20)' | 'Bank Transfer'>('USDT (TRC-20)');
-  const [payoutDetails, setPayoutDetails] = useState('TYsDj4BmVp8QW8r6F32Xnm9ZkE4G1A7L2');
+  const [payoutDetails, setPayoutDetails] = useState('');
   const [payoutError, setPayoutError] = useState<string | null>(null);
   const [payoutSuccess, setPayoutSuccess] = useState<string | null>(null);
   const [isSubmittingPayout, setIsSubmittingPayout] = useState(false);
   const [supabaseCommissions, setSupabaseCommissions] = useState<ReferralRecord[]>([]);
+  const [backendCommissions, setBackendCommissions] = useState<ReferralRecord[]>([]);
+  const [resolvedSupabaseUuid, setResolvedSupabaseUuid] = useState<string | null>(null);
   const [referredNetworkCount, setReferredNetworkCount] = useState(0);
 
   // Query Supabase referral_commissions & network count + subscribe to real-time changes
@@ -76,24 +82,40 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
     const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
     const mapCommissionRow = (c: any): ReferralRecord => {
-      const earnerId = String(c.referrer_id || c.earner_id || userProfile.id);
+      const earnerId = String(c.referrer_id || c.sponsor_id || c.earner_id || userProfile.id);
       const sourceId = String(c.referred_user_id || c.source_user_id || 'trader');
       const rawType = String(c.source_type || c.commission_type || 'package').toLowerCase();
+      const isWithdrawal = rawType.includes('withdrawal');
+      const level = (Number(c.level || c.tier_level || 1) as 1 | 2 | 3);
+      const rate = isWithdrawal ? 0.08 : level === 1 ? 0.10 : level === 2 ? 0.05 : 0.02;
+      const pkgPrice = Number(c.package_amount ?? c.base_amount ?? c.package_price ?? 0);
+      const commAmt = Number(c.amount ?? c.commission_amount ?? (pkgPrice * rate));
+      const rawPkgName = String(c.description || c.package_name || 'Challenge Commission');
+      const cleanPkgName = isWithdrawal
+        ? rawPkgName
+        : formatPurchasedPackageLabel(rawPkgName, undefined, pkgPrice) !== 'No Purchase'
+        ? formatPurchasedPackageLabel(rawPkgName, undefined, pkgPrice)
+        : rawPkgName;
+
       return {
         id: String(c.id),
         referrerId: earnerId,
         referredUserId: sourceId,
-        referredUserName: `Trader ${sourceId.slice(0, 6)}`,
-        referredUserEmail: `trader@bft.io`,
-        level: (c.level || 1) as 1 | 2 | 3,
+        referredUserName: c.referred_user_name || `Trader ${sourceId.slice(0, 6)}`,
+        referredUserEmail: c.referred_user_email || `trader@bft.io`,
+        level,
         packageTier: 'one-step',
-        packageName: c.description || c.package_name || 'Challenge Commission',
-        packagePrice: Number(c.package_amount || c.amount || 0),
-        commissionRate: c.level === 1 ? 0.10 : c.level === 2 ? 0.05 : 0.02,
-        commissionAmount: Number(c.amount || c.commission_amount || 0),
-        commissionType: rawType.includes('withdrawal') ? 'withdrawal' : 'package',
+        packageName: cleanPkgName,
+        packagePrice: pkgPrice,
+        commissionRate: rate,
+        commissionAmount: Number(commAmt.toFixed(2)),
+        commissionType: isWithdrawal ? 'withdrawal' : 'package',
         status: 'paid',
-        createdAt: c.created_at || new Date().toISOString(),
+        createdAt: c.created_at
+          ? typeof c.created_at === 'number'
+            ? new Date(c.created_at).toISOString()
+            : String(c.created_at)
+          : new Date().toISOString(),
       };
     };
 
@@ -103,7 +125,6 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
         if (targetUserId && UUID_REGEX.test(targetUserId)) {
           validUuid = targetUserId;
         } else {
-          // Resolve UUID from auth user or profile lookup
           const { data: authData } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
           if (authData?.user?.id && UUID_REGEX.test(authData.user.id)) {
             validUuid = authData.user.id;
@@ -111,7 +132,7 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
             const { data: pData } = await supabase
               .from('profiles')
               .select('id')
-              .eq('email', userProfile.email)
+              .ilike('email', userProfile.email)
               .maybeSingle();
             if (pData?.id && UUID_REGEX.test(pData.id)) {
               validUuid = pData.id;
@@ -119,7 +140,12 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
           }
         }
 
+        if (isMounted && validUuid) {
+          setResolvedSupabaseUuid(validUuid);
+        }
+
         let rawComms: any[] = [];
+        let rawBackendComms: any[] = [];
         let networkCount: number | null = null;
 
         // 1. Fetch Commissions from Supabase using exact referrer_id column
@@ -139,42 +165,38 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
             .from('profiles')
             .select('*', { count: 'exact', head: true })
             .eq('referred_by', validUuid);
-          if (!countErr && count !== null) {
+          if (!countErr && count !== null && count > 0) {
             networkCount = count;
           }
         }
 
-        // 3. Resilient fallback to backend affiliate dashboard API if Supabase returns 0 records
-        if (rawComms.length === 0) {
-          try {
-            const dashRes = await apiGetAffiliateDashboard();
-            if (dashRes?.ok && Array.isArray(dashRes?.stats?.referrals)) {
-              rawComms = dashRes.stats.referrals.map((r: any) => ({
-                id: String(r.id || Math.random()),
-                referrer_id: validUuid || targetUserId,
-                referred_user_id: r.referred_user_id || 'usr_sub',
-                description: r.package_name || 'Commission',
-                package_amount: Number(r.package_price || 0),
-                amount: Number(r.commission_amount || 0),
-                level: Number(r.tier_level || 1),
-                source_type: r.commission_type || 'package',
-                created_at: r.created_at || new Date().toISOString(),
-              }));
-              if (networkCount === null && typeof dashRes.stats.teamSize === 'number') {
-                networkCount = dashRes.stats.teamSize;
-              }
+        // 3. Also fetch backend affiliate dashboard API (recentCommissions & teamSize)
+        try {
+          const dashRes = await apiGetAffiliateDashboard({
+            userId: validUuid || targetUserId,
+            email: userProfile.email,
+          });
+          if (dashRes?.ok && dashRes?.stats) {
+            if (Array.isArray(dashRes.stats.recentCommissions)) {
+              rawBackendComms = dashRes.stats.recentCommissions;
             }
-          } catch {
-            // ignore
+            if (networkCount === null && typeof dashRes.stats.teamSize === 'number' && dashRes.stats.teamSize > 0) {
+              networkCount = dashRes.stats.teamSize;
+            }
           }
+        } catch {
+          // ignore
         }
 
         if (isMounted) {
           if (rawComms.length > 0) {
             setSupabaseCommissions(rawComms.map(mapCommissionRow));
           }
+          if (rawBackendComms.length > 0) {
+            setBackendCommissions(rawBackendComms.map(mapCommissionRow));
+          }
           if (networkCount !== null) {
-            setReferredNetworkCount(networkCount);
+            setReferredNetworkCount((prev) => Math.max(prev, networkCount!));
           }
         }
       } catch (err) {
@@ -184,7 +206,6 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
 
     fetchAffiliateData();
 
-    // Subscribe to Realtime only with valid channel names
     const commChannel = supabase
       .channel(`realtime:referral_commissions:${targetUserId || 'session'}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'referral_commissions' }, fetchAffiliateData)
@@ -195,35 +216,65 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'profiles' }, fetchAffiliateData)
       .subscribe();
 
+    const handleLocalUpdate = () => {
+      fetchAffiliateData();
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('bft-affiliate-updated', handleLocalUpdate);
+    }
+
     return () => {
       isMounted = false;
       supabase.removeChannel(commChannel);
       supabase.removeChannel(profileChannel);
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('bft-affiliate-updated', handleLocalUpdate);
+      }
     };
   }, [userProfile.id, userProfile.email]);
+
+  const allMergedCommissions = mergeCommissionLedgers({
+    sponsorIds: [userProfile.id, resolvedSupabaseUuid || ''].filter(Boolean),
+    localReferrals: referrals,
+    supabaseReferrals: supabaseCommissions,
+    backendReferrals: backendCommissions,
+  });
 
   const totalPaid = payouts
     .filter((p) => p.status === 'completed' || p.status === 'processing')
     .reduce((sum, p) => sum + p.amount, 0);
 
+  const lifetimeEarnedTotal = Number(
+    allMergedCommissions.reduce((sum, c) => sum + c.commissionAmount, 0).toFixed(2)
+  );
+
   const stats = {
-    availableBalance: Math.max(
-      0,
-      supabaseCommissions.reduce((sum, c) => sum + c.commissionAmount, 0) - totalPaid
+    availableBalance: Math.max(0, Number((lifetimeEarnedTotal - totalPaid).toFixed(2))),
+    lifetimeEarnings: lifetimeEarnedTotal,
+    level1Earnings: Number(
+      allMergedCommissions
+        .filter((c) => c.level === 1 && c.commissionType === 'package')
+        .reduce((sum, c) => sum + c.commissionAmount, 0)
+        .toFixed(2)
     ),
-    lifetimeEarnings: supabaseCommissions.reduce((sum, c) => sum + c.commissionAmount, 0),
-    level1Earnings: supabaseCommissions
-      .filter((c) => c.level === 1 && c.commissionType === 'package')
-      .reduce((sum, c) => sum + c.commissionAmount, 0),
-    level2Earnings: supabaseCommissions
-      .filter((c) => c.level === 2)
-      .reduce((sum, c) => sum + c.commissionAmount, 0),
-    level3Earnings: supabaseCommissions
-      .filter((c) => c.level === 3)
-      .reduce((sum, c) => sum + c.commissionAmount, 0),
-    withdrawalEarnings: supabaseCommissions
-      .filter((c) => c.commissionType === 'withdrawal')
-      .reduce((sum, c) => sum + c.commissionAmount, 0),
+    level2Earnings: Number(
+      allMergedCommissions
+        .filter((c) => c.level === 2)
+        .reduce((sum, c) => sum + c.commissionAmount, 0)
+        .toFixed(2)
+    ),
+    level3Earnings: Number(
+      allMergedCommissions
+        .filter((c) => c.level === 3)
+        .reduce((sum, c) => sum + c.commissionAmount, 0)
+        .toFixed(2)
+    ),
+    withdrawalEarnings: Number(
+      allMergedCommissions
+        .filter((c) => c.commissionType === 'withdrawal')
+        .reduce((sum, c) => sum + c.commissionAmount, 0)
+        .toFixed(2)
+    ),
     totalReferralsCount: referredNetworkCount,
   };
 
@@ -278,7 +329,7 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
         amount: payoutAmount,
         method: payoutMethod,
         details: payoutDetails,
-        referrals: supabaseCommissions,
+        referrals: allMergedCommissions,
         payouts,
       });
 
@@ -297,13 +348,11 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
     }, 1000);
   };
 
-  const filteredReferrals = supabaseCommissions
-    .filter((r) => r.referrerId === userProfile.id)
-    .filter((r) => {
-      if (filterLevel === 'all') return true;
-      if (filterLevel === 'withdrawal') return r.commissionType === 'withdrawal';
-      return r.level === parseInt(filterLevel, 10) && r.commissionType !== 'withdrawal';
-    });
+  const filteredReferrals = allMergedCommissions.filter((r) => {
+    if (filterLevel === 'all') return true;
+    if (filterLevel === 'withdrawal') return r.commissionType === 'withdrawal';
+    return r.level === parseInt(filterLevel, 10) && r.commissionType !== 'withdrawal';
+  });
 
   return (
     <div data-testid="affiliate-dashboard" className="space-y-8 font-sans w-full max-w-full overflow-x-hidden">
@@ -661,7 +710,14 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
         </div>
       </div>
 
-      <ReferralNetworkList userId={userProfile.id} />
+      <ReferralNetworkList
+        userId={userProfile.id}
+        userEmail={userProfile.email}
+        referrals={allMergedCommissions}
+        onNetworkLoaded={(count) => {
+          if (count > 0) setReferredNetworkCount(count);
+        }}
+      />
 
       {/* Pure Inline SVG QR Modal (Zero External URL Dependencies) */}
       <AnimatePresence>

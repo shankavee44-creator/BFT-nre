@@ -1,7 +1,11 @@
 import type { Candle, AssetInfo } from '../types/index.ts';
 import { OTC_ASSETS_CATALOG } from '../utils/otcAssetsCatalog.ts';
-import { computeSynchronizedTickAtTime } from '../utils/priceFeedEngine.ts';
-import { findAssetBySymbol } from '../utils/storage.ts';
+import {
+  computeSynchronizedTickAtTime,
+  computeDeterministicCandleForBucket,
+  getAssetTimeOffsetMs,
+} from '../utils/priceFeedEngine.ts';
+import { findAssetBySymbol, normalizeAssetSymbol } from '../utils/storage.ts';
 
 export type MarketRegime =
   | 'bullish_trend'
@@ -17,6 +21,23 @@ export interface MarketTickPayload {
   timestamp: number;
   candle?: Candle;
 }
+
+export interface ServerMarketSnapshot {
+  ok: true;
+  serverTime: number;
+  symbol: string;
+  timeframeSeconds: number;
+  price: number;
+  prevPrice: number;
+  activeCandle: Candle;
+  candles: Candle[];
+  source: string;
+}
+
+export type ServerBatchTickListener = (payload: {
+  serverTime: number;
+  prices: Record<string, number>;
+}) => void;
 
 /**
  * Computes the synchronized market tick for any of the 268+ assets at timestamp `nowMs`.
@@ -43,7 +64,9 @@ export class BackendMarketEngine {
   private assets: AssetInfo[] = [...OTC_ASSETS_CATALOG];
   private tickInterval: NodeJS.Timeout | null = null;
   private currentPrices: Map<string, number> = new Map();
-  private feedSource: string = 'synchronized_server_rest_engine';
+  private prevPrices: Map<string, number> = new Map();
+  private listeners: Set<ServerBatchTickListener> = new Set();
+  private feedSource: string = 'synchronized_global_realtime_engine';
   private forexRates: Record<string, number> = {
     EUR: 1.0845,
     GBP: 1.2921,
@@ -61,29 +84,89 @@ export class BackendMarketEngine {
     this.broadcastBatch();
   }
 
-  private setSymbolPriceVariants(symbol: string, price: number) {
+  private setSymbolPriceVariants(symbol: string, price: number, prevPrice: number) {
     this.currentPrices.set(symbol, price);
+    this.prevPrices.set(symbol, prevPrice);
     const clean = symbol.replace(/\s*\(OTC\)/i, '').trim();
     this.currentPrices.set(clean, price);
+    this.prevPrices.set(clean, prevPrice);
     if (clean.endsWith('/USD')) {
       this.currentPrices.set(`${clean}T`, price);
+      this.prevPrices.set(`${clean}T`, prevPrice);
     }
   }
 
   public async start() {
     this.broadcastBatch();
-    this.tickInterval = setInterval(() => this.broadcastBatch(), 1000);
+    if (this.tickInterval) clearInterval(this.tickInterval);
+    this.tickInterval = setInterval(() => this.broadcastBatch(), 250);
+  }
+
+  public subscribe(listener: ServerBatchTickListener): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
   }
 
   public getPrice(symbol: string): number | undefined {
-    if (this.currentPrices.has(symbol)) return this.currentPrices.get(symbol);
+    const now = Date.now();
     const matched = findAssetBySymbol(symbol);
     if (matched) {
-      const snap = computeSynchronizedTickAtTime(matched, Date.now());
-      this.setSymbolPriceVariants(matched.symbol, snap.price);
+      const snap = computeSynchronizedTickAtTime(matched, now);
+      this.setSymbolPriceVariants(matched.symbol, snap.price, snap.open);
       return snap.price;
     }
+    if (this.currentPrices.has(symbol)) return this.currentPrices.get(symbol);
     return undefined;
+  }
+
+  public getMarketSnapshot(
+    symbol: string,
+    timeframeSeconds: number = 60,
+    count: number = 250
+  ): ServerMarketSnapshot {
+    const now = Date.now();
+    const canonical = normalizeAssetSymbol(symbol);
+    const asset = findAssetBySymbol(canonical);
+    const tf = Math.max(5, Number(timeframeSeconds) || 60);
+    const tfMs = tf * 1000;
+    const safeCount = Math.max(10, Math.min(1500, Number(count) || 250));
+
+    const snap5s = computeSynchronizedTickAtTime(asset, now);
+    this.setSymbolPriceVariants(asset.symbol, snap5s.price, snap5s.open);
+
+    const offsetMs = getAssetTimeOffsetMs(canonical, tf);
+    const currentBucketTime = Math.floor((now + offsetMs) / tfMs) * tfMs - offsetMs;
+    const startBucketTime = currentBucketTime - (safeCount - 1) * tfMs;
+
+    const candles: Candle[] = new Array(safeCount);
+    for (let i = 0; i < safeCount; i++) {
+      const bTime = startBucketTime + i * tfMs;
+      const isLast = i === safeCount - 1;
+      candles[i] = computeDeterministicCandleForBucket(
+        asset,
+        tf,
+        bTime,
+        isLast,
+        isLast ? snap5s.price : undefined,
+        now
+      );
+    }
+
+    const activeCandle = candles[candles.length - 1];
+
+    return {
+      ok: true,
+      serverTime: now,
+      symbol: asset.symbol,
+      timeframeSeconds: tf,
+      price: snap5s.price,
+      prevPrice: activeCandle.open,
+      activeCandle,
+      candles,
+      source: this.feedSource,
+    };
   }
 
   public getAllPrices(): Record<string, number> {
@@ -104,17 +187,32 @@ export class BackendMarketEngine {
   }
 
   /**
-   * Synchronizes all 268+ assets simultaneously every second using the deterministic UTC clock.
+   * Synchronizes all 268+ assets simultaneously using the authoritative server UTC clock.
    */
   private broadcastBatch() {
     const now = Date.now();
     for (const asset of this.assets) {
       const snap = computeSynchronizedTickAtTime(asset, now);
-      this.setSymbolPriceVariants(asset.symbol, snap.price);
+      this.setSymbolPriceVariants(asset.symbol, snap.price, snap.open);
+    }
+
+    if (this.listeners.size > 0) {
+      const snapshotPrices: Record<string, number> = {};
+      for (const [k, v] of this.currentPrices.entries()) {
+        snapshotPrices[k] = v;
+      }
+      for (const listener of this.listeners) {
+        try {
+          listener({ serverTime: now, prices: snapshotPrices });
+        } catch {
+          // ignore listener error
+        }
+      }
     }
   }
 
   public stop() {
     if (this.tickInterval) clearInterval(this.tickInterval);
+    this.listeners.clear();
   }
 }
