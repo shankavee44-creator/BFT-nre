@@ -249,7 +249,7 @@ export const QuotexAccountSwitcher: React.FC<QuotexAccountSwitcherProps> = ({
       {isOpen && (
         <div
           data-testid="account-switcher-dropdown"
-          className="absolute right-0 top-full mt-2 w-[340px] sm:w-[460px] rounded-2xl bg-[#0c0d12] border border-white/15 shadow-2xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150 flex flex-col sm:flex-row"
+          className="absolute right-0 top-full mt-2 w-[calc(100vw-24px)] max-w-[460px] sm:w-[460px] rounded-2xl bg-[#0c0d12] border border-white/15 shadow-2xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150 flex flex-col sm:flex-row"
         >
           {/* Left Column: Account Details, Live & Demo Cards */}
           <div className="flex-1 p-4 border-b sm:border-b-0 sm:border-r border-white/10 space-y-4">
@@ -473,7 +473,7 @@ export const QuotexAccountSwitcher: React.FC<QuotexAccountSwitcherProps> = ({
           </div>
 
           {/* Right Column: Menu Navigation Links matching Quotex Reference */}
-          <div className="w-full sm:w-44 p-3 bg-[#08090d] flex flex-col justify-between font-mono text-xs">
+          <div className="w-full sm:w-48 p-3 bg-[#08090d] flex flex-col justify-between font-mono text-xs">
             <div className="space-y-1">
               <button
                 type="button"
@@ -482,9 +482,10 @@ export const QuotexAccountSwitcher: React.FC<QuotexAccountSwitcherProps> = ({
                   setIsOpen(false);
                   if (onOpenDepositModal) onOpenDepositModal();
                 }}
-                className="w-full text-left px-3 py-2 rounded-xl text-slate-200 hover:text-white hover:bg-white/5 transition-all font-bold cursor-pointer"
+                className="w-full min-h-[44px] text-left px-3.5 py-2.5 rounded-xl text-slate-200 hover:text-white hover:bg-white/10 transition-all font-bold cursor-pointer touch-manipulation flex items-center justify-between"
               >
-                Deposit
+                <span>Deposit</span>
+                <ArrowUpRight className="w-3.5 h-3.5 text-emerald-400" />
               </button>
 
               <button
@@ -498,21 +499,10 @@ export const QuotexAccountSwitcher: React.FC<QuotexAccountSwitcherProps> = ({
                     onNavigateTab('withdrawals');
                   }
                 }}
-                className="w-full text-left px-3 py-2 rounded-xl text-slate-200 hover:text-white hover:bg-white/5 transition-all font-bold cursor-pointer"
+                className="w-full min-h-[44px] text-left px-3.5 py-2.5 rounded-xl text-slate-200 hover:text-white hover:bg-white/10 transition-all font-bold cursor-pointer touch-manipulation flex items-center justify-between"
               >
-                Withdrawal
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  soundEngine.playUiClick();
-                  setIsOpen(false);
-                  onNavigateTab('dashboard');
-                }}
-                className="w-full text-left px-3 py-2 rounded-xl text-slate-200 hover:text-white hover:bg-white/5 transition-all font-bold cursor-pointer"
-              >
-                Payments
+                <span>Withdrawal</span>
+                <CreditCard className="w-3.5 h-3.5 text-[#ff8800]" />
               </button>
 
               <button
@@ -522,9 +512,10 @@ export const QuotexAccountSwitcher: React.FC<QuotexAccountSwitcherProps> = ({
                   setIsOpen(false);
                   onNavigateTab('terminal');
                 }}
-                className="w-full text-left px-3 py-2 rounded-xl text-slate-200 hover:text-white hover:bg-white/5 transition-all font-bold cursor-pointer"
+                className="w-full min-h-[44px] text-left px-3.5 py-2.5 rounded-xl text-slate-200 hover:text-white hover:bg-white/10 transition-all font-bold cursor-pointer touch-manipulation flex items-center justify-between"
               >
-                Trades
+                <span>Trading Terminal</span>
+                <TrendingUp className="w-3.5 h-3.5 text-cyan-400" />
               </button>
 
               <button
@@ -534,15 +525,31 @@ export const QuotexAccountSwitcher: React.FC<QuotexAccountSwitcherProps> = ({
                   setIsOpen(false);
                   onNavigateTab('dashboard');
                 }}
-                className="w-full text-left px-3 py-2 rounded-xl text-slate-200 hover:text-white hover:bg-white/5 transition-all font-bold cursor-pointer"
+                className="w-full min-h-[44px] text-left px-3.5 py-2.5 rounded-xl text-slate-200 hover:text-white hover:bg-white/10 transition-all font-bold cursor-pointer touch-manipulation flex items-center justify-between"
               >
-                My account
+                <span>KYC Verification</span>
+                <span className="text-[9px] px-1.5 py-0.5 rounded font-black uppercase bg-[#ff8800]/20 text-[#ff8800]">
+                  {userProfile.kycStatus}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  setIsOpen(false);
+                  onNavigateTab('dashboard');
+                }}
+                className="w-full min-h-[44px] text-left px-3.5 py-2.5 rounded-xl text-slate-200 hover:text-white hover:bg-white/10 transition-all font-bold cursor-pointer touch-manipulation flex items-center justify-between"
+              >
+                <span>Profile & Account</span>
+                <User className="w-3.5 h-3.5 text-[#ff8800]" />
               </button>
             </div>
 
             {/* Logout Option */}
             {onLogout && (
-              <div className="pt-3 border-t border-white/10 mt-2">
+              <div className="pt-2 border-t border-white/10 mt-2">
                 <button
                   type="button"
                   onClick={() => {
@@ -550,10 +557,10 @@ export const QuotexAccountSwitcher: React.FC<QuotexAccountSwitcherProps> = ({
                     setIsOpen(false);
                     onLogout();
                   }}
-                  className="w-full text-left px-3 py-2 rounded-xl text-rose-500 hover:text-rose-400 hover:bg-rose-500/10 font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                  className="w-full min-h-[44px] text-left px-3.5 py-2.5 rounded-xl text-rose-400 hover:text-rose-300 hover:bg-rose-500/15 font-bold flex items-center justify-between transition-all cursor-pointer touch-manipulation"
                 >
-                  <LogOut className="w-3.5 h-3.5" />
                   <span>Logout</span>
+                  <LogOut className="w-3.5 h-3.5" />
                 </button>
               </div>
             )}

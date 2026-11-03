@@ -12,10 +12,12 @@ import {
   LogOut,
   Lock,
   Menu,
-  X,
+  ChevronRight,
+  User,
+  Award,
+  CreditCard,
   ShieldCheck,
-  GitBranch,
-  UploadCloud,
+  X,
 } from 'lucide-react';
 import { TradingAccount, UserProfile, PromoCodeType } from '../types';
 import { CryptoTickerBar } from './CryptoTickerBar';
@@ -75,6 +77,7 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const [accountDropdownOpen, setAccountDropdownOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [mobileProfileOpen, setMobileProfileOpen] = useState(false);
   const [soundActive, setSoundActive] = useState(soundEngine.isEnabled());
 
   const ADMIN_EMAILS = ['shankavee44@gmail.com', 'admin@bft.io', 'viktor.v@quant-prop.io'];
@@ -330,50 +333,169 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           </div>
 
-          {/* User Status / Auth Quick Actions */}
+          {/* User Status / Mobile Profile Popover Dropdown Menu */}
           {userProfile.isLoggedIn ? (
-            <div className="p-3 rounded-2xl bg-[#14141a] border border-white/10 flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <img
-                  src={userProfile.avatarUrl || BUILTIN_AVATARS[0]}
-                  alt={userProfile.fullName || 'Trader'}
-                  className="w-9 h-9 rounded-xl object-cover ring-1 ring-[#ff8800]/50"
-                />
-                <div>
-                  <div className="text-xs font-bold text-white font-mono flex items-center gap-1.5">
-                    <span>{userProfile.fullName || userProfile.email}</span>
-                    <span
-                      className={`text-[9px] px-1.5 py-0.2 rounded font-black uppercase ${
-                        userProfile.kycStatus === 'verified'
-                          ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
-                          : 'bg-[#ff8800]/20 text-[#ff8800] border border-[#ff8800]/40'
-                      }`}
-                    >
-                      {userProfile.kycStatus}
-                    </span>
-                  </div>
-                  <div className="text-[10px] text-slate-400 font-mono">
-                    Balance:{' '}
-                    <span className="text-[#00e676] font-bold">
-                      ${authoritativeActiveBalance.toLocaleString('en-US', {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}
-                    </span>{' '}
-                    ({isPersonalModeActive ? 'Personal Live' : isDemoModeActive ? 'Demo' : activeAccount?.id})
+            <div className="rounded-2xl bg-[#14141a] border border-white/15 overflow-hidden">
+              <button
+                type="button"
+                data-testid="mobile-profile-popover-trigger"
+                onClick={() => setMobileProfileOpen(!mobileProfileOpen)}
+                className="w-full p-3 flex items-center justify-between cursor-pointer hover:bg-white/5 transition-all text-left min-h-[50px] touch-manipulation"
+              >
+                <div className="flex items-center gap-2.5 truncate">
+                  <img
+                    src={userProfile.avatarUrl || BUILTIN_AVATARS[0]}
+                    alt={userProfile.fullName || 'Trader'}
+                    className="w-9 h-9 rounded-xl object-cover ring-2 ring-[#ff8800] shrink-0"
+                  />
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold text-white font-mono flex items-center gap-1.5 truncate">
+                      <span className="truncate">{userProfile.fullName || userProfile.email}</span>
+                      <span
+                        className={`text-[9px] px-1.5 py-0.5 rounded font-black uppercase shrink-0 ${
+                          userProfile.kycStatus === 'verified'
+                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                            : 'bg-[#ff8800]/20 text-[#ff8800] border border-[#ff8800]/40'
+                        }`}
+                      >
+                        {userProfile.kycStatus}
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-mono mt-0.5 truncate">
+                      Balance:{' '}
+                      <span className="text-[#00e676] font-bold">
+                        ${authoritativeActiveBalance.toLocaleString('en-US', {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </span>{' '}
+                      ({isPersonalModeActive ? 'Live' : isDemoModeActive ? 'Demo' : activeAccount?.id})
+                    </div>
                   </div>
                 </div>
-              </div>
-              {onLogout && (
-                <button
-                  onClick={() => {
-                    setMobileMenuOpen(false);
-                    onLogout();
-                  }}
-                  className="px-2.5 py-1 rounded-lg bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[11px] font-bold font-mono cursor-pointer"
-                >
-                  Logout
-                </button>
+
+                <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                  <span className="text-[10px] font-mono font-bold text-[#ff8800] uppercase hidden xs:inline">
+                    {mobileProfileOpen ? 'Close Menu' : 'Profile Menu'}
+                  </span>
+                  <ChevronDown
+                    className={`w-4 h-4 text-slate-400 transition-transform duration-200 shrink-0 ${
+                      mobileProfileOpen ? 'rotate-180 text-[#ff8800]' : ''
+                    }`}
+                  />
+                </div>
+              </button>
+
+              {/* Collapsible Mobile Profile Submenu Links */}
+              {mobileProfileOpen && (
+                <div className="p-2 border-t border-white/10 bg-[#0d0d12] space-y-1 font-mono text-xs animate-in fade-in zoom-in-95 duration-150">
+                  <button
+                    type="button"
+                    data-testid="mobile-profile-details-link"
+                    onClick={() => {
+                      setMobileMenuOpen(false);
+                      setMobileProfileOpen(false);
+                      handleNavClick('dashboard');
+                    }}
+                    className="w-full min-h-[44px] px-3 py-2.5 rounded-xl hover:bg-white/10 text-slate-200 hover:text-white flex items-center justify-between font-bold cursor-pointer touch-manipulation"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <User className="w-4 h-4 text-[#ff8800] shrink-0" />
+                      <span>Profile & Personal Details</span>
+                    </div>
+                    <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                  </button>
+
+                  <button
+                    type="button"
+                    data-testid="mobile-kyc-link"
+                    onClick={() => {
+                      setMobileMenuOpen(false);
+                      setMobileProfileOpen(false);
+                      handleNavClick('dashboard');
+                    }}
+                    className="w-full min-h-[44px] px-3 py-2.5 rounded-xl hover:bg-white/10 text-slate-200 hover:text-white flex items-center justify-between font-bold cursor-pointer touch-manipulation"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <ShieldCheck className="w-4 h-4 text-[#ff8800] shrink-0" />
+                      <span>KYC Verification</span>
+                    </div>
+                    <span className="text-[9px] px-1.5 py-0.5 rounded font-black uppercase bg-[#ff8800]/20 text-[#ff8800] shrink-0">
+                      {userProfile.kycStatus}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    data-testid="mobile-certificates-link"
+                    onClick={() => {
+                      setMobileMenuOpen(false);
+                      setMobileProfileOpen(false);
+                      handleNavClick('dashboard');
+                    }}
+                    className="w-full min-h-[44px] px-3 py-2.5 rounded-xl hover:bg-white/10 text-slate-200 hover:text-white flex items-center justify-between font-bold cursor-pointer touch-manipulation"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <Award className="w-4 h-4 text-amber-400 shrink-0" />
+                      <span>Certificates & Badges</span>
+                    </div>
+                    <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                  </button>
+
+                  <button
+                    type="button"
+                    data-testid="mobile-security-link"
+                    onClick={() => {
+                      setMobileMenuOpen(false);
+                      setMobileProfileOpen(false);
+                      handleNavClick('dashboard');
+                    }}
+                    className="w-full min-h-[44px] px-3 py-2.5 rounded-xl hover:bg-white/10 text-slate-200 hover:text-white flex items-center justify-between font-bold cursor-pointer touch-manipulation"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <Lock className="w-4 h-4 text-cyan-400 shrink-0" />
+                      <span>Security & 2FA Settings</span>
+                    </div>
+                    <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                  </button>
+
+                  <button
+                    type="button"
+                    data-testid="mobile-[#141418]-link"
+                    onClick={() => {
+                      setMobileMenuOpen(false);
+                      setMobileProfileOpen(false);
+                      handleNavClick('withdrawals');
+                    }}
+                    className="w-full min-h-[44px] px-3 py-2.5 rounded-xl hover:bg-white/10 text-slate-200 hover:text-white flex items-center justify-between font-bold cursor-pointer touch-manipulation"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <Zap className="w-4 h-4 text-[#00e676] shrink-0 fill-current" />
+                      <span>Withdrawals & Payouts</span>
+                    </div>
+                    <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                  </button>
+
+                  {onLogout && (
+                    <div className="pt-2 border-t border-white/10 mt-1">
+                      <button
+                        type="button"
+                        data-testid="mobile-logout-btn"
+                        onClick={() => {
+                          setMobileMenuOpen(false);
+                          setMobileProfileOpen(false);
+                          onLogout();
+                        }}
+                        className="w-full min-h-[44px] px-3 py-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 flex items-center justify-between font-bold cursor-pointer touch-manipulation"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <LogOut className="w-4 h-4 text-rose-400 shrink-0" />
+                          <span>Log Out of Profile</span>
+                        </div>
+                      </button>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           ) : (
@@ -384,7 +506,7 @@ export const Header: React.FC<HeaderProps> = ({
                   setMobileMenuOpen(false);
                   onOpenAuthModal('login');
                 }}
-                className="py-2.5 px-3 rounded-xl bg-[#141418] border border-white/20 text-xs font-bold text-white font-mono flex items-center justify-center gap-1.5"
+                className="py-3 px-3 rounded-xl bg-[#141418] border border-white/20 text-xs font-bold text-white font-mono flex items-center justify-center gap-1.5 min-h-[44px] touch-manipulation"
               >
                 <LogIn className="w-3.5 h-3.5 text-[#ff8800]" />
                 <span>Sign In</span>
@@ -395,7 +517,7 @@ export const Header: React.FC<HeaderProps> = ({
                   setMobileMenuOpen(false);
                   onOpenAuthModal('register');
                 }}
-                className="py-2.5 px-3 rounded-xl bg-[#ff8800] text-slate-950 text-xs font-black font-mono flex items-center justify-center gap-1.5"
+                className="py-3 px-3 rounded-xl bg-[#ff8800] text-slate-950 text-xs font-black font-mono flex items-center justify-center gap-1.5 min-h-[44px] touch-manipulation"
               >
                 <UserPlus className="w-3.5 h-3.5 stroke-[2.5]" />
                 <span>Register</span>
@@ -424,7 +546,7 @@ export const Header: React.FC<HeaderProps> = ({
                     setMobileMenuOpen(false);
                     handleNavClick(tab.id);
                   }}
-                  className={`flex items-center justify-between p-2.5 rounded-xl text-left transition-all cursor-pointer ${
+                  className={`flex items-center justify-between p-3 min-h-[44px] rounded-xl text-left transition-all cursor-pointer touch-manipulation ${
                     isActive
                       ? 'bg-[#ff8800] text-slate-950 font-black'
                       : 'text-slate-200 hover:bg-white/5'

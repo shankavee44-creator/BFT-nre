@@ -29,6 +29,7 @@ import {
   LogOut,
   Smartphone,
   Sparkles,
+  ChevronDown,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import {
@@ -164,6 +165,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   const [activeTab, setActiveTab] = useState<
     'accounts' | 'analytics' | 'affiliate' | 'kyc' | 'profile' | 'security' | 'admin_users' | 'certificates'
   >(initialTab === 'admin_users' && !isUserAdmin ? 'accounts' : initialTab);
+  const [isMobileTabDropdownOpen, setIsMobileTabDropdownOpen] = useState(false);
 
   // Personal Profile Details State (Full Name, Address, Date of Birth)
   const [fullName, setFullName] = useState(userProfile.fullName || '');
@@ -1464,8 +1466,8 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         )}
       </div>
 
-      {/* Navigation Tabs */}
-      <div className="flex gap-2 border-b border-white/10 mb-8 overflow-x-auto pb-2 font-mono">
+      {/* Navigation Tabs (Desktop view) */}
+      <div className="hidden lg:flex gap-2 border-b border-white/10 mb-8 overflow-x-auto pb-2 font-mono">
         {[
           { id: 'accounts', label: `My Trading Accounts (${accounts.length})` },
           { id: 'certificates', label: 'Certificates' },
@@ -1483,7 +1485,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               soundEngine.playUiClick();
               setActiveTab(tab.id as any);
             }}
-            className={`px-4 py-2.5 min-h-[44px] rounded-xl text-xs font-bold transition-colors whitespace-nowrap cursor-pointer ${
+            className={`px-4 py-2.5 min-h-[44px] rounded-xl text-xs font-bold transition-colors whitespace-nowrap cursor-pointer touch-manipulation ${
               activeTab === tab.id
                 ? 'bg-[#ff8800] text-slate-950 font-black'
                 : 'text-slate-400 hover:text-white hover:bg-white/5'
@@ -1492,6 +1494,88 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             {tab.label}
           </button>
         ))}
+      </div>
+
+      {/* Navigation Tabs (Mobile & Tablet Dropdown Popover) */}
+      <div className="lg:hidden mb-6 relative font-mono">
+        <label className="text-[10px] uppercase font-mono font-bold tracking-wider text-slate-400 block mb-1.5">
+          Select Profile Section:
+        </label>
+        <div className="relative">
+          <button
+            type="button"
+            data-testid="mobile-dashboard-tab-dropdown-btn"
+            onClick={() => setIsMobileTabDropdownOpen(!isMobileTabDropdownOpen)}
+            className="w-full min-h-[48px] px-4 py-3 rounded-2xl bg-[#121218] border border-[#ff8800]/50 text-white text-xs font-black flex items-center justify-between shadow-lg cursor-pointer touch-manipulation"
+          >
+            <div className="flex items-center gap-2.5 truncate">
+              {activeTab === 'accounts' && <CreditCard className="w-4 h-4 text-[#ff8800] shrink-0" />}
+              {activeTab === 'certificates' && <Award className="w-4 h-4 text-[#ff8800] shrink-0" />}
+              {activeTab === 'kyc' && <ShieldCheck className="w-4 h-4 text-[#ff8800] shrink-0" />}
+              {activeTab === 'profile' && <User className="w-4 h-4 text-[#ff8800] shrink-0" />}
+              {activeTab === 'analytics' && <TrendingUp className="w-4 h-4 text-[#ff8800] shrink-0" />}
+              {activeTab === 'affiliate' && <Sparkles className="w-4 h-4 text-[#ff8800] shrink-0" />}
+              {activeTab === 'security' && <Smartphone className="w-4 h-4 text-[#ff8800] shrink-0" />}
+              {activeTab === 'admin_users' && <ShieldCheck className="w-4 h-4 text-purple-400 shrink-0" />}
+
+              <span className="truncate">
+                {activeTab === 'accounts' && `My Trading Accounts (${accounts.length})`}
+                {activeTab === 'certificates' && 'Certificates & Badges'}
+                {activeTab === 'kyc' && `KYC Verification (${formatKycStatusBadgeText(userProfile.kycStatus)})`}
+                {activeTab === 'profile' && 'Profile & Personal Details'}
+                {activeTab === 'analytics' && 'Performance Analytics'}
+                {activeTab === 'affiliate' && 'Affiliate Program'}
+                {activeTab === 'security' && 'Security & 2FA'}
+                {activeTab === 'admin_users' && 'Admin Command Center'}
+              </span>
+            </div>
+            <ChevronDown
+              className={`w-4 h-4 text-[#ff8800] transition-transform duration-200 shrink-0 ${
+                isMobileTabDropdownOpen ? 'rotate-180' : ''
+              }`}
+            />
+          </button>
+
+          {isMobileTabDropdownOpen && (
+            <div className="absolute left-0 right-0 top-full mt-2 z-50 rounded-2xl bg-[#0c0e14] border border-[#ff8800]/40 shadow-2xl p-2 space-y-1 text-xs animate-in fade-in zoom-in-95 duration-150">
+              {[
+                { id: 'accounts', label: `My Trading Accounts (${accounts.length})`, icon: <CreditCard className="w-4 h-4 text-[#ff8800] shrink-0" /> },
+                { id: 'certificates', label: 'Certificates & Badges', icon: <Award className="w-4 h-4 text-[#ff8800] shrink-0" /> },
+                { id: 'kyc', label: 'KYC Verification', icon: <ShieldCheck className="w-4 h-4 text-[#ff8800] shrink-0" />, badge: formatKycStatusBadgeText(userProfile.kycStatus) },
+                { id: 'profile', label: 'Profile & Personal Details', icon: <User className="w-4 h-4 text-[#ff8800] shrink-0" /> },
+                { id: 'analytics', label: 'Performance Analytics', icon: <TrendingUp className="w-4 h-4 text-[#ff8800] shrink-0" /> },
+                { id: 'affiliate', label: 'Affiliate Program', icon: <Sparkles className="w-4 h-4 text-[#ff8800] shrink-0" /> },
+                { id: 'security', label: 'Security & 2FA', icon: <Smartphone className="w-4 h-4 text-[#ff8800] shrink-0" /> },
+                ...(isUserAdmin ? [{ id: 'admin_users', label: 'Admin Command Center', icon: <ShieldCheck className="w-4 h-4 text-purple-400 shrink-0" /> }] : []),
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  data-testid={`mobile-tab-item-${tab.id}`}
+                  onClick={() => {
+                    soundEngine.playUiClick();
+                    setActiveTab(tab.id as any);
+                    setIsMobileTabDropdownOpen(false);
+                  }}
+                  className={`w-full min-h-[44px] px-3.5 py-2.5 rounded-xl flex items-center justify-between font-bold text-left transition-all cursor-pointer touch-manipulation ${
+                    activeTab === tab.id
+                      ? 'bg-[#ff8800] text-slate-950 font-black shadow-md'
+                      : 'text-slate-200 hover:bg-white/10'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5 truncate">
+                    {tab.icon}
+                    <span className="truncate">{tab.label}</span>
+                  </div>
+                  {tab.badge && (
+                    <span className="text-[10px] px-2 py-0.5 rounded font-black uppercase bg-black/40 text-[#ff8800] shrink-0 ml-2">
+                      {tab.badge}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Tab 1: My Trading Accounts */}

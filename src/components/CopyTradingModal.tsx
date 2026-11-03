@@ -790,16 +790,16 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                 <div
                   key={trader.id}
                   data-testid={`copy-trader-card-${trader.numeric_id}`}
-                  className={`group relative flex flex-col xl:flex-row xl:items-center justify-between gap-3.5 sm:gap-4 p-3.5 sm:p-5 rounded-2xl border transition-all ${
+                  className={`group relative flex flex-col xl:flex-row xl:items-center justify-between gap-2.5 sm:gap-4 p-3 sm:p-5 rounded-xl sm:rounded-2xl border transition-all ${
                     isCopying
                       ? 'bg-[#00F5A0]/[0.06] border-[#00F5A0]/50 shadow-lg'
                       : 'bg-[#10141F] border-slate-800/80 hover:border-slate-700'
                   }`}
                 >
                   {/* Left: Rank + Flag + Name + Numeric ID + Account Type + Balance Info */}
-                  <div className="flex items-start sm:items-center gap-3 xl:w-[340px] shrink-0 w-full xl:w-auto">
+                  <div className="flex items-start sm:items-center gap-2.5 sm:gap-3 xl:w-[340px] shrink-0 w-full xl:w-auto">
                     <div
-                      className={`w-7 h-7 sm:w-8 sm:h-8 rounded-xl flex items-center justify-center text-xs font-black font-mono shrink-0 mt-0.5 sm:mt-0 ${
+                      className={`w-6 h-6 sm:w-8 sm:h-8 rounded-lg sm:rounded-xl flex items-center justify-center text-[10px] sm:text-xs font-black font-mono shrink-0 mt-0.5 sm:mt-0 ${
                         displayRank === 1
                           ? 'bg-amber-400 text-slate-950'
                           : displayRank === 2
@@ -812,39 +812,39 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                       #{displayRank}
                     </div>
 
-                    <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-[#161C2B] border border-slate-700/80 flex items-center justify-center shrink-0 overflow-hidden">
+                    <div className="w-9 h-9 sm:w-12 sm:h-12 rounded-lg sm:rounded-xl bg-[#161C2B] border border-slate-700/80 flex items-center justify-center shrink-0 overflow-hidden">
                       <CountryFlagIcon
                         isoCode={trader.country_code}
                         country={trader.country}
                         flagEmoji={trader.flag}
-                        className="w-7 h-5 sm:w-8 sm:h-6 object-cover rounded-xs"
+                        className="w-6 h-4 sm:w-8 sm:h-6 object-cover rounded-xs"
                       />
                     </div>
 
                     <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <h3 className="text-sm sm:text-base font-black text-white truncate max-w-[150px] sm:max-w-none">
+                      <div className="flex flex-wrap items-center gap-1 sm:gap-1.5">
+                        <h3 className="text-xs sm:text-base font-black text-white truncate max-w-[120px] xs:max-w-[170px] sm:max-w-none">
                           {trader.provider_name}
                         </h3>
-                        <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#00F5A0] shrink-0" />
+                        <CheckCircle2 className="w-3 h-3 sm:w-4 sm:h-4 text-[#00F5A0] shrink-0" />
                         <span
                           data-testid={`trader-numeric-id-${trader.numeric_id}`}
-                          className="px-1.5 py-0.5 rounded bg-cyan-500/15 border border-cyan-500/30 font-mono text-[9px] sm:text-[10px] font-bold text-cyan-300"
+                          className="px-1.5 py-0.2 sm:py-0.5 rounded bg-cyan-500/15 border border-cyan-500/30 font-mono text-[8.5px] sm:text-[10px] font-bold text-cyan-300"
                         >
                           ID #{trader.numeric_id}
                         </span>
                       </div>
 
-                      <div className="flex flex-wrap items-center gap-1.5 mt-1">
-                        <span className="text-[9px] sm:text-[10px] font-mono font-bold px-1.5 sm:px-2 py-0.5 rounded bg-white/5 border border-white/10 text-slate-200">
+                      <div className="flex flex-wrap items-center gap-1 sm:gap-1.5 mt-0.5 sm:mt-1">
+                        <span className="text-[8.5px] sm:text-[10px] font-mono font-bold px-1.5 sm:px-2 py-0.2 sm:py-0.5 rounded bg-white/5 border border-white/10 text-slate-200">
                           {trader.account_type_label}
                         </span>
-                        <span className="text-[9px] sm:text-[10px] font-mono font-bold px-1.5 sm:px-2 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-[#00F5A0]">
+                        <span className="text-[8.5px] sm:text-[10px] font-mono font-bold px-1.5 sm:px-2 py-0.2 sm:py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-[#00F5A0]">
                           3M Win Rate: {trader.win_rate_3m}%
                         </span>
                       </div>
 
-                      <div className="flex flex-wrap items-center gap-1.5 sm:gap-2.5 mt-1.5 text-[9px] sm:text-[10px] font-mono text-slate-400">
+                      <div className="flex flex-wrap items-center gap-1.5 sm:gap-2.5 mt-1 text-[8.5px] sm:text-[10px] font-mono text-slate-400">
                         <span>
                           Start: <strong className="text-slate-200">${trader.starting_balance.toLocaleString()}</strong>
                         </span>
@@ -854,59 +854,59 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                         </span>
                         <span className="text-slate-600">•</span>
                         <span>
-                          Withdrawn: <strong className="text-amber-300">${trader.all_time_withdrawals.toLocaleString()}</strong>
+                          Wd: <strong className="text-amber-300">${trader.all_time_withdrawals.toLocaleString()}</strong>
                         </span>
                       </div>
                     </div>
                   </div>
 
-                  {/* Center: Daily, Weekly, Monthly, and 3-Month ROI ($ and %) */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-2.5 flex-1 w-full">
-                    <div className="p-2 sm:p-2.5 rounded-xl bg-[#0B0E17] border border-slate-800/80">
-                      <p className="text-[8px] sm:text-[9px] text-slate-400 font-mono uppercase truncate">Daily ROI (24H)</p>
-                      <p className="text-xs sm:text-sm font-mono font-black text-[#00F5A0] mt-0.5">
+                  {/* Center: Compact 2-Column or 4-Column ROI Grid */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 sm:gap-2.5 flex-1 w-full">
+                    <div className="p-1.5 sm:p-2.5 rounded-lg sm:rounded-xl bg-[#0B0E17] border border-slate-800/80">
+                      <p className="text-[7.5px] sm:text-[9px] text-slate-400 font-mono uppercase truncate">Daily ROI (24H)</p>
+                      <p className="text-[11px] sm:text-sm font-mono font-black text-[#00F5A0] mt-0.5">
                         +${trader.daily_profit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </p>
-                      <p className="text-[9px] sm:text-[10px] font-mono font-bold text-[#00F5A0]/80">
+                      <p className="text-[8.5px] sm:text-[10px] font-mono font-bold text-[#00F5A0]/80">
                         +{trader.daily_profit_pct}%
                       </p>
                     </div>
 
-                    <div className="p-2 sm:p-2.5 rounded-xl bg-[#0B0E17] border border-slate-800/80">
-                      <p className="text-[8px] sm:text-[9px] text-slate-400 font-mono uppercase truncate">Weekly ROI (7D)</p>
-                      <p className="text-xs sm:text-sm font-mono font-black text-white mt-0.5">
+                    <div className="p-1.5 sm:p-2.5 rounded-lg sm:rounded-xl bg-[#0B0E17] border border-slate-800/80">
+                      <p className="text-[7.5px] sm:text-[9px] text-slate-400 font-mono uppercase truncate">Weekly ROI (7D)</p>
+                      <p className="text-[11px] sm:text-sm font-mono font-black text-white mt-0.5">
                         +${trader.weekly_profit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </p>
-                      <p className="text-[9px] sm:text-[10px] font-mono font-bold text-emerald-400">
+                      <p className="text-[8.5px] sm:text-[10px] font-mono font-bold text-emerald-400">
                         +{trader.weekly_profit_pct}%
                       </p>
                     </div>
 
-                    <div className="p-2 sm:p-2.5 rounded-xl bg-[#0B0E17] border border-slate-800/80">
-                      <p className="text-[8px] sm:text-[9px] text-slate-400 font-mono uppercase truncate">Monthly ROI (30D)</p>
-                      <p className="text-xs sm:text-sm font-mono font-black text-white mt-0.5">
+                    <div className="p-1.5 sm:p-2.5 rounded-lg sm:rounded-xl bg-[#0B0E17] border border-slate-800/80">
+                      <p className="text-[7.5px] sm:text-[9px] text-slate-400 font-mono uppercase truncate">Monthly ROI (30D)</p>
+                      <p className="text-[11px] sm:text-sm font-mono font-black text-white mt-0.5">
                         +${trader.monthly_profit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </p>
-                      <p className="text-[9px] sm:text-[10px] font-mono font-bold text-emerald-400">
+                      <p className="text-[8.5px] sm:text-[10px] font-mono font-bold text-emerald-400">
                         +{trader.monthly_profit_pct}%
                       </p>
                     </div>
 
-                    <div className="p-2 sm:p-2.5 rounded-xl bg-[#0B0E17] border border-slate-800/80">
-                      <p className="text-[8px] sm:text-[9px] text-slate-400 font-mono uppercase truncate">3-Month ROI (90D)</p>
-                      <p className="text-xs sm:text-sm font-mono font-black text-amber-300 mt-0.5">
+                    <div className="p-1.5 sm:p-2.5 rounded-lg sm:rounded-xl bg-[#0B0E17] border border-slate-800/80">
+                      <p className="text-[7.5px] sm:text-[9px] text-slate-400 font-mono uppercase truncate">3-Month ROI (90D)</p>
+                      <p className="text-[11px] sm:text-sm font-mono font-black text-amber-300 mt-0.5">
                         +${trader.three_month_profit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </p>
-                      <p className="text-[9px] sm:text-[10px] font-mono font-bold text-amber-400">
+                      <p className="text-[8.5px] sm:text-[10px] font-mono font-bold text-amber-400">
                         +{trader.three_month_profit_pct}%
                       </p>
                     </div>
                   </div>
 
-                  {/* Right: Copier Capacity (X / 200 Copiers) + 100% Profit Keep + Action Buttons */}
-                  <div className="flex flex-col sm:flex-row xl:flex-col items-stretch sm:items-center xl:items-end justify-between gap-2.5 xl:w-[230px] shrink-0 w-full xl:w-auto">
+                  {/* Right: Copier Capacity (X / 200 Copiers) + Action Buttons */}
+                  <div className="flex flex-col sm:flex-row xl:flex-col items-stretch sm:items-center xl:items-end justify-between gap-2 sm:gap-2.5 xl:w-[230px] shrink-0 w-full xl:w-auto">
                     <div className="w-full">
-                      <div className="flex items-center justify-between text-[10px] font-mono mb-1">
+                      <div className="flex items-center justify-between text-[9px] sm:text-[10px] font-mono mb-1">
                         <span className="text-slate-400 flex items-center gap-1">
                           <Users className="w-3 h-3 text-[#00F5A0]" /> Copiers:
                         </span>
@@ -917,7 +917,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                           {trader.current_copiers} / {MAX_COPIERS_PER_TRADER} Copiers
                         </span>
                       </div>
-                      <div className="w-full h-1.5 rounded-full bg-slate-900 border border-slate-800 overflow-hidden">
+                      <div className="w-full h-1 sm:h-1.5 rounded-full bg-slate-900 border border-slate-800 overflow-hidden">
                         <div
                           className={`h-full ${isFull ? 'bg-amber-400' : 'bg-[#00F5A0]'}`}
                           style={{
@@ -925,13 +925,13 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                           }}
                         />
                       </div>
-                      <div className="flex items-center justify-between mt-1 text-[9px] font-mono text-slate-400">
+                      <div className="flex items-center justify-between mt-0.5 sm:mt-1 text-[8.5px] sm:text-[9px] font-mono text-slate-400">
                         <span>Profit Keep: <strong className="text-[#00F5A0]">100%</strong></span>
                         <span>Fee: <strong className="text-[#00F5A0]">0%</strong></span>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2 w-full pt-1 sm:pt-0">
+                    <div className="flex items-center gap-2 w-full pt-0.5 sm:pt-0">
                       <button
                         type="button"
                         data-testid={`view-trader-btn-${trader.numeric_id}`}
@@ -939,7 +939,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                           soundEngine.playUiClick();
                           setViewingTrader(trader);
                         }}
-                        className="px-3.5 py-2.5 sm:py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-200 font-mono font-bold text-xs cursor-pointer transition-all touch-manipulation"
+                        className="px-3 py-2 sm:py-2.5 rounded-lg sm:rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-200 font-mono font-bold text-[11px] sm:text-xs cursor-pointer transition-all touch-manipulation min-h-[38px] sm:min-h-[44px]"
                       >
                         Stats
                       </button>
@@ -949,7 +949,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                           type="button"
                           data-testid={`copy-trader-btn-${trader.numeric_id}`}
                           onClick={() => handleCancelSubscription(trader)}
-                          className="flex-1 py-2.5 px-3 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-rose-300 font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer transition-all touch-manipulation"
+                          className="flex-1 py-2 sm:py-2.5 px-3 rounded-lg sm:rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-rose-300 font-black text-[11px] sm:text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer transition-all touch-manipulation min-h-[38px] sm:min-h-[44px]"
                         >
                           <StopCircle className="w-3.5 h-3.5" />
                           <span>Stop Copying</span>
@@ -960,7 +960,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                           disabled={isFull}
                           data-testid={`copy-trader-btn-${trader.numeric_id}`}
                           onClick={() => handleOpenCopyConfig(trader)}
-                          className={`flex-1 py-2.5 px-3 rounded-xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all touch-manipulation ${
+                          className={`flex-1 py-2 sm:py-2.5 px-3 rounded-lg sm:rounded-xl font-black text-[11px] sm:text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all touch-manipulation min-h-[38px] sm:min-h-[44px] ${
                             isFull
                               ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
                               : 'bg-[#00F5A0] hover:brightness-110 text-[#07080B] cursor-pointer shadow-md'
