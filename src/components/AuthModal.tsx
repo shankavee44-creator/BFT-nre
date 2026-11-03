@@ -97,6 +97,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [authError, setAuthError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Registration Compliance Checkboxes & Terms Modal State
+  const [ageAgreementChecked, setAgeAgreementChecked] = useState(false);
+  const [usTaxResidentChecked, setUsTaxResidentChecked] = useState(false);
+  const [showTermsModal, setShowTermsModal] = useState(false);
+  const [termsActiveTab, setTermsActiveTab] = useState<'terms' | 'kyc_aml' | 'privacy'>('terms');
+
   useEffect(() => {
     if (isOpen || isPageView) {
       if (initialMode === 'register') setAuthTab('email_signup');
@@ -426,6 +432,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     if (!cleanEmail || !password || password.length < 6) {
       setAuthError('Please enter a valid email and password (min 6 characters).');
+      setIsSubmitting(false);
+      return;
+    }
+
+    if (!ageAgreementChecked || !usTaxResidentChecked) {
+      setAuthError(
+        'You must confirm you are 18+ years old, accept the Service Agreement, and declare you are not a US tax resident to register.'
+      );
       setIsSubmitting(false);
       return;
     }
@@ -921,11 +935,52 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             />
           </div>
 
+          {/* Mandatory Compliance Checkboxes */}
+          <div className="space-y-2.5 pt-1 font-mono text-xs text-slate-300">
+            <label className="flex items-start gap-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                data-testid="age-terms-checkbox"
+                checked={ageAgreementChecked}
+                onChange={(e) => setAgeAgreementChecked(e.target.checked)}
+                className="mt-0.5 rounded accent-[#ff8800] w-4 h-4 cursor-pointer shrink-0"
+              />
+              <span>
+                I confirm that I am 18 years old or older and accept the{' '}
+                <button
+                  type="button"
+                  data-testid="open-service-agreement-link"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setShowTermsModal(true);
+                  }}
+                  className="text-[#ff8800] underline hover:text-[#ff9900] font-bold cursor-pointer inline-block"
+                >
+                  Service Agreement
+                </button>
+                .
+              </span>
+            </label>
+
+            <label className="flex items-start gap-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                data-testid="us-tax-resident-checkbox"
+                checked={usTaxResidentChecked}
+                onChange={(e) => setUsTaxResidentChecked(e.target.checked)}
+                className="mt-0.5 rounded accent-[#ff8800] w-4 h-4 cursor-pointer shrink-0"
+              />
+              <span>
+                I declare and confirm that I am not a citizen or resident of the US for tax purposes.
+              </span>
+            </label>
+          </div>
+
           <button
             type="submit"
-            disabled={isSubmitting}
+            disabled={isSubmitting || !ageAgreementChecked || !usTaxResidentChecked}
             data-testid="signup-submit-btn"
-            className="w-full py-3.5 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] disabled:opacity-60 text-slate-950 font-black text-xs cursor-pointer transition-colors flex items-center justify-center gap-1.5 font-mono uppercase tracking-wider mt-2"
+            className="w-full py-3.5 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] disabled:opacity-50 text-slate-950 font-black text-xs cursor-pointer transition-colors flex items-center justify-center gap-1.5 font-mono uppercase tracking-wider mt-2"
           >
             <span>
               {isSubmitting ? 'Creating Account...' : 'Register & Get Live Terminal Access'}
@@ -1009,10 +1064,204 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     </div>
   );
 
+  const termsModalContent = showTermsModal && (
+    <div
+      data-testid="service-agreement-modal"
+      className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-md overflow-y-auto"
+    >
+      <div className="relative w-full max-w-2xl max-h-[88vh] rounded-2xl bg-[#0a0a0a] border border-[#262c3a] p-4 sm:p-6 text-slate-200 font-mono shadow-2xl flex flex-col my-auto">
+        <div className="flex items-center justify-between pb-3 border-b border-[#262c3a]">
+          <div className="flex items-center gap-2 text-[#ff8800]">
+            <ShieldCheck className="w-5 h-5 shrink-0" />
+            <h3 className="text-xs sm:text-sm font-black text-white">
+              BINARY FUNDED TRADER (BFT) — LEGAL COMPLIANCE & POLICIES
+            </h3>
+          </div>
+          <button
+            type="button"
+            data-testid="close-service-agreement-btn-x"
+            onClick={() => setShowTermsModal(false)}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 cursor-pointer transition-colors"
+            aria-label="Close modal"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Tab Switcher: Terms of Service | KYC & AML Policy | Privacy Policy */}
+        <div className="flex bg-[#141720] border border-[#262c3a] p-1 rounded-xl my-3 font-mono text-[11px] font-bold shrink-0">
+          <button
+            type="button"
+            data-testid="terms-tab-terms"
+            onClick={() => setTermsActiveTab('terms')}
+            className={`flex-1 py-2 rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-1 ${
+              termsActiveTab === 'terms'
+                ? 'bg-[#ff8800] text-slate-950 font-black'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <span>Terms of Service</span>
+          </button>
+
+          <button
+            type="button"
+            data-testid="terms-tab-kyc"
+            onClick={() => setTermsActiveTab('kyc_aml')}
+            className={`flex-1 py-2 rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-1 ${
+              termsActiveTab === 'kyc_aml'
+                ? 'bg-[#ff8800] text-slate-950 font-black'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <span>KYC & AML Policy</span>
+          </button>
+
+          <button
+            type="button"
+            data-testid="terms-tab-privacy"
+            onClick={() => setTermsActiveTab('privacy')}
+            className={`flex-1 py-2 rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-1 ${
+              termsActiveTab === 'privacy'
+                ? 'bg-[#ff8800] text-slate-950 font-black'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <span>Privacy Policy</span>
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto py-2 space-y-4 text-xs text-slate-300 pr-2 leading-relaxed">
+          {/* TAB 1: TERMS OF SERVICE */}
+          {termsActiveTab === 'terms' && (
+            <div className="space-y-4 font-mono text-xs text-slate-300">
+              <div className="p-2.5 rounded-xl bg-[#141720] border border-[#262c3a] text-[11px] text-[#ff8800] font-bold">
+                SERVICE AGREEMENT & SIMULATED EVALUATION TERMS (Last Updated: November 2026)
+              </div>
+
+              <section className="space-y-1.5">
+                <h4 className="text-sm font-bold text-white">1. NATURE OF SERVICES (SIMULATED ENVIRONMENT)</h4>
+                <p>
+                  1.1. All accounts provided by BFT (Instant Funded, Self-Capital, and Evaluation Challenges) operate within a simulated trading environment.
+                </p>
+                <p>
+                  1.2. Funds visible in trading accounts represent simulated credits and do not constitute real-world bank deposits or legal tender unless explicitly verified and processed through official payout channels.
+                </p>
+                <p>
+                  1.3. BFT reserves the right to modify leverage, execution parameters, payout schedules, and asset availability at its sole discretion to maintain market stability.
+                </p>
+              </section>
+
+              <section className="space-y-1.5">
+                <h4 className="text-sm font-bold text-white">3. PROHIBITED JURISDICTIONS & AGE RESTRICTIONS</h4>
+                <p>
+                  3.1. <strong>Age Requirement:</strong> Users must be at least 18 years old or the legal age of majority in their jurisdiction.
+                </p>
+                <p>
+                  3.2. <strong>Restricted Territories:</strong> BFT does not offer services to citizens, residents, or tax entities of the United States of America, FATF-blacklisted jurisdictions, or sanctioned countries. Submitting false location data via VPN/Proxy will lead to immediate termination.
+                </p>
+              </section>
+
+              <section className="space-y-1.5">
+                <h4 className="text-sm font-bold text-white">5. COPY TRADING & AFFILIATE COMPLIANCE</h4>
+                <p>
+                  5.1. Master Copy Providers must maintain a verified minimum 60% Win Rate over a 90-day window. BFT reserves the right to suspend or demote master profiles that violate platform risk metrics.
+                </p>
+                <p>
+                  5.2. Automated system checks monitor affiliate referrals. Self-referrals, fraudulent account creation loops, or abusive marketing will lead to immediate cancellation of affiliate balances.
+                </p>
+              </section>
+
+              <section className="space-y-1.5">
+                <h4 className="text-sm font-bold text-white">6. LIMITATION OF LIABILITY</h4>
+                <p>
+                  6.1. BFT shall not be held liable for trading losses, market slippage, internet latency, WebSocket disconnects, or third-party service disruptions.
+                </p>
+                <p>
+                  6.2. Trading derivatives and binary options involves substantial risk. Users accept complete personal responsibility for their capital allocations.
+                </p>
+              </section>
+            </div>
+          )}
+
+          {/* TAB 2: KYC & AML POLICY */}
+          {termsActiveTab === 'kyc_aml' && (
+            <div className="space-y-4 font-mono text-xs text-slate-300">
+              <div className="p-2.5 rounded-xl bg-[#141720] border border-[#ff8800]/30 text-[11px] text-[#ff8800] font-bold">
+                STRICT KYC (KNOW YOUR CUSTOMER) & ANTI-MONEY LAUNDERING (AML) POLICY
+              </div>
+
+              <section className="space-y-2">
+                <h4 className="text-sm font-bold text-white">2. STRICT KYC & AML COMPLIANCE GUIDELINES</h4>
+                <p>
+                  2.1. <strong>Mandatory Identity Verification:</strong> All traders must successfully pass Identity Verification (KYC) before requesting any withdrawals or participating in profit splits.
+                </p>
+                <p>
+                  2.2. <strong>Required Documents:</strong> Users must submit a valid Government-issued Photo ID (Passport, National ID, or Driver's License) along with a Proof of Address (Utility bill or Bank statement issued within 90 days).
+                </p>
+                <p>
+                  2.3. <strong>One Account & Verification Rule:</strong> Each individual is permitted to verify only ONE identity profile. Duplicate accounts, identity theft, or submitting falsified documents will result in immediate permanent ban, account closure, and forfeiture of all balances.
+                </p>
+                <p>
+                  2.4. <strong>Anti-Money Laundering (AML) Compliance:</strong> BFT strictly adheres to international AML protocols. We reserve the right to freeze funds, flag suspicious transactions, delay crypto payouts, and report illicit activities to relevant legal authorities.
+                </p>
+                <p>
+                  2.5. <strong>Third-Party Payments Prohibited:</strong> All crypto deposits and withdrawal wallet addresses must directly belong to the verified account holder. Payouts to third-party wallets are strictly prohibited.
+                </p>
+              </section>
+            </div>
+          )}
+
+          {/* TAB 3: PRIVACY POLICY */}
+          {termsActiveTab === 'privacy' && (
+            <div className="space-y-4 font-mono text-xs text-slate-300">
+              <div className="p-2.5 rounded-xl bg-[#141720] border border-emerald-500/30 text-[11px] text-emerald-400 font-bold">
+                PRIVACY POLICY & DATA PROTECTION REGULATION
+              </div>
+
+              <section className="space-y-2">
+                <h4 className="text-sm font-bold text-white">4. PRIVACY POLICY & DATA PROTECTION</h4>
+                <p>
+                  4.1. <strong>Data Collection:</strong> We collect essential personal data including email address, identity document numbers, transaction logs, IP addresses, and device identifiers solely for account security, KYC compliance, and service delivery.
+                </p>
+                <p>
+                  4.2. <strong>Data Security & Encryption:</strong> All user verification documents and transaction records are stored using high-grade encryption protocols (including Supabase Row-Level Security and secure cloud storage).
+                </p>
+                <p>
+                  4.3. <strong>Third-Party Disclosure:</strong> BFT does not sell, rent, or trade personal user data to third parties. Data is shared exclusively with verified KYC processing partners, payment gateways, or legal authorities when required by law.
+                </p>
+                <p>
+                  4.4. <strong>Data Retention:</strong> Verification data is securely retained for the duration of the account's active lifecycle to satisfy international legal compliance and prevent fraud.
+                </p>
+              </section>
+            </div>
+          )}
+        </div>
+
+        <div className="pt-3 border-t border-[#262c3a] flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
+          <span className="text-[11px] text-slate-400 text-center sm:text-left">
+            By clicking Accept & Close, you acknowledge and agree to all 3 policy sections.
+          </span>
+          <button
+            type="button"
+            data-testid="close-service-agreement-btn"
+            onClick={() => {
+              setAgeAgreementChecked(true);
+              setShowTermsModal(false);
+            }}
+            className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] text-slate-950 font-black text-xs cursor-pointer transition-colors font-mono uppercase tracking-wider"
+          >
+            Accept & Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   if (isPageView) {
     return (
       <section className="py-10 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
         {cardContent}
+        {termsModalContent}
       </section>
     );
   }
@@ -1020,6 +1269,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-md overflow-y-auto">
       {cardContent}
+      {termsModalContent}
     </div>
   );
 };
