@@ -37,9 +37,7 @@ export function ensureTradeUuid(tradeId: string): string {
 
 /**
  * Resolves the effective Supabase user UUID.
- * If the input userId is already a valid UUID, returns it.
- * If not (e.g. backend SQLite user "usr_mvulnwy8_ej1z"), checks if there is an active
- * Supabase Auth session with a valid UUID. If no valid UUID can be resolved, returns null.
+ * If input userId is a valid UUID, returns it. Otherwise checks auth session or generates deterministic UUID.
  */
 export async function getEffectiveSupabaseUserId(userId?: string | null): Promise<string | null> {
   if (userId && isValidUuid(userId)) {
@@ -55,6 +53,10 @@ export async function getEffectiveSupabaseUserId(userId?: string | null): Promis
     // Supabase auth lookup failed or unauthenticated
   }
 
+  if (userId) {
+    return ensureTradeUuid(userId);
+  }
+
   return null;
 }
 
@@ -62,26 +64,31 @@ export async function getEffectiveSupabaseUserId(userId?: string | null): Promis
  * Maps a BinaryTrade object to a Supabase user_trades row.
  */
 function mapToSupabaseRow(trade: BinaryTrade, userId: string): Record<string, any> {
-  // Map tier to database enum strings
   let accountType = 'DEMO';
   const tier = (trade as any).accountTier || 'demo';
-  if (tier === 'personal') accountType = 'REAL';
+  if (tier === 'personal' || tier === 'real') accountType = 'REAL';
   else if (tier === 'one-step') accountType = 'ONE_STEP';
   else if (tier === 'two-step') accountType = 'TWO_STEP';
   else if (tier === 'instant') accountType = 'INSTANT';
+  else if (tier === 'self_funded' || tier === 'self') accountType = 'SELF_FUNDED';
+  else if (tier === 'funded') accountType = 'FUNDED';
+  else if (tier === 'demo' || trade.accountId?.startsWith('BFT-DEMO')) accountType = 'DEMO';
 
-  const durationMs = trade.durationSeconds ? trade.durationSeconds * 1000 : 60000;
+  const durationSeconds = trade.durationSeconds || 60;
+  const durationMs = durationSeconds * 1000;
   const startTime = trade.startTime || Date.now();
 
   return {
     id: ensureTradeUuid(trade.id),
     user_id: userId,
-    account_id: trade.accountId || 'BFT-LIVE-DB',
+    account_id: trade.accountId || 'BFT-DEMO-001',
     symbol: trade.asset,
+    asset_symbol: trade.asset,
     trade_type: trade.direction,
     amount: trade.investment,
     entry_price: trade.strikePrice,
-    exit_price: trade.closePrice ?? trade.strikePrice,
+    exit_price: trade.closePrice ?? trade.currentPrice,
+    duration_seconds: durationSeconds,
     payout_multiplier: 1 + (trade.payoutPercentage / 100),
     status: trade.status === 'active' ? 'OPEN' : trade.status.toUpperCase(),
     created_at: new Date(startTime).toISOString(),
@@ -101,17 +108,15 @@ export function mapFromSupabaseRow(row: any): BinaryTrade {
   const expiresMs = row.expires_at ? new Date(row.expires_at).getTime() : createdMs + 60000;
   const now = Date.now();
   
-  // A trade is only 'active' if status is OPEN and it hasn't expired yet.
-  // Expired OPEN trades are 'zombies' that should be settled or ignored.
   const isExpired = now >= expiresMs;
   let status: 'active' | 'won' | 'lost' | 'tie' = row.status === 'OPEN' 
-    ? (isExpired ? 'lost' : 'active') // Default to 'lost' if zombie, or 'active' if valid
+    ? (isExpired ? 'lost' : 'active')
     : (row.status.toLowerCase() as 'won' | 'lost' | 'tie');
 
   return {
     id: row.id,
-    accountId: row.account_id || 'BFT-LIVE-DB', 
-    asset: row.symbol,
+    accountId: row.account_id || 'BFT-DEMO-001', 
+    asset: row.symbol || row.asset_symbol || 'EUR/USD',
     direction: row.trade_type as BinaryOptionDirection,
     strikePrice: Number(row.entry_price),
     currentPrice: Number(row.exit_price || row.entry_price),
@@ -120,7 +125,7 @@ export function mapFromSupabaseRow(row: any): BinaryTrade {
     payoutPercentage,
     potentialPayout: Number(row.amount) * (payoutPercentage / 100),
     startTime: createdMs,
-    durationSeconds: Math.max(5, Math.round((expiresMs - createdMs) / 1000)),
+    durationSeconds: Math.max(5, row.duration_seconds || Math.round((expiresMs - createdMs) / 1000)),
     endTime: expiresMs,
     status,
     pnl: status === 'won'
@@ -132,8 +137,6 @@ export function mapFromSupabaseRow(row: any): BinaryTrade {
 
 /**
  * Fetches all trades for a specific user from Supabase.
- * Gracefully returns an empty array if the user does not have a valid Supabase UUID,
- * avoiding PostgreSQL 22P02 invalid input syntax errors.
  */
 export async function fetchUserTrades(userId: string): Promise<BinaryTrade[]> {
   if (!userId) return [];
@@ -159,7 +162,7 @@ export async function fetchUserTrades(userId: string): Promise<BinaryTrade[]> {
 }
 
 /**
- * Persists a new trade to Supabase if the user has a valid authenticated Supabase session.
+ * Persists a new trade to Supabase.
  */
 export async function createSupabaseTrade(trade: BinaryTrade, userId: string): Promise<void> {
   if (!userId) return;
@@ -193,14 +196,27 @@ export async function updateSupabaseTrade(trade: BinaryTrade, userId: string): P
 
   try {
     const row = mapToSupabaseRow(trade, effectiveUserId);
-    await supabase
-      .from('user_trades')
-      .update({
-        exit_price: row.exit_price,
-        status: row.status,
-      })
-      .eq('id', row.id)
-      .eq('user_id', effectiveUserId);
+    const updatePayload: Record<string, any> = {
+      exit_price: row.exit_price,
+      status: row.status,
+    };
+    if (row.payout_multiplier !== undefined) {
+      updatePayload.payout_multiplier = row.payout_multiplier;
+    }
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const { error } = await supabase
+        .from('user_trades')
+        .update(updatePayload)
+        .eq('id', row.id)
+        .eq('user_id', effectiveUserId);
+      if (!error) break;
+      const missingColMatch = error.message?.match(/Could not find the '([^']+)' column/i);
+      if (missingColMatch && missingColMatch[1] in updatePayload) {
+        delete updatePayload[missingColMatch[1]];
+        continue;
+      }
+      break;
+    }
   } catch {
     // Non-fatal background sync
   }
@@ -208,7 +224,6 @@ export async function updateSupabaseTrade(trade: BinaryTrade, userId: string): P
 
 /**
  * Returns a clean subscription handle without opening WebSockets that time out in restricted networks.
- * Trade updates are synchronized via REST polling and local state updates.
  */
 export function subscribeUserTrades(_userId: string, _callback: (payload: any) => void) {
   return {

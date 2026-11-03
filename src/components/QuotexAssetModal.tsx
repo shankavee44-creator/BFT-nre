@@ -59,17 +59,17 @@ const AssetRowItem: React.FC<AssetRowItemProps> = React.memo(({
       data-testid={`asset-row-${tvResolved.cleanTicker.replace(/[^A-Z0-9]/g, '')}`}
       onClick={() => onSelect(asset, livePayout)}
       style={{ height: `${ROW_HEIGHT - 4}px` }}
-      className={`flex items-center justify-between p-3 rounded-xl transition-colors cursor-pointer hw-accelerate gpu-accelerated mb-1 ${
+      className={`flex items-center justify-between p-2.5 sm:p-3 rounded-xl transition-colors cursor-pointer hw-accelerate gpu-accelerated mb-1 ${
         isSelected
           ? 'bg-[#ff8800]/15 border border-[#ff8800]/50 text-white'
           : 'hover:bg-white/5 text-slate-300'
       }`}
     >
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1 mr-2">
         <button
           type="button"
           onClick={(e) => onToggleFavorite(e, asset.symbol)}
-          className="p-1 hover:text-[#ff8800] text-slate-600 transition-colors cursor-pointer"
+          className="p-1 hover:text-[#ff8800] text-slate-600 transition-colors cursor-pointer shrink-0"
         >
           <Star
             className={`w-4 h-4 ${
@@ -78,40 +78,37 @@ const AssetRowItem: React.FC<AssetRowItemProps> = React.memo(({
           />
         </button>
 
-        <div className="w-9 h-9 rounded-xl bg-[#16161d] border border-white/10 flex items-center justify-center text-sm font-bold shrink-0">
+        <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-[#16161d] border border-white/10 flex items-center justify-center text-sm font-bold shrink-0">
           <AssetFlagIcon symbol={asset.symbol} category={asset.category} flagEmoji={asset.flag} size="md" />
         </div>
 
-        <div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-black text-white text-sm">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="font-black text-white text-xs sm:text-sm truncate">
               {asset.symbol.includes('R_') ? asset.symbol : `${asset.symbol} (OTC)`}
             </span>
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-bold">
+            <span className="text-[9px] sm:text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-bold shrink-0">
               {tvResolved.tvSymbol}
             </span>
-            <span className="text-[10px] px-2 py-0.5 rounded bg-white/5 text-[#ffaa00] border border-[#ff8800]/25 uppercase font-bold">
-              {asset.category}
-            </span>
           </div>
-          <span className="text-[11px] text-slate-400 block font-mono">
+          <span className="text-[10px] sm:text-[11px] text-slate-400 block font-mono truncate">
             {asset.symbol.includes('R_') ? asset.name : `${asset.name} (OTC)`} • {displayPrice.toFixed(asset.pipDecimals)}
           </span>
         </div>
       </div>
 
-      <div className="flex items-center gap-4 text-right">
-        <div>
-          <span className="text-[10px] text-slate-400 block font-sans flex items-center justify-end gap-1">
+      <div className="flex items-center gap-2 sm:gap-4 text-right shrink-0">
+        <div className="hidden xs:block sm:block">
+          <span className="text-[9px] sm:text-[10px] text-slate-400 block font-sans flex items-center justify-end gap-1">
             <Activity className="w-2.5 h-2.5 text-emerald-400" /> Live Payout
           </span>
-          <span className="text-sm font-black text-emerald-400 bg-emerald-950/70 border border-emerald-500/40 px-2.5 py-0.5 rounded inline-block mt-0.5">
+          <span className="text-xs sm:text-sm font-black text-emerald-400 bg-emerald-950/70 border border-emerald-500/40 px-2 sm:px-2.5 py-0.5 rounded inline-block mt-0.5">
             +{livePayout}%
           </span>
         </div>
 
         <button
-          className={`px-3.5 py-1.5 rounded-xl text-xs font-bold font-sans transition-all cursor-pointer ${
+          className={`px-2.5 sm:px-3.5 py-1.5 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold font-sans transition-all cursor-pointer ${
             isSelected
               ? 'bg-[#ff8800] text-slate-950 font-black'
               : 'bg-[#1a1a22] hover:bg-[#ff8800] hover:text-slate-950 text-slate-200 border border-white/10'
@@ -271,19 +268,19 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
       <div className="w-full h-full sm:h-auto sm:max-w-3xl sm:rounded-2xl rounded-none bg-[#0e0e12] sm:border sm:border-[#ff8800]/40 shadow-2xl overflow-hidden flex flex-col max-h-full sm:max-h-[88vh] hw-accelerate gpu-accelerated">
         {/* Header */}
         <div className="p-3 sm:p-4 bg-[#0a0a0d] border-b border-white/10 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-[#ff8800]/15 border border-[#ff8800]/40 flex items-center justify-center text-[#ff8800]">
-              <TrendingUp className="w-5 h-5" />
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1 mr-2">
+            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-[#ff8800]/15 border border-[#ff8800]/40 flex items-center justify-center text-[#ff8800] shrink-0">
+              <TrendingUp className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
-            <div>
-              <h3 className="text-base font-black text-white font-mono flex items-center gap-2">
-                Select TradingView Market Instrument
-                <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30">
-                  {allAssets.length}+ Live Markets • Up to 95% Payout
+            <div className="min-w-0 flex-1">
+              <h3 className="text-xs sm:text-base font-black text-white font-mono flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 truncate">
+                <span className="truncate">Select TradingView Market</span>
+                <span className="text-[9px] sm:text-[10px] px-1.5 sm:px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30 w-fit shrink-0">
+                  {allAssets.length}+ Markets
                 </span>
               </h3>
-              <p className="text-xs text-slate-400">
-                Select any Forex, Crypto, Stock, or Commodity market to instantly synchronize the TradingView chart.
+              <p className="text-[10px] sm:text-xs text-slate-400 hidden sm:block truncate">
+                Select any Forex, Crypto, Stock, or Commodity market to instantly synchronize chart.
               </p>
             </div>
           </div>
@@ -294,7 +291,7 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
               soundEngine.playUiClick();
               onClose();
             }}
-            className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-colors cursor-pointer"
+            className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-colors cursor-pointer shrink-0"
           >
             <X className="w-4 h-4" />
           </button>

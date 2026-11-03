@@ -1229,22 +1229,24 @@ export default function App() {
     });
     broadcastSyncEvent('TRADE_ADDED', trade);
 
-    // Persist to SQLite backend & Supabase (for non-demo accounts)
-    const isDemoTrade = trade.accountId === 'BFT-DEMO-001' || trade.accountTier === 'demo';
-    if (userProfile.id && userProfile.isLoggedIn && !isDemoTrade) {
-      apiPlaceTrade({
-        id: trade.id,
-        accountId: trade.accountId,
-        asset: trade.asset,
-        direction: trade.direction,
-        strikePrice: trade.strikePrice,
-        investment: trade.investment,
-        payoutPercentage: trade.payoutPercentage,
-        durationSeconds: trade.durationSeconds,
-        startTime: trade.startTime,
-        endTime: trade.endTime,
-        accountTier: trade.accountTier,
-      }).catch(() => {});
+    // Persist to Supabase and SQLite backend for all accounts
+    if (userProfile.id) {
+      const isDemoTrade = trade.accountId === 'BFT-DEMO-001' || trade.accountTier === 'demo';
+      if (!isDemoTrade && userProfile.isLoggedIn) {
+        apiPlaceTrade({
+          id: trade.id,
+          accountId: trade.accountId,
+          asset: trade.asset,
+          direction: trade.direction,
+          strikePrice: trade.strikePrice,
+          investment: trade.investment,
+          payoutPercentage: trade.payoutPercentage,
+          durationSeconds: trade.durationSeconds,
+          startTime: trade.startTime,
+          endTime: trade.endTime,
+          accountTier: trade.accountTier,
+        }).catch(() => {});
+      }
       createSupabaseTrade(trade, userProfile.id);
     }
   };
@@ -1261,10 +1263,10 @@ export default function App() {
     });
     broadcastSyncEvent('TRADE_UPDATED', trade);
 
-    // Update in SQLite backend & Supabase (for non-demo accounts)
-    const isDemoTrade = trade.accountId === 'BFT-DEMO-001' || trade.accountTier === 'demo';
-    if (userProfile.id && userProfile.isLoggedIn && !isDemoTrade) {
-      if (trade.status !== 'active') {
+    // Update in Supabase and SQLite backend for all accounts
+    if (userProfile.id) {
+      const isDemoTrade = trade.accountId === 'BFT-DEMO-001' || trade.accountTier === 'demo';
+      if (!isDemoTrade && userProfile.isLoggedIn && trade.status !== 'active') {
         apiSettleTrade({
           tradeId: trade.id,
           closePrice: trade.closePrice ?? trade.currentPrice,
