@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   TrendingUp,
   TrendingDown,
@@ -8,7 +8,6 @@ import {
   Clock,
   Lock,
   History,
-  SlidersHorizontal,
 } from 'lucide-react';
 import { AssetInfo } from '../types';
 import { soundEngine } from '../utils/soundEffects';
@@ -77,7 +76,7 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = ({
   return (
     <div
       data-testid="quotex-mobile-dock"
-      className="md:hidden sticky bottom-0 left-0 right-0 z-30 bg-[#0e1015]/98 border-t border-white/15 px-2 py-1.5 shrink-0 font-mono select-none w-full max-w-[100vw] overflow-x-hidden hw-accelerate shadow-2xl space-y-1.5"
+      className="md:hidden fixed bottom-[52px] left-0 right-0 z-40 bg-[#0e1015]/99 border-t border-white/20 px-2 py-1.5 shrink-0 font-mono select-none w-full max-w-[100vw] overflow-x-hidden hw-accelerate shadow-[0_-12px_35px_rgba(0,0,0,0.95)] backdrop-blur-md space-y-1"
     >
       {/* 1. Asset Selector Bar & Pending Switch */}
       <div className="flex items-center justify-between pb-1 border-b border-white/10 gap-2">
@@ -119,10 +118,10 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = ({
       </div>
 
       {/* 2. Inline Sticky Duration & Amount Selectors (Quotex Style - Always Visible & Interactive) */}
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-2 gap-1.5">
         {/* Duration / Time Box */}
-        <div className="px-2 py-1 rounded-lg bg-[#161922] border border-white/10 font-mono">
-          <div className="flex items-center justify-between text-[9.5px] text-slate-400 mb-0.5">
+        <div className="px-2 py-0.5 rounded-lg bg-[#161922] border border-white/10 font-mono">
+          <div className="flex items-center justify-between text-[9px] text-slate-400 mb-0.5">
             <span>Duration</span>
             <div className="flex gap-1">
               {[30, 60, 300].map((s) => (
@@ -133,7 +132,7 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = ({
                     soundEngine.playUiClick();
                     onChangeDuration(s);
                   }}
-                  className={`px-1 rounded text-[9px] font-bold cursor-pointer ${
+                  className={`px-1 rounded text-[8.5px] font-bold cursor-pointer ${
                     duration === s ? 'bg-[#ff8800] text-slate-950 font-black' : 'bg-[#0a0a0a] text-slate-300'
                   }`}
                 >
@@ -149,13 +148,13 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = ({
                 soundEngine.playUiClick();
                 onChangeDuration(Math.max(15, duration - (duration <= 60 ? 15 : 60)));
               }}
-              className="w-5 h-5 rounded bg-[#1e222d] text-white font-black flex items-center justify-center text-xs cursor-pointer active:bg-slate-700"
+              className="w-4.5 h-4.5 rounded bg-[#1e222d] text-white font-black flex items-center justify-center text-xs cursor-pointer active:bg-slate-700"
             >
               -
             </button>
             <span
               data-testid="mobile-dock-time-value"
-              className="font-black text-white text-xs tracking-wider tabular-nums"
+              className="font-black text-white text-[11px] tracking-wider tabular-nums"
             >
               {formatSecondsToTimer(duration)}
             </span>
@@ -165,7 +164,7 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = ({
                 soundEngine.playUiClick();
                 onChangeDuration(duration + (duration < 60 ? 15 : 60));
               }}
-              className="w-5 h-5 rounded bg-[#1e222d] text-white font-black flex items-center justify-center text-xs cursor-pointer active:bg-slate-700"
+              className="w-4.5 h-4.5 rounded bg-[#1e222d] text-white font-black flex items-center justify-center text-xs cursor-pointer active:bg-slate-700"
             >
               +
             </button>
@@ -173,8 +172,8 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = ({
         </div>
 
         {/* Investment / Amount Box */}
-        <div className="px-2 py-1 rounded-lg bg-[#161922] border border-white/10 font-mono">
-          <div className="flex items-center justify-between text-[9.5px] text-slate-400 mb-0.5">
+        <div className="px-2 py-0.5 rounded-lg bg-[#161922] border border-white/10 font-mono">
+          <div className="flex items-center justify-between text-[9px] text-slate-400 mb-0.5">
             <span>Amount</span>
             <button
               type="button"
@@ -182,7 +181,7 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = ({
                 soundEngine.playUiClick();
                 onToggleInvestmentMode();
               }}
-              className="text-blue-400 font-bold hover:underline cursor-pointer text-[9px]"
+              className="text-blue-400 font-bold hover:underline cursor-pointer text-[8.5px]"
             >
               {investmentMode === 'usd' ? '$ → %' : '% → $'}
             </button>
@@ -194,11 +193,11 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = ({
                 soundEngine.playUiClick();
                 onChangeInvestment(Math.max(1, investment - (investment <= 10 ? 1 : 10)));
               }}
-              className="w-5 h-5 rounded bg-[#1e222d] text-white font-black flex items-center justify-center text-xs cursor-pointer active:bg-slate-700"
+              className="w-4.5 h-4.5 rounded bg-[#1e222d] text-white font-black flex items-center justify-center text-xs cursor-pointer active:bg-slate-700"
             >
               -
             </button>
-            <div className="flex items-center gap-0.5 font-black text-white text-xs">
+            <div className="flex items-center gap-0.5 font-black text-white text-[11px]">
               <input
                 aria-label="Trade Investment Amount"
                 type="number"
@@ -207,7 +206,7 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = ({
                 onChange={(e) => onChangeInvestment(Math.max(1, Number(e.target.value)))}
                 className="w-12 bg-transparent text-center focus:outline-none font-black text-white"
               />
-              <span className="text-xs text-slate-300">{investmentMode === 'usd' ? '$' : '%'}</span>
+              <span className="text-[11px] text-slate-300">{investmentMode === 'usd' ? '$' : '%'}</span>
             </div>
             <button
               type="button"
@@ -215,7 +214,7 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = ({
                 soundEngine.playUiClick();
                 onChangeInvestment(investment + (investment < 10 ? 1 : 10));
               }}
-              className="w-5 h-5 rounded bg-[#1e222d] text-white font-black flex items-center justify-center text-xs cursor-pointer active:bg-slate-700"
+              className="w-4.5 h-4.5 rounded bg-[#1e222d] text-white font-black flex items-center justify-center text-xs cursor-pointer active:bg-slate-700"
             >
               +
             </button>
@@ -226,12 +225,12 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = ({
       {/* Payout Summary Row */}
       <div
         data-testid="mobile-payout-display"
-        className="flex items-center justify-between px-2 py-1 rounded-lg bg-[#161922] border border-white/10 text-[10.5px] font-mono tabular-nums"
+        className="flex items-center justify-between px-2 py-0.5 rounded-lg bg-[#161922] border border-white/10 text-[10px] font-mono tabular-nums"
       >
         <span className="text-slate-400 font-bold">Estimated Payout</span>
         <div className="flex items-center gap-1.5">
-          <span className="font-black text-white text-xs">${totalPayout.toFixed(2)}</span>
-          <span className="text-[10px] font-black text-[#00e676]">
+          <span className="font-black text-white text-[11px]">${totalPayout.toFixed(2)}</span>
+          <span className="text-[9.5px] font-black text-[#00e676]">
             (+${potentialProfit.toFixed(2)})
           </span>
         </div>
@@ -239,21 +238,21 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = ({
 
       {/* 3. Prominent Buy & Sell Action Buttons */}
       {isSoftBreached ? (
-        <div className="p-2 rounded-lg bg-amber-950/60 border border-amber-500/60 text-center font-mono text-[10.5px] text-amber-200">
+        <div className="p-1.5 rounded-lg bg-amber-950/60 border border-amber-500/60 text-center font-mono text-[10px] text-amber-200">
           <div className="font-black uppercase flex items-center justify-center gap-1 text-white">
             <Clock className="w-3.5 h-3.5 text-amber-400" />
             <span>Daily Pause (Soft Breach)</span>
           </div>
         </div>
       ) : isHardBreached ? (
-        <div className="p-2 rounded-lg bg-rose-950/60 border border-rose-500/60 text-center font-mono text-[10.5px] text-rose-200">
+        <div className="p-1.5 rounded-lg bg-rose-950/60 border border-rose-500/60 text-center font-mono text-[10px] text-rose-200">
           <div className="font-black uppercase flex items-center justify-center gap-1 text-white">
             <Lock className="w-3.5 h-3.5 text-rose-400" />
             <span>Terminal Locked (Hard Breach)</span>
           </div>
         </div>
       ) : riskBarricaded ? (
-        <div className="p-2 rounded-lg bg-amber-950/60 border border-amber-500 text-center text-[10.5px] text-amber-300 font-bold">
+        <div className="p-1.5 rounded-lg bg-amber-950/60 border border-amber-500 text-center text-[10px] text-amber-300 font-bold">
           Risk Barricade Active: Orders blocked at 80% loss threshold.
         </div>
       ) : (
@@ -266,11 +265,11 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = ({
               soundEngine.playTradePlacement('CALL');
               onTriggerTrade('CALL');
             }}
-            className="h-10 sm:h-11 rounded-xl bg-[#00c853] hover:bg-[#00e676] active:scale-[0.98] text-white font-black text-sm flex items-center justify-between px-4 cursor-pointer transition-all shadow-md"
+            className="h-10 rounded-xl bg-[#00c853] hover:bg-[#00e676] active:scale-[0.98] text-white font-black text-sm flex items-center justify-between px-3.5 cursor-pointer transition-all shadow-md"
           >
             <span>Buy</span>
-            <span className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center">
-              <TrendingUp className="w-4 h-4 stroke-[3]" />
+            <span className="w-5.5 h-5.5 rounded-full bg-white/20 flex items-center justify-center">
+              <TrendingUp className="w-3.5 h-3.5 stroke-[3]" />
             </span>
           </button>
 
@@ -282,18 +281,18 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = ({
               soundEngine.playTradePlacement('PUT');
               onTriggerTrade('PUT');
             }}
-            className="h-10 sm:h-11 rounded-xl bg-[#ff334b] hover:bg-[#ff4d63] active:scale-[0.98] text-white font-black text-sm flex items-center justify-between px-4 cursor-pointer transition-all shadow-md"
+            className="h-10 rounded-xl bg-[#ff334b] hover:bg-[#ff4d63] active:scale-[0.98] text-white font-black text-sm flex items-center justify-between px-3.5 cursor-pointer transition-all shadow-md"
           >
             <span>Sell</span>
-            <span className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center">
-              <TrendingDown className="w-4 h-4 stroke-[3]" />
+            <span className="w-5.5 h-5.5 rounded-full bg-white/20 flex items-center justify-center">
+              <TrendingDown className="w-3.5 h-3.5 stroke-[3]" />
             </span>
           </button>
         </div>
       )}
 
       {/* 4. Trades & History Drawer Toggle Bar */}
-      <div className="flex items-center justify-between pt-1 border-t border-white/10 text-[10px] gap-1">
+      <div className="flex items-center justify-between pt-0.5 border-t border-white/10 text-[10px] gap-1">
         <div className="flex items-center gap-1.5">
           <button
             type="button"
@@ -306,7 +305,7 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = ({
                 onToggleTradesDrawer();
               }
             }}
-            className={`px-2 py-1 rounded font-bold flex items-center gap-1 cursor-pointer transition-colors ${
+            className={`px-2 py-0.5 rounded font-bold flex items-center gap-1 cursor-pointer transition-colors ${
               isTradesDrawerOpen && activeTradesTab === 'trades'
                 ? 'bg-[#ff8800] text-slate-950 font-black'
                 : 'bg-[#161922] text-slate-200 hover:text-white border border-white/10'
@@ -327,7 +326,7 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = ({
                 onToggleTradesDrawer();
               }
             }}
-            className={`px-2 py-1 rounded font-bold flex items-center gap-1 cursor-pointer transition-colors ${
+            className={`px-2 py-0.5 rounded font-bold flex items-center gap-1 cursor-pointer transition-colors ${
               isTradesDrawerOpen && activeTradesTab === 'history'
                 ? 'bg-[#ff8800] text-slate-950 font-black'
                 : 'bg-[#161922] text-slate-200 hover:text-white border border-white/10'
@@ -345,7 +344,7 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = ({
               soundEngine.playUiClick();
               onToggleTradesDrawer();
             }}
-            className="p-1 rounded bg-[#161922] border border-white/10 text-slate-400 hover:text-white cursor-pointer"
+            className="p-0.5 rounded bg-[#161922] border border-white/10 text-slate-400 hover:text-white cursor-pointer"
           >
             <ChevronUp
               className={`w-3.5 h-3.5 transition-transform duration-200 ${
@@ -355,7 +354,7 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = ({
           </button>
         </div>
 
-        <div className="text-[10px] text-slate-400 shrink-0 tabular-nums">
+        <div className="text-[9.5px] text-slate-400 shrink-0 tabular-nums">
           Daily DD:{' '}
           <span
             className={`font-black ${
