@@ -3049,7 +3049,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   }, []);
 
   return (
-    <div className="flex flex-col min-h-[100dvh] md:h-[calc(100vh-60px)] md:min-h-[720px] bg-[#0a0a0a] text-slate-100 overflow-x-hidden overflow-y-auto font-sans select-none relative">
+    <div className="flex flex-col min-h-[100dvh] md:h-[calc(100vh-60px)] md:min-h-[720px] bg-[#0a0a0a] text-slate-100 overflow-x-hidden overflow-y-auto touch-scroll terminal-scroll-area hw-accelerate font-sans select-none relative">
       {/* Global Assets Loading Overlay */}
       {isLoadingAssets && (
         <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-[#0a0a0a]/98 backdrop-blur-md pointer-events-auto font-mono text-center px-6">

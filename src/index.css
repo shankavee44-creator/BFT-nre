@@ -74,10 +74,19 @@ body {
   }
 }
 
-/* Force hardware acceleration on fixed containers, modals, charts, and trading panels */
+/* Protect canvas elements and charting layers from forced layout transforms */
+canvas,
+.tv-lightweight-charts,
+.trading-chart-canvas,
+.chart-container canvas {
+  will-change: auto !important;
+  transform: none !important;
+  backface-visibility: visible !important;
+}
+
+/* Force hardware acceleration on fixed containers, modals, and layout wrappers */
 .hw-accelerate,
 .glass-panel,
-.chart-container,
 .trading-panel,
 [role="dialog"],
 .fixed-overlay,
@@ -88,19 +97,35 @@ body {
   perspective: 1000px;
 }
 
-/* Mobile GPU Acceleration & Smooth Touch Scrolling Optimization */
-@media (max-width: 767px) {
+/* Touch-Scrolling & GPU-Accelerated Helpers */
+.touch-scroll {
+  -webkit-overflow-scrolling: touch !important;
+  overscroll-behavior-y: contain !important;
+  touch-action: pan-y;
+}
+
+.gpu-accelerated {
+  transform: translateZ(0);
+  will-change: transform;
+}
+
+/* Mobile GPU Acceleration, Unfreeze Scroll & Render Optimization (< 1024px) */
+@media (max-width: 1023px) {
   * {
     -webkit-tap-highlight-color: transparent;
   }
 
+  /* Disable heavy GPU backdrop blurs on mobile/tablet to fix UI lag and unfreeze scroll */
   .backdrop-blur-2xl,
   .backdrop-blur-xl,
   .backdrop-blur-lg,
   .backdrop-blur-md,
-  .backdrop-blur {
+  .backdrop-blur-sm,
+  .backdrop-blur,
+  [class*="backdrop-blur-"] {
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
+    background-color: rgba(10, 10, 10, 0.98) !important;
   }
 
   .glass-panel {
@@ -109,18 +134,28 @@ body {
 
   .overflow-y-auto,
   .overflow-x-auto,
+  .overflow-auto,
   .custom-scrollbar,
   [role="dialog"],
-  .modal-overlay {
+  .modal-overlay,
+  .terminal-scroll-area {
     -webkit-overflow-scrolling: touch !important;
-    overscroll-behavior: contain !important;
+    overscroll-behavior-y: contain !important;
     touch-action: pan-y pan-x;
   }
 
   .shadow-2xl,
   .shadow-xl,
-  .shadow-lg {
+  .shadow-lg,
+  .shadow-md {
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important;
+  }
+
+  .hw-accelerate,
+  [role="dialog"] > div,
+  .modal-overlay > div {
+    will-change: scroll-position, transform;
+    transform: translateZ(0);
   }
 }
 

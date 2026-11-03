@@ -961,7 +961,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
         {/* Main Leaderboard Feed */}
         <div
           data-testid="copy-traders-list"
-          className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 space-y-3 custom-scrollbar overscroll-contain"
+          className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 space-y-3 custom-scrollbar overscroll-contain touch-scroll hw-accelerate"
         >
           {isLoading ? (
             <div className="flex flex-col items-center justify-center py-24 space-y-4">
