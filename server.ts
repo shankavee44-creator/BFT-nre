@@ -658,6 +658,52 @@ async function startServer() {
     res.status(200).json({ ok: true, status: 'healthy', timestamp: Date.now() });
   });
 
+  app.get('/sitemap.xml', (_req, res) => {
+    res.header('Content-Type', 'application/xml');
+    res.send(`<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://binaryfundedtrader.com/</loc>
+    <lastmod>2026-11-03</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>https://binaryfundedtrader.com/copy-trading</loc>
+    <lastmod>2026-11-03</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://binaryfundedtrader.com/affiliate</loc>
+    <lastmod>2026-11-03</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://binaryfundedtrader.com/terms</loc>
+    <lastmod>2026-11-03</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.5</priority>
+  </url>
+</urlset>`);
+  });
+
+  app.get('/robots.txt', (_req, res) => {
+    res.header('Content-Type', 'text/plain');
+    res.send(`# Binary Funded Trader Robots Configuration
+User-agent: *
+Allow: /
+Allow: /copy-trading
+Allow: /affiliate
+Allow: /terms
+Disallow: /dashboard/
+Disallow: /api/
+Disallow: /admin/
+
+Sitemap: https://binaryfundedtrader.com/sitemap.xml`);
+  });
+
   // Helper for cookie parsing & authentication
   const parseCookies = (req: express.Request): Record<string, string> => {
     const list: Record<string, string> = {};
@@ -2179,6 +2225,10 @@ async function startServer() {
       res.setHeader('Content-Type', 'text/css; charset=utf-8');
     } else if (ext === '.json' || ext === '.map') {
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    } else if (ext === '.xml') {
+      res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    } else if (ext === '.txt') {
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     } else if (ext === '.svg') {
       res.setHeader('Content-Type', 'image/svg+xml');
     } else if (ext === '.wasm') {
@@ -3538,13 +3588,17 @@ async function startServer() {
     });
     app.use(vite.middlewares);
 
-    // Development SPA Fallback: Serve index.html for all non-API/non-file requests
+    // Development SPA Fallback: Serve index.html for all non-API/non-sitemap requests
     app.get('*', async (req, res, next) => {
-      if (req.url.startsWith('/api/')) return next();
+      if (
+        req.url.startsWith('/api/') ||
+        req.url === '/sitemap.xml' ||
+        req.url === '/robots.txt'
+      ) return next();
       try {
         let html = fs.readFileSync(path.resolve(__dirname, 'index.html'), 'utf-8');
         html = await vite.transformIndexHtml(req.url, html);
-        res.status(200).set({ 'Content-Type': 'text/html' }).end(html);
+        res.status(200).set({ 'Content-Type': 'text/html; charset=utf-8' }).end(html);
       } catch (e: any) {
         vite.ssrFixStacktrace(e);
         next(e);
@@ -3558,7 +3612,12 @@ async function startServer() {
         },
       })
     );
-    app.get('*', (_req, res) => {
+    app.get('*', (req, res, next) => {
+      if (
+        req.url.startsWith('/api/') ||
+        req.url === '/sitemap.xml' ||
+        req.url === '/robots.txt'
+      ) return next();
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.sendFile(path.join(distPath, 'index.html'));
     });
