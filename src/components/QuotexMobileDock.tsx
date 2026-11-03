@@ -79,7 +79,7 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = ({
   return (
     <div
       data-testid="quotex-mobile-dock"
-      className="md:hidden bg-[#0e1015] border-t border-white/10 px-2.5 py-2 z-20 shrink-0 font-mono select-none w-full max-w-[100vw] overflow-x-hidden hw-accelerate"
+      className="md:hidden sticky bottom-0 left-0 right-0 z-30 bg-[#0e1015]/98 border-t border-white/15 px-2.5 py-2 shrink-0 font-mono select-none w-full max-w-[100vw] overflow-x-hidden hw-accelerate shadow-2xl"
     >
       {/* 1. Asset Selector Bar with Payout % & PENDING TRADE Switch */}
       <div className="flex items-center justify-between pb-1 mb-1 border-b border-white/10 gap-2">

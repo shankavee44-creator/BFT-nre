@@ -747,11 +747,12 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
             </div>
           </div>
 
-          {/* Standard Quotex Sub-Navigation Bar (Desktop + Mobile Horizontal Strip) */}
+          {/* Standard Quotex Sub-Navigation Bar (Desktop Tab Strip vs Mobile Select Dropdown) */}
           <div className="flex items-center justify-between gap-4">
+            {/* Desktop Tabs (>= 768px) */}
             <nav
               aria-label="Quotex Account Navigation"
-              className="flex items-center gap-1 sm:gap-2 overflow-x-auto no-scrollbar py-2 md:py-0"
+              className="hidden md:flex items-center gap-1 sm:gap-2 overflow-x-auto no-scrollbar py-2 md:py-0"
             >
               {portalNavTabs.map((tab) => {
                 const isActive = activePortalTab === tab.id;
@@ -772,6 +773,29 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                 );
               })}
             </nav>
+
+            {/* Mobile Compact Sub-Tab Dropdown (< 768px) */}
+            <div className="md:hidden py-2 w-full">
+              <label htmlFor="mobile-portal-tab-select" className="sr-only">
+                Select Portal Section
+              </label>
+              <div className="relative">
+                <select
+                  id="mobile-portal-tab-select"
+                  data-testid="mobile-portal-tab-select"
+                  value={activePortalTab}
+                  onChange={(e) => handlePortalTabClick(e.target.value as QuotexPortalTab)}
+                  className="w-full bg-[#181c26] border border-[#262c3a] text-white font-mono text-xs font-bold rounded-xl px-3 py-2.5 appearance-none focus:outline-none focus:border-[#ff8800] cursor-pointer"
+                >
+                  {portalNavTabs.map((tab) => (
+                    <option key={tab.id} value={tab.id} className="bg-[#12151e] text-white">
+                      {tab.label} {activePortalTab === tab.id ? '✓ (Active)' : ''}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="w-4 h-4 text-[#ff8800] absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
+            </div>
 
             {/* Desktop Right Account Balance Indicator + Deposit + Withdrawal Buttons */}
             <div className="hidden md:flex items-center gap-2.5 py-2 shrink-0">

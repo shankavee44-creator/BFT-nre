@@ -14854,7 +14854,9 @@ var copyTradingAlterColumns = [
   `ALTER TABLE copy_trading_profiles ADD COLUMN profit_factor REAL DEFAULT 2.15;`,
   `ALTER TABLE copy_trading_profiles ADD COLUMN max_drawdown REAL DEFAULT 4.2;`,
   `ALTER TABLE copy_trading_profiles ADD COLUMN sharpe_ratio REAL DEFAULT 1.85;`,
-  `ALTER TABLE copy_trading_profiles ADD COLUMN avg_holding_time TEXT DEFAULT '4h 12m';`
+  `ALTER TABLE copy_trading_profiles ADD COLUMN avg_holding_time TEXT DEFAULT '4h 12m';`,
+  `ALTER TABLE commissions ADD COLUMN affiliate_tier TEXT DEFAULT 'basic';`,
+  `ALTER TABLE users ADD COLUMN registered_tier TEXT DEFAULT 'basic';`
 ];
 for (const stmt of copyTradingAlterColumns) {
   try {
@@ -14950,63 +14952,6 @@ function seedInitialData() {
     now - 864e5 * 20,
     now
   );
-  const l1Users = [
-    { id: "USR-SUB-101", name: "Marco Rossi", email: "marco.rossi@milan-fx.it", ref: "BFT-MARCO101" },
-    { id: "USR-SUB-102", name: "Liam Davies", email: "liam.davies@london-capital.uk", ref: "BFT-LIAM102" }
-  ];
-  for (const u of l1Users) {
-    db.prepare(`
-      INSERT INTO users (id, email, full_name, referral_code, referred_by, kyc_status, profile_locked, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, 'verified', 1, ?, ?)
-    `).run(u.id, u.email, u.name, u.ref, "usr_bft_001", now - 864e5 * 15, now);
-    db.prepare(`
-      INSERT INTO referrals (id, sponsor_id, referred_user_id, tier_level, created_at)
-      VALUES (?, ?, ?, 1, ?)
-    `).run(`REF-L1-${u.id}`, "usr_bft_001", u.id, now - 864e5 * 15);
-  }
-  const l2Users = [
-    { id: "USR-GRAND-201", name: "Sophia Chen", email: "sophia.chen@sg-wealth.sg", ref: "BFT-SOPHIA201", parent: "USR-SUB-101" },
-    { id: "USR-GRAND-202", name: "Lucas Bernard", email: "lucas.b@paris-quant.fr", ref: "BFT-LUCAS202", parent: "USR-SUB-102" }
-  ];
-  for (const u of l2Users) {
-    db.prepare(`
-      INSERT INTO users (id, email, full_name, referral_code, referred_by, kyc_status, profile_locked, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, 'verified', 1, ?, ?)
-    `).run(u.id, u.email, u.name, u.ref, u.parent, now - 864e5 * 10, now);
-    db.prepare(`
-      INSERT INTO referrals (id, sponsor_id, referred_user_id, tier_level, created_at)
-      VALUES (?, ?, ?, 2, ?)
-    `).run(`REF-L2-${u.id}`, "usr_bft_001", u.id, now - 864e5 * 10);
-  }
-  const l3Users = [
-    { id: "USR-LEAF-301", name: "David Miller", email: "d.miller@austin-trader.us", ref: "BFT-DAVID301", parent: "USR-GRAND-201" },
-    { id: "USR-LEAF-302", name: "Emma Watson", email: "emma.w@toronto-fx.ca", ref: "BFT-EMMA302", parent: "USR-GRAND-202" }
-  ];
-  for (const u of l3Users) {
-    db.prepare(`
-      INSERT INTO users (id, email, full_name, referral_code, referred_by, kyc_status, profile_locked, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, 'verified', 1, ?, ?)
-    `).run(u.id, u.email, u.name, u.ref, u.parent, now - 864e5 * 5, now);
-    db.prepare(`
-      INSERT INTO referrals (id, sponsor_id, referred_user_id, tier_level, created_at)
-      VALUES (?, ?, ?, 3, ?)
-    `).run(`REF-L3-${u.id}`, "usr_bft_001", u.id, now - 864e5 * 5);
-  }
-  const seedCommissions = [
-    { id: "COMM-001", subId: "USR-SUB-101", type: "purchase", level: 1, pkg: "$10,000 Two-Step", price: 99, rate: 0.1, amt: 9.9, ts: now - 864e5 * 12 },
-    { id: "COMM-002", subId: "USR-SUB-102", type: "purchase", level: 1, pkg: "$25,000 Instant Funded", price: 299, rate: 0.1, amt: 29.9, ts: now - 864e5 * 9 },
-    { id: "COMM-003", subId: "USR-GRAND-201", type: "purchase", level: 2, pkg: "$50,000 One-Step", price: 289, rate: 0.05, amt: 14.45, ts: now - 864e5 * 7 },
-    { id: "COMM-004", subId: "USR-GRAND-202", type: "purchase", level: 2, pkg: "$10,000 Instant Funded", price: 149, rate: 0.05, amt: 7.45, ts: now - 864e5 * 5 },
-    { id: "COMM-005", subId: "USR-LEAF-301", type: "purchase", level: 3, pkg: "$100,000 Two-Step", price: 499, rate: 0.02, amt: 9.98, ts: now - 864e5 * 4 },
-    { id: "COMM-006", subId: "USR-SUB-101", type: "withdrawal", level: 1, pkg: "Direct Referral Payout Bonus (8% of $500)", price: 500, rate: 0.08, amt: 40, ts: now - 864e5 * 2 }
-  ];
-  for (const c of seedCommissions) {
-    db.prepare(`
-      INSERT INTO commissions (
-        id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, status, created_at
-      ) VALUES (?, 'usr_bft_001', ?, ?, ?, ?, ?, ?, ?, 'paid', ?)
-    `).run(c.id, c.subId, c.type, c.level, c.pkg, c.price, c.rate, c.amt, c.ts);
-  }
   db.prepare(`
     INSERT INTO withdrawals (
       id, user_id, account_id, gross_amount, net_profit, max_allowed_profit, profit_share_rate, fee_amount, net_payout,
@@ -15881,21 +15826,24 @@ function processWithdrawalRequest(params) {
     now
   );
   if (user.referred_by) {
-    const bonusRate = 0.08;
+    const isVip = user.registered_tier === "vip";
+    const bonusRate = isVip ? 0.1 : 0.08;
+    const affiliateTier = isVip ? "vip" : "basic";
     const bonusAmount = Number((params.requestedAmount * bonusRate).toFixed(2));
     const commId = `COMM-WD-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
     db.prepare(`
       INSERT INTO commissions (
-        id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, status, created_at
-      ) VALUES (?, ?, ?, 'withdrawal', 1, ?, ?, ?, ?, 'paid', ?)
+        id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, affiliate_tier, status, created_at
+      ) VALUES (?, ?, ?, 'withdrawal', 1, ?, ?, ?, ?, ?, 'paid', ?)
     `).run(
       commId,
       user.referred_by,
       user.id,
-      `Direct Referral Payout Bonus (8% of $${params.requestedAmount.toFixed(2)} Withdrawal by ${user.full_name})`,
+      `Direct Referral Payout Bonus (${(bonusRate * 100).toFixed(0)}% of $${params.requestedAmount.toFixed(2)} Withdrawal by ${user.full_name})`,
       params.requestedAmount,
       bonusRate,
       bonusAmount,
+      affiliateTier,
       now
     );
   }
@@ -15994,7 +15942,14 @@ function creditPurchaseCommissions(buyerUserId, packageName, packagePrice, refer
   if (referralCodeUsed && buyer && !buyer.referred_by) {
     const sponsor = getUserByReferralCode(referralCodeUsed);
     if (sponsor && sponsor.id !== buyer.id) {
-      db.prepare("UPDATE users SET referred_by = ? WHERE id = ?").run(sponsor.id, buyer.id);
+      const sponsorNetwork = db.prepare("SELECT referred_user_id FROM referrals WHERE sponsor_id = ?").all(sponsor.id);
+      let sponsorActiveCount = 0;
+      for (const node of sponsorNetwork) {
+        const pur = getLatestPurchaseForUserInDb(node.referred_user_id);
+        if (pur && Number(pur.amount) > 0) sponsorActiveCount += 1;
+      }
+      const regTier = sponsorActiveCount >= 1e3 ? "vip" : "basic";
+      db.prepare("UPDATE users SET referred_by = ?, registered_tier = ? WHERE id = ?").run(sponsor.id, regTier, buyer.id);
       linkUplineReferrals(sponsor.id, buyer.id, now);
       buyer = getUserById(buyerUserId);
     }
@@ -16004,14 +15959,19 @@ function creditPurchaseCommissions(buyerUserId, packageName, packagePrice, refer
     linkUplineReferrals(buyer.referred_by, buyer.id, now);
   } catch {
   }
+  const isVipReferral = buyer.registered_tier === "vip";
+  const effectiveTier = isVipReferral ? "vip" : "basic";
+  const l1Rate = isVipReferral ? 0.15 : 0.1;
+  const l2Rate = isVipReferral ? 0.08 : 0.05;
+  const l3Rate = isVipReferral ? 0.05 : 0.02;
   const commissionsRecorded = [];
   const l1SponsorId = buyer.referred_by;
-  const l1Amount = Number((packagePrice * 0.1).toFixed(2));
+  const l1Amount = Number((packagePrice * l1Rate).toFixed(2));
   const l1Id = `COMM-P1-${now.toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
   db.prepare(`
-    INSERT INTO commissions (id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, status, created_at)
-    VALUES (?, ?, ?, 'purchase', 1, ?, ?, 0.10, ?, 'paid', ?)
-  `).run(l1Id, l1SponsorId, buyer.id, packageName, packagePrice, l1Amount, now);
+    INSERT INTO commissions (id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, affiliate_tier, status, created_at)
+    VALUES (?, ?, ?, 'purchase', 1, ?, ?, ?, ?, ?, 'paid', ?)
+  `).run(l1Id, l1SponsorId, buyer.id, packageName, packagePrice, l1Rate, l1Amount, effectiveTier, now);
   commissionsRecorded.push({
     id: l1Id,
     level: 1,
@@ -16021,18 +15981,19 @@ function creditPurchaseCommissions(buyerUserId, packageName, packagePrice, refer
     referredUserEmail: buyer.email,
     packageName,
     packagePrice,
-    rate: 0.1,
-    amount: l1Amount
+    rate: l1Rate,
+    amount: l1Amount,
+    affiliateTier: effectiveTier
   });
   const l1User = getUserById(l1SponsorId);
   if (l1User?.referred_by && l1User.referred_by !== buyer.id) {
     const l2SponsorId = l1User.referred_by;
-    const l2Amount = Number((packagePrice * 0.05).toFixed(2));
+    const l2Amount = Number((packagePrice * l2Rate).toFixed(2));
     const l2Id = `COMM-P2-${now.toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
     db.prepare(`
-      INSERT INTO commissions (id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, status, created_at)
-      VALUES (?, ?, ?, 'purchase', 2, ?, ?, 0.05, ?, 'paid', ?)
-    `).run(l2Id, l2SponsorId, buyer.id, packageName, packagePrice, l2Amount, now);
+      INSERT INTO commissions (id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, affiliate_tier, status, created_at)
+      VALUES (?, ?, ?, 'purchase', 2, ?, ?, ?, ?, ?, 'paid', ?)
+    `).run(l2Id, l2SponsorId, buyer.id, packageName, packagePrice, l2Rate, l2Amount, effectiveTier, now);
     commissionsRecorded.push({
       id: l2Id,
       level: 2,
@@ -16042,18 +16003,19 @@ function creditPurchaseCommissions(buyerUserId, packageName, packagePrice, refer
       referredUserEmail: buyer.email,
       packageName,
       packagePrice,
-      rate: 0.05,
-      amount: l2Amount
+      rate: l2Rate,
+      amount: l2Amount,
+      affiliateTier: effectiveTier
     });
     const l2User = getUserById(l2SponsorId);
     if (l2User?.referred_by && l2User.referred_by !== buyer.id) {
       const l3SponsorId = l2User.referred_by;
-      const l3Amount = Number((packagePrice * 0.02).toFixed(2));
+      const l3Amount = Number((packagePrice * l3Rate).toFixed(2));
       const l3Id = `COMM-P3-${now.toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
       db.prepare(`
-        INSERT INTO commissions (id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, status, created_at)
-        VALUES (?, ?, ?, 'purchase', 3, ?, ?, 0.02, ?, 'paid', ?)
-      `).run(l3Id, l3SponsorId, buyer.id, packageName, packagePrice, l3Amount, now);
+        INSERT INTO commissions (id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, affiliate_tier, status, created_at)
+        VALUES (?, ?, ?, 'purchase', 3, ?, ?, ?, ?, ?, 'paid', ?)
+      `).run(l3Id, l3SponsorId, buyer.id, packageName, packagePrice, l3Rate, l3Amount, effectiveTier, now);
       commissionsRecorded.push({
         id: l3Id,
         level: 3,
@@ -16063,8 +16025,9 @@ function creditPurchaseCommissions(buyerUserId, packageName, packagePrice, refer
         referredUserEmail: buyer.email,
         packageName,
         packagePrice,
-        rate: 0.02,
-        amount: l3Amount
+        rate: l3Rate,
+        amount: l3Amount,
+        affiliateTier: effectiveTier
       });
     }
   }
@@ -16114,7 +16077,25 @@ function getLatestPurchaseForUserInDb(userId) {
   return null;
 }
 function getAffiliateDashboardStats(userId) {
-  let targetId = userId || "usr_bft_001";
+  let targetId = (userId || "").trim();
+  if (!targetId) {
+    return {
+      stats: {
+        totalEarned: 0,
+        unpaidEarnings: 0,
+        paidEarnings: 0,
+        level1Earnings: 0,
+        level2Earnings: 0,
+        level3Earnings: 0,
+        withdrawalEarnings: 0,
+        teamSize: 0,
+        activeFundedCount: 0,
+        isVipUnlocked: false,
+        recentCommissions: [],
+        networkTree: []
+      }
+    };
+  }
   let commissions = db.prepare(
     `SELECT c.*, u.full_name as referred_user_name, u.email as referred_user_email
        FROM commissions c
@@ -16129,22 +16110,6 @@ function getAffiliateDashboardStats(userId) {
        WHERE r.sponsor_id = ?
        ORDER BY r.tier_level ASC, r.created_at DESC`
   ).all(targetId);
-  if (commissions.length === 0 && referrals.length === 0 && targetId !== "usr_bft_001") {
-    commissions = db.prepare(
-      `SELECT c.*, u.full_name as referred_user_name, u.email as referred_user_email
-         FROM commissions c
-         LEFT JOIN users u ON c.referred_user_id = u.id
-         WHERE c.sponsor_id = 'usr_bft_001'
-         ORDER BY c.created_at DESC`
-    ).all();
-    referrals = db.prepare(
-      `SELECT r.*, u.full_name, u.email, u.created_at as joined_at
-         FROM referrals r
-         JOIN users u ON r.referred_user_id = u.id
-         WHERE r.sponsor_id = 'usr_bft_001'
-         ORDER BY r.tier_level ASC, r.created_at DESC`
-    ).all();
-  }
   let totalEarnings = 0;
   let level1Earnings = 0;
   let level2Earnings = 0;
@@ -16180,6 +16145,19 @@ function getAffiliateDashboardStats(userId) {
     level: r.tier_level || 1,
     latestPurchase: r.latestPurchase
   }));
+  const activeFundedCount = networkTree.filter(
+    (n) => n.latestPurchase && Number(n.latestPurchase.amount) > 0
+  ).length;
+  const vipThreshold = 1e3;
+  const isVipUnlocked = activeFundedCount >= vipThreshold;
+  const remainingToVip = Math.max(0, vipThreshold - activeFundedCount);
+  const vipProgressPercent = Math.min(100, Number((activeFundedCount / vipThreshold * 100).toFixed(1)));
+  const affiliateTier = isVipUnlocked ? "vip" : "basic";
+  const milestoneRewardAmount = 1e4;
+  const normalizedCommissions = commissions.map((c) => ({
+    ...c,
+    affiliate_tier: c.affiliate_tier || (c.rate >= 0.15 || c.source_type === "withdrawal" && c.rate >= 0.1 ? "vip" : "basic")
+  }));
   return {
     totalEarnings: Number(totalEarnings.toFixed(2)),
     level1Earnings: Number(level1Earnings.toFixed(2)),
@@ -16187,10 +16165,17 @@ function getAffiliateDashboardStats(userId) {
     level3Earnings: Number(level3Earnings.toFixed(2)),
     withdrawalBonusEarnings: Number(withdrawalBonusEarnings.toFixed(2)),
     teamSize: referrals.length,
+    activeFundedCount,
+    vipThreshold,
+    vipProgressPercent,
+    remainingToVip,
+    isVipUnlocked,
+    affiliateTier,
+    milestoneRewardAmount,
     level1Count: referrals.filter((r) => r.tier_level === 1).length,
     level2Count: referrals.filter((r) => r.tier_level === 2).length,
     level3Count: referrals.filter((r) => r.tier_level === 3).length,
-    recentCommissions: commissions.slice(0, 50),
+    recentCommissions: normalizedCommissions.slice(0, 50),
     referrals: enrichedReferrals.slice(0, 50),
     networkTree
   };
@@ -17988,7 +17973,12 @@ function findAssetBySymbol(symbol) {
 }
 
 // src/utils/priceFeedEngine.ts
+var serverTimeOffsetMs = 0;
+function getSynchronizedNowMs() {
+  return Date.now() + serverTimeOffsetMs;
+}
 var GLOBAL_EPOCH = 17040672e5;
+var GLOBAL_OCTAVE_PERIODS_SEC = [5, 15, 30, 60, 180, 300, 900, 1800, 3600];
 function hashSymbol(str) {
   let h = 2166136261 >>> 0;
   for (let i = 0; i < str.length; i++) {
@@ -18052,7 +18042,34 @@ function getAssetTimeOffsetMs(symbol, timeframeSeconds) {
   const stepIndex = (hash >>> 3) % subSteps;
   return stepIndex * 5e3;
 }
-function computeSynchronizedTickAtTime(asset, nowMs = Date.now()) {
+function evalGlobalPriceAtTime(asset, tMs) {
+  const canonical = normalizeAssetSymbol(asset.symbol);
+  const catParams = getCategoryParameters(asset.category, canonical);
+  const unitVol = asset.volatility * catParams.volMultiplier;
+  const minPip = Math.pow(10, -asset.pipDecimals);
+  const symSeed = hashSymbol(canonical);
+  const tSec = (tMs - GLOBAL_EPOCH) / 1e3;
+  let totalOffset = 0;
+  for (let k = 0; k < GLOBAL_OCTAVE_PERIODS_SEC.length; k++) {
+    const periodSec = GLOBAL_OCTAVE_PERIODS_SEC[k];
+    const phaseShiftSec = (symSeed >>> k * 3 % 24) % periodSec;
+    const gridCoord = (tSec + phaseShiftSec) / periodSec;
+    const idx0 = Math.floor(gridCoord);
+    const frac = gridCoord - idx0;
+    const h0 = hashSymbol(`${canonical}:oct:${periodSec}:${idx0}`);
+    const h1 = hashSymbol(`${canonical}:oct:${periodSec}:${idx0 + 1}`);
+    const v0 = (h0 % 20001 - 1e4) / 1e4;
+    const v1 = (h1 % 20001 - 1e4) / 1e4;
+    const interp = v0 + (v1 - v0) * frac;
+    const octaveScale = Math.pow(periodSec / 5, 0.34);
+    totalOffset += interp * unitVol * octaveScale * 0.62;
+  }
+  const maxSafeExcursion = Math.max(minPip * 50, asset.basePrice * 0.075);
+  const boundedOffset = Math.tanh(totalOffset / maxSafeExcursion) * maxSafeExcursion;
+  const rawPrice = asset.basePrice + boundedOffset;
+  return Number(Math.max(minPip * 10, rawPrice).toFixed(asset.pipDecimals));
+}
+function computeSynchronizedTickAtTime(asset, nowMs = getSynchronizedNowMs()) {
   const canonical = normalizeAssetSymbol(asset.symbol);
   const tf = 5;
   const tfMs = tf * 1e3;
@@ -18061,36 +18078,23 @@ function computeSynchronizedTickAtTime(asset, nowMs = Date.now()) {
   const catParams = getCategoryParameters(asset.category, canonical);
   const unitVol = asset.volatility * catParams.volMultiplier;
   const minPip = Math.pow(10, -asset.pipDecimals);
-  const symSeed = hashSymbol(canonical);
-  const evalContinuousPriceAt = (tMs) => {
-    const tSec = (tMs - GLOBAL_EPOCH) / 1e3;
-    const p1 = (symSeed & 255) / 255 * Math.PI * 2;
-    const p2 = (symSeed >>> 8 & 255) / 255 * Math.PI * 2;
-    const p3 = (symSeed >>> 16 & 255) / 255 * Math.PI * 2;
-    const p4 = (symSeed >>> 24 & 255) / 255 * Math.PI * 2;
-    const f1 = 45e-5 + symSeed % 17 * 2e-5;
-    const f2 = 165e-5 + (symSeed >>> 4) % 19 * 5e-5;
-    const f3 = 58e-4 + (symSeed >>> 9) % 23 * 15e-5;
-    const f4 = 0.019 + (symSeed >>> 14) % 29 * 4e-4;
-    const f5 = 0.067 + (symSeed >>> 19) % 31 * 12e-4;
-    const waveUnits = Math.sin(tSec * f1 + p1) * 7.5 + Math.cos(tSec * f2 + p2) * 4.2 + Math.sin(tSec * f3 + p3) * 2.4 + Math.cos(tSec * f4 + p4) * 1.25 + Math.sin(tSec * f5 + p1 + p3) * 0.65;
-    const rawPrice = asset.basePrice + waveUnits * unitVol;
-    return Number(Math.max(minPip * 10, rawPrice).toFixed(asset.pipDecimals));
-  };
-  const open = evalContinuousPriceAt(currentBucketTime);
-  const targetClose = evalContinuousPriceAt(currentBucketTime + tfMs);
+  const open = evalGlobalPriceAtTime(asset, currentBucketTime);
+  const targetClose = evalGlobalPriceAtTime(asset, currentBucketTime + tfMs);
   const elapsedMs = ((nowMs + offsetMs) % tfMs + tfMs) % tfMs;
   const progress = Math.max(0, Math.min(1, elapsedMs / tfMs));
   const subStep = Math.floor(nowMs / 250);
   const pulseHash = hashSymbol(`${canonical}:subtick:${subStep}`);
   const pulseNorm = (pulseHash % 2e3 - 1e3) / 1e3;
   const envelope = Math.sin(progress * Math.PI);
-  const intraWave = pulseNorm * unitVol * 0.35 * envelope;
+  const intraWave = pulseNorm * unitVol * 0.32 * envelope;
   const rawLivePrice = open + (targetClose - open) * progress + intraWave;
   const livePrice = Number(Math.max(minPip * 10, rawLivePrice).toFixed(asset.pipDecimals));
-  const wickHash = hashSymbol(`${canonical}:wick5s:${currentBucketTime}`);
-  const upperWick = Math.max(minPip * 2, wickHash % 100 / 100 * unitVol * 0.65 * progress);
-  const lowerWick = Math.max(minPip * 2, (wickHash >>> 8) % 100 / 100 * unitVol * 0.65 * progress);
+  const wickHash = hashSymbol(`${canonical}:wick:${tf}:${currentBucketTime}`);
+  const uUpper = wickHash % 1e3 / 1e3;
+  const uLower = (wickHash >>> 10) % 1e3 / 1e3;
+  const wickProgress = Math.max(0.2, progress);
+  const upperWick = Math.max(minPip * 2.5, catParams.wickMultiplier * unitVol * (0.22 + uUpper * 0.55) * wickProgress);
+  const lowerWick = Math.max(minPip * 2.5, catParams.wickMultiplier * unitVol * (0.22 + uLower * 0.55) * wickProgress);
   const bodyMax = Math.max(open, livePrice);
   const bodyMin = Math.min(open, livePrice);
   return {
@@ -18102,6 +18106,39 @@ function computeSynchronizedTickAtTime(asset, nowMs = Date.now()) {
     bucketTime: currentBucketTime
   };
 }
+function computeDeterministicCandleForBucket(asset, timeframeSeconds, candleTime, isCurrentActiveBucket, livePrice, nowMs = getSynchronizedNowMs()) {
+  const canonical = normalizeAssetSymbol(asset.symbol);
+  const tf = Math.max(5, timeframeSeconds);
+  const tfMs = tf * 1e3;
+  const catParams = getCategoryParameters(asset.category, canonical);
+  const tfMultiplier = Math.pow(Math.max(1, tf / 5), 0.34);
+  const unitVol = asset.volatility * tfMultiplier * catParams.volMultiplier;
+  const minPip = Math.pow(10, -asset.pipDecimals);
+  const open = evalGlobalPriceAtTime(asset, candleTime);
+  const close = isCurrentActiveBucket && typeof livePrice === "number" && livePrice > 0 ? Number(livePrice.toFixed(asset.pipDecimals)) : evalGlobalPriceAtTime(asset, candleTime + tfMs);
+  const bodyMax = Math.max(open, close);
+  const bodyMin = Math.min(open, close);
+  const wickHash = hashSymbol(`${canonical}:wick:${tf}:${candleTime}`);
+  const uUpper = wickHash % 1e3 / 1e3;
+  const uLower = (wickHash >>> 10) % 1e3 / 1e3;
+  const progress = isCurrentActiveBucket ? Math.max(0.25, Math.min(1, (nowMs - candleTime) / tfMs)) : 1;
+  const upperWick = Math.max(
+    minPip * 2.5,
+    catParams.wickMultiplier * unitVol * (0.22 + uUpper * 0.55) * progress
+  );
+  const lowerWick = Math.max(
+    minPip * 2.5,
+    catParams.wickMultiplier * unitVol * (0.22 + uLower * 0.55) * progress
+  );
+  return {
+    time: candleTime,
+    open,
+    high: Number((bodyMax + upperWick).toFixed(asset.pipDecimals)),
+    low: Number(Math.max(minPip * 5, bodyMin - lowerWick).toFixed(asset.pipDecimals)),
+    close,
+    volume: isCurrentActiveBucket ? Math.max(1, Math.floor((45 + wickHash % 115) * progress)) : Math.floor(45 + wickHash % 115)
+  };
+}
 
 // src/server/marketEngine.ts
 var BackendMarketEngine = class {
@@ -18109,7 +18146,9 @@ var BackendMarketEngine = class {
     this.assets = [...OTC_ASSETS_CATALOG];
     this.tickInterval = null;
     this.currentPrices = /* @__PURE__ */ new Map();
-    this.feedSource = "synchronized_server_rest_engine";
+    this.prevPrices = /* @__PURE__ */ new Map();
+    this.listeners = /* @__PURE__ */ new Set();
+    this.feedSource = "synchronized_global_realtime_engine";
     this.forexRates = {
       EUR: 1.0845,
       GBP: 1.2921,
@@ -18124,27 +18163,76 @@ var BackendMarketEngine = class {
     };
     this.broadcastBatch();
   }
-  setSymbolPriceVariants(symbol, price) {
+  setSymbolPriceVariants(symbol, price, prevPrice) {
     this.currentPrices.set(symbol, price);
+    this.prevPrices.set(symbol, prevPrice);
     const clean = symbol.replace(/\s*\(OTC\)/i, "").trim();
     this.currentPrices.set(clean, price);
+    this.prevPrices.set(clean, prevPrice);
     if (clean.endsWith("/USD")) {
       this.currentPrices.set(`${clean}T`, price);
+      this.prevPrices.set(`${clean}T`, prevPrice);
     }
   }
   async start() {
     this.broadcastBatch();
-    this.tickInterval = setInterval(() => this.broadcastBatch(), 1e3);
+    if (this.tickInterval) clearInterval(this.tickInterval);
+    this.tickInterval = setInterval(() => this.broadcastBatch(), 250);
+  }
+  subscribe(listener) {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
   }
   getPrice(symbol) {
-    if (this.currentPrices.has(symbol)) return this.currentPrices.get(symbol);
+    const now = Date.now();
     const matched = findAssetBySymbol(symbol);
     if (matched) {
-      const snap = computeSynchronizedTickAtTime(matched, Date.now());
-      this.setSymbolPriceVariants(matched.symbol, snap.price);
+      const snap = computeSynchronizedTickAtTime(matched, now);
+      this.setSymbolPriceVariants(matched.symbol, snap.price, snap.open);
       return snap.price;
     }
+    if (this.currentPrices.has(symbol)) return this.currentPrices.get(symbol);
     return void 0;
+  }
+  getMarketSnapshot(symbol, timeframeSeconds = 60, count = 250) {
+    const now = Date.now();
+    const canonical = normalizeAssetSymbol(symbol);
+    const asset = findAssetBySymbol(canonical);
+    const tf = Math.max(5, Number(timeframeSeconds) || 60);
+    const tfMs = tf * 1e3;
+    const safeCount = Math.max(10, Math.min(1500, Number(count) || 250));
+    const snap5s = computeSynchronizedTickAtTime(asset, now);
+    this.setSymbolPriceVariants(asset.symbol, snap5s.price, snap5s.open);
+    const offsetMs = getAssetTimeOffsetMs(canonical, tf);
+    const currentBucketTime = Math.floor((now + offsetMs) / tfMs) * tfMs - offsetMs;
+    const startBucketTime = currentBucketTime - (safeCount - 1) * tfMs;
+    const candles = new Array(safeCount);
+    for (let i = 0; i < safeCount; i++) {
+      const bTime = startBucketTime + i * tfMs;
+      const isLast = i === safeCount - 1;
+      candles[i] = computeDeterministicCandleForBucket(
+        asset,
+        tf,
+        bTime,
+        isLast,
+        isLast ? snap5s.price : void 0,
+        now
+      );
+    }
+    const activeCandle = candles[candles.length - 1];
+    return {
+      ok: true,
+      serverTime: now,
+      symbol: asset.symbol,
+      timeframeSeconds: tf,
+      price: snap5s.price,
+      prevPrice: activeCandle.open,
+      activeCandle,
+      candles,
+      source: this.feedSource
+    };
   }
   getAllPrices() {
     this.broadcastBatch();
@@ -18161,17 +18249,30 @@ var BackendMarketEngine = class {
     return this.feedSource;
   }
   /**
-   * Synchronizes all 268+ assets simultaneously every second using the deterministic UTC clock.
+   * Synchronizes all 268+ assets simultaneously using the authoritative server UTC clock.
    */
   broadcastBatch() {
     const now = Date.now();
     for (const asset of this.assets) {
       const snap = computeSynchronizedTickAtTime(asset, now);
-      this.setSymbolPriceVariants(asset.symbol, snap.price);
+      this.setSymbolPriceVariants(asset.symbol, snap.price, snap.open);
+    }
+    if (this.listeners.size > 0) {
+      const snapshotPrices = {};
+      for (const [k, v] of this.currentPrices.entries()) {
+        snapshotPrices[k] = v;
+      }
+      for (const listener of this.listeners) {
+        try {
+          listener({ serverTime: now, prices: snapshotPrices });
+        } catch {
+        }
+      }
     }
   }
   stop() {
     if (this.tickInterval) clearInterval(this.tickInterval);
+    this.listeners.clear();
   }
 };
 
@@ -18547,39 +18648,79 @@ var CopyTradingEngine = class _CopyTradingEngine {
           total_copiers, max_copiers, win_rate_3m, profit_factor, max_drawdown, sharpe_ratio, avg_holding_time, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
-      const tx = db.transaction((items) => {
-        for (const t of items) {
-          insert.run(
-            t.id,
-            t.user_id || `usr_${t.numeric_id}`,
-            t.provider_name,
-            t.country,
-            t.flag,
-            t.avatar_url,
-            t.account_category,
-            t.strategy_title,
-            t.vip_level,
-            t.starting_balance,
-            t.current_balance,
-            t.all_time_withdrawals,
-            t.daily_profit,
-            t.weekly_profit_pct,
-            t.monthly_profit_pct,
-            t.win_rate_3m,
-            t.total_trades,
-            t.starting_balance * 18,
-            t.current_copiers,
-            MAX_COPIERS_PER_TRADER,
-            t.win_rate_3m,
-            t.profit_factor,
-            t.max_drawdown,
-            t.sharpe_ratio,
-            t.avg_holding_time,
-            now
-          );
+      if (typeof db.transaction === "function") {
+        const tx = db.transaction((items) => {
+          for (const t of items) {
+            insert.run(
+              t.id,
+              t.user_id || `usr_${t.numeric_id}`,
+              t.provider_name,
+              t.country,
+              t.flag,
+              t.avatar_url,
+              t.account_category,
+              t.strategy_title,
+              t.vip_level,
+              t.starting_balance,
+              t.current_balance,
+              t.all_time_withdrawals,
+              t.daily_profit,
+              t.weekly_profit_pct,
+              t.monthly_profit_pct,
+              t.win_rate_3m,
+              t.total_trades,
+              t.starting_balance * 18,
+              t.current_copiers,
+              MAX_COPIERS_PER_TRADER,
+              t.win_rate_3m,
+              t.profit_factor,
+              t.max_drawdown,
+              t.sharpe_ratio,
+              t.avg_holding_time,
+              now
+            );
+          }
+        });
+        tx(pool);
+      } else {
+        db.exec("BEGIN TRANSACTION;");
+        try {
+          for (const t of pool) {
+            insert.run(
+              t.id,
+              t.user_id || `usr_${t.numeric_id}`,
+              t.provider_name,
+              t.country,
+              t.flag,
+              t.avatar_url,
+              t.account_category,
+              t.strategy_title,
+              t.vip_level,
+              t.starting_balance,
+              t.current_balance,
+              t.all_time_withdrawals,
+              t.daily_profit,
+              t.weekly_profit_pct,
+              t.monthly_profit_pct,
+              t.win_rate_3m,
+              t.total_trades,
+              t.starting_balance * 18,
+              t.current_copiers,
+              MAX_COPIERS_PER_TRADER,
+              t.win_rate_3m,
+              t.profit_factor,
+              t.max_drawdown,
+              t.sharpe_ratio,
+              t.avg_holding_time,
+              now
+            );
+          }
+          db.exec("COMMIT;");
+        } catch (e) {
+          db.exec("ROLLBACK;");
+          throw e;
         }
-      });
-      tx(pool);
+      }
     } catch (err) {
       console.warn("CopyTradingEngine seedInitialTraders warning:", err);
     }
@@ -27013,8 +27154,47 @@ function shouldShowDeprecationWarning() {
 if (shouldShowDeprecationWarning()) console.warn("\u26A0\uFE0F  Node.js 20 and below are deprecated and will no longer be supported in future versions of @supabase/supabase-js. Please upgrade to Node.js 22 or later. For more information, visit: https://github.com/orgs/supabase/discussions/45715");
 
 // src/utils/supabase.ts
-var SUPABASE_URL = typeof import.meta !== "undefined" && import.meta.env?.VITE_SUPABASE_URL || "https://kwmjonjcwdwvaijcrtjw.supabase.co";
-var SUPABASE_ANON_KEY = typeof import.meta !== "undefined" && import.meta.env?.VITE_SUPABASE_ANON_KEY || "sb_publishable_G151L79Inh_SPks_HrujZQ_fmaGh-_6";
+function resolveEnv(key, altKeys = [], fallback = "") {
+  try {
+    if (typeof import.meta !== "undefined" && import.meta.env) {
+      if (import.meta.env[key]) return String(import.meta.env[key]).trim();
+      for (const alt of altKeys) {
+        if (import.meta.env[alt]) return String(import.meta.env[alt]).trim();
+      }
+    }
+  } catch {
+  }
+  try {
+    if (typeof process !== "undefined" && process.env) {
+      if (process.env[key]) return String(process.env[key]).trim();
+      for (const alt of altKeys) {
+        if (process.env[alt]) return String(process.env[alt]).trim();
+      }
+    }
+  } catch {
+  }
+  try {
+    if (typeof window !== "undefined" && window.__ENV__) {
+      const winEnv = window.__ENV__;
+      if (winEnv[key]) return String(winEnv[key]).trim();
+      for (const alt of altKeys) {
+        if (winEnv[alt]) return String(winEnv[alt]).trim();
+      }
+    }
+  } catch {
+  }
+  return fallback;
+}
+var SUPABASE_URL = resolveEnv(
+  "VITE_SUPABASE_URL",
+  ["SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL", "REACT_APP_SUPABASE_URL"],
+  "https://kwmjonjcwdwvaijcrtjw.supabase.co"
+).replace(/\/+$/, "");
+var SUPABASE_ANON_KEY = resolveEnv(
+  "VITE_SUPABASE_ANON_KEY",
+  ["SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "REACT_APP_SUPABASE_ANON_KEY"],
+  "sb_publishable_G151L79Inh_SPks_HrujZQ_fmaGh-_6"
+);
 var supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
     persistSession: true,
@@ -27172,8 +27352,8 @@ async function startServer() {
   marketEngine.start();
   const copyTradingEngine = CopyTradingEngine.getInstance();
   copyTradingEngine.start();
-  const supabaseUrl = process.env.VITE_SUPABASE_URL;
-  const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY;
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "https://kwmjonjcwdwvaijcrtjw.supabase.co";
+  const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || "sb_publishable_G151L79Inh_SPks_HrujZQ_fmaGh-_6";
   const safeParseFetchJson = async (res, fallback = null) => {
     try {
       const text = await res.text();
@@ -27529,6 +27709,50 @@ async function startServer() {
   }
   app.get(["/api/health", "/healthz"], (_req, res) => {
     res.status(200).json({ ok: true, status: "healthy", timestamp: Date.now() });
+  });
+  app.get("/sitemap.xml", (_req, res) => {
+    res.header("Content-Type", "application/xml");
+    res.send(`<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://binaryfundedtrader.com/</loc>
+    <lastmod>2026-11-03</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>https://binaryfundedtrader.com/copy-trading</loc>
+    <lastmod>2026-11-03</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://binaryfundedtrader.com/affiliate</loc>
+    <lastmod>2026-11-03</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://binaryfundedtrader.com/terms</loc>
+    <lastmod>2026-11-03</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.5</priority>
+  </url>
+</urlset>`);
+  });
+  app.get("/robots.txt", (_req, res) => {
+    res.header("Content-Type", "text/plain");
+    res.send(`# Binary Funded Trader Robots Configuration
+User-agent: *
+Allow: /
+Allow: /copy-trading
+Allow: /affiliate
+Allow: /terms
+Disallow: /dashboard/
+Disallow: /api/
+Disallow: /admin/
+
+Sitemap: https://binaryfundedtrader.com/sitemap.xml`);
   });
   const parseCookies = (req) => {
     const list = {};
@@ -28024,13 +28248,21 @@ async function startServer() {
       return res.status(400).json({ ok: false, error: err?.message || "Failed to update account state." });
     }
   });
+  const setNoCacheMarketHeaders = (res) => {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+  };
   app.get("/api/market/live-prices", (_req, res) => {
     try {
+      setNoCacheMarketHeaders(res);
+      const now = Date.now();
       const prices = marketEngine.getAllPrices();
       const forexRates = marketEngine.getForexRates();
       return res.json({
         ok: true,
-        timestamp: Date.now(),
+        timestamp: now,
+        serverTime: now,
         source: marketEngine.getFeedSource(),
         prices,
         forexRates
@@ -28041,18 +28273,104 @@ async function startServer() {
   });
   app.get("/api/market/ticker", (req, res) => {
     try {
-      const symbol = String(req.query.symbol || "BTC/USD (OTC)").trim();
-      const price = marketEngine.getPrice(symbol);
+      setNoCacheMarketHeaders(res);
+      const symbol = String(req.query.symbol || "EUR/USD (OTC)").trim();
+      const tfSec = Number(req.query.timeframe) || 60;
+      const snap = marketEngine.getMarketSnapshot(symbol, tfSec, 10);
       return res.json({
         ok: true,
-        symbol,
-        price: price ?? null,
-        timestamp: Date.now(),
-        source: marketEngine.getFeedSource()
+        symbol: snap.symbol,
+        price: snap.price,
+        prevPrice: snap.prevPrice,
+        activeCandle: snap.activeCandle,
+        timestamp: snap.serverTime,
+        serverTime: snap.serverTime,
+        source: snap.source
       });
     } catch (err) {
       return res.status(500).json({ ok: false, error: err?.message || "Failed to get ticker price." });
     }
+  });
+  app.get(["/api/market/snapshot", "/api/market/candles"], (req, res) => {
+    try {
+      setNoCacheMarketHeaders(res);
+      const symbol = String(req.query.symbol || "EUR/USD (OTC)").trim();
+      const rawTf = String(req.query.timeframe || "60").trim();
+      let tfSec = Number(rawTf);
+      if (Number.isNaN(tfSec) || tfSec <= 0) {
+        if (rawTf.endsWith("s")) tfSec = parseInt(rawTf, 10) || 60;
+        else if (rawTf.endsWith("m")) tfSec = (parseInt(rawTf, 10) || 1) * 60;
+        else if (rawTf.endsWith("h")) tfSec = (parseInt(rawTf, 10) || 1) * 3600;
+        else if (rawTf === "1D" || rawTf === "D") tfSec = 86400;
+        else tfSec = 60;
+      }
+      const count = Math.max(20, Math.min(1500, Number(req.query.count) || 250));
+      const snapshot = marketEngine.getMarketSnapshot(symbol, tfSec, count);
+      return res.json(snapshot);
+    } catch (err) {
+      return res.status(500).json({ ok: false, error: err?.message || "Failed to get market snapshot." });
+    }
+  });
+  app.get("/api/market/stream", (req, res) => {
+    setNoCacheMarketHeaders(res);
+    res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    if (typeof res.flushHeaders === "function") {
+      res.flushHeaders();
+    }
+    const symbol = String(req.query.symbol || "EUR/USD (OTC)").trim();
+    const tfSec = Math.max(5, Number(req.query.timeframe) || 60);
+    try {
+      const initSnap = marketEngine.getMarketSnapshot(symbol, tfSec, 150);
+      res.write(`event: init
+data: ${JSON.stringify(initSnap)}
+
+`);
+    } catch {
+    }
+    let lastSentMs = 0;
+    const unsubscribe = marketEngine.subscribe(({ serverTime, prices }) => {
+      if (serverTime - lastSentMs < 450) return;
+      lastSentMs = serverTime;
+      try {
+        const snap = marketEngine.getMarketSnapshot(symbol, tfSec, 2);
+        const payload = {
+          serverTime,
+          symbol: snap.symbol,
+          price: snap.price,
+          prevPrice: snap.prevPrice,
+          activeCandle: snap.activeCandle,
+          prices
+        };
+        res.write(`event: tick
+data: ${JSON.stringify(payload)}
+
+`);
+      } catch {
+      }
+    });
+    const heartbeatTimer = setInterval(() => {
+      try {
+        const snap = marketEngine.getMarketSnapshot(symbol, tfSec, 2);
+        res.write(
+          `event: heartbeat
+data: ${JSON.stringify({
+            serverTime: Date.now(),
+            symbol: snap.symbol,
+            price: snap.price,
+            activeCandle: snap.activeCandle
+          })}
+
+`
+        );
+      } catch {
+      }
+    }, 3e3);
+    req.on("close", () => {
+      clearInterval(heartbeatTimer);
+      unsubscribe();
+    });
   });
   app.post("/api/trades", (req, res) => {
     try {
@@ -28679,13 +28997,43 @@ async function startServer() {
       }
       const qUserId = String(req.query.userId || "").trim();
       const qEmail = String(req.query.email || "").trim();
-      const user = (qUserId ? getUserById(qUserId) : null) || (qEmail ? getUserByEmail(qEmail) : null) || getAuthenticatedUser(req) || getUserById("usr_bft_001");
-      const targetId = user?.id || qUserId || "usr_bft_001";
+      const user = (qUserId ? getUserById(qUserId) : null) || (qEmail ? getUserByEmail(qEmail) : null) || getAuthenticatedUser(req);
+      const targetId = user?.id || qUserId;
+      if (!targetId) {
+        return res.json({
+          ok: true,
+          stats: {
+            lifetimeEarnings: 0,
+            availableBalance: 0,
+            pendingCommission: 0,
+            totalReferralsCount: 0,
+            activeFundedCount: 0,
+            vipThreshold: 1e3,
+            vipProgressPercent: 0,
+            remainingToVip: 1e3,
+            affiliateTier: "basic",
+            isVipUnlocked: false,
+            milestoneRewardAmount: 1e4,
+            milestoneClaimed: false,
+            level1Count: 0,
+            level1Earnings: 0,
+            level2Count: 0,
+            level2Earnings: 0,
+            level3Count: 0,
+            level3Earnings: 0,
+            withdrawalEarnings: 0,
+            teamSize: 0,
+            recentCommissions: [],
+            networkTree: []
+          },
+          referralCode: user?.referral_code || ""
+        });
+      }
       const stats = getAffiliateDashboardStats(targetId);
       return res.json({
         ok: true,
         stats,
-        referralCode: user?.referral_code || "BFT-ALEX77"
+        referralCode: user?.referral_code || ""
       });
     } catch (err) {
       return res.status(500).json({ ok: false, error: err?.message || "Failed to load affiliate dashboard" });
@@ -28707,6 +29055,10 @@ async function startServer() {
       res.setHeader("Content-Type", "text/css; charset=utf-8");
     } else if (ext === ".json" || ext === ".map") {
       res.setHeader("Content-Type", "application/json; charset=utf-8");
+    } else if (ext === ".xml") {
+      res.setHeader("Content-Type", "application/xml; charset=utf-8");
+    } else if (ext === ".txt") {
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
     } else if (ext === ".svg") {
       res.setHeader("Content-Type", "image/svg+xml");
     } else if (ext === ".wasm") {
@@ -28730,7 +29082,10 @@ async function startServer() {
   });
   app.all(
     ["/api/deposit/submit", "/api/crypto-deposits", "/functions/v1/deposit-submit", "/functions/v1/crypto-deposits", "/verify-deposit", "/functions/v1/verify-deposit", "/submit-deposit", "/functions/v1/submit-deposit"],
-    async (req, res) => {
+    async (req, res, next) => {
+      if (req.method === "GET") {
+        return next();
+      }
       try {
         const user = getAuthenticatedUser(req);
         const rawAmount = Number(req.body?.amount);
@@ -28985,13 +29340,14 @@ async function startServer() {
   app.get(["/api/deposit/history", "/api/crypto-deposits", "/api/transactions"], (req, res) => {
     try {
       const user = getAuthenticatedUser(req);
+      const queryUserId = typeof req.query.userId === "string" && req.query.userId.trim() ? req.query.userId.trim() : void 0;
       const accountId = typeof req.query.accountId === "string" ? req.query.accountId.trim() : "";
       const cryptoDeposits = getCryptoDeposits({
-        userId: user?.id,
+        userId: user?.id || queryUserId,
         accountId: accountId || void 0
       });
       const transactions = getTransactions({
-        userId: user?.id
+        userId: user?.id || queryUserId
       });
       return res.json({
         ok: true,
@@ -29845,18 +30201,17 @@ async function startServer() {
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        hmr: false,
-        watch: { usePolling: true, interval: 100 }
+        hmr: false
       },
       appType: "spa"
     });
     app.use(vite.middlewares);
     app.get("*", async (req, res, next) => {
-      if (req.url.startsWith("/api/")) return next();
+      if (req.url.startsWith("/api/") || req.url === "/sitemap.xml" || req.url === "/robots.txt") return next();
       try {
         let html = fs2.readFileSync(path2.resolve(__dirname, "index.html"), "utf-8");
         html = await vite.transformIndexHtml(req.url, html);
-        res.status(200).set({ "Content-Type": "text/html" }).end(html);
+        res.status(200).set({ "Content-Type": "text/html; charset=utf-8" }).end(html);
       } catch (e) {
         vite.ssrFixStacktrace(e);
         next(e);
@@ -29870,7 +30225,8 @@ async function startServer() {
         }
       })
     );
-    app.get("*", (_req, res) => {
+    app.get("*", (req, res, next) => {
+      if (req.url.startsWith("/api/") || req.url === "/sitemap.xml" || req.url === "/robots.txt") return next();
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       res.sendFile(path2.join(distPath, "index.html"));
     });

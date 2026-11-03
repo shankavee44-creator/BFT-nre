@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useDeferredValue, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useDeferredValue, useCallback, useRef } from 'react';
 import { Search, X, Star, TrendingUp, Sparkles, Activity } from 'lucide-react';
 import { AssetInfo } from '../types';
 import {
@@ -36,6 +36,8 @@ interface AssetRowItemProps {
   onToggleFavorite: (e: React.MouseEvent, symbol: string) => void;
 }
 
+const ROW_HEIGHT = 64; // px
+
 const AssetRowItem: React.FC<AssetRowItemProps> = React.memo(({
   asset,
   isSelected,
@@ -56,7 +58,8 @@ const AssetRowItem: React.FC<AssetRowItemProps> = React.memo(({
     <div
       data-testid={`asset-row-${tvResolved.cleanTicker.replace(/[^A-Z0-9]/g, '')}`}
       onClick={() => onSelect(asset, livePayout)}
-      className={`flex items-center justify-between p-3 rounded-xl transition-colors cursor-pointer hw-accelerate gpu-accelerated ${
+      style={{ height: `${ROW_HEIGHT - 4}px` }}
+      className={`flex items-center justify-between p-3 rounded-xl transition-colors cursor-pointer hw-accelerate gpu-accelerated mb-1 ${
         isSelected
           ? 'bg-[#ff8800]/15 border border-[#ff8800]/50 text-white'
           : 'hover:bg-white/5 text-slate-300'
@@ -135,6 +138,10 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
   const [favorites, setFavorites] = useState<string[]>(() => loadFavoritesFromStorage());
   const [payoutSeed, setPayoutSeed] = useState<number>(() => Math.floor(Date.now() / 2500));
 
+  const listContainerRef = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [containerHeight, setContainerHeight] = useState(480);
+
   useEffect(() => {
     if (!isOpen) return;
     setFavorites(loadFavoritesFromStorage());
@@ -143,6 +150,30 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
     }, 2500);
     return () => clearInterval(interval);
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || !listContainerRef.current) return;
+    const updateHeight = () => {
+      if (listContainerRef.current) {
+        setContainerHeight(listContainerRef.current.clientHeight || 480);
+      }
+    };
+    updateHeight();
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(listContainerRef.current);
+    return () => observer.disconnect();
+  }, [isOpen]);
+
+  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    setScrollTop(e.currentTarget.scrollTop);
+  }, []);
+
+  useEffect(() => {
+    setScrollTop(0);
+    if (listContainerRef.current) {
+      listContainerRef.current.scrollTop = 0;
+    }
+  }, [deferredSearch, activeCategory]);
 
   const toggleFavorite = useCallback((e: React.MouseEvent, symbol: string) => {
     e.stopPropagation();
@@ -159,8 +190,8 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
   const handleSelect = useCallback(
     (asset: AssetInfo, livePayout: number) => {
       soundEngine.playUiClick();
-      onSelectAsset({ ...asset, payout: livePayout });
       onClose();
+      onSelectAsset({ ...asset, payout: livePayout });
     },
     [onSelectAsset, onClose]
   );
@@ -221,6 +252,14 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
       return true; // 'All'
     });
   }, [allAssets, deferredSearch, activeCategory, favorites]);
+
+  // Virtualized Window Calculation
+  const totalListHeight = filteredAssets.length * ROW_HEIGHT;
+  const startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - 2);
+  const visibleItemCount = Math.ceil(containerHeight / ROW_HEIGHT) + 4;
+  const endIndex = Math.min(filteredAssets.length, startIndex + visibleItemCount);
+  const visibleAssets = filteredAssets.slice(startIndex, endIndex);
+  const offsetY = startIndex * ROW_HEIGHT;
 
   if (!isOpen) return null;
 
@@ -309,24 +348,42 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
           </div>
         </div>
 
-        {/* Asset List */}
-        <div className="p-3 overflow-y-auto divide-y divide-white/5 font-mono flex-1 touch-scroll custom-scrollbar">
+        {/* Virtualized Asset List */}
+        <div
+          ref={listContainerRef}
+          onScroll={handleScroll}
+          className="p-3 overflow-y-auto font-mono flex-1 touch-scroll custom-scrollbar relative"
+          style={{ minHeight: '280px' }}
+        >
           {filteredAssets.length === 0 ? (
             <div className="py-12 text-center text-slate-500 text-xs">
               No matching trading instruments found.
             </div>
           ) : (
-            filteredAssets.map((asset) => (
-              <AssetRowItem
-                key={asset.symbol}
-                asset={asset}
-                isSelected={asset.symbol === currentAssetSymbol}
-                isFav={favorites.includes(asset.symbol)}
-                payoutSeed={payoutSeed}
-                onSelect={handleSelect}
-                onToggleFavorite={toggleFavorite}
-              />
-            ))
+            <div style={{ height: `${totalListHeight}px`, position: 'relative' }}>
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  transform: `translateY(${offsetY}px)`,
+                  willChange: 'transform',
+                }}
+              >
+                {visibleAssets.map((asset) => (
+                  <AssetRowItem
+                    key={asset.symbol}
+                    asset={asset}
+                    isSelected={asset.symbol === currentAssetSymbol}
+                    isFav={favorites.includes(asset.symbol)}
+                    payoutSeed={payoutSeed}
+                    onSelect={handleSelect}
+                    onToggleFavorite={toggleFavorite}
+                  />
+                ))}
+              </div>
+            </div>
           )}
         </div>
 
@@ -341,3 +398,4 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
     </div>
   );
 };
+

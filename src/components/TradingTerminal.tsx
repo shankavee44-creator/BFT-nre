@@ -5613,12 +5613,14 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       )}
 
       {/* Quotex Asset Selector Modal */}
-      <QuotexAssetModal
-        isOpen={isAssetModalOpen}
-        onClose={() => setIsAssetModalOpen(false)}
-        onSelectAsset={handleSelectTabAsset}
-        currentAssetSymbol={selectedAsset.symbol}
-      />
+      {isAssetModalOpen && (
+        <QuotexAssetModal
+          isOpen={isAssetModalOpen}
+          onClose={() => setIsAssetModalOpen(false)}
+          onSelectAsset={handleSelectTabAsset}
+          currentAssetSymbol={selectedAsset.symbol}
+        />
+      )}
 
       {/* Dedicated BFT Trading Signals Panel */}
       <QuotexSignalsDrawer

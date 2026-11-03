@@ -525,6 +525,40 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           )}
 
+          {/* Compact Mobile Navigation Select Dropdown */}
+          <div className="font-mono text-xs space-y-2 mb-2">
+            <label htmlFor="mobile-header-nav-select" className="text-[10px] uppercase font-mono font-bold tracking-wider text-slate-400 block">
+              Quick Navigation Menu:
+            </label>
+            <div className="relative">
+              <select
+                id="mobile-header-nav-select"
+                data-testid="mobile-header-nav-select"
+                value={currentTab}
+                onChange={(e) => {
+                  setMobileMenuOpen(false);
+                  handleNavClick(e.target.value);
+                }}
+                className="w-full bg-[#141418] border border-[#ff8800]/50 text-white font-mono text-xs font-black rounded-xl px-3.5 py-3 appearance-none focus:outline-none focus:border-[#ff8800] cursor-pointer"
+              >
+                {[
+                  { id: 'home', label: 'Challenges & Pricing' },
+                  { id: 'terminal', label: 'Trading Terminal' },
+                  { id: 'rules', label: 'Prop Rules & Objectives' },
+                  { id: 'affiliate', label: 'Affiliate Network' },
+                  { id: 'withdrawals', label: 'Withdrawal Portal' },
+                  { id: 'dashboard', label: 'Trader Hub & KYC' },
+                  { id: 'faq', label: 'FAQ & Support' },
+                ].map((tab) => (
+                  <option key={tab.id} value={tab.id} className="bg-[#0e0e12] text-white">
+                    {tab.label} {currentTab === tab.id ? '✓ (Active)' : ''}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="w-4 h-4 text-[#ff8800] absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
+          </div>
+
           {/* Navigation Links */}
           <div className="grid grid-cols-1 gap-1 font-mono text-xs">
             {[

@@ -81,6 +81,8 @@ export class LiveMarketFeedEngine {
   private microTickInterval: any = null;
   private heartbeatWatchdogInterval: any = null;
   private eventSource: EventSource | null = null;
+  private sseRetryCount: number = 0;
+  private sseRetryTimer: any = null;
   private lastServerHeartbeatMs: number = Date.now();
   private reconnectCount: number = 0;
 
@@ -183,6 +185,10 @@ export class LiveMarketFeedEngine {
         // ignore
       }
       this.eventSource = null;
+    }
+    if (this.sseRetryTimer) {
+      clearTimeout(this.sseRetryTimer);
+      this.sseRetryTimer = null;
     }
     this.currentActiveSymbol = null;
   }
@@ -328,8 +334,36 @@ export class LiveMarketFeedEngine {
         }
       });
 
+      es.onopen = () => {
+        this.sseRetryCount = 0;
+      };
+
       es.onerror = () => {
-        // Handled automatically by heartbeat watchdog + EventSource retry
+        // Explicitly close EventSource on error to halt browser native infinite auto-retry loops
+        try {
+          es.close();
+        } catch {
+          // ignore
+        }
+        if (this.eventSource === es) {
+          this.eventSource = null;
+        }
+        this.updateStatus({
+          binanceStatus: 'fallback',
+          forexStatus: 'synchronized',
+        });
+
+        // Exponential backoff retry: 2s, 4s, 8s, 16s, max 30s
+        if (!this.isDestroyed && this.currentActiveSymbol === symbol && !this.sseRetryTimer) {
+          const delay = Math.min(30000, 2000 * Math.pow(2, Math.min(4, this.sseRetryCount)));
+          this.sseRetryCount++;
+          this.sseRetryTimer = setTimeout(() => {
+            this.sseRetryTimer = null;
+            if (!this.isDestroyed && this.currentActiveSymbol === symbol && !this.eventSource) {
+              this.connectServerStream(symbol, timeframeSeconds);
+            }
+          }, delay);
+        }
       };
     } catch {
       // Fallback to REST polling if EventSource is unavailable
@@ -474,13 +508,20 @@ export class LiveMarketFeedEngine {
     window.addEventListener('focus', this.boundOnlineHandler);
   }
 
+  private lastReconnectMs: number = 0;
+
   /**
    * Forces an immediate reconnection of the real-time stream and catches up the chart state.
    */
   public reconnectAndCatchUp() {
     if (this.isDestroyed) return;
+    const now = Date.now();
+    if (now - this.lastReconnectMs < 4000) {
+      return; // Skip rapid reconnection attempts within 4 seconds
+    }
+    this.lastReconnectMs = now;
     this.reconnectCount += 1;
-    this.lastServerHeartbeatMs = Date.now();
+    this.lastServerHeartbeatMs = now;
 
     const activeSym = this.currentActiveSymbol || 'EUR/USD (OTC)';
     const activeTf = this.currentTimeframeSeconds || 60;
@@ -736,6 +777,10 @@ export class LiveMarketFeedEngine {
     if (this.activeSymbolPollInterval) clearInterval(this.activeSymbolPollInterval);
     if (this.microTickInterval) clearInterval(this.microTickInterval);
     if (this.heartbeatWatchdogInterval) clearInterval(this.heartbeatWatchdogInterval);
+    if (this.sseRetryTimer) {
+      clearTimeout(this.sseRetryTimer);
+      this.sseRetryTimer = null;
+    }
     if (typeof document !== 'undefined' && this.boundVisibilityHandler) {
       document.removeEventListener('visibilitychange', this.boundVisibilityHandler);
     }
