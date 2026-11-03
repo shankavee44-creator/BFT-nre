@@ -124,55 +124,6 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <header className="sticky top-0 z-40 w-full max-w-[100vw] border-b border-white/10 bg-[#0a0a0a]/95 backdrop-blur-xl">
-      {/* Top Promotional Banner & Discount Codes — BFT Institutional Amber Styling */}
-      <div className="bg-[#0d0b08] border-b border-[#ff8800]/30 px-4 py-2 text-xs overflow-x-hidden">
-        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 bg-[#ff8800] text-slate-950 px-2.5 py-0.5 rounded font-black font-mono tracking-wider text-[11px]">
-              <Tag className="w-3 h-3 fill-slate-950" /> BFT ACTIVE PROMO
-            </span>
-
-            <button
-              onClick={() => {
-                soundEngine.playUiClick();
-                onSelectPromoCode('SPOOKY40');
-              }}
-              className={`px-2.5 py-0.5 rounded font-mono text-[11px] font-bold transition-all cursor-pointer border ${
-                activePromoCode === 'SPOOKY40' || activePromoCode === 'BFT40'
-                  ? 'bg-[#ff8800]/20 text-[#ff8800] border-[#ff8800]'
-                  : 'bg-white/5 text-slate-300 border-white/10 hover:text-white'
-              }`}
-            >
-              Code: <strong className="text-white">"SPOOKY40"</strong> (Flat 40% OFF New Users)
-            </button>
-
-            <button
-              onClick={() => {
-                soundEngine.playUiClick();
-                onSelectPromoCode('SPOOKY20');
-              }}
-              className={`px-2.5 py-0.5 rounded font-mono text-[11px] font-bold transition-all cursor-pointer border ${
-                activePromoCode === 'SPOOKY20' || activePromoCode === 'BFT20'
-                  ? 'bg-[#ff8800]/20 text-[#ff8800] border-[#ff8800]'
-                  : 'bg-white/5 text-slate-300 border-white/10 hover:text-white'
-              }`}
-            >
-              Code: <strong className="text-white">"SPOOKY20"</strong> (Flat 20% OFF Existing Users)
-            </button>
-          </div>
-
-          <div className="hidden xl:flex items-center gap-4 text-slate-300 text-[11px] font-mono">
-            <span>
-              Split: <strong className="text-[#ffaa00]">80% (M1-3) → 90% + Scaling</strong>
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-emerald-400" />
-              <span className="text-emerald-400">3-Min TRC-20 SLA</span>
-            </span>
-          </div>
-        </div>
-      </div>
-
       {/* Live Institutional Payout Ticker Feed */}
       <CryptoTickerBar onSelectPair={() => setCurrentTab('terminal')} />
 
