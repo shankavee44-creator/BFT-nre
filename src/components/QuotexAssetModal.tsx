@@ -266,11 +266,11 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
   return (
     <div
       data-testid="native-asset-selector-modal"
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/90 hw-accelerate gpu-accelerated animate-bft-modal"
+      className="fixed inset-0 z-50 flex flex-col sm:items-center sm:justify-center p-0 sm:p-4 bg-black/95 sm:bg-black/90 hw-accelerate gpu-accelerated animate-bft-modal"
     >
-      <div className="w-full max-w-3xl rounded-2xl bg-[#0e0e12] border border-[#ff8800]/40 shadow-2xl overflow-hidden flex flex-col max-h-[86vh] hw-accelerate gpu-accelerated">
+      <div className="w-full h-full sm:h-auto sm:max-w-3xl sm:rounded-2xl rounded-none bg-[#0e0e12] sm:border sm:border-[#ff8800]/40 shadow-2xl overflow-hidden flex flex-col max-h-full sm:max-h-[88vh] hw-accelerate gpu-accelerated">
         {/* Header */}
-        <div className="p-4 bg-[#0a0a0d] border-b border-white/10 flex items-center justify-between shrink-0">
+        <div className="p-3 sm:p-4 bg-[#0a0a0d] border-b border-white/10 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-[#ff8800]/15 border border-[#ff8800]/40 flex items-center justify-center text-[#ff8800]">
               <TrendingUp className="w-5 h-5" />
