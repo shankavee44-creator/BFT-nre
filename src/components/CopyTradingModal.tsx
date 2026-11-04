@@ -5,6 +5,7 @@ import {
   Zap,
   DollarSign,
   ChevronRight,
+  ChevronDown,
   Activity,
   Award,
   Globe,
@@ -86,64 +87,107 @@ const MasterTraderCardItem: React.FC<MasterTraderCardItemProps> = React.memo(({
   onCancelSubscription,
   onOpenCopyConfig,
 }) => {
+  const [isDetailsOpen, setIsDetailsOpen] = useState<boolean>(displayRank === 1);
+
   return (
     <div
       data-testid={`copy-trader-card-${trader.numeric_id}`}
-      className={`group relative flex flex-col xl:flex-row xl:items-center justify-between gap-2.5 sm:gap-4 p-3 sm:p-5 rounded-xl sm:rounded-2xl border transition-all ${
+      className={`group relative flex flex-col xl:flex-row xl:items-center justify-between gap-2 sm:gap-4 p-2.5 sm:p-4 rounded-xl sm:rounded-2xl border transition-all duration-200 ${
         isCopying
           ? 'bg-[#00F5A0]/[0.06] border-[#00F5A0]/50 shadow-lg'
           : 'bg-[#10141F] border-slate-800/80 hover:border-slate-700'
       }`}
     >
-      {/* Left: Rank + Flag + Name + Numeric ID + Account Type + Balance Info */}
-      <div className="flex items-start sm:items-center gap-2.5 sm:gap-3 xl:w-[340px] shrink-0 w-full xl:w-auto">
-        <div
-          className={`w-6 h-6 sm:w-8 sm:h-8 rounded-lg sm:rounded-xl flex items-center justify-center text-[10px] sm:text-xs font-black font-mono shrink-0 mt-0.5 sm:mt-0 ${
-            displayRank === 1
-              ? 'bg-amber-400 text-slate-950'
-              : displayRank === 2
-              ? 'bg-slate-300 text-slate-950'
-              : displayRank === 3
-              ? 'bg-amber-600 text-white'
-              : 'bg-[#181E2E] text-slate-300 border border-slate-700'
-          }`}
-        >
-          #{displayRank}
-        </div>
-
-        <div className="w-9 h-9 sm:w-12 sm:h-12 rounded-lg sm:rounded-xl bg-[#161C2B] border border-slate-700/80 flex items-center justify-center shrink-0 overflow-hidden">
-          <CountryFlagIcon
-            isoCode={trader.country_code}
-            country={trader.country}
-            flagEmoji={trader.flag}
-            className="w-6 h-4 sm:w-8 sm:h-6 object-cover rounded-xs"
-          />
-        </div>
-
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-1 sm:gap-1.5">
-            <h3 className="text-xs sm:text-base font-black text-white truncate max-w-[120px] xs:max-w-[170px] sm:max-w-none">
-              {trader.provider_name}
-            </h3>
-            <CheckCircle2 className="w-3 h-3 sm:w-4 sm:h-4 text-[#00F5A0] shrink-0" />
-            <span
-              data-testid={`trader-numeric-id-${trader.numeric_id}`}
-              className="px-1.5 py-0.2 sm:py-0.5 rounded bg-cyan-500/15 border border-cyan-500/30 font-mono text-[8.5px] sm:text-[10px] font-bold text-cyan-300"
-            >
-              ID #{trader.numeric_id}
-            </span>
+      {/* Top / Left Primary Compact Row: Rank + Flag + Name + Numeric ID + Mobile 24H ROI Summary */}
+      <div className="flex items-center justify-between gap-2 xl:w-[340px] shrink-0 w-full">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+          <div
+            className={`w-6 h-6 sm:w-8 sm:h-8 rounded-lg sm:rounded-xl flex items-center justify-center text-[10px] sm:text-xs font-black font-mono shrink-0 ${
+              displayRank === 1
+                ? 'bg-amber-400 text-slate-950'
+                : displayRank === 2
+                ? 'bg-slate-300 text-slate-950'
+                : displayRank === 3
+                ? 'bg-amber-600 text-white'
+                : 'bg-[#181E2E] text-slate-300 border border-slate-700'
+            }`}
+          >
+            #{displayRank}
           </div>
 
-          <div className="flex flex-wrap items-center gap-1 sm:gap-1.5 mt-0.5 sm:mt-1">
-            <span className="text-[8.5px] sm:text-[10px] font-mono font-bold px-1.5 sm:px-2 py-0.2 sm:py-0.5 rounded bg-white/5 border border-white/10 text-slate-200">
-              {trader.account_type_label}
-            </span>
-            <span className="text-[8.5px] sm:text-[10px] font-mono font-bold px-1.5 sm:px-2 py-0.2 sm:py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-[#00F5A0]">
-              3M Win Rate: {trader.win_rate_3m}%
-            </span>
+          <div className="w-8 h-8 sm:w-11 sm:h-11 rounded-lg sm:rounded-xl bg-[#161C2B] border border-slate-700/80 flex items-center justify-center shrink-0 overflow-hidden">
+            <CountryFlagIcon
+              isoCode={trader.country_code}
+              country={trader.country}
+              flagEmoji={trader.flag}
+              className="w-5 h-3.5 sm:w-7 sm:h-5 object-cover rounded-xs"
+            />
           </div>
 
-          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2.5 mt-1 text-[8.5px] sm:text-[10px] font-mono text-slate-400">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-1 sm:gap-1.5">
+              <h3 className="text-xs sm:text-base font-black text-white truncate max-w-[115px] xs:max-w-[155px] sm:max-w-none">
+                {trader.provider_name}
+              </h3>
+              <CheckCircle2 className="w-3 h-3 sm:w-4 sm:h-4 text-[#00F5A0] shrink-0" />
+              <span
+                data-testid={`trader-numeric-id-${trader.numeric_id}`}
+                className="px-1.5 py-0.2 rounded bg-cyan-500/15 border border-cyan-500/30 font-mono text-[8.5px] sm:text-[10px] font-bold text-cyan-300"
+              >
+                ID #{trader.numeric_id}
+              </span>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1 sm:gap-1.5 mt-0.5">
+              <span className="text-[8.5px] sm:text-[10px] font-mono font-bold px-1.5 py-0.2 rounded bg-white/5 border border-white/10 text-slate-200">
+                {trader.account_type_label}
+              </span>
+              <span className="text-[8.5px] sm:text-[10px] font-mono font-bold px-1.5 py-0.2 rounded bg-emerald-500/15 border border-emerald-500/30 text-[#00F5A0]">
+                3M Win: {trader.win_rate_3m}%
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Mobile Quick 24H ROI Summary + Accordion Toggle Button */}
+        <div className="flex sm:hidden items-center gap-1.5 shrink-0">
+          <div className="text-right font-mono">
+            <div className="text-[11px] font-black text-[#00F5A0] leading-tight">
+              +${trader.daily_profit.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+            </div>
+            <div className="text-[8.5px] font-bold text-[#00F5A0]/80 leading-tight">
+              +{trader.daily_profit_pct}% 24H
+            </div>
+          </div>
+          <button
+            type="button"
+            data-testid={`toggle-trader-details-${trader.numeric_id}`}
+            aria-expanded={isDetailsOpen}
+            aria-label={`Toggle metrics for ${trader.provider_name}`}
+            onClick={() => {
+              soundEngine.playUiClick();
+              setIsDetailsOpen((prev) => !prev);
+            }}
+            className="w-7 h-7 rounded-lg bg-[#181E2E] border border-slate-700/80 text-slate-300 flex items-center justify-center bft-touch-scale cursor-pointer"
+          >
+            <ChevronDown
+              className={`w-3.5 h-3.5 transition-transform duration-200 ${
+                isDetailsOpen ? 'rotate-180 text-[#00F5A0]' : ''
+              }`}
+            />
+          </button>
+        </div>
+      </div>
+
+      {/* Collapsible Detailed ROI Grid & Balances (Collapsible on Mobile, Always Open on sm+ Desktop) */}
+      <div
+        className={`bft-accordion-grid bft-accordion-sm-always-open flex-1 w-full ${
+          isDetailsOpen ? 'bft-accordion-open' : 'bft-accordion-closed'
+        }`}
+      >
+        <div className="bft-accordion-inner space-y-2 pt-1 sm:pt-0">
+          {/* Balances Summary Strip */}
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2.5 text-[8.5px] sm:text-[10px] font-mono text-slate-400">
             <span>
               Start: <strong className="text-slate-200">${trader.starting_balance.toLocaleString()}</strong>
             </span>
@@ -156,58 +200,58 @@ const MasterTraderCardItem: React.FC<MasterTraderCardItemProps> = React.memo(({
               Wd: <strong className="text-amber-300">${trader.all_time_withdrawals.toLocaleString()}</strong>
             </span>
           </div>
+
+          {/* 4-Period ROI Grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 sm:gap-2.5 w-full">
+            <div className="p-1.5 sm:p-2.5 rounded-lg sm:rounded-xl bg-[#0B0E17] border border-slate-800/80">
+              <p className="text-[7.5px] sm:text-[9px] text-slate-400 font-mono uppercase truncate">Daily ROI (24H)</p>
+              <p className="text-[10.5px] sm:text-sm font-mono font-black text-[#00F5A0] mt-0.5">
+                +${trader.daily_profit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </p>
+              <p className="text-[8px] sm:text-[10px] font-mono font-bold text-[#00F5A0]/80">
+                +{trader.daily_profit_pct}%
+              </p>
+            </div>
+
+            <div className="p-1.5 sm:p-2.5 rounded-lg sm:rounded-xl bg-[#0B0E17] border border-slate-800/80">
+              <p className="text-[7.5px] sm:text-[9px] text-slate-400 font-mono uppercase truncate">Weekly ROI (7D)</p>
+              <p className="text-[10.5px] sm:text-sm font-mono font-black text-white mt-0.5">
+                +${trader.weekly_profit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </p>
+              <p className="text-[8px] sm:text-[10px] font-mono font-bold text-emerald-400">
+                +{trader.weekly_profit_pct}%
+              </p>
+            </div>
+
+            <div className="p-1.5 sm:p-2.5 rounded-lg sm:rounded-xl bg-[#0B0E17] border border-slate-800/80">
+              <p className="text-[7.5px] sm:text-[9px] text-slate-400 font-mono uppercase truncate">Monthly ROI (30D)</p>
+              <p className="text-[10.5px] sm:text-sm font-mono font-black text-white mt-0.5">
+                +${trader.monthly_profit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </p>
+              <p className="text-[8px] sm:text-[10px] font-mono font-bold text-emerald-400">
+                +{trader.monthly_profit_pct}%
+              </p>
+            </div>
+
+            <div className="p-1.5 sm:p-2.5 rounded-lg sm:rounded-xl bg-[#0B0E17] border border-slate-800/80">
+              <p className="text-[7.5px] sm:text-[9px] text-slate-400 font-mono uppercase truncate">3-Month ROI (90D)</p>
+              <p className="text-[10.5px] sm:text-sm font-mono font-black text-amber-300 mt-0.5">
+                +${trader.three_month_profit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </p>
+              <p className="text-[8px] sm:text-[10px] font-mono font-bold text-amber-400">
+                +{trader.three_month_profit_pct}%
+              </p>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* Center: Compact 2-Column or 4-Column ROI Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 sm:gap-2.5 flex-1 w-full">
-        <div className="p-1.5 sm:p-2.5 rounded-lg sm:rounded-xl bg-[#0B0E17] border border-slate-800/80">
-          <p className="text-[7.5px] sm:text-[9px] text-slate-400 font-mono uppercase truncate">Daily ROI (24H)</p>
-          <p className="text-[11px] sm:text-sm font-mono font-black text-[#00F5A0] mt-0.5">
-            +${trader.daily_profit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </p>
-          <p className="text-[8.5px] sm:text-[10px] font-mono font-bold text-[#00F5A0]/80">
-            +{trader.daily_profit_pct}%
-          </p>
-        </div>
-
-        <div className="p-1.5 sm:p-2.5 rounded-lg sm:rounded-xl bg-[#0B0E17] border border-slate-800/80">
-          <p className="text-[7.5px] sm:text-[9px] text-slate-400 font-mono uppercase truncate">Weekly ROI (7D)</p>
-          <p className="text-[11px] sm:text-sm font-mono font-black text-white mt-0.5">
-            +${trader.weekly_profit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </p>
-          <p className="text-[8.5px] sm:text-[10px] font-mono font-bold text-emerald-400">
-            +{trader.weekly_profit_pct}%
-          </p>
-        </div>
-
-        <div className="p-1.5 sm:p-2.5 rounded-lg sm:rounded-xl bg-[#0B0E17] border border-slate-800/80">
-          <p className="text-[7.5px] sm:text-[9px] text-slate-400 font-mono uppercase truncate">Monthly ROI (30D)</p>
-          <p className="text-[11px] sm:text-sm font-mono font-black text-white mt-0.5">
-            +${trader.monthly_profit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </p>
-          <p className="text-[8.5px] sm:text-[10px] font-mono font-bold text-emerald-400">
-            +{trader.monthly_profit_pct}%
-          </p>
-        </div>
-
-        <div className="p-1.5 sm:p-2.5 rounded-lg sm:rounded-xl bg-[#0B0E17] border border-slate-800/80">
-          <p className="text-[7.5px] sm:text-[9px] text-slate-400 font-mono uppercase truncate">3-Month ROI (90D)</p>
-          <p className="text-[11px] sm:text-sm font-mono font-black text-amber-300 mt-0.5">
-            +${trader.three_month_profit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </p>
-          <p className="text-[8.5px] sm:text-[10px] font-mono font-bold text-amber-400">
-            +{trader.three_month_profit_pct}%
-          </p>
-        </div>
-      </div>
-
-      {/* Right: Copier Capacity (X / 200 Copiers) + Action Buttons */}
-      <div className="flex flex-col sm:flex-row xl:flex-col items-stretch sm:items-center xl:items-end justify-between gap-2 sm:gap-2.5 xl:w-[230px] shrink-0 w-full xl:w-auto">
+      {/* Right / Bottom: Compact Copier Capacity + Always-Accessible Stats & Copy Buttons */}
+      <div className="flex flex-col sm:flex-row xl:flex-col items-stretch sm:items-center xl:items-end justify-between gap-1.5 sm:gap-2.5 xl:w-[230px] shrink-0 w-full xl:w-auto">
         <div className="w-full">
-          <div className="flex items-center justify-between text-[9px] sm:text-[10px] font-mono mb-1">
+          <div className="flex items-center justify-between text-[8.5px] sm:text-[10px] font-mono mb-0.5">
             <span className="text-slate-400 flex items-center gap-1">
-              <Users className="w-3 h-3 text-[#00F5A0]" /> Copiers:
+              <Users className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-[#00F5A0]" /> Copiers:
             </span>
             <span
               data-testid={`trader-copiers-${trader.numeric_id}`}
@@ -215,22 +259,23 @@ const MasterTraderCardItem: React.FC<MasterTraderCardItemProps> = React.memo(({
             >
               {trader.current_copiers} / {MAX_COPIERS_PER_TRADER} Copiers
             </span>
+            <span className="text-[#00F5A0] font-bold sm:hidden">100% Keep • 0% Fee</span>
           </div>
-          <div className="w-full h-1 sm:h-1.5 rounded-full bg-slate-900 border border-slate-800 overflow-hidden">
+          <div className="w-full h-1 rounded-full bg-slate-900 border border-slate-800 overflow-hidden">
             <div
-              className={`h-full ${isFull ? 'bg-amber-400' : 'bg-[#00F5A0]'}`}
+              className={`h-full transition-all duration-300 ${isFull ? 'bg-amber-400' : 'bg-[#00F5A0]'}`}
               style={{
                 width: `${Math.min(100, (trader.current_copiers / MAX_COPIERS_PER_TRADER) * 100)}%`,
               }}
             />
           </div>
-          <div className="flex items-center justify-between mt-0.5 sm:mt-1 text-[8.5px] sm:text-[9px] font-mono text-slate-400">
+          <div className="hidden sm:flex items-center justify-between mt-1 text-[9px] font-mono text-slate-400">
             <span>Profit Keep: <strong className="text-[#00F5A0]">100%</strong></span>
             <span>Fee: <strong className="text-[#00F5A0]">0%</strong></span>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 w-full pt-0.5 sm:pt-0">
+        <div className="flex items-center gap-1.5 sm:gap-2 w-full">
           <button
             type="button"
             data-testid={`view-trader-btn-${trader.numeric_id}`}
@@ -238,7 +283,7 @@ const MasterTraderCardItem: React.FC<MasterTraderCardItemProps> = React.memo(({
               soundEngine.playUiClick();
               onViewStats(trader);
             }}
-            className="px-3 py-2 sm:py-2.5 rounded-lg sm:rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-200 font-mono font-bold text-[11px] sm:text-xs cursor-pointer transition-all touch-manipulation min-h-[38px] sm:min-h-[44px]"
+            className="px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-lg sm:rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-200 font-mono font-bold text-[10.5px] sm:text-xs cursor-pointer bft-touch-scale min-h-[34px] sm:min-h-[42px]"
           >
             Stats
           </button>
@@ -248,7 +293,7 @@ const MasterTraderCardItem: React.FC<MasterTraderCardItemProps> = React.memo(({
               type="button"
               data-testid={`copy-trader-btn-${trader.numeric_id}`}
               onClick={() => onCancelSubscription(trader)}
-              className="flex-1 py-2 sm:py-2.5 px-3 rounded-lg sm:rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-rose-300 font-black text-[11px] sm:text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer transition-all touch-manipulation min-h-[38px] sm:min-h-[44px]"
+              className="flex-1 py-1.5 sm:py-2 px-3 rounded-lg sm:rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-rose-300 font-black text-[10.5px] sm:text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer bft-touch-scale min-h-[34px] sm:min-h-[42px]"
             >
               <StopCircle className="w-3.5 h-3.5" />
               <span>Stop Copying</span>
@@ -259,7 +304,7 @@ const MasterTraderCardItem: React.FC<MasterTraderCardItemProps> = React.memo(({
               disabled={isFull}
               data-testid={`copy-trader-btn-${trader.numeric_id}`}
               onClick={() => onOpenCopyConfig(trader)}
-              className={`flex-1 py-2 sm:py-2.5 px-3 rounded-lg sm:rounded-xl font-black text-[11px] sm:text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all touch-manipulation min-h-[38px] sm:min-h-[44px] ${
+              className={`flex-1 py-1.5 sm:py-2 px-3 rounded-lg sm:rounded-xl font-black text-[10.5px] sm:text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 bft-touch-scale min-h-[34px] sm:min-h-[42px] ${
                 isFull
                   ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
                   : 'bg-[#00F5A0] hover:brightness-110 text-[#07080B] cursor-pointer shadow-md'
@@ -290,6 +335,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'instant_funded' | 'self_capital'>('instant_funded');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [isMobileRulesOpen, setIsMobileRulesOpen] = useState<boolean>(false);
   const [fullPool, setFullPool] = useState<CopyTraderProfileData[]>(() => generate200TraderPool());
   const [customProviders, setCustomProviders] = useState<CopyTraderProfileData[]>(() => {
     try {
@@ -759,26 +805,26 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
         onClick={(e) => e.stopPropagation()}
         className="relative w-full h-full sm:h-[94vh] sm:max-w-[1320px] bg-[#090B10] sm:rounded-3xl shadow-2xl flex flex-col border border-slate-800/70 overflow-hidden"
       >
-        {/* Top Header Bar */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 px-4 sm:px-6 py-3.5 sm:py-4 border-b border-slate-800/60 bg-[#0B0E17]">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-2xl bg-[#00F5A0]/15 border border-[#00F5A0]/30 flex items-center justify-center text-[#00F5A0] shrink-0">
-              <Users className="w-5 h-5 sm:w-6 sm:h-6" />
+        {/* Top Header Bar (Ultra-Compact on Mobile) */}
+        <div className="flex items-center justify-between gap-2 px-3 sm:px-6 py-2.5 sm:py-4 border-b border-slate-800/60 bg-[#0B0E17] shrink-0">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+            <div className="w-8 h-8 sm:w-11 sm:h-11 rounded-xl sm:rounded-2xl bg-[#00F5A0]/15 border border-[#00F5A0]/30 flex items-center justify-center text-[#00F5A0] shrink-0">
+              <Users className="w-4 h-4 sm:w-6 sm:h-6" />
             </div>
-            <div>
-              <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-                <h2 className="text-base sm:text-xl font-black text-white tracking-tight uppercase">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-1 sm:gap-2">
+                <h2 className="text-xs sm:text-xl font-black text-white tracking-tight uppercase truncate">
                   BFT Copy Trading <span className="text-[#00F5A0]">Master Pool</span>
                 </h2>
-                <span className="px-2 py-0.5 rounded-md bg-[#00F5A0]/15 border border-[#00F5A0]/30 text-[9px] sm:text-[10px] font-mono font-black text-[#00F5A0] uppercase">
+                <span className="px-1.5 py-0.2 sm:px-2 sm:py-0.5 rounded bg-[#00F5A0]/15 border border-[#00F5A0]/30 text-[8.5px] sm:text-[10px] font-mono font-black text-[#00F5A0] uppercase">
                   100% Profit Keep
                 </span>
-                <span className="px-2 py-0.5 rounded-md bg-amber-500/15 border border-amber-500/30 text-[9px] sm:text-[10px] font-mono font-bold text-amber-400">
+                <span className="hidden xs:inline-block px-1.5 py-0.2 sm:px-2 sm:py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-[8.5px] sm:text-[10px] font-mono font-bold text-amber-400">
                   {TOTAL_TRADER_POOL_SIZE} Verified Traders
                 </span>
               </div>
-              <p className="text-[10px] sm:text-[11px] text-slate-400 font-mono mt-0.5 flex flex-wrap items-center gap-2 sm:gap-3">
-                <span>Daily Top {LEADERBOARD_TOP_LIMIT}</span>
+              <p className="text-[9.5px] sm:text-[11px] text-slate-400 font-mono mt-0.5 flex flex-wrap items-center gap-1.5 sm:gap-3">
+                <span>Top {LEADERBOARD_TOP_LIMIT}</span>
                 <span>•</span>
                 <span data-testid="rotation-countdown-badge" className="text-cyan-400 font-bold">
                   45m Rotation: {rotationInfo.formattedCountdown}
@@ -789,7 +835,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-2 w-full sm:w-auto justify-end shrink-0">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             <button
               type="button"
               data-testid="join-copy-provider-btn"
@@ -798,28 +844,29 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                 setProviderErrorNotice(null);
                 setShowProviderModal(true);
               }}
-              className="flex-1 sm:flex-none px-3.5 sm:px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#ff8800] to-[#ffaa00] hover:brightness-110 text-slate-950 font-black text-[11px] sm:text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg touch-manipulation"
+              className="px-2.5 sm:px-4 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl bg-gradient-to-r from-[#ff8800] to-[#ffaa00] hover:brightness-110 text-slate-950 font-black text-[10px] sm:text-xs uppercase tracking-wider flex items-center justify-center gap-1 sm:gap-2 cursor-pointer shadow-md bft-touch-scale"
             >
-              <UserPlus className="w-4 h-4 stroke-[2.5]" />
-              <span>Join as Copy Master</span>
+              <UserPlus className="w-3.5 h-3.5 sm:w-4 sm:h-4 stroke-[2.5]" />
+              <span className="hidden xs:inline">Join as Copy Master</span>
+              <span className="xs:hidden">Join</span>
             </button>
             <button
               type="button"
               data-testid="close-copy-trading-btn"
               aria-label="Close Copy Trading Modal"
               onClick={onClose}
-              className="p-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-all border border-white/10 cursor-pointer shrink-0 touch-manipulation"
+              className="p-1.5 sm:p-2.5 rounded-lg sm:rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white border border-white/10 cursor-pointer shrink-0 bft-touch-scale"
             >
-              <X className="w-5 h-5" />
+              <X className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>
           </div>
         </div>
 
-        {/* Copier Eligibility Status Bar & Account Switcher */}
-        <div className="bg-[#0D111C] border-b border-slate-800/60 px-4 sm:px-6 py-2.5 flex flex-col lg:flex-row lg:items-center justify-between gap-2.5 text-xs">
-          <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full lg:w-auto">
-            <div className="flex items-center gap-2 w-full sm:w-auto">
-              <span className="font-mono text-[10px] uppercase tracking-wider text-slate-400 font-bold shrink-0">
+        {/* Copier Account Switcher & Collapsible Eligibility Rules Dropdown */}
+        <div className="bg-[#0D111C] border-b border-slate-800/60 px-3 sm:px-6 py-2 text-xs shrink-0">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 flex-1 min-w-0">
+              <span className="font-mono text-[9.5px] sm:text-[10px] uppercase tracking-wider text-slate-400 font-bold shrink-0">
                 Account:
               </span>
               <select
@@ -827,7 +874,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                 data-testid="copy-account-selector"
                 value={selectedCopyAccountId}
                 onChange={(e) => setSelectedCopyAccountId(e.target.value)}
-                className="flex-1 sm:flex-none bg-[#141926] border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs font-mono text-white outline-none focus:border-[#00F5A0] truncate"
+                className="flex-1 sm:flex-none sm:max-w-xs bg-[#141926] border border-slate-700 rounded-lg px-2 py-1 text-[11px] sm:text-xs font-mono text-white outline-none focus:border-[#00F5A0] truncate"
               >
                 {copierEligibility.allEvaluations.map(({ account, result }) => (
                   <option key={account.id} value={account.id}>
@@ -838,39 +885,75 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
               </select>
             </div>
 
-            <span
-              data-testid="copier-eligibility-badge"
-              className={`px-2.5 py-1 rounded-lg font-mono text-[10px] font-bold flex items-center gap-1.5 border w-full sm:w-auto justify-center sm:justify-start ${
-                copierEligibility.selectedResult.eligible
-                  ? 'bg-emerald-500/15 border-emerald-500/40 text-[#00F5A0]'
-                  : 'bg-rose-500/15 border-rose-500/40 text-rose-300'
-              }`}
+            <button
+              type="button"
+              data-testid="toggle-copy-rules-accordion"
+              aria-expanded={isMobileRulesOpen}
+              onClick={() => {
+                soundEngine.playUiClick();
+                setIsMobileRulesOpen((prev) => !prev);
+              }}
+              className="flex items-center gap-1 px-2 py-1 rounded-lg bg-[#141926] border border-slate-700/80 text-[10px] font-mono font-bold text-slate-300 hover:text-white cursor-pointer bft-touch-scale shrink-0"
             >
               {copierEligibility.selectedResult.eligible ? (
-                <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                <CheckCircle2 className="w-3 h-3 text-[#00F5A0] shrink-0" />
               ) : (
-                <Lock className="w-3.5 h-3.5 shrink-0" />
+                <Lock className="w-3 h-3 text-rose-400 shrink-0" />
               )}
-              <span className="truncate">{copierEligibility.selectedResult.reason}</span>
-            </span>
+              <span>{copierEligibility.selectedResult.eligible ? 'Eligible' : 'Rules'}</span>
+              <ChevronDown
+                className={`w-3 h-3 transition-transform duration-200 ${
+                  isMobileRulesOpen ? 'rotate-180 text-[#00F5A0]' : ''
+                }`}
+              />
+            </button>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono text-slate-400">
-            <span className="px-2 py-0.5 rounded bg-white/5 border border-white/10">
-              Funded: <strong className="text-white">$25K/$50K/$100K Instant</strong>
-            </span>
-            <span className="px-2 py-0.5 rounded bg-white/5 border border-white/10">
-              Challenge: <strong className="text-rose-400">Barred</strong>
-            </span>
-            <span className="px-2 py-0.5 rounded bg-white/5 border border-white/10">
-              Self-Capital: <strong className="text-[#00F5A0]">$100+ Balance</strong>
-            </span>
+          {/* Collapsible Eligibility Details & Rule Breakdown */}
+          <div
+            data-testid="mobile-copy-rules-collapsible"
+            className={`bft-accordion-grid bft-accordion-sm-always-open ${
+              isMobileRulesOpen ? 'bft-accordion-open' : 'bft-accordion-closed'
+            }`}
+          >
+            <div className="bft-accordion-inner pt-2 flex flex-col lg:flex-row lg:items-center justify-between gap-2">
+              <span
+                data-testid="copier-eligibility-badge"
+                className={`px-2.5 py-1 rounded-lg font-mono text-[10px] font-bold flex items-center gap-1.5 border ${
+                  copierEligibility.selectedResult.eligible
+                    ? 'bg-emerald-500/15 border-emerald-500/40 text-[#00F5A0]'
+                    : 'bg-rose-500/15 border-rose-500/40 text-rose-300'
+                }`}
+              >
+                {copierEligibility.selectedResult.eligible ? (
+                  <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                ) : (
+                  <Lock className="w-3.5 h-3.5 shrink-0" />
+                )}
+                <span className="truncate">{copierEligibility.selectedResult.reason}</span>
+              </span>
+
+              <div className="flex flex-wrap items-center gap-1.5 text-[9.5px] sm:text-[10px] font-mono text-slate-400">
+                <span className="px-2 py-0.5 rounded bg-white/5 border border-white/10">
+                  Funded: <strong className="text-white">$25K/$50K/$100K Instant</strong>
+                </span>
+                <span className="px-2 py-0.5 rounded bg-white/5 border border-white/10">
+                  Challenge: <strong className="text-rose-400">Barred</strong>
+                </span>
+                <span className="px-2 py-0.5 rounded bg-white/5 border border-white/10">
+                  Self-Capital: <strong className="text-[#00F5A0]">$100+ Balance</strong>
+                </span>
+                <span className="px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-bold">
+                  Active Subs: {Object.values(activeSubscriptions).filter((s) => s.status === 'active').length}
+                </span>
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* Category Tabs + 200-Pool Numeric ID Search Bar */}
-        <div className="px-4 sm:px-6 pt-3.5 pb-3 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 border-b border-slate-800/40 bg-[#090B10]">
-          <div className="flex bg-[#111520] p-1 rounded-xl border border-slate-800 w-full md:w-auto">
+        {/* Category Tabs + 200-Pool Numeric ID Search Bar (Compact on Mobile) */}
+        <div className="px-3 sm:px-6 py-2 sm:py-3 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2 sm:gap-3 border-b border-slate-800/40 bg-[#090B10] shrink-0">
+          <div className="flex bg-[#111520] p-0.5 sm:p-1 rounded-xl border border-slate-800 w-full md:w-auto">
             <button
               type="button"
               data-testid="tab-instant-funded"
@@ -878,13 +961,13 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                 soundEngine.playUiClick();
                 setActiveTab('instant_funded');
               }}
-              className={`flex-1 sm:flex-none px-3 sm:px-6 py-2.5 rounded-lg font-black text-[11px] sm:text-xs transition-all flex items-center justify-center gap-1.5 sm:gap-2 cursor-pointer touch-manipulation ${
+              className={`flex-1 sm:flex-none px-2.5 sm:px-6 py-1.5 sm:py-2 rounded-lg font-black text-[10.5px] sm:text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer bft-touch-scale ${
                 activeTab === 'instant_funded'
                   ? 'bg-[#00F5A0] text-[#07080B] shadow-md'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
-              <Trophy className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+              <Trophy className="w-3.5 h-3.5 shrink-0" />
               <span>
                 <span className="hidden sm:inline">INSTANT FUNDED TRADERS (100)</span>
                 <span className="sm:hidden">INSTANT FUNDED (100)</span>
@@ -897,13 +980,13 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                 soundEngine.playUiClick();
                 setActiveTab('self_capital');
               }}
-              className={`flex-1 sm:flex-none px-3 sm:px-6 py-2.5 rounded-lg font-black text-[11px] sm:text-xs transition-all flex items-center justify-center gap-1.5 sm:gap-2 cursor-pointer touch-manipulation ${
+              className={`flex-1 sm:flex-none px-2.5 sm:px-6 py-1.5 sm:py-2 rounded-lg font-black text-[10.5px] sm:text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer bft-touch-scale ${
                 activeTab === 'self_capital'
                   ? 'bg-[#00F5A0] text-[#07080B] shadow-md'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
-              <DollarSign className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+              <DollarSign className="w-3.5 h-3.5 shrink-0" />
               <span>
                 <span className="hidden sm:inline">SELF-CAPITAL TRADERS (100)</span>
                 <span className="sm:hidden">SELF-CAPITAL (100)</span>
@@ -913,22 +996,22 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
 
           {/* Search across all 200 traders by numeric ID (#100101 - #100300) or name */}
           <div className="relative w-full md:max-w-md">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <Search className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
               type="text"
               data-testid="copy-trader-search-input"
               aria-label="Search 200 Traders by Numeric ID or Name"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search all 200 traders by ID (e.g. 100105) or name..."
-              className="w-full bg-[#111520] border border-slate-700/80 focus:border-[#00F5A0] rounded-xl pl-10 pr-9 py-2.5 text-xs font-mono text-white placeholder:text-slate-500 outline-none transition-all"
+              placeholder="Search 200 traders by ID (e.g. 100105) or name..."
+              className="w-full bg-[#111520] border border-slate-700/80 focus:border-[#00F5A0] rounded-lg sm:rounded-xl pl-9 pr-8 py-1.5 sm:py-2 text-xs font-mono text-white placeholder:text-slate-500 outline-none transition-all"
             />
             {searchQuery && (
               <button
                 type="button"
                 aria-label="Clear Trader Search"
                 onClick={() => setSearchQuery('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer touch-manipulation"
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer touch-manipulation"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -936,53 +1019,136 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
           </div>
         </div>
 
-        {/* Subheader showing current view mode */}
-        <div className="px-4 sm:px-6 py-2 bg-[#0B0E16] border-b border-slate-800/40 flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono text-slate-400">
-          <div>
-            {queryResult.isSearchActive ? (
-              <span>
-                Searching full <strong className="text-white">200-Trader Master Pool</strong> for{' '}
-                <strong className="text-[#00F5A0]">"{searchQuery}"</strong> ({displayedTraders.length} matches)
-              </span>
-            ) : (
-              <span>
-                Showing <strong className="text-[#00F5A0]">Daily Top {LEADERBOARD_TOP_LIMIT}</strong>{' '}
-                {activeTab === 'instant_funded' ? 'Instant Funded' : 'Self-Capital'} Master Traders (from 100 category pool • rotates every 45m)
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="text-emerald-400 font-bold">
-              Active Subscriptions: {Object.values(activeSubscriptions).filter((s) => s.status === 'active').length}
-            </span>
-          </div>
-        </div>
-
-        {/* Main Leaderboard Feed */}
+        {/* Main Leaderboard Feed with Mobile Horizontal Swipable Top 3 Spotlight */}
         <div
           data-testid="copy-traders-list"
-          className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 space-y-3 custom-scrollbar overscroll-contain touch-scroll hw-accelerate"
+          className="flex-1 overflow-y-auto px-3 sm:px-6 py-2.5 sm:py-4 space-y-2 sm:space-y-3 custom-scrollbar overscroll-contain touch-scroll hw-accelerate"
         >
+          {/* Mobile Horizontal Swipable Top 3 Podium Cards */}
+          {!isLoading && !queryResult.isSearchActive && displayedTraders.length >= 3 && (
+            <div className="sm:hidden pb-1">
+              <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 mb-1.5 px-0.5">
+                <span className="font-bold text-white flex items-center gap-1">
+                  <Trophy className="w-3 h-3 text-amber-400" /> Top 3 Spotlight (Swipe →)
+                </span>
+                <span className="text-[#00F5A0] font-bold">
+                  Tap card chevron for full ROI
+                </span>
+              </div>
+              <div
+                data-testid="mobile-swipable-top-traders"
+                className="bft-snap-strip gap-2 pb-1"
+              >
+                {displayedTraders.slice(0, 3).map((topTrader, idx) => {
+                  const topRank = topTrader.rank || idx + 1;
+                  const topSub = activeSubscriptions[topTrader.id];
+                  const topIsCopying = Boolean(topSub && topSub.status === 'active');
+                  const topIsFull = topTrader.current_copiers >= MAX_COPIERS_PER_TRADER && !topIsCopying;
+                  return (
+                    <div
+                      key={`swipe-${topTrader.id}`}
+                      className="bft-snap-card w-[235px] p-2.5 rounded-xl bg-gradient-to-br from-[#131929] to-[#0D111C] border border-slate-700/80 flex flex-col justify-between gap-2"
+                    >
+                      <div className="flex items-center justify-between gap-1.5">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span
+                            className={`w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-black font-mono shrink-0 ${
+                              topRank === 1
+                                ? 'bg-amber-400 text-slate-950'
+                                : topRank === 2
+                                ? 'bg-slate-300 text-slate-950'
+                                : 'bg-amber-600 text-white'
+                            }`}
+                          >
+                            #{topRank}
+                          </span>
+                          <CountryFlagIcon
+                            isoCode={topTrader.country_code}
+                            country={topTrader.country}
+                            flagEmoji={topTrader.flag}
+                            className="w-4 h-3 object-cover rounded-xs shrink-0"
+                          />
+                          <span className="text-xs font-black text-white truncate">
+                            {topTrader.provider_name}
+                          </span>
+                        </div>
+                        <span className="text-[9px] font-mono font-bold text-[#00F5A0] bg-emerald-500/15 px-1.5 py-0.2 rounded shrink-0">
+                          {topTrader.win_rate_3m}% WR
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between font-mono bg-[#090C14] px-2 py-1 rounded-lg border border-slate-800/80">
+                        <div>
+                          <span className="text-[8px] text-slate-400 uppercase block">24H Profit</span>
+                          <span className="text-xs font-black text-[#00F5A0]">
+                            +${topTrader.daily_profit.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                          </span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-[8px] text-slate-400 uppercase block">90D ROI</span>
+                          <span className="text-xs font-black text-amber-300">
+                            +{topTrader.three_month_profit_pct}%
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            soundEngine.playUiClick();
+                            setViewingTrader(topTrader);
+                          }}
+                          className="px-2 py-1 rounded-lg bg-white/5 border border-white/10 text-[10px] font-mono font-bold text-slate-300 bft-touch-scale cursor-pointer"
+                        >
+                          Stats
+                        </button>
+                        <button
+                          type="button"
+                          disabled={topIsFull}
+                          onClick={() =>
+                            topIsCopying
+                              ? handleCancelSubscription(topTrader)
+                              : handleOpenCopyConfig(topTrader)
+                          }
+                          className={`flex-1 py-1 px-2 rounded-lg font-black text-[10px] uppercase tracking-wider bft-touch-scale cursor-pointer ${
+                            topIsCopying
+                              ? 'bg-rose-500/20 border border-rose-500/40 text-rose-300'
+                              : topIsFull
+                              ? 'bg-slate-800 text-slate-500'
+                              : 'bg-[#00F5A0] text-[#07080B]'
+                          }`}
+                        >
+                          {topIsCopying ? 'Stop' : topIsFull ? 'Full' : 'Copy'}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {isLoading ? (
-            <div className="flex flex-col items-center justify-center py-24 space-y-4">
-              <RefreshCw className="w-8 h-8 text-[#00F5A0] animate-spin" />
+            <div className="flex flex-col items-center justify-center py-16 space-y-3">
+              <RefreshCw className="w-7 h-7 text-[#00F5A0] animate-spin" />
               <p className="text-slate-400 font-mono text-xs uppercase tracking-widest">
                 Synchronizing 200-Trader Master Pool...
               </p>
             </div>
           ) : displayedTraders.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-20 space-y-4 text-center">
-              <ShieldAlert className="w-10 h-10 text-amber-400" />
+            <div className="flex flex-col items-center justify-center py-14 space-y-3 text-center">
+              <ShieldAlert className="w-8 h-8 text-amber-400" />
               <div>
-                <p className="text-white font-bold text-sm">No Master Trader Found Matching "{searchQuery}"</p>
-                <p className="text-slate-400 font-mono text-xs mt-1">
+                <p className="text-white font-bold text-xs sm:text-sm">No Master Trader Found Matching "{searchQuery}"</p>
+                <p className="text-slate-400 font-mono text-[11px] mt-1">
                   Try searching any numeric Trader ID between #100101 and #100300.
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setSearchQuery('')}
-                className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-mono text-white cursor-pointer"
+                className="px-4 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-mono text-white cursor-pointer bft-touch-scale"
               >
                 Reset Search to Daily Top 10
               </button>
@@ -1010,22 +1176,22 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
           )}
         </div>
 
-        {/* Bottom Footer */}
-        <div className="px-4 sm:px-6 py-3.5 border-t border-slate-800/60 bg-[#0B0E17] flex flex-col sm:flex-row items-center justify-between gap-3 text-[11px] font-mono text-slate-400">
-          <div className="flex flex-wrap items-center gap-4">
-            <span className="flex items-center gap-1.5 text-slate-300">
-              <ShieldCheck className="w-4 h-4 text-[#00F5A0]" />
-              <span>Follower Keeps 100% Profit (0% Master Commission)</span>
+        {/* Bottom Footer (Compact on Mobile) */}
+        <div className="px-3 sm:px-6 py-2 sm:py-3 border-t border-slate-800/60 bg-[#0B0E17] flex items-center justify-between gap-2 text-[10px] sm:text-[11px] font-mono text-slate-400 shrink-0">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-4 min-w-0">
+            <span className="flex items-center gap-1 text-slate-300 truncate">
+              <ShieldCheck className="w-3.5 h-3.5 text-[#00F5A0] shrink-0" />
+              <span className="truncate">100% Profit Keep (0% Fee)</span>
             </span>
-            <span>•</span>
-            <span>Provider Requirement: ≥{MIN_PROVIDER_WIN_RATE_3M}% 90-Day Win Rate</span>
+            <span className="hidden sm:inline">•</span>
+            <span className="hidden sm:inline">Provider Requirement: ≥{MIN_PROVIDER_WIN_RATE_3M}% 90-Day Win Rate</span>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="px-6 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 font-bold text-xs uppercase cursor-pointer"
+            className="px-3 sm:px-5 py-1.5 rounded-lg sm:rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 font-bold text-[10.5px] sm:text-xs uppercase cursor-pointer shrink-0 bft-touch-scale"
           >
-            Close Window
+            Close
           </button>
         </div>
       </div>

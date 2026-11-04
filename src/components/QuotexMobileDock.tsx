@@ -88,7 +88,7 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = React.memo(({
             soundEngine.playUiClick();
             onOpenAssetModal();
           }}
-          className="flex items-center gap-1 text-left py-0.5 px-2 rounded-md bg-[#161922] border border-white/10 active:bg-[#1e222d] text-white cursor-pointer min-w-0 shrink"
+          className="flex items-center gap-1 text-left py-0.5 px-2 rounded-md bg-[#161922] border border-white/10 active:bg-[#1e222d] text-white cursor-pointer min-w-0 shrink bft-touch-scale"
         >
           <AssetFlagIcon symbol={selectedAsset.symbol} category={selectedAsset.category} flagEmoji={selectedAsset.flag} size="xs" />
           <span className="font-black text-[11px] tracking-tight truncate">{selectedAsset.symbol}</span>
@@ -117,7 +117,7 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = React.memo(({
             soundEngine.playUiClick();
             onTogglePendingTrade();
           }}
-          className="flex items-center gap-1 py-0.5 px-1.5 rounded-md bg-[#161922] border border-white/10 active:bg-[#1e222d] text-[9px] font-bold text-slate-300 cursor-pointer shrink-0"
+          className="flex items-center gap-1 py-0.5 px-1.5 rounded-md bg-[#161922] border border-white/10 active:bg-[#1e222d] text-[9px] font-bold text-slate-300 cursor-pointer shrink-0 bft-touch-scale"
         >
           <span className="text-blue-400 font-bold text-[8.5px]">PENDING</span>
           <div

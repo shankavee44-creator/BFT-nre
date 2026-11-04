@@ -635,6 +635,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   const [accountDropdownOpen, setAccountDropdownOpen] = useState(false);
   const [isTradesDrawerOpen, setIsTradesDrawerOpen] = useState(false);
   const [mobileTradesTab, setMobileTradesTab] = useState<MobileTradesTab>('trades');
+  const [isMobileOhlcExpanded, setIsMobileOhlcExpanded] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(soundEngine.isEnabled());
 
   // Real-time Price Alerts state
@@ -4642,70 +4643,137 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             return (
               <div
                 data-testid="chart-ohlc-bar"
-                className="absolute top-11 left-2 md:top-14 md:left-3 z-20 px-2 py-0.5 md:px-2.5 md:py-1 rounded-md md:rounded-lg bg-[#141722]/92 border border-white/10 flex flex-wrap items-center gap-1.5 md:gap-3 font-mono text-[9.5px] md:text-[11px] select-none"
+                className="absolute top-11 left-2 md:top-14 md:left-3 z-20 px-2 py-0.5 md:px-2.5 md:py-1 rounded-md md:rounded-lg bg-[#141722]/92 border border-white/10 flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-0.5 sm:gap-1.5 md:gap-3 font-mono text-[9.5px] md:text-[11px] select-none"
               >
-                {/* Native Platform Symbol Selector Override for TradingView Chart */}
-                <button
-                  type="button"
-                  data-testid="tv-chart-symbol-selector-btn"
-                  onClick={() => {
-                    soundEngine.playUiClick();
-                    setIsAssetModalOpen(true);
-                  }}
-                  title="Switch TradingView Chart Market (Forex, Crypto, Stocks, Commodities)"
-                  className="font-black text-white flex items-center gap-1 md:gap-1.5 hover:text-[#ff8800] transition-colors cursor-pointer pointer-events-auto"
-                >
-                  <span data-testid="tv-chart-active-symbol">{selectedAsset.symbol}</span>
-                  <span
-                    data-testid="tv-chart-resolved-symbol"
-                    className="text-[8.5px] md:text-[9px] px-1 md:px-1.5 py-0.2 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-bold"
+                <div className="flex items-center gap-1.5 md:gap-3">
+                  {/* Native Platform Symbol Selector Override for TradingView Chart */}
+                  <button
+                    type="button"
+                    data-testid="tv-chart-symbol-selector-btn"
+                    onClick={() => {
+                      soundEngine.playUiClick();
+                      setIsAssetModalOpen(true);
+                    }}
+                    title="Switch TradingView Chart Market (Forex, Crypto, Stocks, Commodities)"
+                    className="font-black text-white flex items-center gap-1 md:gap-1.5 hover:text-[#ff8800] transition-colors cursor-pointer pointer-events-auto bft-touch-scale"
                   >
-                    {tvResolved.tvSymbol}
+                    <span data-testid="tv-chart-active-symbol">{selectedAsset.symbol}</span>
+                    <span
+                      data-testid="tv-chart-resolved-symbol"
+                      className="text-[8.5px] md:text-[9px] px-1 md:px-1.5 py-0.2 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-bold"
+                    >
+                      {tvResolved.tvSymbol}
+                    </span>
+                    <span
+                      data-testid="tv-chart-category-badge"
+                      className="text-[9px] px-1.5 py-0.2 rounded bg-white/5 text-slate-300 border border-white/10 font-bold hidden sm:inline"
+                    >
+                      {tvResolved.marketCategory}
+                    </span>
+                    <span className="text-[8.5px] md:text-[9px] px-1 md:px-1.5 py-0.2 rounded bg-[#ff8800]/20 text-[#ff8800] font-bold">
+                      {timeframe}
+                    </span>
+                    <ChevronDown className="w-3 h-3 text-slate-400" />
+                  </button>
+                  <span className="text-slate-400 pointer-events-none hidden sm:inline">
+                    O{' '}
+                    <strong className={isBull ? 'text-[#00e676]' : 'text-[#ff334b]'}>
+                      {inspectedCandle.open.toFixed(selectedAsset.pipDecimals)}
+                    </strong>
+                  </span>
+                  <span className="text-slate-400 pointer-events-none hidden sm:inline">
+                    H{' '}
+                    <strong className={isBull ? 'text-[#00e676]' : 'text-[#ff334b]'}>
+                      {inspectedCandle.high.toFixed(selectedAsset.pipDecimals)}
+                    </strong>
+                  </span>
+                  <span className="text-slate-400 pointer-events-none hidden sm:inline">
+                    L{' '}
+                    <strong className={isBull ? 'text-[#00e676]' : 'text-[#ff334b]'}>
+                      {inspectedCandle.low.toFixed(selectedAsset.pipDecimals)}
+                    </strong>
+                  </span>
+                  <span className="text-slate-400 pointer-events-none">
+                    C{' '}
+                    <strong className={isBull ? 'text-[#00e676]' : 'text-[#ff334b]'}>
+                      {inspectedCandle.close.toFixed(selectedAsset.pipDecimals)}
+                    </strong>
                   </span>
                   <span
-                    data-testid="tv-chart-category-badge"
-                    className="text-[9px] px-1.5 py-0.2 rounded bg-white/5 text-slate-300 border border-white/10 font-bold hidden sm:inline"
+                    className={`font-bold hidden sm:inline pointer-events-none ${
+                      isBull ? 'text-[#00e676]' : 'text-[#ff334b]'
+                    }`}
                   >
-                    {tvResolved.marketCategory}
+                    {changeAbs >= 0 ? '+' : ''}
+                    {changeAbs.toFixed(selectedAsset.pipDecimals)} ({changePct >= 0 ? '+' : ''}
+                    {changePct.toFixed(2)}%)
                   </span>
-                  <span className="text-[8.5px] md:text-[9px] px-1 md:px-1.5 py-0.2 rounded bg-[#ff8800]/20 text-[#ff8800] font-bold">
-                    {timeframe}
-                  </span>
-                  <ChevronDown className="w-3 h-3 text-slate-400" />
-                </button>
-                <span className="text-slate-400 pointer-events-none hidden sm:inline">
-                  O{' '}
-                  <strong className={isBull ? 'text-[#00e676]' : 'text-[#ff334b]'}>
-                    {inspectedCandle.open.toFixed(selectedAsset.pipDecimals)}
-                  </strong>
-                </span>
-                <span className="text-slate-400 pointer-events-none hidden sm:inline">
-                  H{' '}
-                  <strong className={isBull ? 'text-[#00e676]' : 'text-[#ff334b]'}>
-                    {inspectedCandle.high.toFixed(selectedAsset.pipDecimals)}
-                  </strong>
-                </span>
-                <span className="text-slate-400 pointer-events-none hidden sm:inline">
-                  L{' '}
-                  <strong className={isBull ? 'text-[#00e676]' : 'text-[#ff334b]'}>
-                    {inspectedCandle.low.toFixed(selectedAsset.pipDecimals)}
-                  </strong>
-                </span>
-                <span className="text-slate-400 pointer-events-none">
-                  C{' '}
-                  <strong className={isBull ? 'text-[#00e676]' : 'text-[#ff334b]'}>
-                    {inspectedCandle.close.toFixed(selectedAsset.pipDecimals)}
-                  </strong>
-                </span>
-                <span
-                  className={`font-bold hidden sm:inline pointer-events-none ${
-                    isBull ? 'text-[#00e676]' : 'text-[#ff334b]'
+
+                  {/* Mobile Collapsible OHLC & Quick Timeframe Accordion Trigger */}
+                  <button
+                    type="button"
+                    data-testid="mobile-ohlc-details-toggle"
+                    onClick={() => {
+                      soundEngine.playUiClick();
+                      setIsMobileOhlcExpanded((prev) => !prev);
+                    }}
+                    title="Toggle Detailed Candle Metrics & Timeframes"
+                    className="sm:hidden px-1 py-0.5 rounded bg-white/5 border border-white/10 text-slate-300 hover:text-white flex items-center gap-0.5 pointer-events-auto cursor-pointer bft-touch-scale"
+                  >
+                    <span className="text-[8px] font-bold uppercase text-[#ff8800]">OHLC</span>
+                    <ChevronDown
+                      className={`w-2.5 h-2.5 transition-transform duration-200 ${
+                        isMobileOhlcExpanded ? 'rotate-180 text-[#ff8800]' : ''
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {/* Mobile Collapsible Accordion Panel for Secondary OHLC Metrics & Timeframes */}
+                <div
+                  data-testid="mobile-ohlc-collapsible-panel"
+                  className={`sm:hidden bft-accordion-grid ${
+                    isMobileOhlcExpanded ? 'bft-accordion-open' : 'bft-accordion-closed'
                   }`}
                 >
-                  {changeAbs >= 0 ? '+' : ''}
-                  {changeAbs.toFixed(selectedAsset.pipDecimals)} ({changePct >= 0 ? '+' : ''}
-                  {changePct.toFixed(2)}%)
-                </span>
+                  <div className="bft-accordion-inner">
+                    <div className="pt-1 mt-0.5 border-t border-white/10 flex flex-col gap-1 pointer-events-auto">
+                      <div className="flex items-center gap-2 text-[9px] tabular-nums">
+                        <span className="text-slate-400">
+                          O <strong className={isBull ? 'text-[#00e676]' : 'text-[#ff334b]'}>{inspectedCandle.open.toFixed(selectedAsset.pipDecimals)}</strong>
+                        </span>
+                        <span className="text-slate-400">
+                          H <strong className={isBull ? 'text-[#00e676]' : 'text-[#ff334b]'}>{inspectedCandle.high.toFixed(selectedAsset.pipDecimals)}</strong>
+                        </span>
+                        <span className="text-slate-400">
+                          L <strong className={isBull ? 'text-[#00e676]' : 'text-[#ff334b]'}>{inspectedCandle.low.toFixed(selectedAsset.pipDecimals)}</strong>
+                        </span>
+                        <span className={`font-bold ${isBull ? 'text-[#00e676]' : 'text-[#ff334b]'}`}>
+                          {changePct >= 0 ? '+' : ''}{changePct.toFixed(2)}%
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {(['5s', '15s', '30s', '1m', '5m', '15m'] as Timeframe[]).map((tf) => (
+                          <button
+                            key={tf}
+                            type="button"
+                            onClick={() => {
+                              soundEngine.playUiClick();
+                              setTimeframe(tf);
+                            }}
+                            className={`px-1.5 py-0.5 rounded text-[8.5px] font-bold cursor-pointer bft-touch-scale ${
+                              timeframe === tf
+                                ? 'bg-[#ff8800] text-slate-950 font-black'
+                                : 'bg-[#0a0a0a] text-slate-300 border border-white/10'
+                            }`}
+                          >
+                            {tf}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
             );
           })()}

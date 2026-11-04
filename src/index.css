@@ -527,3 +527,63 @@ button:active:not(:disabled),
   }
 }
 
+/* Smooth Mobile Accordion & Touch Micro-Animations */
+.bft-accordion-grid {
+  display: grid;
+  transition: grid-template-rows 220ms cubic-bezier(0.16, 1, 0.3, 1), opacity 180ms ease-out;
+  will-change: grid-template-rows, opacity;
+}
+
+.bft-accordion-open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.bft-accordion-closed {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (min-width: 640px) {
+  .bft-accordion-sm-always-open {
+    grid-template-rows: 1fr !important;
+    opacity: 1 !important;
+    pointer-events: auto !important;
+  }
+}
+
+.bft-accordion-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+.bft-touch-scale {
+  transition: transform 140ms cubic-bezier(0.16, 1, 0.3, 1), background-color 140ms ease, border-color 140ms ease;
+  touch-action: manipulation;
+}
+
+.bft-touch-scale:active {
+  transform: scale3d(0.965, 0.965, 1);
+}
+
+.bft-snap-strip {
+  display: flex;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.bft-snap-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.bft-snap-card {
+  scroll-snap-align: start;
+  flex-shrink: 0;
+}
+
+

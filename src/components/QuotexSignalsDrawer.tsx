@@ -127,6 +127,7 @@ export const QuotexSignalsDrawer: React.FC<QuotexSignalsDrawerProps> = ({
   const [signals, setSignals] = useState<BFTSignalItem[]>(INITIAL_BFT_SIGNALS);
   const [filter, setFilter] = useState<'ALL' | 'CALL' | 'PUT'>('ALL');
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [expandedSignalId, setExpandedSignalId] = useState<string | null>('BFT-SIG-01');
 
   if (!isOpen) return null;
 
@@ -148,25 +149,25 @@ export const QuotexSignalsDrawer: React.FC<QuotexSignalsDrawerProps> = ({
   const filteredSignals = signals.filter((s) => (filter === 'ALL' ? true : s.direction === filter));
 
   return (
-    <div className="fixed inset-y-0 left-14 z-50 w-84 bg-[#181b25] border-r border-[#2a2e39] shadow-2xl flex flex-col animate-in slide-in-from-left duration-200 font-sans select-none">
+    <div className="fixed inset-x-0 bottom-0 top-9 md:inset-y-0 md:left-14 md:right-auto z-50 w-full md:w-84 bg-[#181b25] border-r border-[#2a2e39] shadow-2xl flex flex-col animate-in slide-in-from-left duration-200 font-sans select-none">
       {/* Header */}
-      <div className="p-4 bg-[#131722] border-b border-[#2a2e39] flex items-center justify-between">
+      <div className="p-3 sm:p-4 bg-[#131722] border-b border-[#2a2e39] flex items-center justify-between">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl bg-cyan-500/20 border border-cyan-400/40 flex items-center justify-center text-cyan-400 shadow-md">
-            <Cpu className="w-4 h-4 text-cyan-400" />
+          <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-cyan-500/20 border border-cyan-400/40 flex items-center justify-center text-cyan-400 shadow-md">
+            <Cpu className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-cyan-400" />
           </div>
           <div>
-            <h3 className="text-sm font-black text-white font-mono flex items-center gap-1.5">
+            <h3 className="text-xs sm:text-sm font-black text-white font-mono flex items-center gap-1.5">
               BFT Trading Signals
               <span className="w-2 h-2 rounded-full bg-[#00e676] animate-ping" />
             </h3>
-            <p className="text-[10px] text-slate-400 font-mono">Algorithmic OTC Market Insights</p>
+            <p className="text-[9.5px] sm:text-[10px] text-slate-400 font-mono">Algorithmic OTC Market Insights</p>
           </div>
         </div>
         <div className="flex items-center gap-1">
           <button
             onClick={handleRefresh}
-            className={`p-1.5 rounded-lg hover:bg-[#252b3b] text-slate-400 hover:text-white transition-all cursor-pointer ${
+            className={`p-1.5 rounded-lg hover:bg-[#252b3b] text-slate-400 hover:text-white transition-all cursor-pointer bft-touch-scale ${
               isRefreshing ? 'animate-spin text-cyan-400' : ''
             }`}
             title="Refresh AI Signals"
@@ -178,7 +179,7 @@ export const QuotexSignalsDrawer: React.FC<QuotexSignalsDrawerProps> = ({
               soundEngine.playUiClick();
               onClose();
             }}
-            className="p-1.5 rounded-lg hover:bg-[#252b3b] text-slate-400 hover:text-white transition-colors cursor-pointer"
+            className="p-1.5 rounded-lg hover:bg-[#252b3b] text-slate-400 hover:text-white transition-colors cursor-pointer bft-touch-scale"
           >
             <X className="w-4 h-4" />
           </button>
@@ -186,7 +187,7 @@ export const QuotexSignalsDrawer: React.FC<QuotexSignalsDrawerProps> = ({
       </div>
 
       {/* Accuracy & Metric Banner */}
-      <div className="p-3 bg-[#1e222d] border-b border-[#2a2e39] text-xs font-mono flex items-center justify-between">
+      <div className="px-3 py-2 sm:p-3 bg-[#1e222d] border-b border-[#2a2e39] text-[11px] sm:text-xs font-mono flex items-center justify-between">
         <div className="flex items-center gap-1.5 text-[#00e676] font-bold">
           <ShieldCheck className="w-3.5 h-3.5" />
           <span>91.2% Backtested Win Rate</span>
@@ -197,7 +198,7 @@ export const QuotexSignalsDrawer: React.FC<QuotexSignalsDrawerProps> = ({
       </div>
 
       {/* Filter Tabs */}
-      <div className="p-2.5 bg-[#131722] border-b border-[#2a2e39] flex gap-1.5 font-mono text-[11px]">
+      <div className="p-2 sm:p-2.5 bg-[#131722] border-b border-[#2a2e39] flex gap-1.5 font-mono text-[10.5px] sm:text-[11px]">
         {(['ALL', 'CALL', 'PUT'] as const).map((t) => (
           <button
             key={t}
@@ -205,7 +206,7 @@ export const QuotexSignalsDrawer: React.FC<QuotexSignalsDrawerProps> = ({
               soundEngine.playUiClick();
               setFilter(t);
             }}
-            className={`flex-1 py-1 rounded-lg font-bold transition-all cursor-pointer ${
+            className={`flex-1 py-1 rounded-lg font-bold transition-all cursor-pointer bft-touch-scale ${
               filter === t
                 ? 'bg-cyan-500 text-slate-950 font-black'
                 : 'bg-[#1e222d] text-slate-400 hover:text-white border border-[#2a2e39]'
@@ -217,20 +218,21 @@ export const QuotexSignalsDrawer: React.FC<QuotexSignalsDrawerProps> = ({
       </div>
 
       {/* Signals List */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-2.5 font-mono">
+      <div className="flex-1 overflow-y-auto p-2.5 sm:p-3 space-y-2 font-mono">
         {filteredSignals.map((sig) => {
           const asset = DEFAULT_ASSETS.find((a) => a.symbol === sig.symbol) || DEFAULT_ASSETS[0];
+          const isExpanded = expandedSignalId === sig.id;
 
           return (
             <div
               key={sig.id}
-              className="p-3 rounded-xl bg-[#131722] border border-[#2a2e39] hover:border-cyan-500/50 transition-all text-xs space-y-2 group"
+              className="p-2.5 sm:p-3 rounded-xl bg-[#131722] border border-[#2a2e39] hover:border-cyan-500/50 transition-all text-xs space-y-1.5 sm:space-y-2 group"
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1.5">
                   <AssetFlagIcon symbol={asset.symbol} category={asset.category} flagEmoji={asset.flag} size="xs" />
-                  <span className="font-black text-white text-sm">{sig.symbol}</span>
-                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-950/80 text-[#00e676] font-bold border border-[#00e676]/30">
+                  <span className="font-black text-white text-xs sm:text-sm">{sig.symbol}</span>
+                  <span className="text-[9.5px] sm:text-[10px] px-1.5 py-0.2 rounded bg-emerald-950/80 text-[#00e676] font-bold border border-[#00e676]/30">
                     +{asset.payout}%
                   </span>
                 </div>
@@ -239,20 +241,20 @@ export const QuotexSignalsDrawer: React.FC<QuotexSignalsDrawerProps> = ({
                 </span>
               </div>
 
-              {/* Direction & Confidence */}
+              {/* Direction & Confidence + Mobile Rationale Toggle */}
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 sm:gap-2">
                   <span
-                    className={`px-2 py-0.5 rounded text-[11px] font-black flex items-center gap-1 ${
+                    className={`px-2 py-0.5 rounded text-[10.5px] sm:text-[11px] font-black flex items-center gap-1 ${
                       sig.direction === 'CALL'
                         ? 'bg-emerald-950/80 text-[#00e676] border border-[#00e676]/40'
                         : 'bg-rose-950/80 text-[#ff334b] border border-[#ff334b]/40'
                     }`}
                   >
                     {sig.direction === 'CALL' ? (
-                      <TrendingUp className="w-3.5 h-3.5 stroke-[3]" />
+                      <TrendingUp className="w-3 h-3 sm:w-3.5 sm:h-3.5 stroke-[3]" />
                     ) : (
-                      <TrendingDown className="w-3.5 h-3.5 stroke-[3]" />
+                      <TrendingDown className="w-3 h-3 sm:w-3.5 sm:h-3.5 stroke-[3]" />
                     )}
                     {sig.direction === 'CALL' ? 'CALL (UP)' : 'PUT (DOWN)'}
                   </span>
@@ -261,21 +263,41 @@ export const QuotexSignalsDrawer: React.FC<QuotexSignalsDrawerProps> = ({
                   </span>
                 </div>
 
-                <div className="text-right">
-                  <span className="text-[11px] font-black text-cyan-400">
-                    {sig.confidence}%
-                  </span>
-                  <span className="text-[9px] text-slate-500 block uppercase">Confidence</span>
+                <div className="flex items-center gap-2">
+                  <div className="text-right">
+                    <span className="text-[11px] font-black text-cyan-400">
+                      {sig.confidence}%
+                    </span>
+                    <span className="text-[8.5px] sm:text-[9px] text-slate-500 block uppercase">Confidence</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      soundEngine.playUiClick();
+                      setExpandedSignalId((prev) => (prev === sig.id ? null : sig.id));
+                    }}
+                    className="sm:hidden px-1.5 py-1 rounded bg-[#1e222d] border border-[#2a2e39] text-[9.5px] text-cyan-300 font-bold bft-touch-scale cursor-pointer"
+                  >
+                    {isExpanded ? 'Hide' : 'Basis'}
+                  </button>
                 </div>
               </div>
 
-              {/* Technical Indicator Basis */}
-              <div className="p-2 rounded-lg bg-[#181b25] border border-[#2a2e39]/80 space-y-1">
-                <div className="text-[10px] text-cyan-300 font-bold">
-                  {sig.indicator}
-                </div>
-                <div className="text-[10px] text-slate-400 leading-relaxed font-sans">
-                  {sig.aiRationale}
+              {/* Technical Indicator Basis (Collapsible on Mobile, Always Open on Desktop) */}
+              <div
+                className={`bft-accordion-grid bft-accordion-sm-always-open ${
+                  isExpanded ? 'bft-accordion-open' : 'bft-accordion-closed'
+                }`}
+              >
+                <div className="bft-accordion-inner">
+                  <div className="p-2 rounded-lg bg-[#181b25] border border-[#2a2e39]/80 space-y-1">
+                    <div className="text-[10px] text-cyan-300 font-bold">
+                      {sig.indicator}
+                    </div>
+                    <div className="text-[10px] text-slate-400 leading-relaxed font-sans">
+                      {sig.aiRationale}
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -286,7 +308,7 @@ export const QuotexSignalsDrawer: React.FC<QuotexSignalsDrawerProps> = ({
                   onApplySignal(asset, sig.direction, sig.durationSeconds);
                   onClose();
                 }}
-                className="w-full py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:brightness-110 text-slate-950 font-black text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-md shadow-cyan-500/20 active:scale-98"
+                className="w-full py-1.5 sm:py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:brightness-110 text-slate-950 font-black text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-md shadow-cyan-500/20 bft-touch-scale"
               >
                 <Zap className="w-3.5 h-3.5 fill-slate-950" />
                 <span>Trade BFT Signal ({sig.direction} {sig.timeframe})</span>
