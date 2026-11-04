@@ -104,6 +104,19 @@ canvas,
   touch-action: pan-y;
 }
 
+.tradingview-chart-container,
+.tv-chart-container {
+  touch-action: pan-x pan-y pinch-zoom;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.tradingview-chart-container canvas,
+.tv-chart-container canvas,
+.tv-lightweight-charts {
+  touch-action: pan-x pan-y pinch-zoom !important;
+}
+
 .gpu-accelerated {
   transform: translateZ(0);
   will-change: transform;
@@ -438,3 +451,60 @@ button:active:not(:disabled),
 .animate-pricing-bg-2 {
   animation: pricingBgCrossFade2 18s ease-in-out infinite;
 }
+
+/* GPU-Efficient Compositor-Only Pulsing Animation for Active Trade Indicator Badges */
+@keyframes activeTradeBadgePulse {
+  0%, 100% {
+    transform: translateZ(0) scale3d(1, 1, 1);
+    opacity: 1;
+  }
+  50% {
+    transform: translateZ(0) scale3d(1.035, 1.035, 1);
+    opacity: 0.86;
+  }
+}
+
+@keyframes activeTradeDotPulse {
+  0% {
+    transform: translateZ(0) scale3d(0.95, 0.95, 1);
+    opacity: 0.85;
+  }
+  75%, 100% {
+    transform: translateZ(0) scale3d(1.75, 1.75, 1);
+    opacity: 0;
+  }
+}
+
+.active-trade-badge-pulse,
+.pulse-active-trade-badge {
+  animation: activeTradeBadgePulse 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  will-change: transform, opacity;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  contain: layout style;
+}
+
+.active-trade-badge-pulse-win {
+  border-color: rgba(0, 230, 118, 0.65);
+}
+
+.active-trade-badge-pulse-loss {
+  border-color: rgba(255, 51, 75, 0.65);
+}
+
+.active-trade-dot-pulse {
+  animation: activeTradeDotPulse 1.6s cubic-bezier(0, 0, 0.2, 1) infinite;
+  will-change: transform, opacity;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .active-trade-badge-pulse,
+  .pulse-active-trade-badge,
+  .active-trade-dot-pulse {
+    animation: none !important;
+    will-change: auto !important;
+  }
+}
+

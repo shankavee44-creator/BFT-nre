@@ -105,6 +105,14 @@ import {
   updateSupabaseTradingAccountState,
 } from '../utils/supabaseRealtimeSync';
 import {
+  computeAssetActiveTradeBadge,
+  normalizeTradeAssetKey,
+  isTradeActiveOrOpen,
+  fetchActiveOpenTradesFromSupabase,
+  fetchCompletedHistoryTradesFromSupabase,
+  fetchUserTrades,
+} from '../utils/supabaseTradeSync';
+import {
   calculateHeikinAshi,
   calculateSMA,
   calculateEMA,
@@ -209,6 +217,7 @@ interface TradingTerminalProps {
   trades: BinaryTrade[];
   onAddTrade: (trade: BinaryTrade) => void;
   onUpdateTrade: (trade: BinaryTrade) => void;
+  onSyncTrades?: (trades: BinaryTrade[]) => void;
   onOpenWithdrawalModal: () => void;
   onOpenDepositModal?: () => void;
   onOpenChallengeModal?: () => void;
@@ -388,6 +397,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   trades,
   onAddTrade,
   onUpdateTrade,
+  onSyncTrades,
   onOpenWithdrawalModal,
   onOpenDepositModal,
   onOpenChallengeModal,
@@ -657,12 +667,84 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   const tradeMarkersRef = useRef<TradeChartMarkerPoint[]>([]);
 
   // Active and real closed trades for this account (zero fake seeded trades)
-  const activeTrades = React.useMemo(() => trades.filter((t) => t.status === 'active'), [trades]);
+  const activeTrades = React.useMemo(
+    () => trades.filter((t) => isTradeActiveOrOpen(t)),
+    [trades]
+  );
   const closedTrades = React.useMemo(() => {
     return trades
       .filter((t) => t.status === 'won' || t.status === 'lost' || t.status === 'tie')
       .sort((a, b) => b.endTime - a.endTime);
   }, [trades]);
+
+  // Ensure any asset with a running/active trade is automatically present in the top asset tabs bar
+  useEffect(() => {
+    if (activeTrades.length === 0) return;
+    setOpenTabs((prevTabs) => {
+      const existingKeys = new Set(prevTabs.map((t) => normalizeTradeAssetKey(t.symbol)));
+      const additions: AssetInfo[] = [];
+      for (const tr of activeTrades) {
+        const trSymbol = (tr as any).asset_symbol || tr.asset || (tr as any).symbol;
+        const key = normalizeTradeAssetKey(trSymbol);
+        if (key && !existingKeys.has(key)) {
+          const matchedAsset = findAssetBySymbol(trSymbol);
+          if (matchedAsset) {
+            existingKeys.add(key);
+            additions.push(matchedAsset);
+          }
+        }
+      }
+      if (additions.length === 0) return prevTabs;
+      const nextTabs = [...prevTabs, ...additions];
+      saveOpenAssetTabSymbols(nextTabs.map((t) => t.symbol));
+      return nextTabs;
+    });
+  }, [activeTrades]);
+
+  // Query active ('OPEN') trades and completed history trades from Supabase on mount and account/tab changes
+  useEffect(() => {
+    let isCancelled = false;
+    const syncTerminalTradesFromDb = async () => {
+      try {
+        const [openFromDb, allFromDb] = await Promise.all([
+          fetchActiveOpenTradesFromSupabase(userProfile?.id, effectiveAccount),
+          fetchUserTrades(userProfile?.id),
+        ]);
+        if (isCancelled) return;
+        const combined = [...openFromDb, ...allFromDb];
+        if (combined.length > 0 && onSyncTrades) {
+          onSyncTrades(combined);
+        }
+      } catch {
+        // Ignore transient network errors
+      }
+    };
+
+    syncTerminalTradesFromDb();
+    return () => {
+      isCancelled = true;
+    };
+  }, [userProfile?.id, effectiveAccount?.id, onSyncTrades]);
+
+  // Re-verify completed trades when user switches to History tab on desktop or mobile drawer
+  useEffect(() => {
+    const isHistoryVisible =
+      rightPanelTab === 'history' || (isTradesDrawerOpen && mobileTradesTab === 'history');
+    if (!isHistoryVisible || !onSyncTrades) return;
+
+    let isCancelled = false;
+    fetchCompletedHistoryTradesFromSupabase(userProfile?.id, effectiveAccount)
+      .then((completed) => {
+        if (!isCancelled && completed.length > 0) {
+          onSyncTrades(completed);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [rightPanelTab, isTradesDrawerOpen, mobileTradesTab, userProfile?.id, effectiveAccount?.id, onSyncTrades]);
 
   const activeInspectedMarker = hoveredTradeMarker || selectedTradeMarker;
   const effectiveInvestment =
@@ -1588,9 +1670,10 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         ? currentPrice
         : (liveFeedPrice ?? tradeMarket?.lastPrice ?? assetToTrade.basePrice);
 
-    const newTrade: BinaryTrade = {
+    const newTrade: BinaryTrade & { supabaseAccountId?: string } = {
       id: tradeId,
       accountId: activeAcc.id,
+      supabaseAccountId: activeAcc.supabaseAccountId,
       asset: assetToTrade.symbol,
       direction,
       strikePrice: assetLivePrice,
@@ -3757,42 +3840,99 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         </div>
 
         {/* 3. CENTRAL SUPER-SMOOTH OTC ALGORITHMIC CHART ENGINE */}
-        <div className="flex-1 flex flex-col relative overflow-y-auto md:overflow-hidden bg-[#0a0a0a] min-h-0 touch-scroll">
+        <div className="flex-1 flex flex-col relative overflow-hidden bg-[#0a0a0a] min-h-0">
           {/* 1. TOP MULTI-ASSET SCROLLING TICKER BAR (Quotex Style) */}
           <div
             data-testid="top-multi-asset-ticker-bar"
             className="flex items-center gap-1.5 overflow-x-auto px-2 py-1.5 md:px-3 md:py-2 bg-[#0a0a0a] border-b border-white/10 shrink-0 z-25 font-mono text-xs select-none no-scrollbar"
           >
             {openTabs.map((tabAsset) => {
-              const isTabActive = tabAsset.symbol === selectedAsset.symbol;
+              const isTabActive =
+                normalizeTradeAssetKey(tabAsset.symbol) ===
+                normalizeTradeAssetKey(selectedAsset.symbol);
               const livePayout = getLivePayoutPercentage(tabAsset, payoutSeed);
               const tabState = getAssetMarketState(tabAsset.symbol);
+              const feedPrice = liveMarketFeed.getLatestPrice(tabAsset.symbol);
               const displayPrice = isTabActive
                 ? smoothPrice
-                : (tabState?.lastPrice ?? tabAsset.basePrice);
+                : (feedPrice ?? tabState?.lastPrice ?? tabAsset.basePrice);
               const tabTv = resolveTradingViewSymbol(tabAsset.symbol, tabAsset.category);
+              const cleanTestKey = tabTv.cleanTicker.replace(/[^A-Z0-9]/g, '');
+              const activeBadge = computeAssetActiveTradeBadge(
+                tabAsset.symbol,
+                activeTrades,
+                displayPrice
+              );
+
               return (
                 <div
                   key={tabAsset.symbol}
-                  data-testid={`open-asset-tab-${tabTv.cleanTicker.replace(/[^A-Z0-9]/g, '')}`}
+                  data-testid={`open-asset-tab-${cleanTestKey}`}
+                  data-has-active-trade={activeBadge.hasActiveTrades ? 'true' : 'false'}
                   onClick={() => handleSelectTabAsset(tabAsset)}
-                  className={`flex items-center gap-1.5 px-2.5 py-1 md:px-3 md:py-1.5 rounded-lg border transition-all cursor-pointer shrink-0 ${
+                  className={`relative flex items-center gap-1.5 px-2.5 py-1 md:px-3 md:py-1.5 rounded-lg border transition-all cursor-pointer shrink-0 ${
                     isTabActive
                       ? 'bg-[#141720] border-[#ff8800] text-white shadow-sm'
+                      : activeBadge.hasActiveTrades
+                      ? activeBadge.isWinning
+                        ? 'bg-[#0c1a14] hover:bg-[#11241c] border-[#00e676]/60 text-white shadow-sm'
+                        : 'bg-[#1a0f13] hover:bg-[#241419] border-[#ff334b]/60 text-white shadow-sm'
                       : 'bg-[#0e1016] hover:bg-[#141720] border-white/10 text-slate-300'
                   }`}
                 >
-                  <AssetFlagIcon symbol={tabAsset.symbol} category={tabAsset.category} flagEmoji={tabAsset.flag} size="sm" />
+                  <div className="relative shrink-0">
+                    <AssetFlagIcon
+                      symbol={tabAsset.symbol}
+                      category={tabAsset.category}
+                      flagEmoji={tabAsset.flag}
+                      size="sm"
+                    />
+                    {activeBadge.hasActiveTrades && (
+                      <span
+                        className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5"
+                        title={`${activeBadge.activeCount} Active Trade(s) on ${tabAsset.symbol}`}
+                      >
+                        <span className="active-trade-dot-pulse absolute inline-flex h-full w-full rounded-full bg-[#00e676]" />
+                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#00e676] border border-[#0a0a0a]" />
+                      </span>
+                    )}
+                  </div>
+
                   <div className="flex flex-col text-left">
-                    <span className="font-bold text-xs whitespace-nowrap">{tabAsset.symbol}</span>
+                    <div className="flex items-center gap-1">
+                      <span className="font-bold text-xs whitespace-nowrap">{tabAsset.symbol}</span>
+                    </div>
                     <span className="text-[10px] text-slate-400 font-mono">
                       {displayPrice.toFixed(tabAsset.pipDecimals)}
                     </span>
                   </div>
-                  <span className="text-[11px] font-black text-[#00e676] shrink-0 ml-1">
-                    {livePayout}%
-                  </span>
-                  {openTabs.length > 1 && (
+
+                  {activeBadge.hasActiveTrades ? (
+                    <div
+                      data-testid={`asset-tab-active-trade-badge-${cleanTestKey}`}
+                      className={`active-trade-badge-pulse flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[10px] font-mono font-black shrink-0 ml-1 ${
+                        activeBadge.isWinning
+                          ? 'active-trade-badge-pulse-win bg-[#00e676]/15 border-[#00e676]/50 text-[#00e676]'
+                          : 'active-trade-badge-pulse-loss bg-[#ff334b]/15 border-[#ff334b]/50 text-[#ff334b]'
+                      }`}
+                      title={`${activeBadge.activeCount} running trade(s) • Live P/L: ${activeBadge.formattedPnL}`}
+                    >
+                      <span className="relative flex h-1.5 w-1.5 shrink-0">
+                        <span className="active-trade-dot-pulse absolute inline-flex h-full w-full rounded-full bg-[#00e676]" />
+                        <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-[#00e676]" />
+                      </span>
+                      <span className="px-1 rounded bg-black/40 text-white text-[9px] font-black">
+                        {activeBadge.activeCount}
+                      </span>
+                      <span>{activeBadge.formattedPnL}</span>
+                    </div>
+                  ) : (
+                    <span className="text-[11px] font-black text-[#00e676] shrink-0 ml-1">
+                      {livePayout}%
+                    </span>
+                  )}
+
+                  {openTabs.length > 1 && !activeBadge.hasActiveTrades && (
                     <button
                       type="button"
                       aria-label={`Close tab ${tabAsset.symbol}`}
@@ -4509,7 +4649,11 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
           <div
             ref={chartContainerRef}
             data-testid="otc-chart-container"
-            className="flex-1 min-h-[350px] sm:min-h-[420px] md:min-h-0 relative w-full h-full select-none overflow-hidden"
+            className="tradingview-chart-container tv-chart-container flex-1 min-h-[350px] sm:min-h-[420px] md:min-h-0 relative w-full h-full select-none overflow-hidden"
+            style={{
+              touchAction: 'pan-x pan-y pinch-zoom',
+              WebkitOverflowScrolling: 'touch',
+            }}
           >
             <LightweightTradingChart
               asset={selectedAsset}
@@ -4551,19 +4695,49 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                 </button>
               </div>
             )}
-            {/* Mobile Floating Action Button: Reset Pan / Center Chart */}
-            <button
-              type="button"
-              data-testid="mobile-center-chart-btn"
-              onClick={() => {
-                soundEngine.playUiClick();
-                setPanOffset(0);
-              }}
-              className="md:hidden absolute bottom-2.5 right-18 z-20 w-8 h-8 rounded-lg bg-[#141722]/95 border border-white/10 flex items-center justify-center text-[#ff8800] active:scale-95 cursor-pointer"
-              title="Center Chart to Latest Price"
-            >
-              <Target className="w-4 h-4" />
-            </button>
+            {/* Mobile Floating Action Controls: Zoom In, Zoom Out, and Center Chart */}
+            <div className="md:hidden absolute bottom-2.5 right-16 z-20 flex items-center gap-1">
+              <button
+                type="button"
+                data-testid="mobile-zoom-out-chart-btn"
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  setZoomLevel((prev) => Number(Math.max(0.35, prev - 0.25).toFixed(2)));
+                }}
+                className="w-8 h-8 rounded-lg bg-[#141722]/95 border border-white/10 flex items-center justify-center text-slate-300 active:scale-95 cursor-pointer"
+                title="Zoom Out Chart"
+              >
+                <ZoomOut className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                data-testid="mobile-zoom-in-chart-btn"
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  setZoomLevel((prev) => Number(Math.min(3.5, prev + 0.25).toFixed(2)));
+                }}
+                className="w-8 h-8 rounded-lg bg-[#141722]/95 border border-white/10 flex items-center justify-center text-slate-300 active:scale-95 cursor-pointer"
+                title="Zoom In Chart"
+              >
+                <ZoomIn className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                data-testid="mobile-center-chart-btn"
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  setPanOffset(0);
+                  setZoomLevel(1);
+                  if (typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('bft-center-chart'));
+                  }
+                }}
+                className="w-8 h-8 rounded-lg bg-[#141722]/95 border border-white/10 flex items-center justify-center text-[#ff8800] active:scale-95 cursor-pointer"
+                title="Center Chart to Latest Price"
+              >
+                <Target className="w-4 h-4" />
+              </button>
+            </div>
 
             {/* Interactive Chart Trade History Marker Tooltip (Hover / Click on Green/Red Execution & Settlement Dots) */}
             {showHistoryOverlay && activeInspectedMarker && (
@@ -4846,7 +5020,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
           {isTradesDrawerOpen && (
             <div
               data-testid="mobile-trades-history-panel-wrapper"
-              className="fixed inset-0 z-40 bg-black/65 backdrop-blur-sm md:static md:bg-transparent md:backdrop-blur-none flex flex-col justify-end"
+              className="fixed inset-0 z-[60] bg-black/65 backdrop-blur-sm md:static md:z-auto md:bg-transparent md:backdrop-blur-none flex flex-col justify-end"
               onClick={() => setIsTradesDrawerOpen(false)}
             >
               <div
@@ -5619,6 +5793,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
           onClose={() => setIsAssetModalOpen(false)}
           onSelectAsset={handleSelectTabAsset}
           currentAssetSymbol={selectedAsset.symbol}
+          activeTrades={activeTrades}
         />
       )}
 

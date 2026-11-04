@@ -653,6 +653,71 @@ export function shouldAcceptRemoteBalance(
   return true;
 }
 
+const knownProfileColumns = new Set<string>();
+const unsupportedProfileColumns = new Set<string>();
+
+export function recordKnownProfileColumns(row?: Record<string, any> | null): void {
+  if (!row || typeof row !== 'object') return;
+  for (const key of Object.keys(row)) {
+    if (key) {
+      knownProfileColumns.add(key);
+      unsupportedProfileColumns.delete(key);
+    }
+  }
+}
+
+export function markUnsupportedProfileColumn(col?: string | null): void {
+  if (!col) return;
+  const clean = col.trim();
+  if (clean) {
+    unsupportedProfileColumns.add(clean);
+    knownProfileColumns.delete(clean);
+  }
+}
+
+function extractMissingColumnFromError(error: any): string | null {
+  const msg = String(error?.message || error?.details || '');
+  const m1 = msg.match(/Could not find the '([^']+)' column/i);
+  if (m1?.[1]) return m1[1];
+  const m2 = msg.match(/column "?([a-zA-Z0-9_]+)"? of relation "?profiles"? does not exist/i);
+  if (m2?.[1]) return m2[1];
+  const m3 = msg.match(/column profiles\.([a-zA-Z0-9_]+) does not exist/i);
+  if (m3?.[1]) return m3[1];
+  return null;
+}
+
+function buildSafeProfileBalancePayload(
+  column: ProfileBalanceColumn,
+  rounded: number
+): Record<string, number> | null {
+  const hasKnownSchema = knownProfileColumns.size > 0;
+  const isColumnSupported = (col: string) => {
+    if (unsupportedProfileColumns.has(col)) return false;
+    if (hasKnownSchema && !knownProfileColumns.has(col)) return false;
+    return true;
+  };
+
+  const payload: Record<string, number> = {};
+
+  if (column === 'self_balance') {
+    if (isColumnSupported('self_balance')) {
+      payload.self_balance = rounded;
+    }
+    if (knownProfileColumns.has('self_capital_balance') && !unsupportedProfileColumns.has('self_capital_balance')) {
+      payload.self_capital_balance = rounded;
+    }
+    if (Object.keys(payload).length === 0 && isColumnSupported('balance')) {
+      payload.balance = rounded;
+    }
+  } else {
+    if (isColumnSupported(column)) {
+      payload[column] = rounded;
+    }
+  }
+
+  return Object.keys(payload).length > 0 ? payload : null;
+}
+
 /**
  * Atomically commits an updated account balance (`self_balance`, `demo_balance`, or `funded_balance`)
  * directly to the authenticated user's row in the Supabase `profiles` table.
@@ -664,20 +729,15 @@ export async function commitProfileBalanceToSupabase(params: {
   newBalance: number;
 }): Promise<boolean> {
   const rounded = Number(params.newBalance.toFixed(2));
-  const primaryPayload: Record<string, number> =
-    params.column === 'self_balance'
-      ? { self_balance: rounded, self_capital_balance: rounded }
-      : { [params.column]: rounded };
-  const fallbackPayload: Record<string, number> = { [params.column]: rounded };
+
+  const confirmLocalCommit = () => {
+    lastObservedRemoteBalances[params.column] = rounded;
+    if (localBalanceMutations[params.column]?.committedBalance === rounded) {
+      localBalanceMutations[params.column]!.confirmedBySupabase = true;
+    }
+  };
 
   const candidateUuids = new Set<string>();
-  if (cachedSupabaseProfileUuid && UUID_REGEX.test(cachedSupabaseProfileUuid)) {
-    candidateUuids.add(cachedSupabaseProfileUuid);
-  }
-  if (params.userId && UUID_REGEX.test(params.userId)) {
-    candidateUuids.add(params.userId);
-  }
-
   try {
     const {
       data: { user },
@@ -689,66 +749,87 @@ export async function commitProfileBalanceToSupabase(params: {
     // ignore
   }
 
+  if (cachedSupabaseProfileUuid && UUID_REGEX.test(cachedSupabaseProfileUuid)) {
+    candidateUuids.add(cachedSupabaseProfileUuid);
+  }
+  if (params.userId && UUID_REGEX.test(params.userId)) {
+    candidateUuids.add(params.userId);
+  }
+
   for (const uid of Array.from(candidateUuids)) {
-    try {
-      let { data, error } = await supabase
-        .from('profiles')
-        .update(primaryPayload)
-        .eq('id', uid)
-        .select('id, self_balance, demo_balance, funded_balance');
-      if (error && params.column === 'self_balance') {
-        const fbRes = await supabase
-          .from('profiles')
-          .update(fallbackPayload)
-          .eq('id', uid)
-          .select('id, self_balance, demo_balance, funded_balance');
-        data = fbRes.data;
-        error = fbRes.error;
-      }
-      if (!error && Array.isArray(data) && data.length > 0) {
-        if (data[0]?.id && UUID_REGEX.test(String(data[0].id))) {
-          cachedSupabaseProfileUuid = String(data[0].id);
-        }
-        lastObservedRemoteBalances[params.column] = rounded;
-        if (localBalanceMutations[params.column]?.committedBalance === rounded) {
-          localBalanceMutations[params.column]!.confirmedBySupabase = true;
-        }
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const safePayload = buildSafeProfileBalancePayload(params.column, rounded);
+      if (!safePayload) {
+        confirmLocalCommit();
         return true;
       }
-    } catch {
-      // try next identifier
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .update(safePayload)
+          .eq('id', uid)
+          .select('*');
+
+        if (error) {
+          const missingCol = extractMissingColumnFromError(error);
+          if (missingCol) {
+            markUnsupportedProfileColumn(missingCol);
+            continue;
+          }
+          break;
+        }
+
+        if (Array.isArray(data) && data.length > 0) {
+          recordKnownProfileColumns(data[0]);
+          if (data[0]?.id && UUID_REGEX.test(String(data[0].id))) {
+            cachedSupabaseProfileUuid = String(data[0].id);
+          }
+          confirmLocalCommit();
+          return true;
+        }
+        break;
+      } catch {
+        break;
+      }
     }
   }
 
   const normalizedEmail = params.userEmail ? params.userEmail.trim().toLowerCase() : '';
   if (normalizedEmail) {
-    try {
-      let { data, error } = await supabase
-        .from('profiles')
-        .update(primaryPayload)
-        .ilike('email', normalizedEmail)
-        .select('id, self_balance, demo_balance, funded_balance');
-      if (error && params.column === 'self_balance') {
-        const fbRes = await supabase
-          .from('profiles')
-          .update(fallbackPayload)
-          .ilike('email', normalizedEmail)
-          .select('id, self_balance, demo_balance, funded_balance');
-        data = fbRes.data;
-        error = fbRes.error;
-      }
-      if (!error && Array.isArray(data) && data.length > 0) {
-        if (data[0]?.id && UUID_REGEX.test(String(data[0].id))) {
-          cachedSupabaseProfileUuid = String(data[0].id);
-        }
-        lastObservedRemoteBalances[params.column] = rounded;
-        if (localBalanceMutations[params.column]?.committedBalance === rounded) {
-          localBalanceMutations[params.column]!.confirmedBySupabase = true;
-        }
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const safePayload = buildSafeProfileBalancePayload(params.column, rounded);
+      if (!safePayload) {
+        confirmLocalCommit();
         return true;
       }
-    } catch {
-      // ignore
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .update(safePayload)
+          .ilike('email', normalizedEmail)
+          .select('*');
+
+        if (error) {
+          const missingCol = extractMissingColumnFromError(error);
+          if (missingCol) {
+            markUnsupportedProfileColumn(missingCol);
+            continue;
+          }
+          break;
+        }
+
+        if (Array.isArray(data) && data.length > 0) {
+          recordKnownProfileColumns(data[0]);
+          if (data[0]?.id && UUID_REGEX.test(String(data[0].id))) {
+            cachedSupabaseProfileUuid = String(data[0].id);
+          }
+          confirmLocalCommit();
+          return true;
+        }
+        break;
+      } catch {
+        break;
+      }
     }
   }
 
@@ -770,6 +851,8 @@ export function applyRealtimeProfileUpdate(
   if (!row || typeof row !== 'object') {
     return { updatedProfile: prevProfile, updatedAccounts: prevAccounts, changed: false };
   }
+
+  recordKnownProfileColumns(row);
 
   if (typeof row.id === 'string' && UUID_REGEX.test(row.id)) {
     cachedSupabaseProfileUuid = row.id;
@@ -2464,7 +2547,10 @@ export async function fetchSupabaseProfileRow(params: {
         .select(PROFILE_SELECT_COLUMNS)
         .eq('id', uid)
         .maybeSingle();
-      if (data) return data;
+      if (data) {
+        recordKnownProfileColumns(data);
+        return data;
+      }
     } catch {
       // ignore and try next
     }
@@ -2478,7 +2564,10 @@ export async function fetchSupabaseProfileRow(params: {
         .select(PROFILE_SELECT_COLUMNS)
         .ilike('email', normalizedEmail)
         .maybeSingle();
-      if (data) return data;
+      if (data) {
+        recordKnownProfileColumns(data);
+        return data;
+      }
     } catch {
       // ignore
     }

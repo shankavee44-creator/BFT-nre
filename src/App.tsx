@@ -68,10 +68,15 @@ import { registerDynamicAssets } from './utils/storage';
 import { supabaseMarketSync } from './utils/supabaseMarketSync';
 import {
   fetchUserTrades,
+  fetchActiveOpenTradesFromSupabase,
   createSupabaseTrade,
   updateSupabaseTrade,
   subscribeUserTrades,
   mapFromSupabaseRow,
+  reconcileLoadedTradesOnMount,
+  mergeTradesAuthoritatively,
+  filterTradesForActiveAccount,
+  ensureTradeUuid,
 } from './utils/supabaseTradeSync';
 import {
   subscribeUserRealtimeChannels,
@@ -149,11 +154,17 @@ export default function App() {
   const [purchases, setPurchases] = useState<any[]>([]);
   const [trades, setTrades] = useState<BinaryTrade[]>(() => {
     const loaded = loadTrades();
-    // Strictly filter out 'active' trades from localStorage on reload to prevent ghost/phantom execution.
-    // Genuine active trades will be re-fetched from the authoritative Supabase user_trades table.
-    const historicalOnly = loaded.filter((t) => t.status !== 'active');
-    rehydrateActiveTradesInLedger(historicalOnly);
-    return historicalOnly;
+    // Reconcile loaded trades on mount: keep still-running active trades alive so countdowns resume
+    // seamlessly on page refresh, and settle any trades whose expiry elapsed during refresh into history.
+    const { reconciledTrades = [], newlySettledTrades = [] } = reconcileLoadedTradesOnMount(loaded);
+    if (Array.isArray(newlySettledTrades) && newlySettledTrades.length > 0) {
+      saveTrades(reconciledTrades);
+      try {
+        localStorage.setItem('bft_trades', JSON.stringify(reconciledTrades));
+      } catch {}
+    }
+    rehydrateActiveTradesInLedger(reconciledTrades);
+    return reconciledTrades;
   });
   const [protectedRouteNotice, setProtectedRouteNotice] = useState<string | null>(null);
 
@@ -467,61 +478,31 @@ export default function App() {
       setActiveReferralNotification(refCode);
     }
 
-    // Initial fetch of trades from SQLite backend (with Supabase fallback) if logged in
-    if (userProfile.id && userProfile.isLoggedIn) {
-      const mergeIncomingTrades = (fetched: BinaryTrade[]) => {
-        if (!Array.isArray(fetched)) return;
-        setTrades((prev) => {
-          const byId = new Map<string, BinaryTrade>();
-          
-          // 1. Add all fetched trades (authoritative from DB)
-          for (const t of fetched) {
-            byId.set(t.id, t);
-          }
+    // Initial fetch of trades from Supabase user_trades
+    const mergeIncomingTrades = (fetched: BinaryTrade[]) => {
+      if (!Array.isArray(fetched) || fetched.length === 0) return;
+      setTrades((prev) => {
+        const merged = mergeTradesAuthoritatively(prev, fetched);
+        saveTrades(merged);
+        try {
+          localStorage.setItem('bft_trades', JSON.stringify(merged));
+        } catch {}
+        rehydrateActiveTradesInLedger(merged);
+        return merged;
+      });
+    };
 
-          // 2. Only retain local trades if they are already settled (won/lost) 
-          // or if they were placed in the last 15 seconds (account for replication lag).
-          const now = Date.now();
-          for (const local of prev) {
-            if (!byId.has(local.id)) {
-              const isVeryRecent = (now - local.startTime) < 15000;
-              const isSettled = local.status === 'won' || local.status === 'lost' || local.status === 'tie';
-              
-              if (isSettled || (local.status === 'active' && isVeryRecent)) {
-                byId.set(local.id, local);
-              }
-            }
-          }
+    fetchUserTrades(userProfile.id).then((fetchedTrades) => {
+      if (fetchedTrades.length > 0) {
+        mergeIncomingTrades(fetchedTrades);
+      }
+    });
 
-          const merged = Array.from(byId.values()).sort((a, b) => b.startTime - a.startTime);
-          saveTrades(merged);
-          try {
-            localStorage.setItem('bft_trades', JSON.stringify(merged));
-          } catch {}
-          rehydrateActiveTradesInLedger(merged);
-          return merged;
-        });
-      };
-
-      apiGetUserTrades()
-        .then((tRes) => {
-          if (tRes && tRes.ok && Array.isArray(tRes.trades) && tRes.trades.length > 0) {
-            mergeIncomingTrades(tRes.trades);
-          }
-          fetchUserTrades(userProfile.id).then((fetchedTrades) => {
-            if (fetchedTrades.length > 0) {
-              mergeIncomingTrades(fetchedTrades);
-            }
-          });
-        })
-        .catch(() => {
-          fetchUserTrades(userProfile.id).then((fetchedTrades) => {
-            if (fetchedTrades.length > 0) {
-              mergeIncomingTrades(fetchedTrades);
-            }
-          });
-        });
-    }
+    fetchActiveOpenTradesFromSupabase(userProfile.id).then((openTrades) => {
+      if (openTrades.length > 0) {
+        mergeIncomingTrades(openTrades);
+      }
+    });
 
     // Global OTC Asset Discovery & Sync
     supabaseMarketSync.fetchAllOtcAssets().then((assets) => {
@@ -532,32 +513,40 @@ export default function App() {
     });
   }, [userProfile.id, userProfile.isLoggedIn]);
 
-  // Real-time Trade Subscription
+  const handleSyncIncomingTrades = React.useCallback((incoming: BinaryTrade[]) => {
+    if (!Array.isArray(incoming) || incoming.length === 0) return;
+    setTrades((prev) => {
+      const merged = mergeTradesAuthoritatively(prev, incoming);
+      saveTrades(merged);
+      try {
+        localStorage.setItem('bft_trades', JSON.stringify(merged));
+      } catch {}
+      rehydrateActiveTradesInLedger(merged);
+      return merged;
+    });
+  }, []);
+
+  // Real-time Trade Subscription & Periodic Sync
   useEffect(() => {
-    if (!userProfile.id || !userProfile.isLoggedIn) return;
+    if (!userProfile.id && !userProfile.isLoggedIn) return;
 
     const subscription = subscribeUserTrades(userProfile.id, (payload) => {
-      const { eventType, new: newRecord, old: oldRecord } = payload;
-      
-      if (eventType === 'INSERT') {
+      const { eventType, new: newRecord, old: oldRecord, trades: syncedTrades } = payload;
+
+      if (eventType === 'SYNC' && Array.isArray(syncedTrades)) {
+        handleSyncIncomingTrades(syncedTrades);
+      } else if (eventType === 'INSERT' && newRecord) {
         const trade = mapFromSupabaseRow(newRecord);
-        setTrades((prev) => {
-          const next = prev.some((t) => t.id === trade.id) ? prev : [trade, ...prev];
-          saveTrades(next);
-          rehydrateActiveTradesInLedger(next);
-          return next;
-        });
-      } else if (eventType === 'UPDATE') {
+        handleSyncIncomingTrades([trade]);
+      } else if (eventType === 'UPDATE' && newRecord) {
         const trade = mapFromSupabaseRow(newRecord);
+        handleSyncIncomingTrades([trade]);
+      } else if (eventType === 'DELETE' && oldRecord) {
+        const deletedUuid = ensureTradeUuid(String(oldRecord.id || ''));
         setTrades((prev) => {
-          const next = prev.map((t) => (t.id === trade.id ? trade : t));
-          saveTrades(next);
-          rehydrateActiveTradesInLedger(next);
-          return next;
-        });
-      } else if (eventType === 'DELETE') {
-        setTrades((prev) => {
-          const next = prev.filter((t) => t.id !== oldRecord.id);
+          const next = prev.filter(
+            (t) => t.id !== oldRecord.id && ensureTradeUuid(t.id) !== deletedUuid
+          );
           saveTrades(next);
           return next;
         });
@@ -567,7 +556,7 @@ export default function App() {
     return () => {
       subscription?.unsubscribe();
     };
-  }, [userProfile.id, userProfile.isLoggedIn]);
+  }, [userProfile.id, userProfile.isLoggedIn, handleSyncIncomingTrades]);
 
   // Real-time Supabase subscriptions: profiles (self_balance, demo_balance, funded_balance), withdrawals, and referral_commissions
   useEffect(() => {
@@ -1229,26 +1218,8 @@ export default function App() {
     });
     broadcastSyncEvent('TRADE_ADDED', trade);
 
-    // Persist to Supabase and SQLite backend for all accounts
-    if (userProfile.id) {
-      const isDemoTrade = trade.accountId === 'BFT-DEMO-001' || trade.accountTier === 'demo';
-      if (!isDemoTrade && userProfile.isLoggedIn) {
-        apiPlaceTrade({
-          id: trade.id,
-          accountId: trade.accountId,
-          asset: trade.asset,
-          direction: trade.direction,
-          strikePrice: trade.strikePrice,
-          investment: trade.investment,
-          payoutPercentage: trade.payoutPercentage,
-          durationSeconds: trade.durationSeconds,
-          startTime: trade.startTime,
-          endTime: trade.endTime,
-          accountTier: trade.accountTier,
-        }).catch(() => {});
-      }
-      createSupabaseTrade(trade, userProfile.id);
-    }
+    // Persist directly to Supabase user_trades for all accounts
+    createSupabaseTrade(trade, userProfileRef.current.id || userProfile.id).catch(() => {});
   };
 
   const handleUpdateTrade = (trade: BinaryTrade) => {
@@ -1263,18 +1234,8 @@ export default function App() {
     });
     broadcastSyncEvent('TRADE_UPDATED', trade);
 
-    // Update in Supabase and SQLite backend for all accounts
-    if (userProfile.id) {
-      const isDemoTrade = trade.accountId === 'BFT-DEMO-001' || trade.accountTier === 'demo';
-      if (!isDemoTrade && userProfile.isLoggedIn && trade.status !== 'active') {
-        apiSettleTrade({
-          tradeId: trade.id,
-          closePrice: trade.closePrice ?? trade.currentPrice,
-          status: trade.status,
-        }).catch(() => {});
-      }
-      updateSupabaseTrade(trade, userProfile.id);
-    }
+    // Update directly in Supabase user_trades for all accounts
+    updateSupabaseTrade(trade, userProfileRef.current.id || userProfile.id).catch(() => {});
   };
 
   const handleAddAffiliatePayout = (payout: AffiliatePayout) => {
@@ -1608,29 +1569,10 @@ export default function App() {
     [userAccounts, activeAccountId, userProfile]
   );
 
-  const activeTerminalTrades = React.useMemo(() => {
-    if (!activeAccount) return [];
-    return trades.filter((t) => {
-      if (t.accountId === activeAccount.id) return true;
-      if (isPersonalLiveAccount(activeAccount)) {
-        return (
-          t.accountTier === 'personal' ||
-          t.accountId === 'BFT-LIVE-DB' ||
-          t.accountId.startsWith('BFT-PERS') ||
-          t.accountId === 'personal_live'
-        );
-      }
-      if (isDemoAccount(activeAccount)) {
-        return (
-          t.accountTier === 'demo' ||
-          t.accountId === 'BFT-DEMO-001' ||
-          t.accountId.startsWith('BFT-DEMO') ||
-          t.accountId === 'BFT-10000'
-        );
-      }
-      return false;
-    });
-  }, [trades, activeAccount]);
+  const activeTerminalTrades = React.useMemo(
+    () => filterTradesForActiveAccount(trades, activeAccount),
+    [trades, activeAccount]
+  );
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-slate-100 flex flex-col selection:bg-[#ff8800] selection:text-slate-950 w-full max-w-[100vw] overflow-x-hidden relative">
@@ -1760,6 +1702,7 @@ export default function App() {
             trades={activeTerminalTrades}
             onAddTrade={handleAddTrade}
             onUpdateTrade={handleUpdateTrade}
+            onSyncTrades={handleSyncIncomingTrades}
             onOpenWithdrawalModal={() => setIsWithdrawalModalOpen(true)}
             onOpenDepositModal={() => setIsDepositModalOpen(true)}
             onOpenChallengeModal={() => setSelectedPackageToBuy(PACKAGES[2])}

@@ -85,6 +85,7 @@ export class LiveMarketFeedEngine {
   private sseRetryTimer: any = null;
   private lastServerHeartbeatMs: number = Date.now();
   private reconnectCount: number = 0;
+  private serverApiAvailable: boolean | null = null;
 
   private latestPrices: Map<string, number> = new Map();
   private prevPrices: Map<string, number> = new Map();
@@ -193,6 +194,37 @@ export class LiveMarketFeedEngine {
     this.currentActiveSymbol = null;
   }
 
+  private isJsonApiResponse(res: Response): boolean {
+    if (!res || !res.ok) return false;
+    const contentType = String(res.headers?.get?.('content-type') || '').toLowerCase();
+    if (contentType.includes('text/html')) return false;
+    return true;
+  }
+
+  private disableServerApiStreamAndPolling() {
+    this.serverApiAvailable = false;
+    if (this.eventSource) {
+      try {
+        this.eventSource.close();
+      } catch {
+        // ignore
+      }
+      this.eventSource = null;
+    }
+    if (this.sseRetryTimer) {
+      clearTimeout(this.sseRetryTimer);
+      this.sseRetryTimer = null;
+    }
+    if (this.activeSymbolPollInterval) {
+      clearInterval(this.activeSymbolPollInterval);
+      this.activeSymbolPollInterval = null;
+    }
+    if (this.restPollInterval) {
+      clearInterval(this.restPollInterval);
+      this.restPollInterval = null;
+    }
+  }
+
   /**
    * Sets the currently active symbol & timeframe, connects to the live SSE stream,
    * and immediately fetches the authoritative server snapshot so no manual refresh is needed.
@@ -209,15 +241,19 @@ export class LiveMarketFeedEngine {
       // 1. Immediately sync authoritative snapshot from server (no cache)
       this.syncActiveSymbolSnapshot(targetSym, targetTf).catch(() => {});
 
-      // 2. Connect to unified Server-Sent Events (/api/market/stream) real-time push feed
-      this.connectServerStream(targetSym, targetTf);
-
-      // 3. Keep 1s active ticker verification poll as continuous redundancy
-      this.activeSymbolPollInterval = setInterval(() => {
-        if (!this.isDestroyed && this.currentActiveSymbol === targetSym) {
-          this.pollActiveSymbolFromServerProxy(targetSym);
+      if (this.serverApiAvailable !== false) {
+        // 2. Connect to unified Server-Sent Events (/api/market/stream) real-time push feed once server JSON API is verified
+        if (this.serverApiAvailable === true) {
+          this.connectServerStream(targetSym, targetTf);
         }
-      }, 1000);
+
+        // 3. Keep 1s active ticker verification poll as continuous redundancy
+        this.activeSymbolPollInterval = setInterval(() => {
+          if (!this.isDestroyed && this.currentActiveSymbol === targetSym && this.serverApiAvailable !== false) {
+            this.pollActiveSymbolFromServerProxy(targetSym);
+          }
+        }, 1000);
+      }
     }
   }
 
@@ -225,7 +261,12 @@ export class LiveMarketFeedEngine {
    * Connects to `/api/market/stream` (SSE) to receive live server ticks and heartbeats in real time.
    */
   private connectServerStream(symbol: string, timeframeSeconds: number) {
-    if (typeof window === 'undefined' || typeof EventSource === 'undefined' || this.isDestroyed) {
+    if (
+      typeof window === 'undefined' ||
+      typeof EventSource === 'undefined' ||
+      this.isDestroyed ||
+      this.serverApiAvailable === false
+    ) {
       return;
     }
     if (this.eventSource) {
@@ -353,13 +394,23 @@ export class LiveMarketFeedEngine {
           forexStatus: 'synchronized',
         });
 
-        // Exponential backoff retry: 2s, 4s, 8s, 16s, max 30s
-        if (!this.isDestroyed && this.currentActiveSymbol === symbol && !this.sseRetryTimer) {
+        // Exponential backoff retry only when backend JSON API is confirmed available
+        if (
+          !this.isDestroyed &&
+          this.serverApiAvailable === true &&
+          this.currentActiveSymbol === symbol &&
+          !this.sseRetryTimer
+        ) {
           const delay = Math.min(30000, 2000 * Math.pow(2, Math.min(4, this.sseRetryCount)));
           this.sseRetryCount++;
           this.sseRetryTimer = setTimeout(() => {
             this.sseRetryTimer = null;
-            if (!this.isDestroyed && this.currentActiveSymbol === symbol && !this.eventSource) {
+            if (
+              !this.isDestroyed &&
+              this.serverApiAvailable === true &&
+              this.currentActiveSymbol === symbol &&
+              !this.eventSource
+            ) {
               this.connectServerStream(symbol, timeframeSeconds);
             }
           }, delay);
@@ -384,7 +435,7 @@ export class LiveMarketFeedEngine {
     const startMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
 
     try {
-      if (typeof fetch !== 'undefined') {
+      if (typeof fetch !== 'undefined' && this.serverApiAvailable !== false) {
         const res = await fetch(
           `/api/market/snapshot?symbol=${encodeURIComponent(targetSymbol)}&timeframe=${encodeURIComponent(
             String(targetTf)
@@ -392,14 +443,21 @@ export class LiveMarketFeedEngine {
           {
             cache: 'no-store',
             headers: {
+              Accept: 'application/json',
               'Cache-Control': 'no-cache, no-store, must-revalidate',
               Pragma: 'no-cache',
             },
           }
         );
-        if (res.ok) {
+        if (!this.isJsonApiResponse(res)) {
+          this.disableServerApiStreamAndPolling();
+        } else {
           const data = await res.json();
           if (data?.ok) {
+            this.serverApiAvailable = true;
+            if (this.currentActiveSymbol === targetSymbol && !this.eventSource) {
+              this.connectServerStream(targetSymbol, targetTf);
+            }
             const rttMs = Math.max(
               4,
               Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) - startMs)
@@ -481,7 +539,7 @@ export class LiveMarketFeedEngine {
     if (this.heartbeatWatchdogInterval) clearInterval(this.heartbeatWatchdogInterval);
 
     this.heartbeatWatchdogInterval = setInterval(() => {
-      if (this.isDestroyed || typeof window === 'undefined') return;
+      if (this.isDestroyed || typeof window === 'undefined' || this.serverApiAvailable === false) return;
       const elapsedSinceHeartbeat = Date.now() - this.lastServerHeartbeatMs;
       if (elapsedSinceHeartbeat > 4000) {
         this.reconnectAndCatchUp();
@@ -533,11 +591,13 @@ export class LiveMarketFeedEngine {
       lastHeartbeatTime: this.lastServerHeartbeatMs,
     });
 
-    if (typeof window !== 'undefined' && this.currentActiveSymbol) {
+    if (typeof window !== 'undefined' && this.currentActiveSymbol && this.serverApiAvailable === true) {
       this.connectServerStream(activeSym, activeTf);
     }
     this.syncActiveSymbolSnapshot(activeSym, activeTf).catch(() => {});
-    this.fetchInitialSnapshots().catch(() => {});
+    if (this.serverApiAvailable !== false) {
+      this.fetchInitialSnapshots().catch(() => {});
+    }
   }
 
   public resolveBinanceSymbol(symbol: string): string | null {
@@ -565,13 +625,14 @@ export class LiveMarketFeedEngine {
     this.fetchInitialSnapshots();
 
     this.restPollInterval = setInterval(() => {
-      if (!this.isDestroyed) {
+      if (!this.isDestroyed && this.serverApiAvailable !== false) {
         this.fetchInitialSnapshots();
       }
     }, 1500);
   }
 
   private async pollActiveSymbolFromServerProxy(symbol: string) {
+    if (this.serverApiAvailable === false) return;
     const canonical = normalizeAssetSymbol(symbol);
     if (this.currentActiveSymbol !== canonical) return;
 
@@ -593,10 +654,14 @@ export class LiveMarketFeedEngine {
         )}&_t=${Date.now()}`,
         {
           cache: 'no-store',
+          headers: { Accept: 'application/json' },
           ...(controller ? { signal: controller.signal } : {}),
         }
       );
-      if (!res.ok) return;
+      if (!this.isJsonApiResponse(res)) {
+        this.disableServerApiStreamAndPolling();
+        return;
+      }
       const data = await res.json();
       if (this.currentActiveSymbol !== canonical) return;
       const rtt = Math.max(4, Math.round(performance.now() - startMs));
@@ -630,55 +695,63 @@ export class LiveMarketFeedEngine {
   }
 
   public async fetchInitialSnapshots() {
+    if (this.serverApiAvailable === false) return;
     const startMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
 
     try {
       const res = await fetch(`/api/market/live-prices?_t=${Date.now()}`, {
         cache: 'no-store',
+        headers: { Accept: 'application/json' },
       });
-      if (res.ok) {
-        const data = await res.json();
-        if (data?.ok && data.prices && typeof data.prices === 'object') {
-          const latency = Math.max(
-            4,
-            Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) - startMs)
-          );
-          if (data.serverTime || data.timestamp) {
-            setServerTimeOffset(Number(data.serverTime || data.timestamp) + Math.round(latency / 2));
-          }
-          this.lastServerHeartbeatMs = Date.now();
-          const now = getSynchronizedNowMs();
-
-          Object.entries(data.prices).forEach(([sym, priceVal]) => {
-            const numPrice = Number(priceVal);
-            if (!Number.isNaN(numPrice) && numPrice > 0) {
-              this.latestPrices.set(sym, numPrice);
-            }
-          });
-
-          if (this.currentActiveSymbol) {
-            const activePrice = this.latestPrices.get(this.currentActiveSymbol);
-            if (activePrice) {
-              this.dispatchTick({
-                symbol: this.currentActiveSymbol,
-                price: activePrice,
-                prevPrice: this.prevPrices.get(this.currentActiveSymbol) || activePrice,
-                timestamp: now,
-                serverTime: data.serverTime || data.timestamp,
-                source: 'server_sync',
-              });
-            }
-          }
-
-          this.updateStatus({
-            binanceStatus: 'connected',
-            forexStatus: 'synchronized',
-            latencyMs: latency,
-            lastTickTime: now,
-            lastHeartbeatTime: this.lastServerHeartbeatMs,
-            activePairsCount: OTC_ASSETS_CATALOG.length,
-          });
+      if (!this.isJsonApiResponse(res)) {
+        this.disableServerApiStreamAndPolling();
+        return;
+      }
+      const data = await res.json();
+      if (data?.ok && data.prices && typeof data.prices === 'object') {
+        this.serverApiAvailable = true;
+        if (this.currentActiveSymbol && !this.eventSource) {
+          this.connectServerStream(this.currentActiveSymbol, this.currentTimeframeSeconds);
         }
+        const latency = Math.max(
+          4,
+          Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) - startMs)
+        );
+        if (data.serverTime || data.timestamp) {
+          setServerTimeOffset(Number(data.serverTime || data.timestamp) + Math.round(latency / 2));
+        }
+        this.lastServerHeartbeatMs = Date.now();
+        const now = getSynchronizedNowMs();
+
+        Object.entries(data.prices).forEach(([sym, priceVal]) => {
+          const numPrice = Number(priceVal);
+          if (!Number.isNaN(numPrice) && numPrice > 0) {
+            this.latestPrices.set(sym, numPrice);
+          }
+        });
+
+        if (this.currentActiveSymbol) {
+          const activePrice = this.latestPrices.get(this.currentActiveSymbol);
+          if (activePrice) {
+            this.dispatchTick({
+              symbol: this.currentActiveSymbol,
+              price: activePrice,
+              prevPrice: this.prevPrices.get(this.currentActiveSymbol) || activePrice,
+              timestamp: now,
+              serverTime: data.serverTime || data.timestamp,
+              source: 'server_sync',
+            });
+          }
+        }
+
+        this.updateStatus({
+          binanceStatus: 'connected',
+          forexStatus: 'synchronized',
+          latencyMs: latency,
+          lastTickTime: now,
+          lastHeartbeatTime: this.lastServerHeartbeatMs,
+          activePairsCount: OTC_ASSETS_CATALOG.length,
+        });
       }
     } catch {
       // Deterministic tick engine maintains continuity

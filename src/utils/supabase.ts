@@ -92,7 +92,7 @@ export async function ensureSupabaseProfileAndDemoAccount(params: {
     // 1. Check if profile already exists
     const { data: existingProfile } = await supabase
       .from('profiles')
-      .select('id, email, full_name, referral_code, referred_by, kyc_status, balance')
+      .select('*')
       .eq('id', userId)
       .maybeSingle();
 
@@ -116,31 +116,34 @@ export async function ensureSupabaseProfileAndDemoAccount(params: {
         }
       }
 
-      // Upsert profile
-      const { data: insertedProfile } = await supabase
-        .from('profiles')
-        .upsert(
-          {
-            id: userId,
-            email: cleanEmail,
-            full_name: cleanName,
-            balance: 0.0,
-            self_balance: 0.0,
-            self_capital_balance: 0.0,
-            demo_balance: 10000.0,
-            funded_balance: 0.0,
-            role: 'user',
-            referral_code: genRefCode,
-            referred_by: sponsorUuid,
-            kyc_status: 'unverified',
-            total_referral_earnings: 0.0,
-          },
-          { onConflict: 'id' }
-        )
-        .select('*')
-        .maybeSingle();
+      // Upsert profile with core fields and automatic fallback if optional columns are missing
+      const upsertRow: Record<string, any> = {
+        id: userId,
+        email: cleanEmail,
+        full_name: cleanName,
+        referral_code: genRefCode,
+        referred_by: sponsorUuid,
+        kyc_status: 'unverified',
+      };
 
-      profileResult = insertedProfile;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const { data: insertedProfile, error: upsertError } = await supabase
+          .from('profiles')
+          .upsert(upsertRow, { onConflict: 'id' })
+          .select('*')
+          .maybeSingle();
+
+        if (!upsertError) {
+          profileResult = insertedProfile;
+          break;
+        }
+        const missingColMatch = String(upsertError.message || '').match(/Could not find the '([^']+)' column/i);
+        if (missingColMatch?.[1] && missingColMatch[1] in upsertRow) {
+          delete upsertRow[missingColMatch[1]];
+          continue;
+        }
+        break;
+      }
     }
 
     // 2. Ensure initial Demo trading account exists in trading_accounts

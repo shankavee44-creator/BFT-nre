@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useDeferredValue, useCallback, useRef } from 'react';
 import { Search, X, Star, TrendingUp, Sparkles, Activity } from 'lucide-react';
-import { AssetInfo } from '../types';
+import { AssetInfo, BinaryTrade } from '../types';
 import {
   getDynamicAssets,
   getLivePayoutPercentage,
@@ -10,6 +10,10 @@ import {
 import { getAssetMarketState } from '../utils/priceFeedEngine';
 import { soundEngine } from '../utils/soundEffects';
 import { resolveTradingViewSymbol } from '../utils/tradingViewOrderLineEngine';
+import {
+  computeAssetActiveTradeBadge,
+  type AssetActiveTradeBadgeInfo,
+} from '../utils/supabaseTradeSync';
 import { AssetFlagIcon } from './CountryFlagIcon';
 
 interface QuotexAssetModalProps {
@@ -17,6 +21,7 @@ interface QuotexAssetModalProps {
   onClose: () => void;
   onSelectAsset: (asset: AssetInfo) => void;
   currentAssetSymbol: string;
+  activeTrades?: BinaryTrade[];
 }
 
 type ModalCategoryTab =
@@ -32,6 +37,7 @@ interface AssetRowItemProps {
   isSelected: boolean;
   isFav: boolean;
   payoutSeed: number;
+  activeBadge: AssetActiveTradeBadgeInfo;
   onSelect: (asset: AssetInfo, livePayout: number) => void;
   onToggleFavorite: (e: React.MouseEvent, symbol: string) => void;
 }
@@ -43,6 +49,7 @@ const AssetRowItem: React.FC<AssetRowItemProps> = React.memo(({
   isSelected,
   isFav,
   payoutSeed,
+  activeBadge,
   onSelect,
   onToggleFavorite,
 }) => {
@@ -57,11 +64,14 @@ const AssetRowItem: React.FC<AssetRowItemProps> = React.memo(({
   return (
     <div
       data-testid={`asset-row-${tvResolved.cleanTicker.replace(/[^A-Z0-9]/g, '')}`}
+      data-has-active-trade={activeBadge.hasActiveTrades ? 'true' : 'false'}
       onClick={() => onSelect(asset, livePayout)}
       style={{ height: `${ROW_HEIGHT - 4}px` }}
       className={`flex items-center justify-between p-2.5 sm:p-3 rounded-xl transition-colors cursor-pointer hw-accelerate gpu-accelerated mb-1 ${
         isSelected
           ? 'bg-[#ff8800]/15 border border-[#ff8800]/50 text-white'
+          : activeBadge.hasActiveTrades
+          ? 'bg-[#00e676]/10 border border-[#00e676]/40 text-white'
           : 'hover:bg-white/5 text-slate-300'
       }`}
     >
@@ -78,8 +88,14 @@ const AssetRowItem: React.FC<AssetRowItemProps> = React.memo(({
           />
         </button>
 
-        <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-[#16161d] border border-white/10 flex items-center justify-center text-sm font-bold shrink-0">
+        <div className="relative w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-[#16161d] border border-white/10 flex items-center justify-center text-sm font-bold shrink-0">
           <AssetFlagIcon symbol={asset.symbol} category={asset.category} flagEmoji={asset.flag} size="md" />
+          {activeBadge.hasActiveTrades && (
+            <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
+              <span className="active-trade-dot-pulse absolute inline-flex h-full w-full rounded-full bg-[#00e676]" />
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#00e676] border border-[#0e0e12]" />
+            </span>
+          )}
         </div>
 
         <div className="min-w-0 flex-1">
@@ -90,6 +106,24 @@ const AssetRowItem: React.FC<AssetRowItemProps> = React.memo(({
             <span className="text-[9px] sm:text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-bold shrink-0">
               {tvResolved.tvSymbol}
             </span>
+            {activeBadge.hasActiveTrades && (
+              <span
+                data-testid={`modal-asset-active-trade-badge-${tvResolved.cleanTicker.replace(/[^A-Z0-9]/g, '')}`}
+                className={`active-trade-badge-pulse inline-flex items-center gap-1 text-[9px] sm:text-[10px] px-1.5 py-0.5 rounded font-mono font-black shrink-0 border ${
+                  activeBadge.isWinning
+                    ? 'active-trade-badge-pulse-win bg-[#00e676]/20 text-[#00e676] border-[#00e676]/50'
+                    : 'active-trade-badge-pulse-loss bg-[#ff334b]/20 text-[#ff334b] border-[#ff334b]/50'
+                }`}
+              >
+                <span className="relative flex h-1.5 w-1.5 shrink-0">
+                  <span className="active-trade-dot-pulse absolute inline-flex h-full w-full rounded-full bg-[#00e676]" />
+                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-[#00e676]" />
+                </span>
+                <span>{activeBadge.activeCount} OPEN</span>
+                <span>•</span>
+                <span>{activeBadge.formattedPnL}</span>
+              </span>
+            )}
           </div>
           <span className="text-[10px] sm:text-[11px] text-slate-400 block font-mono truncate">
             {asset.symbol.includes('R_') ? asset.name : `${asset.name} (OTC)`} • {displayPrice.toFixed(asset.pipDecimals)}
@@ -128,6 +162,7 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
   onClose,
   onSelectAsset,
   currentAssetSymbol,
+  activeTrades = [],
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const deferredSearch = useDeferredValue(searchQuery);
@@ -368,17 +403,27 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
                   willChange: 'transform',
                 }}
               >
-                {visibleAssets.map((asset) => (
-                  <AssetRowItem
-                    key={asset.symbol}
-                    asset={asset}
-                    isSelected={asset.symbol === currentAssetSymbol}
-                    isFav={favorites.includes(asset.symbol)}
-                    payoutSeed={payoutSeed}
-                    onSelect={handleSelect}
-                    onToggleFavorite={toggleFavorite}
-                  />
-                ))}
+                {visibleAssets.map((asset) => {
+                  const marketState = getAssetMarketState(asset.symbol);
+                  const rowPrice = marketState?.lastPrice ?? asset.basePrice;
+                  const activeBadge = computeAssetActiveTradeBadge(
+                    asset.symbol,
+                    activeTrades,
+                    rowPrice
+                  );
+                  return (
+                    <AssetRowItem
+                      key={asset.symbol}
+                      asset={asset}
+                      isSelected={asset.symbol === currentAssetSymbol}
+                      isFav={favorites.includes(asset.symbol)}
+                      payoutSeed={payoutSeed}
+                      activeBadge={activeBadge}
+                      onSelect={handleSelect}
+                      onToggleFavorite={toggleFavorite}
+                    />
+                  );
+                })}
               </div>
             </div>
           )}

@@ -308,10 +308,19 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = ({
             className={`px-2 py-0.5 rounded font-bold flex items-center gap-1 cursor-pointer transition-colors ${
               isTradesDrawerOpen && activeTradesTab === 'trades'
                 ? 'bg-[#ff8800] text-slate-950 font-black'
+                : activeTradesCount > 0
+                ? 'active-trade-badge-pulse active-trade-badge-pulse-win bg-[#0c1a14] text-[#00e676] border border-[#00e676]/50'
                 : 'bg-[#161922] text-slate-200 hover:text-white border border-white/10'
             }`}
           >
-            <Layers className="w-3 h-3 shrink-0" />
+            {activeTradesCount > 0 ? (
+              <span className="relative flex h-2 w-2 shrink-0">
+                <span className="active-trade-dot-pulse absolute inline-flex h-full w-full rounded-full bg-[#00e676]" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-[#00e676]" />
+              </span>
+            ) : (
+              <Layers className="w-3 h-3 shrink-0" />
+            )}
             <span>Trades ({activeTradesCount})</span>
           </button>
 

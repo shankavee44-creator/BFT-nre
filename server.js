@@ -27203,6 +27203,54 @@ var supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   }
 });
 
+// src/utils/supabaseRealtimeSync.ts
+var LEDGER_STORAGE_KEY = "bft_active_trades_ledger_v1";
+var SETTLED_STORAGE_KEY = "bft_settled_trades_v1";
+var MUTATIONS_STORAGE_KEY = "bft_local_balance_mutations_v1";
+var activeTradesLedger = /* @__PURE__ */ new Map();
+var settledTradeIdsSet = /* @__PURE__ */ new Set();
+var localBalanceMutations = {};
+function restoreLedgerState(nowMs = Date.now()) {
+  try {
+    if (typeof localStorage === "undefined") return;
+    const rawSettled = localStorage.getItem(SETTLED_STORAGE_KEY);
+    if (rawSettled) {
+      const arr = JSON.parse(rawSettled);
+      if (Array.isArray(arr)) {
+        for (const id of arr) {
+          if (typeof id === "string") settledTradeIdsSet.add(id);
+        }
+      }
+    }
+    const rawMutations = localStorage.getItem(MUTATIONS_STORAGE_KEY);
+    if (rawMutations) {
+      const obj = JSON.parse(rawMutations);
+      if (obj && typeof obj === "object") {
+        for (const k of ["self_balance", "demo_balance", "funded_balance"]) {
+          if (obj[k] && typeof obj[k] === "object" && Number.isFinite(obj[k].committedBalance)) {
+            if (nowMs - (obj[k].updatedAt || 0) < 6e4) {
+              localBalanceMutations[k] = obj[k];
+            }
+          }
+        }
+      }
+    }
+    const rawLedger = localStorage.getItem(LEDGER_STORAGE_KEY);
+    if (rawLedger) {
+      const entries = JSON.parse(rawLedger);
+      if (Array.isArray(entries)) {
+        for (const [id, entry] of entries) {
+          if (entry && typeof entry === "object" && entry.endTime > nowMs - 15e3) {
+            activeTradesLedger.set(id, entry);
+          }
+        }
+      }
+    }
+  } catch {
+  }
+}
+restoreLedgerState();
+
 // src/utils/demoBalanceManager.ts
 var MIN_DEMO_BALANCE = 1;
 var MAX_DEMO_BALANCE = 1e4;
@@ -30206,6 +30254,9 @@ data: ${JSON.stringify({
       appType: "spa"
     });
     app.use(vite.middlewares);
+    app.all("/api/*", (req, res) => {
+      res.status(404).json({ ok: false, error: `API endpoint not found: ${req.method} ${req.url}` });
+    });
     app.get("*", async (req, res, next) => {
       if (req.url.startsWith("/api/") || req.url === "/sitemap.xml" || req.url === "/robots.txt") return next();
       try {
@@ -30225,6 +30276,9 @@ data: ${JSON.stringify({
         }
       })
     );
+    app.all("/api/*", (req, res) => {
+      res.status(404).json({ ok: false, error: `API endpoint not found: ${req.method} ${req.url}` });
+    });
     app.get("*", (req, res, next) => {
       if (req.url.startsWith("/api/") || req.url === "/sitemap.xml" || req.url === "/robots.txt") return next();
       res.setHeader("Content-Type", "text/html; charset=utf-8");

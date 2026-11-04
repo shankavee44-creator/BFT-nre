@@ -19,6 +19,7 @@ import {
 } from '../utils/propRules';
 import { DEFAULT_ASSETS, findAssetBySymbol } from '../utils/storage';
 import { getAssetMarketState } from '../utils/priceFeedEngine';
+import { isTradeActiveOrOpen } from '../utils/supabaseTradeSync';
 import { AssetFlagIcon } from './CountryFlagIcon';
 
 interface TradingDrawerProps {
@@ -46,16 +47,25 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
 }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState<'open' | 'history' | 'risk'>(initialTab);
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
     setActiveTab(initialTab);
     setIsCollapsed(false);
   }, [initialTab]);
 
-  const openTrades = trades.filter((t) => t.status === 'active');
+  const openTrades = trades.filter((t) => isTradeActiveOrOpen(t));
   const closedTrades = trades
-    .filter((t) => t.status !== 'active')
-    .sort((a, b) => b.endTime - a.endTime);
+    .filter((t) => !isTradeActiveOrOpen(t))
+    .sort((a, b) => (b.endTime || b.startTime) - (a.endTime || a.startTime));
+
+  useEffect(() => {
+    if (openTrades.length === 0) return;
+    const timer = setInterval(() => {
+      setNowMs(Date.now());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [openTrades.length]);
 
   // Risk metrics
   const isUnrestrictedSelfOrDemo = isPersonalLiveAccount(account) || isDemoAccount(account);
@@ -169,7 +179,7 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
               {openTrades.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
                   {openTrades.map((t) => {
-                    const secondsLeft = Math.max(0, Math.ceil((t.endTime - Date.now()) / 1000));
+                    const secondsLeft = Math.max(0, Math.ceil((t.endTime - nowMs) / 1000));
                     const isCall = t.direction === 'CALL';
                     const assetObj = findAssetBySymbol(t.asset);
                     const tradeMarket = getAssetMarketState(t.asset);

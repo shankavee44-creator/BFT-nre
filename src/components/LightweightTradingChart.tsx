@@ -91,7 +91,7 @@ export function prepareLightweightBars(
 ): FormattedBar[] {
   if (!candles || candles.length === 0) return [];
   if (asset && !validateCandlesForAsset(asset, candles)) return [];
-  const windowed = candles.length > 120 ? candles.slice(-120) : candles;
+  const windowed = candles.length > 500 ? candles.slice(-500) : candles;
   const source = chartType === 'heikin-ashi' ? calculateHeikinAshi(windowed) : windowed;
   const bySec = new Map<number, FormattedBar>();
   for (const c of source) {
@@ -143,6 +143,7 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
   timeframe,
   activeTrades,
   tradeResultOverlay,
+  zoomLevel = 1,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -165,9 +166,12 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
 
   const assetActiveTrades = useMemo(() => {
     const targetSym = normalizeAssetSymbol(asset.symbol);
-    return activeTrades.filter(
-      (t) => t.status === 'active' && normalizeAssetSymbol(t.asset) === targetSym
-    );
+    return activeTrades.filter((t) => {
+      const st = String(t.status || '').toUpperCase().trim();
+      const isOpen = st === 'ACTIVE' || st === 'OPEN';
+      const tradeSym = (t as any).asset_symbol || t.asset || (t as any).symbol || '';
+      return isOpen && normalizeAssetSymbol(tradeSym) === targetSym;
+    });
   }, [activeTrades, asset.symbol]);
 
   // 1s tick interval for live timers synchronized to authoritative server clock
@@ -306,20 +310,31 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
         vertLines: { visible: false, color: '#111111' },
         horzLines: { visible: false, color: '#111111' },
       },
+      kineticScroll: {
+        touch: true,
+        mouse: true,
+      },
       handleScroll: {
         mouseWheel: true,
         pressedMouseMove: true,
         horzTouchDrag: true,
-        vertTouchDrag: false,
+        vertTouchDrag: true,
       },
       handleScale: {
-        axisPressedMouseMove: true,
+        axisPressedMouseMove: {
+          time: true,
+          price: true,
+        },
+        axisDoubleClickReset: {
+          time: true,
+          price: true,
+        },
         mouseWheel: true,
         pinch: true,
       },
       timeScale: {
         barSpacing: 12,
-        minBarSpacing: 4,
+        minBarSpacing: 2,
         rightOffset: 15,
         fixLeftEdge: false,
         fixRightEdge: false,
@@ -376,6 +391,19 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
     };
     chart.timeScale().subscribeVisibleLogicalRangeChange(handleLogicalRangeChange);
 
+    const handleCenterChartEvent = () => {
+      if (chartRef.current) {
+        try {
+          chartRef.current.priceScale('right').applyOptions({ autoScale: true });
+          chartRef.current.timeScale().scrollToRealTime();
+          setIsScrolledFromLive(false);
+        } catch {
+          // ignore
+        }
+      }
+    };
+    window.addEventListener('bft-center-chart', handleCenterChartEvent);
+
     let resizeRaf = 0;
     const resizeObserver = new ResizeObserver((entries) => {
       if (resizeRaf) cancelAnimationFrame(resizeRaf);
@@ -396,6 +424,7 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
     resizeObserver.observe(container);
 
     return () => {
+      window.removeEventListener('bft-center-chart', handleCenterChartEvent);
       if (resizeRaf) cancelAnimationFrame(resizeRaf);
       resizeObserver.disconnect();
       try {
@@ -409,7 +438,19 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 2. Strict Symbol Binding & Fast O(1) Live Tick Streaming with Automatic Bucket Catch-Up
+  // Sync external zoomLevel changes smoothly to timeScale barSpacing
+  useEffect(() => {
+    if (!chartRef.current) return;
+    try {
+      const targetSpacing = Math.max(3, Math.min(45, Math.round(12 * zoomLevel)));
+      chartRef.current.timeScale().applyOptions({ barSpacing: targetSpacing });
+      updateCoordinatesRef.current();
+    } catch {
+      // ignore
+    }
+  }, [zoomLevel]);
+
+  // 2. Strict Symbol Binding & Fast O(1) Live Tick Streaming (Never interrupts touch pan/zoom)
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
@@ -447,29 +488,13 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
       return;
     }
 
-    const windowStartCandle = candles.length > 120 ? candles[candles.length - 120] : candles[0];
-    const formattedFirstCandle = formatSingleCandle(windowStartCandle, asset.pipDecimals);
-    const formattedLatestCandle = formatSingleCandle(candles[candles.length - 1], asset.pipDecimals);
-    const prevLastBar = lastFormattedBarRef.current;
-    const isBucketAdvancedOrResynced =
-      !prevLastBar ||
-      !formattedLatestCandle ||
-      (formattedLatestCandle.time as number) !== (prevLastBar.time as number);
-
-    const isSeriesAnchorShifted =
-      !firstFormattedBarRef.current ||
-      !formattedFirstCandle ||
-      firstFormattedBarRef.current.time !== formattedFirstCandle.time ||
-      firstFormattedBarRef.current.open !== formattedFirstCandle.open ||
-      isBucketAdvancedOrResynced;
-
-    // Full series rebuild when symbol, chartType, timeframe, or bucket boundary advances
+    // Full series rebuild ONLY when symbol, chartType, or timeframe changes, or on initial load
     if (
       isChartTypeChanged ||
       isSymbolChanged ||
       isTimeframeChanged ||
       barsCountRef.current === 0 ||
-      isSeriesAnchorShifted
+      !lastFormattedBarRef.current
     ) {
       const bars = prepareLightweightBars(candles, chartType, asset.pipDecimals, asset);
       barsCountRef.current = bars.length;
@@ -491,9 +516,6 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
         seriesRef.current = newSeries;
       }
 
-      const shouldResetTimeScale =
-        isSymbolChanged || isTimeframeChanged || isChartTypeChanged || barsCountRef.current === 0;
-
       lastLoadedSymbolRef.current = asset.symbol;
       lastLoadedTimeframeRef.current = timeframe;
       lastLoadedChartTypeRef.current = chartType;
@@ -514,25 +536,23 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
           mode: PriceScaleMode.Normal,
           scaleMargins: { top: 0.1, bottom: 0.1 },
         });
-        if (shouldResetTimeScale) {
-          chart.timeScale().resetTimeScale();
-          chart.timeScale().fitContent();
-          setIsScrolledFromLive(false);
-          requestAnimationFrame(() => {
-            if (chartRef.current && lastLoadedSymbolRef.current === asset.symbol) {
-              try {
-                chartRef.current.priceScale('right').applyOptions({
-                  autoScale: true,
-                  mode: PriceScaleMode.Normal,
-                  scaleMargins: { top: 0.1, bottom: 0.1 },
-                });
-                chartRef.current.timeScale().fitContent();
-              } catch {
-                // ignore
-              }
+        chart.timeScale().resetTimeScale();
+        chart.timeScale().fitContent();
+        setIsScrolledFromLive(false);
+        requestAnimationFrame(() => {
+          if (chartRef.current && lastLoadedSymbolRef.current === asset.symbol) {
+            try {
+              chartRef.current.priceScale('right').applyOptions({
+                autoScale: true,
+                mode: PriceScaleMode.Normal,
+                scaleMargins: { top: 0.1, bottom: 0.1 },
+              });
+              chartRef.current.timeScale().fitContent();
+            } catch {
+              // ignore
             }
-          });
-        }
+          }
+        });
       } catch {
         // ignore
       }
@@ -540,40 +560,43 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
       return;
     }
 
-    // Fast O(1) incremental live tick update for the active symbol & timeframe
+    // Fast O(1) incremental live tick update & new candle bucket append (preserves active touch drag & pinch-zoom!)
     const series = seriesRef.current;
     if (!series) return;
 
-    let lastBar: FormattedBar | null = null;
-    if (chartType === 'heikin-ashi') {
-      const recentSlice = candles.slice(-6);
-      const haSlice = calculateHeikinAshi(recentSlice);
-      if (haSlice.length > 0) {
-        lastBar = formatSingleCandle(haSlice[haSlice.length - 1], asset.pipDecimals);
-      }
-    } else {
-      lastBar = formatSingleCandle(candles[candles.length - 1], asset.pipDecimals);
-    }
-
-    if (!lastBar || !isValidPriceForAsset(asset, lastBar.close)) return;
-
     const prevBar = lastFormattedBarRef.current;
-    // Prevent Lightweight Charts error if an older timestamp arrives
-    if (prevBar && (lastBar.time as number) < (prevBar.time as number)) {
-      return;
+    const recentSlice = candles.slice(-6);
+    const sourceSlice = chartType === 'heikin-ashi' ? calculateHeikinAshi(recentSlice) : recentSlice;
+
+    if (sourceSlice.length === 0) return;
+
+    // Collect any bars >= prevBar.time so new candle buckets append cleanly via series.update()
+    const barsToApply: FormattedBar[] = [];
+    for (const c of sourceSlice) {
+      const formatted = formatSingleCandle(c, asset.pipDecimals);
+      if (!formatted || !isValidPriceForAsset(asset, formatted.close)) continue;
+      if (!prevBar || (formatted.time as number) >= (prevBar.time as number)) {
+        barsToApply.push(formatted);
+      }
     }
 
-    lastFormattedBarRef.current = lastBar;
-    barsCountRef.current = Math.min(120, candles.length);
+    if (barsToApply.length === 0) return;
 
     try {
-      if (chartType === 'line') {
-        series.update({ time: lastBar.time, value: lastBar.close });
-      } else {
-        series.update(lastBar);
+      for (const b of barsToApply) {
+        const prevTime = lastFormattedBarRef.current ? (lastFormattedBarRef.current.time as number) : 0;
+        if ((b.time as number) > prevTime) {
+          barsCountRef.current += 1;
+        }
+        lastFormattedBarRef.current = b;
+        if (chartType === 'line') {
+          series.update({ time: b.time, value: b.close });
+        } else {
+          series.update(b);
+        }
       }
     } catch {
-      // Fallback full sync if time bucket jumped
+      // Fallback full sync only if time series became non-monotonic
       const bars = prepareLightweightBars(candles, chartType, asset.pipDecimals, asset);
       barsCountRef.current = bars.length;
       if (bars.length > 0) {
@@ -585,8 +608,6 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
           } else {
             series.setData(bars);
           }
-          chart.priceScale('right').applyOptions({ autoScale: true });
-          chart.timeScale().fitContent();
         } catch {
           // ignore
         }
@@ -648,6 +669,7 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
 
   const handleGoToLive = useCallback(() => {
     if (chartRef.current) {
+      chartRef.current.priceScale('right').applyOptions({ autoScale: true });
       chartRef.current.timeScale().scrollToRealTime();
       setIsScrolledFromLive(false);
     }
@@ -659,11 +681,12 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
   return (
     <div
       ref={containerRef}
-      className="relative w-full h-full overflow-hidden select-none chart-container hw-accelerate"
+      className="relative w-full h-full overflow-hidden select-none tradingview-chart-container tv-chart-container chart-container hw-accelerate"
       style={{
         background: "url('/1793209787676.jpg.jpeg') center/cover no-repeat",
         transform: 'translateZ(0)',
-        touchAction: 'none',
+        touchAction: 'pan-x pan-y pinch-zoom',
+        WebkitOverflowScrolling: 'touch',
       }}
     >
       {/* Loading state indicator when data is empty, switching symbol, or validating */}

@@ -37,6 +37,12 @@ import {
   formatPurchasedPackageLabel,
   recordAffiliateUserPurchase,
 } from './affiliateEngine';
+import {
+  createSupabaseTrade,
+  updateSupabaseTrade,
+  fetchUserTrades,
+  ensureTradeUuid,
+} from './supabaseTradeSync';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const RAW_API_BASE = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE_URL) || '';
@@ -399,7 +405,7 @@ export async function apiCancelWithdrawal(params: {
         try {
           const { data: prof } = await supabase
             .from('profiles')
-            .select('id, email, self_balance, self_capital_balance, funded_balance')
+            .select('*')
             .eq('id', targetUid)
             .maybeSingle();
           if (prof) {
@@ -650,7 +656,7 @@ export async function apiPurchaseAccount(params: {
       if (targetUuid) {
         const { data: bp } = await supabase
           .from('profiles')
-          .select('id, email, full_name, referred_by')
+          .select('*')
           .eq('id', targetUuid)
           .maybeSingle();
         buyerProfile = bp;
@@ -658,7 +664,7 @@ export async function apiPurchaseAccount(params: {
       if (!buyerProfile && params.email) {
         const { data: bp } = await supabase
           .from('profiles')
-          .select('id, email, full_name, referred_by')
+          .select('*')
           .ilike('email', params.email)
           .maybeSingle();
         buyerProfile = bp;
@@ -711,7 +717,7 @@ export async function apiPurchaseAccount(params: {
 
             const sponsorRes: any = await supabase
               .from('profiles')
-              .select('id, referred_by, total_referral_earnings')
+              .select('*')
               .eq('id', currentSponsorId)
               .maybeSingle();
             const sponsorProf = sponsorRes?.data;
@@ -1382,21 +1388,27 @@ export async function apiPlaceTrade(params: {
   endTime?: number;
   accountTier?: string;
 }) {
-  if (
-    !hasJwtSession() ||
-    params.accountTier === 'demo' ||
-    params.accountId.startsWith('BFT-DEMO') ||
-    params.accountId === 'BFT-10000'
-  ) {
-    return { ok: true, localOnly: true };
-  }
   try {
-    const res = await fetch(`${API_BASE}/api/trades`, {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify(params),
-    });
-    return await safeJsonResponse(res);
+    const startMs = params.startTime || Date.now();
+    const durationSec = Number(params.durationSeconds) || 60;
+    const tradeObj: any = {
+      id: params.id || `TRD-${Date.now()}`,
+      accountId: params.accountId,
+      asset: params.asset,
+      direction: params.direction,
+      strikePrice: Number(params.strikePrice),
+      currentPrice: Number(params.strikePrice),
+      investment: Number(params.investment),
+      payoutPercentage: Number(params.payoutPercentage || 85),
+      potentialPayout: Number((Number(params.investment) * (Number(params.payoutPercentage || 85) / 100)).toFixed(2)),
+      startTime: startMs,
+      durationSeconds: durationSec,
+      endTime: params.endTime || startMs + durationSec * 1000,
+      status: 'active',
+      accountTier: params.accountTier,
+    };
+    await createSupabaseTrade(tradeObj);
+    return { ok: true, trade: tradeObj };
   } catch (e: any) {
     return { ok: false, error: e?.message || 'Trade placement request failed' };
   }
@@ -1407,34 +1419,44 @@ export async function apiSettleTrade(params: {
   closePrice: number;
   status?: string;
 }) {
-  if (!hasJwtSession()) return { ok: true, localOnly: true };
   try {
-    const res = await fetch(`${API_BASE}/api/trades/settle`, {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify(params),
+    const normalizedStatus =
+      params.status === 'won' || params.status === 'WIN'
+        ? 'won'
+        : params.status === 'tie' || params.status === 'TIE'
+        ? 'tie'
+        : 'lost';
+    await updateSupabaseTrade({
+      id: ensureTradeUuid(params.tradeId),
+      accountId: 'BFT-DEMO-001',
+      asset: 'EUR/USD',
+      direction: 'CALL',
+      strikePrice: Number(params.closePrice),
+      currentPrice: Number(params.closePrice),
+      closePrice: Number(params.closePrice),
+      investment: 0,
+      payoutPercentage: 85,
+      potentialPayout: 0,
+      startTime: Date.now(),
+      durationSeconds: 60,
+      endTime: Date.now(),
+      status: normalizedStatus,
     });
-    return await safeJsonResponse(res);
+    return { ok: true };
   } catch (e: any) {
     return { ok: false, error: e?.message || 'Trade settlement request failed' };
   }
 }
 
 export async function apiGetUserTrades(accountId?: string) {
-  if (
-    !hasJwtSession() ||
-    (accountId && (accountId.startsWith('BFT-DEMO') || accountId === 'BFT-10000'))
-  ) {
-    return { ok: true, trades: [] };
-  }
   try {
-    const qs = accountId ? `?accountId=${encodeURIComponent(accountId)}` : '';
-    const res = await fetch(`${API_BASE}/api/trades${qs}`, {
-      headers: getAuthHeaders(),
-    });
-    return await safeJsonResponse(res);
+    const trades = await fetchUserTrades();
+    const filtered = accountId
+      ? trades.filter((t) => !t.accountId || t.accountId === accountId)
+      : trades;
+    return { ok: true, trades: filtered };
   } catch (e: any) {
-    return { ok: false, error: e?.message || 'Failed to fetch trades' };
+    return { ok: false, trades: [], error: e?.message || 'Failed to fetch trades' };
   }
 }
 
@@ -1570,7 +1592,7 @@ export async function apiGetAdminMetrics() {
 
   try {
     const [profilesRes, depositsRes, withdrawalsRes, accountsRes] = await Promise.all([
-      supabase.from('profiles').select('id, kyc_status, self_balance, funded_balance'),
+      supabase.from('profiles').select('*'),
       supabase.from('crypto_deposits').select('id, amount, status'),
       supabase.from('withdrawals').select('id, amount, status'),
       supabase.from('trading_accounts').select('id, status'),
@@ -2276,7 +2298,7 @@ export async function apiVerify2fa(params: {
     }
     if (!secret && (params.userId || cleanEmail)) {
       let targetUuid = params.userId && UUID_REGEX.test(params.userId) ? params.userId : null;
-      let query = supabase.from('profiles').select('totp_secret, id');
+      let query = supabase.from('profiles').select('*');
       if (targetUuid) {
         query = query.eq('id', targetUuid);
       } else if (cleanEmail) {
@@ -2444,7 +2466,7 @@ export async function apiValidate2fa(params: {
 
     if (!secret && (params.userId || cleanEmail)) {
       let targetUuid = params.userId && UUID_REGEX.test(params.userId) ? params.userId : null;
-      let query = supabase.from('profiles').select('totp_secret, id');
+      let query = supabase.from('profiles').select('*');
       if (targetUuid) {
         query = query.eq('id', targetUuid);
       } else if (cleanEmail) {
@@ -2613,12 +2635,6 @@ export async function apiRegisterCopyProvider(params: {
           },
           { onConflict: 'user_id' }
         )
-        .then(undefined, () => {});
-
-      await supabase
-        .from('profiles')
-        .update({ is_copy_provider: true, copy_provider_win_rate: params.winRate3m } as any)
-        .eq('id', targetUuid)
         .then(undefined, () => {});
     }
   } catch {

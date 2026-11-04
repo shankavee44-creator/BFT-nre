@@ -35,6 +35,7 @@ export class SupabaseMarketSyncEngine {
   private listeners: Set<MarketTickCallback> = new Set();
   private lastBroadcastMs: Record<string, number> = {};
   private pollInterval: any = null;
+  private serverApiAvailable: boolean = true;
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -43,19 +44,34 @@ export class SupabaseMarketSyncEngine {
     }
   }
 
+  private isJsonApiResponse(res: Response): boolean {
+    if (!res || !res.ok) return false;
+    const ct = String(res.headers?.get?.('content-type') || '').toLowerCase();
+    return !ct.includes('text/html');
+  }
+
   /**
    * Initializes live server synchronization against `/api/market/live-prices` with `cache: 'no-store'`
    * and synchronizes the local clock offset with `serverTime`.
    */
   public initRealtimeChannel() {
-    if (this.pollInterval || typeof window === 'undefined') return;
+    if (this.pollInterval || typeof window === 'undefined' || !this.serverApiAvailable) return;
 
     const pollServerPrices = async () => {
+      if (!this.serverApiAvailable) return;
       try {
         const res = await fetch(`/api/market/live-prices?_t=${Date.now()}`, {
           cache: 'no-store',
+          headers: { Accept: 'application/json' },
         });
-        if (!res.ok) return;
+        if (!this.isJsonApiResponse(res)) {
+          this.serverApiAvailable = false;
+          if (this.pollInterval) {
+            clearInterval(this.pollInterval);
+            this.pollInterval = null;
+          }
+          return;
+        }
         const data = await safeJsonResponse(res);
         if (data?.ok && data.prices && typeof data.prices === 'object') {
           if (data.serverTime || data.timestamp) {
@@ -88,23 +104,31 @@ export class SupabaseMarketSyncEngine {
    * Returns all 268+ synchronized OTC assets and primes their live prices from `/api/market/live-prices`.
    */
   public async fetchAllOtcAssets(): Promise<AssetInfo[]> {
+    if (!this.serverApiAvailable) return DEFAULT_ASSETS;
     try {
       const res = await fetch(`/api/market/live-prices?_t=${Date.now()}`, {
         cache: 'no-store',
+        headers: { Accept: 'application/json' },
       });
-      if (res.ok) {
-        const data = await safeJsonResponse(res);
-        if (data?.ok && data.prices && typeof data.prices === 'object') {
-          if (data.serverTime || data.timestamp) {
-            setServerTimeOffset(Number(data.serverTime || data.timestamp));
-          }
-          const now = getSynchronizedNowMs();
-          for (const asset of DEFAULT_ASSETS) {
-            const canonical = normalizeAssetSymbol(asset.symbol);
-            const livePrice = Number(data.prices[canonical] ?? data.prices[asset.symbol]);
-            if (!Number.isNaN(livePrice) && livePrice > 0) {
-              appendLiveTick(asset, livePrice, true, now);
-            }
+      if (!this.isJsonApiResponse(res)) {
+        this.serverApiAvailable = false;
+        if (this.pollInterval) {
+          clearInterval(this.pollInterval);
+          this.pollInterval = null;
+        }
+        return DEFAULT_ASSETS;
+      }
+      const data = await safeJsonResponse(res);
+      if (data?.ok && data.prices && typeof data.prices === 'object') {
+        if (data.serverTime || data.timestamp) {
+          setServerTimeOffset(Number(data.serverTime || data.timestamp));
+        }
+        const now = getSynchronizedNowMs();
+        for (const asset of DEFAULT_ASSETS) {
+          const canonical = normalizeAssetSymbol(asset.symbol);
+          const livePrice = Number(data.prices[canonical] ?? data.prices[asset.symbol]);
+          if (!Number.isNaN(livePrice) && livePrice > 0) {
+            appendLiveTick(asset, livePrice, true, now);
           }
         }
       }

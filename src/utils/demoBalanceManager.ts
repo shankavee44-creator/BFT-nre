@@ -3,7 +3,7 @@
  * Handles validation, formatting, 8-digit numeric Trader IDs, and Supabase persistence.
  */
 
-import { supabase } from './supabase';
+import { commitProfileBalanceToSupabase, recordDirectBalanceCommit } from './supabaseRealtimeSync';
 import { UserProfile, TradingAccount } from '../types';
 
 export const MIN_DEMO_BALANCE = 1;
@@ -134,38 +134,15 @@ export async function persistCustomDemoBalance(params: PersistDemoBalanceParams)
 
   // 2. Direct Supabase client-side update on profiles table under demo_balance
   try {
-    const isUuid = params.userId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(params.userId);
-    if (isUuid) {
-      await supabase
-        .from('profiles')
-        .update({ demo_balance: normalized })
-        .eq('id', params.userId);
-    } else if (params.userEmail) {
-      await supabase
-        .from('profiles')
-        .update({ demo_balance: normalized })
-        .eq('email', params.userEmail);
-    }
+    recordDirectBalanceCommit('demo_balance', normalized);
+    await commitProfileBalanceToSupabase({
+      userId: params.userId,
+      userEmail: params.userEmail,
+      column: 'demo_balance',
+      newBalance: normalized,
+    });
   } catch (err) {
     console.warn('[DemoBalanceManager] Supabase direct update non-blocking error:', err);
-  }
-
-  // 3. Server-side persistence route (/api/profile/demo-balance)
-  try {
-    const res = await fetch('/api/profile/demo-balance', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        userId: params.userId,
-        email: params.userEmail,
-        demoBalance: normalized,
-      }),
-    });
-    if (!res.ok) {
-      console.warn('[DemoBalanceManager] Server route responded with status:', res.status);
-    }
-  } catch (err) {
-    // Non-blocking if offline/mock
   }
 
   return { success: true, balance: normalized };
