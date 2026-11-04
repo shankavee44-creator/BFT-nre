@@ -85,13 +85,16 @@ function mapToSupabaseRow(trade: BinaryTrade, userId: string): Record<string, an
   else if (tier === 'demo' || trade.accountId?.startsWith('BFT-DEMO')) accountType = 'DEMO';
 
   const durationSeconds = trade.durationSeconds || 60;
-  const durationMs = durationSeconds * 1000;
   const startTime = trade.startTime || Date.now();
+
+  const accountIdUuid = isValidUuid(trade.accountId) 
+    ? trade.accountId! 
+    : ensureTradeUuid(trade.accountId || 'BFT-DEMO-001');
 
   return {
     id: ensureTradeUuid(trade.id),
     user_id: userId,
-    account_id: trade.accountId || 'BFT-DEMO-001',
+    account_id: accountIdUuid,
     symbol: trade.asset,
     asset_symbol: trade.asset,
     trade_type: trade.direction,
@@ -102,7 +105,6 @@ function mapToSupabaseRow(trade: BinaryTrade, userId: string): Record<string, an
     payout_multiplier: 1 + (trade.payoutPercentage / 100),
     status: trade.status === 'active' ? 'OPEN' : trade.status.toUpperCase(),
     created_at: new Date(startTime).toISOString(),
-    expires_at: new Date(startTime + durationMs).toISOString(),
     account_type: accountType,
   };
 }
@@ -115,7 +117,8 @@ export function mapFromSupabaseRow(row: any): BinaryTrade {
     ? Math.round((Number(row.payout_multiplier) - 1) * 100)
     : 85;
   const createdMs = row.created_at ? new Date(row.created_at).getTime() : Date.now();
-  const expiresMs = row.expires_at ? new Date(row.expires_at).getTime() : createdMs + 60000;
+  const durationSec = row.duration_seconds || 60;
+  const expiresMs = row.expires_at ? new Date(row.expires_at).getTime() : createdMs + (durationSec * 1000);
   const now = Date.now();
   
   const isExpired = now >= expiresMs;
@@ -135,7 +138,7 @@ export function mapFromSupabaseRow(row: any): BinaryTrade {
     payoutPercentage,
     potentialPayout: Number(row.amount) * (payoutPercentage / 100),
     startTime: createdMs,
-    durationSeconds: Math.max(5, row.duration_seconds || Math.round((expiresMs - createdMs) / 1000)),
+    durationSeconds: Math.max(5, durationSec),
     endTime: expiresMs,
     status,
     pnl: status === 'won'
@@ -183,42 +186,33 @@ export async function createSupabaseTrade(trade: BinaryTrade, userId: string): P
   }
 
   try {
-    let accountType = 'DEMO';
-    const tier = (trade as any).accountTier || 'demo';
-    if (tier === 'personal' || tier === 'real') accountType = 'REAL';
-    else if (tier === 'one-step') accountType = 'ONE_STEP';
-    else if (tier === 'two-step') accountType = 'TWO_STEP';
-    else if (tier === 'instant') accountType = 'INSTANT';
-    else if (tier === 'self_funded' || tier === 'self') accountType = 'SELF_FUNDED';
-    else if (tier === 'funded') accountType = 'FUNDED';
-    else if (tier === 'demo' || trade.accountId?.startsWith('BFT-DEMO')) accountType = 'DEMO';
+    const payload: Record<string, any> = { ...mapToSupabaseRow(trade, effectiveUserId) };
+    console.log('[SupabaseTradeSync] Inserting trade into user_trades:', payload);
 
-    const insertPayload = {
-      id: ensureTradeUuid(trade.id),
-      user_id: effectiveUserId,
-      asset_symbol: trade.asset,
-      trade_type: trade.direction, // 'CALL' or 'PUT'
-      amount: Number(trade.investment),
-      entry_price: Number(trade.strikePrice),
-      duration_seconds: Number(trade.durationSeconds || 60),
-      status: trade.status === 'active' ? 'OPEN' : trade.status.toUpperCase(),
-      account_type: accountType, // 'DEMO', 'SELF_FUNDED', 'FUNDED'
-      account_id: trade.accountId || 'BFT-DEMO-001'
-    };
-
-    console.log('[SupabaseTradeSync] Inserting trade into user_trades:', insertPayload);
-    const { data, error } = await supabase.from('user_trades').insert([insertPayload]);
-    if (error) {
-      console.error("Trade Insert Error:", error);
-      const mappedRow = mapToSupabaseRow(trade, effectiveUserId);
-      const { data: data2, error: error2 } = await supabase.from('user_trades').insert([mappedRow]);
-      if (error2) {
-        console.error("Trade Insert Fallback Error:", error2);
-      } else {
-        console.log("Trade Insert Fallback Success:", data2);
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const { data, error } = await supabase.from('user_trades').insert([payload]);
+      if (!error) {
+        console.log('[SupabaseTradeSync] Trade Insert Success:', data);
+        break;
       }
-    } else {
-      console.log("Trade Insert Success:", data);
+      console.error(`[SupabaseTradeSync] Trade Insert Error (attempt ${attempt + 1}):`, error);
+
+      const missingColMatch = error.message?.match(/Could not find the '([^']+)' column/i);
+      if (missingColMatch && missingColMatch[1] in payload) {
+        console.warn(`[SupabaseTradeSync] Removing missing column '${missingColMatch[1]}' from trade payload and retrying`);
+        delete payload[missingColMatch[1]];
+        continue;
+      }
+
+      if (error.code === '22P02') {
+        if ('account_id' in payload) {
+          console.warn('[SupabaseTradeSync] UUID syntax error on account_id, setting account_id to null');
+          payload.account_id = null;
+          continue;
+        }
+      }
+
+      break;
     }
   } catch (err: any) {
     console.error('[SupabaseTradeSync] Exception in createSupabaseTrade:', err);
