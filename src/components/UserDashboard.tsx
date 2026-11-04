@@ -1238,7 +1238,10 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   const kycWithdrawalCheck = canUserWithdraw(userProfile);
 
   return (
-    <div className="py-8 sm:py-10 max-w-6xl mx-auto px-3 sm:px-6 lg:px-8 font-sans w-full max-w-full overflow-x-hidden">
+    <div
+      style={{ touchAction: 'pan-y' }}
+      className="py-8 sm:py-10 max-w-6xl mx-auto px-3 sm:px-6 lg:px-8 font-sans w-full max-w-full overflow-y-visible touch-pan-y"
+    >
       {/* Trader Profile Header Card */}
       <div className="p-5 sm:p-8 rounded-3xl bg-[#0a0a0a] border border-[#ff8800]/40 mb-6">
         <div className="flex flex-col lg:flex-row items-center lg:items-start justify-between gap-6">
@@ -1504,7 +1507,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         ))}
       </div>
 
-      {/* Navigation Tabs (Mobile & Tablet Dropdown Popover) */}
+      {/* Navigation Tabs (Mobile & Tablet Glassmorphic Dropdown Popover) */}
       <div className="lg:hidden mb-6 relative font-mono">
         <label className="text-[10px] uppercase font-mono font-bold tracking-wider text-slate-400 block mb-1.5">
           Select Profile Section:
@@ -1513,18 +1516,28 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           <button
             type="button"
             data-testid="mobile-dashboard-tab-dropdown-btn"
-            onClick={() => setIsMobileTabDropdownOpen(!isMobileTabDropdownOpen)}
-            className="w-full min-h-[48px] px-4 py-3 rounded-2xl bg-[#121218] border border-[#ff8800]/50 text-white text-xs font-black flex items-center justify-between shadow-lg cursor-pointer touch-manipulation"
+            aria-expanded={isMobileTabDropdownOpen}
+            onClick={() => {
+              soundEngine.playUiClick();
+              setIsMobileTabDropdownOpen(!isMobileTabDropdownOpen);
+            }}
+            className={`w-full min-h-[48px] px-4 py-3 rounded-xl bg-zinc-900/95 backdrop-blur-md border text-white text-xs font-black flex items-center justify-between transition-all duration-200 cursor-pointer touch-manipulation bft-touch-scale ${
+              isMobileTabDropdownOpen
+                ? 'border-[#ff8800] shadow-[0_0_20px_rgba(255,136,0,0.22)]'
+                : 'border-[#ff8800]/45 hover:border-[#ff8800]/75 shadow-[0_8px_24px_rgba(0,0,0,0.65)]'
+            }`}
           >
             <div className="flex items-center gap-2.5 truncate">
-              {activeTab === 'accounts' && <CreditCard className="w-4 h-4 text-[#ff8800] shrink-0" />}
-              {activeTab === 'certificates' && <Award className="w-4 h-4 text-[#ff8800] shrink-0" />}
-              {activeTab === 'kyc' && <ShieldCheck className="w-4 h-4 text-[#ff8800] shrink-0" />}
-              {activeTab === 'profile' && <User className="w-4 h-4 text-[#ff8800] shrink-0" />}
-              {activeTab === 'analytics' && <TrendingUp className="w-4 h-4 text-[#ff8800] shrink-0" />}
-              {activeTab === 'affiliate' && <Sparkles className="w-4 h-4 text-[#ff8800] shrink-0" />}
-              {activeTab === 'security' && <Smartphone className="w-4 h-4 text-[#ff8800] shrink-0" />}
-              {activeTab === 'admin_users' && <ShieldCheck className="w-4 h-4 text-purple-400 shrink-0" />}
+              <span className="w-7 h-7 rounded-lg bg-[#ff8800]/15 border border-[#ff8800]/40 flex items-center justify-center shrink-0">
+                {activeTab === 'accounts' && <CreditCard className="w-4 h-4 text-[#ff8800]" />}
+                {activeTab === 'certificates' && <Award className="w-4 h-4 text-[#ff8800]" />}
+                {activeTab === 'kyc' && <ShieldCheck className="w-4 h-4 text-[#ff8800]" />}
+                {activeTab === 'profile' && <User className="w-4 h-4 text-[#ff8800]" />}
+                {activeTab === 'analytics' && <TrendingUp className="w-4 h-4 text-[#ff8800]" />}
+                {activeTab === 'affiliate' && <Sparkles className="w-4 h-4 text-[#ff8800]" />}
+                {activeTab === 'security' && <Smartphone className="w-4 h-4 text-[#ff8800]" />}
+                {activeTab === 'admin_users' && <ShieldCheck className="w-4 h-4 text-purple-400" />}
+              </span>
 
               <span className="truncate">
                 {activeTab === 'accounts' && `My Trading Accounts (${accounts.length})`}
@@ -1536,6 +1549,11 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                 {activeTab === 'security' && 'Security & 2FA'}
                 {activeTab === 'admin_users' && 'Admin Command Center'}
               </span>
+
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#00e676]/15 border border-[#00e676]/40 text-[#00e676] text-[9.5px] font-black uppercase tracking-wider shrink-0">
+                <Check className="w-2.5 h-2.5 stroke-[3]" />
+                <span>Active</span>
+              </span>
             </div>
             <ChevronDown
               className={`w-4 h-4 text-[#ff8800] transition-transform duration-200 shrink-0 ${
@@ -1545,42 +1563,61 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           </button>
 
           {isMobileTabDropdownOpen && (
-            <div className="absolute left-0 right-0 top-full mt-2 z-50 rounded-2xl bg-[#0c0e14] border border-[#ff8800]/40 shadow-2xl p-2 space-y-1 text-xs animate-in fade-in zoom-in-95 duration-150">
+            <div className="absolute left-0 right-0 top-full mt-2 z-50 rounded-xl bg-zinc-900/95 backdrop-blur-md border border-[#ff8800]/45 shadow-[0_20px_50px_rgba(0,0,0,0.9),0_0_24px_rgba(255,136,0,0.15)] p-1.5 space-y-1 text-xs animate-in fade-in zoom-in-95 slide-in-from-top-1 duration-150">
               {[
-                { id: 'accounts', label: `My Trading Accounts (${accounts.length})`, icon: <CreditCard className="w-4 h-4 text-[#ff8800] shrink-0" /> },
-                { id: 'certificates', label: 'Certificates & Badges', icon: <Award className="w-4 h-4 text-[#ff8800] shrink-0" /> },
-                { id: 'kyc', label: 'KYC Verification', icon: <ShieldCheck className="w-4 h-4 text-[#ff8800] shrink-0" />, badge: formatKycStatusBadgeText(userProfile.kycStatus) },
-                { id: 'profile', label: 'Profile & Personal Details', icon: <User className="w-4 h-4 text-[#ff8800] shrink-0" /> },
-                { id: 'analytics', label: 'Performance Analytics', icon: <TrendingUp className="w-4 h-4 text-[#ff8800] shrink-0" /> },
-                { id: 'affiliate', label: 'Affiliate Program', icon: <Sparkles className="w-4 h-4 text-[#ff8800] shrink-0" /> },
-                { id: 'security', label: 'Security & 2FA', icon: <Smartphone className="w-4 h-4 text-[#ff8800] shrink-0" /> },
+                { id: 'accounts', label: `My Trading Accounts (${accounts.length})`, icon: <CreditCard className="w-4 h-4 shrink-0" /> },
+                { id: 'certificates', label: 'Certificates & Badges', icon: <Award className="w-4 h-4 shrink-0" /> },
+                { id: 'kyc', label: 'KYC Verification', icon: <ShieldCheck className="w-4 h-4 shrink-0" />, badge: formatKycStatusBadgeText(userProfile.kycStatus) },
+                { id: 'profile', label: 'Profile & Personal Details', icon: <User className="w-4 h-4 shrink-0" /> },
+                { id: 'analytics', label: 'Performance Analytics', icon: <TrendingUp className="w-4 h-4 shrink-0" /> },
+                { id: 'affiliate', label: 'Affiliate Program', icon: <Sparkles className="w-4 h-4 shrink-0" /> },
+                { id: 'security', label: 'Security & 2FA', icon: <Smartphone className="w-4 h-4 shrink-0" /> },
                 ...(isUserAdmin ? [{ id: 'admin_users', label: 'Admin Command Center', icon: <ShieldCheck className="w-4 h-4 text-purple-400 shrink-0" /> }] : []),
-              ].map((tab) => (
-                <button
-                  key={tab.id}
-                  data-testid={`mobile-tab-item-${tab.id}`}
-                  onClick={() => {
-                    soundEngine.playUiClick();
-                    setActiveTab(tab.id as any);
-                    setIsMobileTabDropdownOpen(false);
-                  }}
-                  className={`w-full min-h-[44px] px-3.5 py-2.5 rounded-xl flex items-center justify-between font-bold text-left transition-all cursor-pointer touch-manipulation ${
-                    activeTab === tab.id
-                      ? 'bg-[#ff8800] text-slate-950 font-black shadow-md'
-                      : 'text-slate-200 hover:bg-white/10'
-                  }`}
-                >
-                  <div className="flex items-center gap-2.5 truncate">
-                    {tab.icon}
-                    <span className="truncate">{tab.label}</span>
-                  </div>
-                  {tab.badge && (
-                    <span className="text-[10px] px-2 py-0.5 rounded font-black uppercase bg-black/40 text-[#ff8800] shrink-0 ml-2">
-                      {tab.badge}
-                    </span>
-                  )}
-                </button>
-              ))}
+              ].map((tab) => {
+                const isTabSelected = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    data-testid={`mobile-tab-item-${tab.id}`}
+                    onClick={() => {
+                      soundEngine.playUiClick();
+                      setActiveTab(tab.id as any);
+                      setIsMobileTabDropdownOpen(false);
+                    }}
+                    className={`w-full min-h-[44px] px-3 py-2.5 rounded-lg flex items-center justify-between font-bold text-left transition-all duration-150 cursor-pointer touch-manipulation bft-touch-scale ${
+                      isTabSelected
+                        ? 'bg-gradient-to-r from-[#ff8800]/25 via-[#ff8800]/10 to-transparent border border-[#ff8800]/60 text-white font-black shadow-[0_0_14px_rgba(255,136,0,0.18)]'
+                        : 'text-slate-300 hover:text-white hover:bg-white/[0.06] border border-transparent'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5 truncate">
+                      <span
+                        className={`w-6 h-6 rounded-md flex items-center justify-center shrink-0 ${
+                          isTabSelected
+                            ? 'bg-[#ff8800] text-slate-950'
+                            : 'bg-white/5 text-[#ff8800] border border-white/10'
+                        }`}
+                      >
+                        {tab.icon}
+                      </span>
+                      <span className="truncate">{tab.label}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                      {tab.badge && (
+                        <span className="text-[9.5px] px-2 py-0.5 rounded font-black uppercase bg-black/50 text-[#ff8800] border border-[#ff8800]/30">
+                          {tab.badge}
+                        </span>
+                      )}
+                      {isTabSelected && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#00e676]/15 border border-[#00e676]/45 text-[#00e676] text-[10px] font-black shadow-[0_0_10px_rgba(0,230,118,0.2)]">
+                          <Check className="w-3 h-3 stroke-[3]" />
+                          <span>✓ (Active)</span>
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>

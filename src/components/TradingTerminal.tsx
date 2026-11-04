@@ -66,6 +66,7 @@ import {
   loadChartType,
   saveChartType,
   registerDynamicAssets,
+  getTopVolatileAssets,
 } from '../utils/storage';
 import { broadcastSyncEvent, subscribeToSyncEvents } from '../utils/crossTabSync';
 import {
@@ -3907,6 +3908,67 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
         {/* 3. CENTRAL SUPER-SMOOTH OTC ALGORITHMIC CHART ENGINE */}
         <div className="flex-1 flex flex-col relative overflow-hidden bg-[#0a0a0a] min-h-0 pb-[136px] md:pb-0">
+          {/* 0. QUICK-ACCESS TOP 5 MOST VOLATILE ASSETS HORIZONTAL SCROLL STRIP */}
+          <div
+            data-testid="quick-access-volatile-strip"
+            className="flex items-center gap-1.5 overflow-x-auto px-1.5 py-1 md:px-3 md:py-1 bg-[#0d1017] border-b border-white/10 shrink-0 z-25 font-mono text-[10px] select-none no-scrollbar bft-snap-strip"
+          >
+            <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#ff8800]/15 border border-[#ff8800]/40 text-[#ff8800] font-black uppercase tracking-wider text-[8.5px] md:text-[9px] shrink-0">
+              <Zap className="w-2.5 h-2.5 fill-[#ff8800] shrink-0" />
+              <span>Top 5 Volatile</span>
+            </div>
+
+            {getTopVolatileAssets(DEFAULT_ASSETS, 5).map((volAsset) => {
+              const isCurrent =
+                normalizeTradeAssetKey(volAsset.symbol) ===
+                normalizeTradeAssetKey(selectedAsset.symbol);
+              const volPayout = getLivePayoutPercentage(volAsset, payoutSeed);
+              const volBadge = computeAssetActiveTradeBadge(
+                volAsset.symbol,
+                activeTrades,
+                isCurrent
+                  ? smoothPrice
+                  : (liveMarketFeed.getLatestPrice(volAsset.symbol) ??
+                    getAssetMarketState(volAsset.symbol)?.lastPrice ??
+                    volAsset.basePrice)
+              );
+              const cleanVolKey = volAsset.symbol.replace(/[^A-Za-z0-9]/g, '');
+
+              return (
+                <button
+                  key={`volatile-${volAsset.symbol}`}
+                  type="button"
+                  data-testid={`quick-volatile-asset-${cleanVolKey}`}
+                  onClick={() => {
+                    soundEngine.playUiClick();
+                    handleSelectTabAsset(volAsset);
+                  }}
+                  className={`bft-snap-card bft-touch-scale flex items-center gap-1.5 px-2 py-0.5 rounded-md border transition-all cursor-pointer shrink-0 ${
+                    isCurrent
+                      ? 'bg-[#ff8800]/20 border-[#ff8800] text-white font-black shadow-[0_0_10px_rgba(255,136,0,0.2)]'
+                      : 'bg-[#141822]/90 hover:bg-[#1c2230] border-white/10 text-slate-300 hover:text-white'
+                  }`}
+                  title={`One-Tap Switch to ${volAsset.name} (${volAsset.symbol}) • Volatility: ±${volAsset.volatility}`}
+                >
+                  <AssetFlagIcon
+                    symbol={volAsset.symbol}
+                    category={volAsset.category}
+                    flagEmoji={volAsset.flag}
+                    size="xs"
+                  />
+                  <span className="font-bold text-[10px] whitespace-nowrap">{volAsset.symbol}</span>
+                  <span className="text-[9px] font-black text-[#00e676]">+{volPayout}%</span>
+                  {volBadge.hasActiveTrades && (
+                    <span className="relative flex h-1.5 w-1.5 shrink-0">
+                      <span className="active-trade-dot-pulse absolute inline-flex h-full w-full rounded-full bg-[#00e676]" />
+                      <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-[#00e676]" />
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
           {/* 1. TOP MULTI-ASSET SCROLLING TICKER BAR (Quotex Style) */}
           <div
             data-testid="top-multi-asset-ticker-bar"

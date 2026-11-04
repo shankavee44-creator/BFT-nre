@@ -148,6 +148,34 @@ export function getDynamicAssets(): AssetInfo[] {
 }
 
 /**
+ * Computes and returns the top N most volatile assets for the quick-access horizontal scroll strip.
+ * Ranks assets by normalized volatility ratio (volatility / basePrice) weighted by institutional liquidity/payout.
+ */
+export function getTopVolatileAssets(
+  assets: AssetInfo[] = getDynamicAssets(),
+  count: number = 5
+): AssetInfo[] {
+  const source = Array.isArray(assets) && assets.length > 0 ? assets : OTC_ASSETS_CATALOG;
+  const scored = source.map((asset) => {
+    const safeBase = Math.max(0.0001, Number(asset.basePrice) || 1);
+    const vol = Math.max(0, Number(asset.volatility) || 0);
+    const relativeVol = vol / safeBase;
+    const payoutBoost = (Number(asset.payout) || 85) >= 92 ? 1.5 : 1.0;
+    return {
+      asset,
+      score: relativeVol * payoutBoost,
+    };
+  });
+
+  scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return (b.asset.payout || 0) - (a.asset.payout || 0);
+  });
+
+  return scored.slice(0, Math.max(1, count)).map((item) => item.asset);
+}
+
+/**
  * Finds the complete AssetInfo object for any symbol variant.
  * Guarantees a valid, fully-formed AssetInfo is ALWAYS returned without throwing or returning undefined.
  */

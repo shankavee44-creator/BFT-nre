@@ -320,7 +320,10 @@ export const ReferralNetworkList: React.FC<ReferralNetworkListProps> = ({
           </div>
         </div>
       ) : (
-        <div className="overflow-x-auto">
+        <div
+          style={{ touchAction: 'pan-x pan-y', WebkitOverflowScrolling: 'touch' }}
+          className="overflow-x-auto overflow-y-visible touch-pan-x touch-pan-y"
+        >
           <table className="w-full text-left font-mono text-xs">
             <thead>
               <tr className="border-b border-white/10 text-[10px] uppercase text-slate-400">

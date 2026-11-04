@@ -401,7 +401,11 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
   });
 
   return (
-    <div data-testid="affiliate-dashboard" className="space-y-8 font-sans w-full max-w-full overflow-x-hidden">
+    <div
+      data-testid="affiliate-dashboard"
+      style={{ touchAction: 'pan-y' }}
+      className="space-y-6 sm:space-y-8 font-sans w-full max-w-full overflow-y-visible touch-pan-y"
+    >
       {/* 1. HERO BANNER WITH CURRENT TIER STATUS */}
       <div className="relative rounded-3xl bg-[#111115] border border-[#ff8800]/40 p-6 sm:p-8 overflow-hidden">
         <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
@@ -602,18 +606,22 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
       </div>
 
       {/* 3. BASIC VS. VIP COMPARISON CARD */}
-      <div className="rounded-3xl bg-[#111115] border border-white/10 p-6 sm:p-7 shadow-xl">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+      <div
+        data-testid="affiliate-tier-comparison-card"
+        style={{ touchAction: 'pan-y' }}
+        className="rounded-3xl bg-[#111115] border border-white/10 p-4 sm:p-7 shadow-xl overflow-y-visible touch-pan-y"
+      >
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 sm:mb-6">
           <div>
             <h3 className="text-base sm:text-lg font-black text-white flex items-center gap-2">
-              <Layers className="w-5 h-5 text-[#ffaa00]" />
+              <Layers className="w-5 h-5 text-[#ffaa00] shrink-0" />
               <span>Affiliate Tier Comparison: Basic vs. VIP Tiers</span>
             </h3>
             <p className="text-xs text-slate-400 mt-0.5">
               Contrast tier benefits side-by-side to understand commission growth and historical isolation.
             </p>
           </div>
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#0a0a0d] border border-white/15 text-xs font-mono text-slate-300">
+          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#0a0a0d] border border-white/15 text-xs font-mono text-slate-300 self-start sm:self-auto">
             <span>Your Active Tier:</span>
             <span className={`font-black uppercase px-2 py-0.5 rounded ${stats.isVipUnlocked ? 'bg-amber-400 text-slate-950' : 'bg-slate-700 text-white'}`}>
               {stats.affiliateTier}
@@ -621,7 +629,102 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
           </div>
         </div>
 
-        <div className="overflow-x-auto">
+        {/* Mobile Stacked Comparison Cards (< 768px) - Prevents horizontal scroll trapping on mobile */}
+        <div
+          data-testid="mobile-affiliate-tier-comparison-cards"
+          style={{ touchAction: 'pan-y' }}
+          className="md:hidden space-y-2.5 touch-pan-y"
+        >
+          {[
+            {
+              stream: 'Direct Referral Challenge Purchase (L1)',
+              dotColor: 'bg-emerald-400',
+              basic: '10%',
+              vip: '15%',
+              impact: '+50% Higher Payout',
+              impactColor: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30',
+            },
+            {
+              stream: 'Sub-Referral Purchase (L2)',
+              dotColor: 'bg-cyan-400',
+              basic: '5%',
+              vip: '8%',
+              impact: '+60% Higher Payout',
+              impactColor: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30',
+            },
+            {
+              stream: 'Extended Network Purchase (L3)',
+              dotColor: 'bg-purple-400',
+              basic: '2%',
+              vip: '5%',
+              impact: '+150% Higher Payout',
+              impactColor: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30',
+            },
+            {
+              stream: 'Direct Referral Profit Withdrawal Royalty',
+              dotColor: 'bg-[#ff8800]',
+              basic: '8%',
+              vip: '10%',
+              impact: '+25% Recurring Royalty',
+              impactColor: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30',
+            },
+            {
+              stream: 'Milestone Cash Reward',
+              dotColor: 'bg-amber-400',
+              basic: '—',
+              vip: '$10,000 USD',
+              impact: 'One-Time Instant Bonus',
+              impactColor: 'text-amber-300 bg-amber-500/15 border-amber-500/35',
+            },
+            {
+              stream: 'Historical Rate Isolation',
+              dotColor: 'bg-slate-400',
+              basic: 'Default for all registrations',
+              vip: 'Applies to all new signups after VIP',
+              impact: 'Protects rate stability',
+              impactColor: 'text-slate-300 bg-white/5 border-white/10',
+            },
+          ].map((item) => (
+            <div
+              key={item.stream}
+              className="p-3 rounded-2xl bg-[#0b0c10] border border-white/10 space-y-2 touch-pan-y"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className={`w-2 h-2 rounded-full shrink-0 ${item.dotColor}`} />
+                  <span className="text-xs font-bold text-white leading-snug">{item.stream}</span>
+                </div>
+                <span
+                  className={`px-2 py-0.5 rounded-md border font-mono text-[10px] font-bold shrink-0 ${item.impactColor}`}
+                >
+                  {item.impact}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 font-mono text-xs">
+                <div className="p-2 rounded-xl bg-[#12141c] border border-white/5">
+                  <div className="text-[9.5px] uppercase text-slate-400 font-semibold">
+                    Basic (&lt;1,000 Active)
+                  </div>
+                  <div className="text-xs font-bold text-slate-200 mt-0.5">{item.basic}</div>
+                </div>
+                <div className="p-2 rounded-xl bg-amber-500/[0.08] border border-amber-500/30">
+                  <div className="text-[9.5px] uppercase text-amber-300/90 font-semibold">
+                    VIP (1,000+ Active)
+                  </div>
+                  <div className="text-xs font-black text-amber-400 mt-0.5">{item.vip}</div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Desktop & Tablet Table View (>= 768px) with Touch-Scroll Isolation */}
+        <div
+          data-testid="affiliate-tier-comparison-table-wrapper"
+          style={{ touchAction: 'pan-x pan-y', WebkitOverflowScrolling: 'touch' }}
+          className="hidden md:block overflow-x-auto overflow-y-visible touch-pan-x touch-pan-y"
+        >
           <table className="w-full text-left font-mono text-xs">
             <thead>
               <tr className="border-b border-white/15 text-[11px] uppercase text-slate-400 bg-white/5">
@@ -973,7 +1076,10 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
               )}
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <div
+              style={{ touchAction: 'pan-x pan-y', WebkitOverflowScrolling: 'touch' }}
+              className="overflow-x-auto overflow-y-visible touch-pan-x touch-pan-y"
+            >
               <table className="w-full text-left font-mono text-xs">
                 <thead>
                   <tr className="border-b border-white/10 text-[10px] uppercase text-slate-400">

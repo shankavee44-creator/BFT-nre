@@ -109,6 +109,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
 }) => {
   const [activePortalTab, setActivePortalTab] = useState<QuotexPortalTab>(initialPortalTab);
   const [accountDropdownOpen, setAccountDropdownOpen] = useState(false);
+  const [mobilePortalDropdownOpen, setMobilePortalDropdownOpen] = useState(false);
 
   const kycCheck = canUserWithdraw(userProfile);
   const accountSummary = useMemo(() => calculateQuotexAccountSummary(account), [account]);
@@ -694,28 +695,41 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
               </button>
 
               {accountDropdownOpen && accounts.length > 0 && (
-                <div className="absolute left-0 mt-1.5 w-60 rounded-lg bg-[#161922] border border-[#262c3a] p-1.5 z-50">
-                  {accounts.map((acc) => (
-                    <button
-                      key={acc.id}
-                      type="button"
-                      onClick={() => {
-                        onSelectAccount?.(acc.id);
-                        setAccountDropdownOpen(false);
-                      }}
-                      className={`w-full flex items-center justify-between p-2 rounded text-left text-xs cursor-pointer ${
-                        account?.id === acc.id ? 'bg-[#212634] text-white' : 'text-[#94a3b8] hover:bg-[#1c202b]'
-                      }`}
-                    >
-                      <div>
-                        <div className="font-bold text-white font-mono">{acc.id}</div>
-                        <div className="text-[10px] text-[#8c96a6]">{acc.tierName}</div>
-                      </div>
-                      <span className="font-mono tabular-nums font-bold text-[#00c853]">
-                        ${acc.currentBalance.toFixed(2)}
-                      </span>
-                    </button>
-                  ))}
+                <div className="absolute left-0 mt-2 w-64 rounded-xl bg-zinc-900/95 backdrop-blur-md border border-[#ff8800]/40 shadow-[0_16px_36px_rgba(0,0,0,0.85),0_0_16px_rgba(255,136,0,0.12)] p-1.5 z-50 animate-in fade-in zoom-in-95 slide-in-from-top-1 duration-150">
+                  {accounts.map((acc) => {
+                    const isAccActive = account?.id === acc.id;
+                    return (
+                      <button
+                        key={acc.id}
+                        type="button"
+                        onClick={() => {
+                          soundEngine.playUiClick();
+                          onSelectAccount?.(acc.id);
+                          setAccountDropdownOpen(false);
+                        }}
+                        className={`w-full flex items-center justify-between p-2.5 rounded-lg text-left text-xs transition-all cursor-pointer bft-touch-scale ${
+                          isAccActive
+                            ? 'bg-gradient-to-r from-[#ff8800]/20 via-[#ff8800]/10 to-transparent border border-[#ff8800]/50 text-white shadow-sm'
+                            : 'text-slate-300 hover:bg-white/[0.06] hover:text-white border border-transparent'
+                        }`}
+                      >
+                        <div>
+                          <div className="font-bold text-white font-mono flex items-center gap-1.5">
+                            <span>{acc.id}</span>
+                            {isAccActive && (
+                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-[#ff8800]/20 text-[#ff8800] border border-[#ff8800]/40 font-black">
+                                ✓ Active
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[10px] text-[#8c96a6]">{acc.tierName}</div>
+                        </div>
+                        <span className="font-mono tabular-nums font-bold text-[#00e676]">
+                          ${acc.currentBalance.toFixed(2)}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -729,7 +743,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                   if (onOpenDepositModal) onOpenDepositModal();
                   else if (onOpenChallengeModal) onOpenChallengeModal();
                 }}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#00b853] hover:bg-[#00c853] text-white font-bold text-xs cursor-pointer transition-colors"
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#00b853] hover:bg-[#00c853] text-white font-bold text-xs cursor-pointer transition-colors bft-touch-scale"
               >
                 <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
                 <span>Deposit</span>
@@ -740,7 +754,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                   type="button"
                   onClick={onClose}
                   aria-label="Close Portal"
-                  className="p-1.5 rounded-lg bg-[#181c26] border border-[#262c3a] text-[#8c96a6] hover:text-white cursor-pointer"
+                  className="p-1.5 rounded-lg bg-[#181c26] border border-[#262c3a] text-[#8c96a6] hover:text-white cursor-pointer bft-touch-scale"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -748,7 +762,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
             </div>
           </div>
 
-          {/* Standard Quotex Sub-Navigation Bar (Desktop Tab Strip vs Mobile Select Dropdown) */}
+          {/* Standard Quotex Sub-Navigation Bar (Desktop Tab Strip vs Modern BFT Dark Glassmorphism Mobile Dropdown) */}
           <div className="flex items-center justify-between gap-4">
             {/* Desktop Tabs (>= 768px) */}
             <nav
@@ -775,26 +789,129 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
               })}
             </nav>
 
-            {/* Mobile Compact Sub-Tab Dropdown (< 768px) */}
-            <div className="md:hidden py-2 w-full">
+            {/* Mobile Modern Dark Glassmorphism Dropdown Menu (< 768px) */}
+            <div className="md:hidden py-2 w-full relative">
               <label htmlFor="mobile-portal-tab-select" className="sr-only">
                 Select Portal Section
               </label>
-              <div className="relative">
-                <select
-                  id="mobile-portal-tab-select"
-                  data-testid="mobile-portal-tab-select"
-                  value={activePortalTab}
-                  onChange={(e) => handlePortalTabClick(e.target.value as QuotexPortalTab)}
-                  className="w-full bg-[#181c26] border border-[#262c3a] text-white font-mono text-xs font-bold rounded-xl px-3 py-2.5 appearance-none focus:outline-none focus:border-[#ff8800] cursor-pointer"
-                >
-                  {portalNavTabs.map((tab) => (
-                    <option key={tab.id} value={tab.id} className="bg-[#12151e] text-white">
-                      {tab.label} {activePortalTab === tab.id ? '✓ (Active)' : ''}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="w-4 h-4 text-[#ff8800] absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              {/* Synchronized sr-only native select for accessibility & automated form selectors */}
+              <select
+                id="mobile-portal-tab-select"
+                data-testid="mobile-portal-tab-select"
+                value={activePortalTab}
+                onChange={(e) => {
+                  setMobilePortalDropdownOpen(false);
+                  handlePortalTabClick(e.target.value as QuotexPortalTab);
+                }}
+                className="sr-only"
+              >
+                {portalNavTabs.map((tab) => (
+                  <option key={tab.id} value={tab.id}>
+                    {tab.label} {activePortalTab === tab.id ? '✓ (Active)' : ''}
+                  </option>
+                ))}
+              </select>
+
+              {/* Custom BFT Dark Theme Dropdown Trigger Button */}
+              <button
+                type="button"
+                data-testid="mobile-portal-dropdown-trigger"
+                aria-expanded={mobilePortalDropdownOpen}
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  setMobilePortalDropdownOpen((prev) => !prev);
+                }}
+                className={`w-full px-3.5 py-2.5 rounded-xl bg-zinc-900/95 backdrop-blur-md border transition-all duration-200 flex items-center justify-between cursor-pointer bft-touch-scale ${
+                  mobilePortalDropdownOpen
+                    ? 'border-[#ff8800] shadow-[0_0_20px_rgba(255,136,0,0.2)]'
+                    : 'border-[#ff8800]/40 hover:border-[#ff8800]/70 shadow-[0_4px_16px_rgba(0,0,0,0.6)]'
+                }`}
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span className="w-7 h-7 rounded-lg bg-[#ff8800]/15 border border-[#ff8800]/40 flex items-center justify-center text-[#ff8800] shrink-0">
+                    {activePortalTab === 'withdrawal' && <CreditCard className="w-3.5 h-3.5" />}
+                    {activePortalTab === 'payments' && <History className="w-3.5 h-3.5" />}
+                    {activePortalTab === 'trades' && <LineChart className="w-3.5 h-3.5" />}
+                    {activePortalTab === 'account' && <User className="w-3.5 h-3.5" />}
+                    {activePortalTab === 'market' && <Store className="w-3.5 h-3.5" />}
+                    {activePortalTab === 'tournaments' && <Trophy className="w-3.5 h-3.5" />}
+                    {activePortalTab === 'analytics' && <BarChart3 className="w-3.5 h-3.5" />}
+                  </span>
+                  <span className="font-mono text-xs font-black text-white tracking-wide truncate">
+                    {portalNavTabs.find((t) => t.id === activePortalTab)?.label || 'Withdrawal'}
+                  </span>
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#00e676]/15 border border-[#00e676]/40 text-[#00e676] font-mono text-[9.5px] font-black uppercase tracking-wider shadow-[0_0_10px_rgba(0,230,118,0.15)]">
+                    <Check className="w-2.5 h-2.5 stroke-[3]" />
+                    <span>Active</span>
+                  </span>
+                </div>
+                <ChevronDown
+                  className={`w-4 h-4 text-[#ff8800] transition-transform duration-200 shrink-0 ${
+                    mobilePortalDropdownOpen ? 'rotate-180' : ''
+                  }`}
+                />
+              </button>
+
+              {/* Smooth Open/Close Animated Glassmorphism Dropdown Menu */}
+              <div
+                data-testid="mobile-portal-dropdown-menu"
+                className={`bft-accordion-grid transition-all duration-200 ${
+                  mobilePortalDropdownOpen
+                    ? 'bft-accordion-open opacity-100 scale-100 translate-y-0 mt-2'
+                    : 'bft-accordion-closed opacity-0 scale-95 -translate-y-1 pointer-events-none'
+                }`}
+              >
+                <div className="bft-accordion-inner">
+                  <div className="rounded-xl bg-zinc-900/95 backdrop-blur-md border border-[#ff8800]/45 shadow-[0_20px_50px_rgba(0,0,0,0.9),0_0_24px_rgba(255,136,0,0.14)] p-1.5 space-y-1 z-50">
+                    {portalNavTabs.map((tab) => {
+                      const isTabActive = activePortalTab === tab.id;
+                      return (
+                        <button
+                          key={tab.id}
+                          type="button"
+                          data-testid={`mobile-portal-option-${tab.id}`}
+                          onClick={() => {
+                            setMobilePortalDropdownOpen(false);
+                            handlePortalTabClick(tab.id);
+                          }}
+                          className={`w-full px-3 py-2.5 rounded-lg flex items-center justify-between font-mono text-xs transition-all duration-150 cursor-pointer bft-touch-scale ${
+                            isTabActive
+                              ? 'bg-gradient-to-r from-[#ff8800]/25 via-[#ff8800]/10 to-transparent border border-[#ff8800]/60 text-white font-black shadow-[0_0_14px_rgba(255,136,0,0.18)]'
+                              : 'text-slate-300 hover:text-white hover:bg-white/[0.06] border border-transparent font-semibold'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <span
+                              className={`w-6 h-6 rounded-md flex items-center justify-center shrink-0 ${
+                                isTabActive
+                                  ? 'bg-[#ff8800] text-slate-950 shadow-sm'
+                                  : 'bg-white/5 text-slate-400 border border-white/10'
+                              }`}
+                            >
+                              {tab.id === 'withdrawal' && <CreditCard className="w-3.5 h-3.5" />}
+                              {tab.id === 'payments' && <History className="w-3.5 h-3.5" />}
+                              {tab.id === 'trades' && <LineChart className="w-3.5 h-3.5" />}
+                              {tab.id === 'account' && <User className="w-3.5 h-3.5" />}
+                              {tab.id === 'market' && <Store className="w-3.5 h-3.5" />}
+                              {tab.id === 'tournaments' && <Trophy className="w-3.5 h-3.5" />}
+                              {tab.id === 'analytics' && <BarChart3 className="w-3.5 h-3.5" />}
+                            </span>
+                            <span className="truncate">{tab.label}</span>
+                          </div>
+
+                          {isTabActive ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#00e676]/15 border border-[#00e676]/45 text-[#00e676] text-[10px] font-black tracking-wide shrink-0 shadow-[0_0_10px_rgba(0,230,118,0.2)]">
+                              <Check className="w-3 h-3 stroke-[3]" />
+                              <span>✓ (Active)</span>
+                            </span>
+                          ) : (
+                            <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
             </div>
 

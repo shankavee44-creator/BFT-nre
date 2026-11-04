@@ -166,3 +166,13 @@ test('triggerHapticFeedback invokes Web Vibration API patterns for trade entry a
   assert.equal(triggerHapticFeedback(HAPTIC_PATTERNS.uiTap, {}), false);
 });
 
+test('getTopVolatileAssets returns the top 5 most volatile assets for the quick-access strip', async () => {
+  const { getTopVolatileAssets, DEFAULT_ASSETS } = await import('./storage');
+  const top5 = getTopVolatileAssets(DEFAULT_ASSETS, 5);
+  assert.equal(top5.length, 5);
+  for (const asset of top5) {
+    assert.ok(asset.symbol && asset.symbol.length > 0);
+    assert.ok(asset.volatility > 0);
+  }
+});
+
