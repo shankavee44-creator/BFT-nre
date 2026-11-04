@@ -484,11 +484,13 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         ? Number(userProfile.demoBalance)
         : 10000.9;
     return {
-      id: 'BFT-10000',
-      loginId: 'BFT-10000',
+      id: 'BFT-DEMO-001',
+      loginId: 'BFT-DEMO-001',
       passwordHash: '',
-      tier: 'two-step',
-      tierName: 'Challenge Account',
+      tier: 'demo',
+      accountType: 'demo',
+      accountCategory: 'demo',
+      tierName: 'Demo Practice Account',
       size: 10000,
       initialBalance: initialDemoBal,
       currentBalance: initialDemoBal,
@@ -500,7 +502,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       status: 'active',
       createdDate: '2026-10-27',
       lastActiveDate: '2026-10-27',
-      phase: 'phase_1',
+      phase: 'demo',
       tradingDaysCompleted: 1,
       tradesCount: 0,
       winRate: 100,
@@ -706,12 +708,13 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     let isCancelled = false;
     const syncTerminalTradesFromDb = async () => {
       try {
-        const [openFromDb, allFromDb] = await Promise.all([
+        const [openFromDb, accountFromDb, allFromDb] = await Promise.all([
           fetchActiveOpenTradesFromSupabase(userProfile?.id, effectiveAccount),
+          fetchUserTrades(userProfile?.id, effectiveAccount),
           fetchUserTrades(userProfile?.id),
         ]);
         if (isCancelled) return;
-        const combined = [...openFromDb, ...allFromDb];
+        const combined = [...openFromDb, ...accountFromDb, ...allFromDb];
         if (combined.length > 0 && onSyncTrades) {
           onSyncTrades(combined);
         }
@@ -724,7 +727,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     return () => {
       isCancelled = true;
     };
-  }, [userProfile?.id, effectiveAccount?.id, onSyncTrades]);
+  }, [userProfile?.id, effectiveAccount?.id, effectiveAccount?.tier, onSyncTrades]);
 
   // Re-verify completed trades when user switches to History tab on desktop or mobile drawer
   useEffect(() => {

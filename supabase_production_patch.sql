@@ -307,6 +307,7 @@ ALTER TABLE public.trading_accounts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.crypto_deposits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.user_purchases ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.referral_commissions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.user_trades ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.withdrawals ENABLE ROW LEVEL SECURITY;
 
 -- 8.1 PROFILES POLICIES
@@ -392,9 +393,12 @@ DROP POLICY IF EXISTS "Allow update referral_commissions" ON public.referral_com
 CREATE POLICY "Allow update referral_commissions"
   ON public.referral_commissions FOR UPDATE TO anon, authenticated USING (true) WITH CHECK (true);
 
--- 8.6 USER TRADES POLICIES
+-- 8.6 USER TRADES POLICIES (Explicit auth.uid() = user_id for SELECT, INSERT, UPDATE + permissive fallback)
 DROP POLICY IF EXISTS "Users can view own trades" ON public.user_trades;
+DROP POLICY IF EXISTS "Allow authenticated select own trades" ON public.user_trades;
 DROP POLICY IF EXISTS "Allow select user_trades" ON public.user_trades;
+CREATE POLICY "Allow authenticated select own trades"
+  ON public.user_trades FOR SELECT TO authenticated USING (auth.uid() = user_id);
 CREATE POLICY "Allow select user_trades"
   ON public.user_trades FOR SELECT TO anon, authenticated USING (true);
 
@@ -406,9 +410,17 @@ CREATE POLICY "Allow authenticated inserts"
 CREATE POLICY "Allow insert user_trades"
   ON public.user_trades FOR INSERT TO anon, authenticated WITH CHECK (true);
 
+DROP POLICY IF EXISTS "Users can update own trades" ON public.user_trades;
+DROP POLICY IF EXISTS "Allow authenticated updates" ON public.user_trades;
 DROP POLICY IF EXISTS "Allow update user_trades" ON public.user_trades;
+CREATE POLICY "Allow authenticated updates"
+  ON public.user_trades FOR UPDATE TO authenticated USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
 CREATE POLICY "Allow update user_trades"
   ON public.user_trades FOR UPDATE TO anon, authenticated USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow delete user_trades" ON public.user_trades;
+CREATE POLICY "Allow delete user_trades"
+  ON public.user_trades FOR DELETE TO anon, authenticated USING (true);
 
 -- 8.7 WITHDRAWALS POLICIES
 DROP POLICY IF EXISTS "Users can view own withdrawals" ON public.withdrawals;
@@ -605,3 +617,4 @@ ALTER PUBLICATION supabase_realtime ADD TABLE public.profiles;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.user_purchases;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.crypto_deposits;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.trading_accounts;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.user_trades;

@@ -120,41 +120,77 @@ function extractNotNullTradeColumn(error: any): string | null {
   return m?.[1] || null;
 }
 
-export function resolveSupabaseAccountType(tradeOrAccount: any): string {
+export type CanonicalTradeAccountType = 'DEMO' | 'SELF_FUNDED' | 'FUNDED';
+
+export function resolveSupabaseAccountType(tradeOrAccount: any): CanonicalTradeAccountType {
+  if (!tradeOrAccount) return 'DEMO';
+
+  if (typeof tradeOrAccount === 'string') {
+    const raw = tradeOrAccount.toUpperCase().trim();
+    if (raw === 'DEMO') return 'DEMO';
+    if (raw === 'SELF_FUNDED' || raw === 'PERSONAL' || raw === 'REAL' || raw === 'SELF') {
+      return 'SELF_FUNDED';
+    }
+    if (
+      raw === 'FUNDED' ||
+      raw === 'ONE_STEP' ||
+      raw === 'ONE-STEP' ||
+      raw === 'TWO_STEP' ||
+      raw === 'TWO-STEP' ||
+      raw === 'INSTANT' ||
+      raw === 'CHALLENGE'
+    ) {
+      return 'FUNDED';
+    }
+    return 'DEMO';
+  }
+
   const tier = String(
     tradeOrAccount?.accountTier ||
       tradeOrAccount?.tier ||
       tradeOrAccount?.accountType ||
       tradeOrAccount?.account_type ||
+      tradeOrAccount?.accountCategory ||
       ''
   )
     .toLowerCase()
     .trim();
-  const accIdStr = String(tradeOrAccount?.accountId || tradeOrAccount?.id || '');
+  const phase = String(tradeOrAccount?.phase || '').toLowerCase().trim();
+  const accIdStr = String(tradeOrAccount?.accountId || tradeOrAccount?.id || '').trim();
 
-  if (tier === 'demo' || accIdStr.startsWith('BFT-DEMO') || accIdStr === 'BFT-10000') {
+  if (
+    tier === 'demo' ||
+    phase === 'demo' ||
+    accIdStr.startsWith('BFT-DEMO') ||
+    accIdStr === 'BFT-10000'
+  ) {
     return 'DEMO';
   }
   if (
     tier === 'personal' ||
+    tier === 'personal_live' ||
     tier === 'real' ||
     tier === 'self_funded' ||
     tier === 'self' ||
     accIdStr.includes('PERS') ||
-    accIdStr === 'personal_live'
+    accIdStr === 'personal_live' ||
+    accIdStr === 'BFT-LIVE-DB'
   ) {
     return 'SELF_FUNDED';
   }
-  if (tier === 'one-step' || tier === 'one_step') {
-    return 'ONE_STEP';
-  }
-  if (tier === 'two-step' || tier === 'two_step') {
-    return 'TWO_STEP';
-  }
-  if (tier === 'instant') {
-    return 'INSTANT';
-  }
-  if (tier === 'funded' || tradeOrAccount?.phase === 'funded') {
+  if (
+    tier === 'one-step' ||
+    tier === 'one_step' ||
+    tier === 'two-step' ||
+    tier === 'two_step' ||
+    tier === 'instant' ||
+    tier === 'funded' ||
+    tier === 'challenge' ||
+    phase === 'phase_1' ||
+    phase === 'phase_2' ||
+    phase === 'funded' ||
+    (accIdStr.startsWith('BFT-') && !accIdStr.startsWith('BFT-DEMO') && accIdStr !== 'BFT-10000')
+  ) {
     return 'FUNDED';
   }
   return 'DEMO';
@@ -490,110 +526,131 @@ export function filterTradesForActiveAccount(
 
   // When activeAccount is null/undefined, TradingTerminal uses its Demo Practice account ('BFT-10000' / 'BFT-DEMO-001')
   if (!activeAccount) {
-    return trades.filter((t) => {
-      const tier = String(t.accountTier || '').toLowerCase();
-      const accId = String(t.accountId || '');
-      return (
-        tier === 'demo' ||
-        !tier ||
-        accId === 'BFT-DEMO-001' ||
-        accId.startsWith('BFT-DEMO') ||
-        accId === 'BFT-10000'
-      );
-    });
+    return trades.filter((t) => resolveSupabaseAccountType(t) === 'DEMO');
   }
 
-  const activeId = String(activeAccount.id || '');
-  const activeSupaId = String(activeAccount.supabaseAccountId || '');
-  const activeTier = String(activeAccount.tier || activeAccount.accountType || '').toLowerCase().trim();
-  const isDemo =
-    activeTier === 'demo' ||
-    activeAccount.accountCategory === 'demo' ||
-    activeAccount.phase === 'demo' ||
-    activeId.startsWith('BFT-DEMO') ||
-    activeId === 'BFT-10000';
-  const isPersonal =
-    activeTier === 'personal' ||
-    activeTier === 'self_funded' ||
-    activeTier === 'self' ||
-    activeAccount.accountCategory === 'personal_live' ||
-    activeId.startsWith('BFT-PERS') ||
-    activeId === 'personal_live';
+  const activeId = String(activeAccount.id || '').trim();
+  const activeSupaId = String(activeAccount.supabaseAccountId || '').trim();
+  const targetAccountType = resolveSupabaseAccountType(activeAccount);
 
   return trades.filter((t) => {
-    const tAccId = String(t.accountId || '');
+    const tAccId = String(t.accountId || '').trim();
+    const tSupaId = String((t as any).supabaseAccountId || '').trim();
+
+    // Direct account ID match always wins
+    if (activeId && (tAccId === activeId || tSupaId === activeId)) return true;
+    if (activeSupaId && (tAccId === activeSupaId || tSupaId === activeSupaId)) return true;
+
+    const tradeAccountType = resolveSupabaseAccountType(t);
+    if (tradeAccountType !== targetAccountType) {
+      return false;
+    }
+
+    if (targetAccountType === 'DEMO' || targetAccountType === 'SELF_FUNDED') {
+      return true;
+    }
+
+    // For FUNDED / Challenge accounts:
+    // If the trade came from Supabase without a specific local BFT-XXXXX account ID
+    // (e.g., 'BFT-FUNDED', 'BFT-ONE_STEP', 'BFT-TWO_STEP', 'BFT-INSTANT', or empty),
+    // or matches the active prop account, include it.
+    const isGenericFundedId =
+      !tAccId ||
+      tAccId === 'BFT-FUNDED' ||
+      tAccId === 'BFT-ONE_STEP' ||
+      tAccId === 'BFT-TWO_STEP' ||
+      tAccId === 'BFT-INSTANT' ||
+      tAccId === 'BFT-CHALLENGE';
+
+    if (isGenericFundedId) return true;
+
+    const activeTier = String(activeAccount.tier || activeAccount.accountType || '').toLowerCase().trim();
     const tTier = String(t.accountTier || '').toLowerCase().trim();
-
-    if (activeId && tAccId === activeId) return true;
-    if (activeSupaId && tAccId === activeSupaId) return true;
-
-    if (isPersonal) {
-      return (
-        tTier === 'personal' ||
-        tTier === 'self_funded' ||
-        tTier === 'self' ||
-        tAccId === 'BFT-LIVE-DB' ||
-        tAccId.startsWith('BFT-PERS') ||
-        tAccId === 'personal_live'
-      );
-    }
-
-    if (isDemo) {
-      return (
-        tTier === 'demo' ||
-        tAccId === 'BFT-DEMO-001' ||
-        tAccId.startsWith('BFT-DEMO') ||
-        tAccId === 'BFT-10000'
-      );
-    }
-
-    // Prop Challenge or Funded Account
     if (activeTier && tTier === activeTier) return true;
-    if (activeAccount.phase === 'funded' && tTier === 'funded') return true;
-    if (
-      tTier === 'one-step' ||
-      tTier === 'two-step' ||
-      tTier === 'instant' ||
-      tTier === 'funded'
-    ) {
-      // If user only has one prop account of this tier, match it even when Supabase account_id was null
-      return tTier === activeTier || (activeAccount.phase === 'funded' && tTier === 'funded');
-    }
 
     return false;
   });
 }
 
 /**
- * Fetches all trades for a specific user from Supabase `user_trades`.
+ * Fetches trades for a specific user from Supabase `user_trades`.
+ * When `accountOrType` is provided, explicitly filters by both `user_id` AND `account_type`
+ * (and falls back to include legacy `account_type` aliases if present).
  * Automatically settles any stale `'OPEN'` rows in Supabase whose duration has already elapsed.
  */
-export async function fetchUserTrades(userId?: string | null): Promise<BinaryTrade[]> {
+export async function fetchUserTrades(
+  userId?: string | null,
+  accountOrType?: any | null
+): Promise<BinaryTrade[]> {
   const effectiveUserId = await getEffectiveSupabaseUserId(userId);
   if (!effectiveUserId || !isValidUuid(effectiveUserId)) {
     return [];
   }
 
   try {
-    const { data, error } = await supabase
-      .from('user_trades')
-      .select('*')
-      .eq('user_id', effectiveUserId)
-      .order('created_at', { ascending: false });
+    let rows: any[] = [];
 
-    if (error) {
-      console.warn('[SupabaseTradeSync] fetchUserTrades warning:', error.message);
-      return [];
+    if (accountOrType) {
+      const currentAccountType = resolveSupabaseAccountType(accountOrType);
+      const { data, error } = await supabase
+        .from('user_trades')
+        .select('*')
+        .eq('user_id', effectiveUserId)
+        .eq('account_type', currentAccountType)
+        .order('created_at', { ascending: false });
+
+      if (!error && Array.isArray(data)) {
+        rows = data;
+      }
+
+      // Also check legacy account_type aliases (e.g., REAL for SELF_FUNDED, ONE_STEP/TWO_STEP/INSTANT for FUNDED)
+      const legacyAliases =
+        currentAccountType === 'SELF_FUNDED'
+          ? ['REAL', 'PERSONAL', 'SELF']
+          : currentAccountType === 'FUNDED'
+          ? ['ONE_STEP', 'TWO_STEP', 'INSTANT', 'CHALLENGE']
+          : [];
+
+      if (legacyAliases.length > 0) {
+        const { data: aliasData } = await supabase
+          .from('user_trades')
+          .select('*')
+          .eq('user_id', effectiveUserId)
+          .in('account_type', legacyAliases)
+          .order('created_at', { ascending: false });
+
+        if (Array.isArray(aliasData) && aliasData.length > 0) {
+          const seenIds = new Set(rows.map((r) => r.id));
+          for (const r of aliasData) {
+            if (!seenIds.has(r.id)) {
+              rows.push(r);
+            }
+          }
+        }
+      }
+    } else {
+      const { data, error } = await supabase
+        .from('user_trades')
+        .select('*')
+        .eq('user_id', effectiveUserId)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.warn('[SupabaseTradeSync] fetchUserTrades warning:', error.message);
+        return [];
+      }
+      if (Array.isArray(data)) {
+        rows = data;
+      }
     }
-    if (!Array.isArray(data)) return [];
 
-    if (data.length > 0 && typeof data[0] === 'object' && data[0] !== null) {
-      for (const col of Object.keys(data[0])) {
+    if (rows.length > 0 && typeof rows[0] === 'object' && rows[0] !== null) {
+      for (const col of Object.keys(rows[0])) {
         unsupportedTradeColumns.delete(col);
       }
     }
 
-    const mapped = data.map((row) => {
+    const mapped = rows.map((row) => {
       const trade = mapFromSupabaseRow(row);
       const rawSt = String(row.status || '').toUpperCase().trim();
       if ((rawSt === 'OPEN' || rawSt === 'ACTIVE') && trade.status !== 'active') {
@@ -623,12 +680,24 @@ export async function fetchActiveOpenTradesFromSupabase(
   }
 
   try {
-    const { data, error } = await supabase
+    let query = supabase
       .from('user_trades')
       .select('*')
       .eq('user_id', effectiveUserId)
-      .in('status', ['OPEN', 'ACTIVE'])
-      .order('created_at', { ascending: false });
+      .in('status', ['OPEN', 'ACTIVE']);
+
+    if (activeAccount) {
+      const currentAccountType = resolveSupabaseAccountType(activeAccount);
+      const acceptedTypes =
+        currentAccountType === 'SELF_FUNDED'
+          ? ['SELF_FUNDED', 'REAL', 'PERSONAL', 'SELF']
+          : currentAccountType === 'FUNDED'
+          ? ['FUNDED', 'ONE_STEP', 'TWO_STEP', 'INSTANT', 'CHALLENGE']
+          : ['DEMO'];
+      query = query.in('account_type', acceptedTypes);
+    }
+
+    const { data, error } = await query.order('created_at', { ascending: false });
 
     if (error || !Array.isArray(data)) {
       return [];
@@ -658,7 +727,7 @@ export async function fetchCompletedHistoryTradesFromSupabase(
   userId?: string | null,
   activeAccount?: any | null
 ): Promise<BinaryTrade[]> {
-  const all = await fetchUserTrades(userId);
+  const all = await fetchUserTrades(userId, activeAccount);
   const completed = all.filter(
     (t) => t.status === 'won' || t.status === 'lost' || t.status === 'tie'
   );
@@ -830,10 +899,64 @@ export async function updateSupabaseTrade(
 }
 
 /**
- * Returns a subscription handle that polls REST cleanly without opening WebSockets that time out in restricted networks.
+ * Subscribes to Supabase Realtime `postgres_changes` on `public.user_trades` for the user,
+ * paired with local custom event sync and a background REST poll fallback so trades update
+ * instantaneously without requiring a page refresh.
  */
 export function subscribeUserTrades(userId: string, callback: (payload: any) => void) {
   let active = true;
+  let realtimeChannel: any = null;
+
+  // 1. Set up Supabase Realtime postgres_changes subscription on `user_trades`
+  if (typeof window !== 'undefined') {
+    getEffectiveSupabaseUserId(userId)
+      .then((effectiveUserId) => {
+        if (!active || !effectiveUserId || !isValidUuid(effectiveUserId)) return;
+        try {
+          realtimeChannel = supabase
+            .channel(`bft_user_trades_${effectiveUserId}`)
+            .on(
+              'postgres_changes',
+              {
+                event: '*',
+                schema: 'public',
+                table: 'user_trades',
+                filter: `user_id=eq.${effectiveUserId}`,
+              },
+              (payload: any) => {
+                if (!active) return;
+                const eventType = payload.eventType || payload.event;
+                callback({
+                  eventType,
+                  new: payload.new,
+                  old: payload.old,
+                });
+              }
+            )
+            .subscribe();
+        } catch {
+          // Ignore Realtime WebSocket error if blocked by network; REST polling & local events will handle sync
+        }
+      })
+      .catch(() => {});
+  }
+
+  // 2. Listen to immediate local Supabase trade sync events in the same browser window
+  const handleLocalTradeSync = (e: Event) => {
+    if (!active) return;
+    const detail = (e as CustomEvent)?.detail;
+    if (detail?.trade) {
+      callback({
+        eventType: 'SYNC',
+        trades: [detail.trade],
+      });
+    }
+  };
+  if (typeof window !== 'undefined') {
+    window.addEventListener('bft-supabase-trade-synced', handleLocalTradeSync);
+  }
+
+  // 3. Periodic REST poll fallback
   const pollInterval =
     typeof window !== 'undefined'
       ? window.setInterval(async () => {
@@ -848,8 +971,20 @@ export function subscribeUserTrades(userId: string, callback: (payload: any) => 
   return {
     unsubscribe: () => {
       active = false;
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('bft-supabase-trade-synced', handleLocalTradeSync);
+      }
       if (pollInterval !== null && typeof window !== 'undefined') {
         window.clearInterval(pollInterval);
+      }
+      if (realtimeChannel) {
+        try {
+          supabase.removeChannel(realtimeChannel);
+        } catch {
+          try {
+            realtimeChannel.unsubscribe();
+          } catch {}
+        }
       }
     },
   };
