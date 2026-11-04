@@ -176,3 +176,35 @@ test('getTopVolatileAssets returns the top 5 most volatile assets for the quick-
   }
 });
 
+test('computeUserTradingSummary calculates real trading stats and returns $0.00 / 0% when empty', async () => {
+  const { computeUserTradingSummary } = await import('./supabaseTradeSync');
+
+  const emptySummary = computeUserTradingSummary([]);
+  assert.equal(emptySummary.totalTradesCount, 0);
+  assert.equal(emptySummary.winRatePercent, 0);
+  assert.equal(emptySummary.formattedWinRate, '0%');
+  assert.equal(emptySummary.totalNetProfitLoss, 0);
+  assert.equal(emptySummary.formattedNetProfitLoss, '$0.00');
+  assert.equal(emptySummary.totalVolumeTraded, 0);
+  assert.equal(emptySummary.formattedVolumeTraded, '$0.00');
+
+  const realSummary = computeUserTradingSummary([
+    { id: '1', investment: 100, status: 'won', pnl: 85 },
+    { id: '2', investment: 50, status: 'lost', pnl: -50 },
+    { id: '3', investment: 200, status: 'won', pnl: 170 },
+    { id: '4', investment: 50, status: 'active' },
+  ]);
+
+  assert.equal(realSummary.totalTradesCount, 4);
+  assert.equal(realSummary.winningTradesCount, 2);
+  assert.equal(realSummary.losingTradesCount, 1);
+  assert.equal(realSummary.totalCompletedTrades, 3);
+  assert.equal(realSummary.winRatePercent, 66.7);
+  assert.equal(realSummary.formattedWinRate, '66.7%');
+  assert.equal(realSummary.totalNetProfitLoss, 205);
+  assert.equal(realSummary.formattedNetProfitLoss, '+$205.00');
+  assert.equal(realSummary.totalVolumeTraded, 400);
+  assert.equal(realSummary.formattedVolumeTraded, '$400.00');
+});
+
+

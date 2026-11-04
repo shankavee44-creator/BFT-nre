@@ -2002,10 +2002,8 @@ export default function App() {
         onClose={() => setIsGitHubSyncOpen(false)}
       />
 
-      {/* Interactive Live Support Chat Widget (Hidden on mobile terminal where bottom nav handles Support) */}
-      <div className={currentTab === 'terminal' ? 'hidden md:block' : 'block'}>
-        <LiveChatWidget />
-      </div>
+      {/* Interactive Live Support Chat Widget (Rendered ONLY on the Landing Page `/` route) */}
+      {currentTab === 'home' && <LiveChatWidget />}
 
       {/* Institutional Footer */}
       {currentTab !== 'terminal' && (

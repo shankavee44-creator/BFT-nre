@@ -111,6 +111,12 @@ import {
   evaluateDepositStatusWithExpiry,
   formatDepositCountdown,
 } from '../config/directDeposit';
+import {
+  fetchUserTrades,
+  mapFromSupabaseRow,
+  mergeTradesAuthoritatively,
+  computeUserTradingSummary,
+} from '../utils/supabaseTradeSync';
 
 interface UserDashboardProps {
   userProfile: UserProfile;
@@ -251,10 +257,11 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     }
   }, [userProfile.profileLocked]);
 
-  // Live Supabase state for Purchases, Deposits & Withdrawals Ledger
+  // Live Supabase state for Purchases, Deposits, Withdrawals & Real User Trades Ledger
   const [livePurchases, setLivePurchases] = useState<NormalizedPurchaseRecord[]>([]);
   const [supabaseDeposits, setSupabaseDeposits] = useState<any[]>([]);
   const [supabaseWithdrawals, setSupabaseWithdrawals] = useState<any[]>([]);
+  const [supabaseUserTrades, setSupabaseUserTrades] = useState<BinaryTrade[]>([]);
   const [adminUsersList, setAdminUsersList] = useState<any[]>([]);
   const [nowTick, setNowTick] = useState<number>(() => Date.now());
   const [cancellingWdId, setCancellingWdId] = useState<string | null>(null);
@@ -544,8 +551,8 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
         if (effectiveUserUuid) {
           await expireStaleSupabaseCryptoDeposits(effectiveUserUuid).catch(() => {});
-          // Query Supabase user_purchases, crypto_deposits, and withdrawals tables
-          const [purchasesRes, cryptoDepsRes, wdsRes] = await Promise.all([
+          // Query Supabase user_purchases, crypto_deposits, withdrawals, and user_trades tables
+          const [purchasesRes, cryptoDepsRes, wdsRes, userTradesRes] = await Promise.all([
             supabase
               .from('user_purchases')
               .select('*')
@@ -558,6 +565,11 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               .order('created_at', { ascending: false }),
             supabase
               .from('withdrawals')
+              .select('*')
+              .eq('user_id', effectiveUserUuid)
+              .order('created_at', { ascending: false }),
+            supabase
+              .from('user_trades')
               .select('*')
               .eq('user_id', effectiveUserUuid)
               .order('created_at', { ascending: false }),
@@ -580,6 +592,14 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
           if (isMounted) {
             if (wdsRes.data) setSupabaseWithdrawals(wdsRes.data);
+            if (Array.isArray(userTradesRes.data)) {
+              setSupabaseUserTrades(userTradesRes.data.map((row) => mapFromSupabaseRow(row)));
+            }
+          }
+        } else if (targetUserId) {
+          const fetchedTrades = await fetchUserTrades(targetUserId).catch(() => []);
+          if (isMounted && Array.isArray(fetchedTrades)) {
+            setSupabaseUserTrades(fetchedTrades);
           }
         }
 
@@ -631,6 +651,13 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'trading_accounts' },
+        () => {
+          if (isMounted) syncLiveSupabaseData();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'user_trades' },
         () => {
           if (isMounted) syncLiveSupabaseData();
         }
@@ -1032,7 +1059,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
   const handleExportCSV = (accId?: string) => {
     soundEngine.playTradeWin();
-    exportTradesToCSV(trades, accId);
+    exportTradesToCSV(authoritativeUserTrades, accId);
   };
 
   const handleStart2faSetup = async () => {
@@ -1160,22 +1187,26 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     setTimeout(() => setCopiedSecret(false), 2500);
   };
 
+  // Authoritative real user trades merged from Supabase `user_trades` and current session trades
+  const authoritativeUserTrades = React.useMemo(
+    () => mergeTradesAuthoritatively(trades, supabaseUserTrades),
+    [trades, supabaseUserTrades]
+  );
+
+  // Real Trading Summary dynamically computed from Supabase `user_trades` for the active logged-in user
+  const tradingSummary = React.useMemo(
+    () => computeUserTradingSummary(authoritativeUserTrades),
+    [authoritativeUserTrades]
+  );
+
   // Filter trades based on the currently selected account for history and analytics consistency
-  const effectiveTrades = activeAccountId 
-    ? trades.filter((t) => t.accountId === activeAccountId)
-    : trades;
+  const effectiveTrades = activeAccountId
+    ? authoritativeUserTrades.filter((t) => t.accountId === activeAccountId)
+    : authoritativeUserTrades;
   const wonTradesCount = effectiveTrades.filter((t) => t.status === 'won').length;
   const lostTradesCount = effectiveTrades.filter((t) => t.status === 'lost').length;
   const totalSettled = wonTradesCount + lostTradesCount;
   const winRatePercent = totalSettled > 0 ? Number(((wonTradesCount / totalSettled) * 100).toFixed(1)) : 0;
-
-  // Overall totals across all accounts based on trades state
-  const totalTradesCount = trades.length;
-  const totalWins = trades.filter((t) => t.status === 'won').length;
-  const totalLosses = trades.filter((t) => t.status === 'lost').length;
-  const totalSettledAll = totalWins + totalLosses;
-  const overallWinRate = totalSettledAll > 0 ? ((totalWins / totalSettledAll) * 100).toFixed(1) : '0.0';
-  const overallPnl = trades.reduce((sum, t) => sum + (t.pnl || (t.status === 'won' ? (t.potentialPayout || t.investment * 0.85) : t.status === 'lost' ? -t.investment : 0)), 0);
 
   const winLossPieData =
     totalSettled > 0
@@ -1240,24 +1271,25 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   return (
     <div
       style={{ touchAction: 'pan-y' }}
-      className="py-8 sm:py-10 max-w-6xl mx-auto px-3 sm:px-6 lg:px-8 font-sans w-full max-w-full overflow-y-visible touch-pan-y"
+      className="py-3 sm:py-10 max-w-6xl mx-auto px-2.5 sm:px-6 lg:px-8 font-sans w-full max-w-full overflow-y-visible touch-pan-y"
     >
-      {/* Trader Profile Header Card */}
-      <div className="p-5 sm:p-8 rounded-3xl bg-[#0a0a0a] border border-[#ff8800]/40 mb-6">
-        <div className="flex flex-col lg:flex-row items-center lg:items-start justify-between gap-6">
-          <div className="flex flex-col sm:flex-row items-center gap-5 text-center sm:text-left">
-            <div className="relative group">
+      {/* Ultra-Compact Trader Profile Header Card */}
+      <div className="p-3.5 sm:p-7 rounded-2xl sm:rounded-3xl bg-[#0a0a0a]/95 backdrop-blur-md border border-[#ff8800]/40 shadow-[0_8px_30px_rgba(0,0,0,0.65)] mb-4 sm:mb-6">
+        <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 sm:gap-6">
+          {/* Top / Left Identity Row: Compact side-by-side layout on mobile */}
+          <div className="flex items-center gap-3 sm:gap-5 text-left min-w-0">
+            <div className="relative group shrink-0">
               <img
                 src={userProfile.avatarUrl || BUILTIN_AVATARS[0]}
                 alt={userProfile.fullName || 'Trader'}
-                className="w-20 h-20 rounded-2xl object-cover ring-2 ring-[#ff8800] bg-[#141418]"
+                className="w-14 h-14 sm:w-20 sm:h-20 rounded-xl sm:rounded-2xl object-cover ring-2 ring-[#ff8800] bg-[#141418]"
               />
               <label
                 htmlFor="quick-avatar-upload"
-                className="absolute inset-0 bg-black/60 rounded-2xl opacity-0 group-hover:opacity-100 flex items-center justify-center cursor-pointer transition-opacity"
+                className="absolute inset-0 bg-black/60 rounded-xl sm:rounded-2xl opacity-0 group-hover:opacity-100 flex items-center justify-center cursor-pointer transition-opacity"
                 title="Upload Custom Profile Photo"
               >
-                <Camera className="w-6 h-6 text-[#ff8800]" />
+                <Camera className="w-4 h-4 sm:w-6 sm:h-6 text-[#ff8800]" />
                 <input
                   id="quick-avatar-upload"
                   type="file"
@@ -1268,7 +1300,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               </label>
               <span
                 data-testid="user-kyc-status-badge"
-                className={`absolute -bottom-1.5 -right-1.5 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider font-mono border ${
+                className={`absolute -bottom-1 -right-1 px-1.5 sm:px-2 py-0.5 rounded-full text-[8px] sm:text-[9px] font-black uppercase tracking-wider font-mono border shadow-sm ${
                   userProfile.kycStatus === 'verified'
                     ? 'bg-emerald-400 text-slate-950 border-emerald-300'
                     : userProfile.kycStatus === 'pending'
@@ -1280,38 +1312,42 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               </span>
             </div>
 
-            <div>
-              <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2.5">
+            <div className="flex-1 min-w-0">
+              <div className="flex flex-wrap items-center gap-1.5 sm:gap-2.5">
                 <BftLogo
-                  imgClassName="h-8 sm:h-9 w-auto"
+                  imgClassName="h-5 sm:h-8 w-auto shrink-0"
                   testId="dashboard-header-bft-logo"
                   alt="BFT Bull Logo"
                 />
-                <h1 className="text-xl sm:text-2xl font-black text-white">
+                <h1 className="text-sm sm:text-2xl font-black text-white truncate">
                   {userProfile.fullName || 'New BFT Trader'}
                 </h1>
-                <span className="text-xs font-mono text-[#ff8800] bg-[#ff8800]/15 border border-[#ff8800]/40 px-2.5 py-0.5 rounded-full font-bold">
+                <span className="text-[10px] sm:text-xs font-mono text-[#ff8800] bg-[#ff8800]/15 border border-[#ff8800]/40 px-2 sm:px-2.5 py-0.5 rounded-full font-bold shrink-0">
                   Ref Code: {userProfile.referralCode || (userProfile.id ? `BFT-${String(userProfile.id).replace(/[^a-zA-Z0-9]/g, '').slice(0, 6).toUpperCase()}` : 'BFT-TRADER')}
                 </span>
                 {isProfileLocked && (
                   <span
                     data-testid="header-profile-locked-pill"
-                    className="inline-flex items-center gap-1 text-[10px] font-mono bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 px-2.5 py-0.5 rounded-full font-bold"
+                    className="inline-flex items-center gap-1 text-[9.5px] sm:text-[10px] font-mono bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 px-2 py-0.5 rounded-full font-bold shrink-0"
                   >
-                    <Lock className="w-3 h-3" /> Identity Locked
+                    <Lock className="w-2.5 h-2.5 sm:w-3 sm:h-3" /> Identity Locked
                   </span>
                 )}
               </div>
-              <p className="text-xs text-slate-400 mt-1 font-mono">{userProfile.email}</p>
-              <div className="flex flex-wrap items-center justify-center sm:justify-start gap-3 mt-3 text-xs text-slate-300">
-                <span data-testid="profile-header-country" className="flex items-center gap-1.5 font-mono">
-                  <Globe className="w-3.5 h-3.5 text-[#ff8800] shrink-0" />
-                  <CountryFlagIcon country={userProfile.country} className="w-5 h-3.5 rounded-[2px] shadow-sm border border-white/10 shrink-0 inline-block align-middle object-cover" />
-                  <span>{userProfile.country || 'United States'}</span>
+
+              <p className="text-[11px] sm:text-xs text-slate-400 mt-0.5 sm:mt-1 font-mono truncate">
+                {userProfile.email}
+              </p>
+
+              <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 mt-1.5 sm:mt-2.5 text-[10.5px] sm:text-xs text-slate-300">
+                <span data-testid="profile-header-country" className="flex items-center gap-1 font-mono">
+                  <Globe className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#ff8800] shrink-0" />
+                  <CountryFlagIcon country={userProfile.country} className="w-4 h-3 sm:w-5 sm:h-3.5 rounded-[2px] shadow-sm border border-white/10 shrink-0 inline-block align-middle object-cover" />
+                  <span className="truncate">{userProfile.country || 'United States'}</span>
                 </span>
                 {userProfile.dateOfBirth && (
                   <span className="flex items-center gap-1 font-mono text-slate-300">
-                    <Calendar className="w-3.5 h-3.5 text-[#ff8800]" /> DOB: {userProfile.dateOfBirth}
+                    <Calendar className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#ff8800]" /> DOB: {userProfile.dateOfBirth}
                   </span>
                 )}
                 <span
@@ -1324,49 +1360,73 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                       : 'text-rose-400'
                   }`}
                 >
-                  <ShieldCheck className="w-3.5 h-3.5" />
-                  KYC Status: {formatKycStatusBadgeText(userProfile.kycStatus)}
+                  <ShieldCheck className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+                  <span>KYC Status: {formatKycStatusBadgeText(userProfile.kycStatus)}</span>
                 </span>
               </div>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center justify-center gap-2">
+          {/* Action Buttons: Compact 2x2 Grid on Mobile, Horizontal Row on Desktop */}
+          <div
+            data-testid="profile-header-actions-grid"
+            className="grid grid-cols-2 sm:flex sm:flex-wrap items-center justify-center gap-1.5 sm:gap-2 w-full lg:w-auto pt-2.5 lg:pt-0 border-t border-white/10 lg:border-t-0"
+          >
             <button
               type="button"
               data-testid="dashboard-request-withdrawal-btn"
               onClick={() => handleAttemptWithdrawal()}
-              className={`px-4 py-2.5 rounded-xl font-mono text-xs font-black transition-colors flex items-center gap-1.5 cursor-pointer border ${
+              className={`min-h-[38px] sm:min-h-[42px] px-2.5 py-2 sm:px-4 sm:py-2.5 rounded-xl font-mono text-[11px] sm:text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer border bft-touch-scale ${
                 kycWithdrawalCheck.allowed
                   ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 border-emerald-400'
-                  : 'bg-[#141418] hover:bg-[#1c1c22] text-slate-300 border-white/15'
+                  : 'bg-[#141418] hover:bg-[#1c1c22] text-slate-200 border-white/15'
               }`}
             >
               {kycWithdrawalCheck.allowed ? (
-                <Zap className="w-3.5 h-3.5 fill-current" />
+                <Zap className="w-3.5 h-3.5 fill-current shrink-0" />
               ) : (
-                <Lock className="w-3.5 h-3.5 text-[#ff8800]" />
+                <Lock className="w-3.5 h-3.5 text-[#ff8800] shrink-0" />
               )}
-              <span>Request Withdrawal</span>
+              <span className="truncate">Request Withdrawal</span>
             </button>
 
             <button
               type="button"
+              data-testid="dashboard-export-csv-btn"
               onClick={() => handleExportCSV()}
-              className="px-4 py-2.5 rounded-xl bg-[#141418] hover:bg-white/10 border border-white/15 text-slate-200 hover:text-white font-mono text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer"
+              className="min-h-[38px] sm:min-h-[42px] px-2.5 py-2 sm:px-4 sm:py-2.5 rounded-xl bg-[#141418] hover:bg-white/10 border border-white/15 text-slate-200 hover:text-white font-mono text-[11px] sm:text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer bft-touch-scale"
             >
-              <Download className="w-3.5 h-3.5 text-[#ff8800]" />
-              <span>Export CSV</span>
+              <Download className="w-3.5 h-3.5 text-[#ff8800] shrink-0" />
+              <span className="truncate">Export CSV</span>
             </button>
 
             <button
               type="button"
               data-testid="dashboard-buy-challenge-btn"
               onClick={onOpenChallengeModal}
-              className="px-5 py-2.5 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] text-slate-950 font-black text-xs transition-colors cursor-pointer shrink-0 font-mono"
+              className="min-h-[38px] sm:min-h-[42px] px-2.5 py-2 sm:px-5 sm:py-2.5 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] text-slate-950 font-black text-[11px] sm:text-xs transition-all cursor-pointer shrink-0 font-mono flex items-center justify-center gap-1.5 bft-touch-scale"
             >
-              {accounts.length === 0 ? 'Choose a Plan / Buy Challenge' : '+ Buy Another Account'}
+              <ShoppingBag className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">
+                {accounts.length === 0 ? 'Choose a Plan / Buy Challenge' : '+ Buy Another Account'}
+              </span>
             </button>
+
+            {onLogout && (
+              <button
+                type="button"
+                data-testid="dashboard-profile-logout-btn"
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  onLogout();
+                }}
+                className="min-h-[38px] sm:min-h-[42px] px-2.5 py-2 sm:px-4 sm:py-2.5 rounded-xl bg-rose-950/60 hover:bg-rose-900/80 border border-rose-500/40 text-rose-300 hover:text-white font-mono text-[11px] sm:text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer shrink-0 bft-touch-scale"
+                title="Sign Out of Your Profile"
+              >
+                <LogOut className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                <span className="truncate">Sign Out</span>
+              </button>
+            )}
 
             {isUserAdmin && (
               <button
@@ -1380,27 +1440,11 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                     setActiveTab('admin_users');
                   }
                 }}
-                className="px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-mono text-xs font-black transition-colors flex items-center gap-1.5 cursor-pointer shrink-0 shadow-lg shadow-purple-600/25"
+                className="col-span-2 sm:col-span-1 min-h-[38px] sm:min-h-[42px] px-3 py-2 sm:px-4 sm:py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-mono text-[11px] sm:text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer shrink-0 shadow-lg shadow-purple-600/25 bft-touch-scale"
                 title="Open Administrative Command Center"
               >
-                <ShieldCheck className="w-3.5 h-3.5" />
+                <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
                 <span>Admin Console</span>
-              </button>
-            )}
-
-            {onLogout && (
-              <button
-                type="button"
-                data-testid="dashboard-profile-logout-btn"
-                onClick={() => {
-                  soundEngine.playUiClick();
-                  onLogout();
-                }}
-                className="px-4 py-2.5 rounded-xl bg-rose-950/60 hover:bg-rose-900/80 border border-rose-500/40 text-rose-300 hover:text-white font-mono text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer shrink-0"
-                title="Sign Out of Your Profile"
-              >
-                <LogOut className="w-3.5 h-3.5 text-rose-400" />
-                <span>Sign Out</span>
               </button>
             )}
           </div>
@@ -1410,10 +1454,10 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         {userProfile.kycStatus !== 'verified' && (
           <div
             data-testid="dashboard-kyc-lock-banner"
-            className="mt-5 p-4 rounded-2xl bg-[#14100a] border border-[#ff8800]/50 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs font-mono"
+            className="mt-3 sm:mt-5 p-2.5 sm:p-4 rounded-xl sm:rounded-2xl bg-[#14100a] border border-[#ff8800]/50 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-3 text-[11px] sm:text-xs font-mono"
           >
-            <div className="flex items-start gap-2.5">
-              <ShieldAlert className="w-5 h-5 text-[#ff8800] shrink-0 mt-0.5" />
+            <div className="flex items-start gap-2">
+              <ShieldAlert className="w-4 h-4 sm:w-5 sm:h-5 text-[#ff8800] shrink-0 mt-0.5" />
               <div>
                 <div className="font-black text-white uppercase">
                   KYC Status: {formatKycStatusBadgeText(userProfile.kycStatus)} —{' '}
@@ -1421,7 +1465,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                     ? 'Document Review In Progress'
                     : 'Withdrawals Restricted'}
                 </div>
-                <p className="text-slate-300 mt-0.5">
+                <p className="text-slate-300 mt-0.5 text-[10.5px] sm:text-xs">
                   {userProfile.kycStatus === 'pending'
                     ? 'Your personal details and dual-sided ID documents have been saved to the database and are currently Pending Verification.'
                     : KYC_WITHDRAWAL_LOCK_MESSAGE}
@@ -1435,7 +1479,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                 soundEngine.playUiClick();
                 setActiveTab('kyc');
               }}
-              className="px-4 py-2 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] text-slate-950 font-black text-xs uppercase shrink-0 cursor-pointer transition-colors"
+              className="w-full sm:w-auto px-3.5 py-2 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] text-slate-950 font-black text-[11px] sm:text-xs uppercase shrink-0 cursor-pointer transition-colors text-center"
             >
               {userProfile.kycStatus === 'pending' ? 'View KYC Status →' : 'Complete Automated KYC →'}
             </button>
@@ -1446,7 +1490,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         {withdrawalBlockNotice && (
           <div
             data-testid="withdrawal-blocked-alert"
-            className="mt-3 p-3.5 rounded-xl bg-rose-950/90 border border-rose-500 text-xs font-mono text-rose-200 flex items-center justify-between gap-3"
+            className="mt-2.5 sm:mt-3 p-3 rounded-xl bg-rose-950/90 border border-rose-500 text-xs font-mono text-rose-200 flex items-center justify-between gap-3"
           >
             <div className="flex items-center gap-2">
               <Ban className="w-4 h-4 text-rose-400 shrink-0" />
@@ -1508,7 +1552,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
       </div>
 
       {/* Navigation Tabs (Mobile & Tablet Glassmorphic Dropdown Popover) */}
-      <div className="lg:hidden mb-6 relative font-mono">
+      <div className="lg:hidden mb-4 sm:mb-6 relative font-mono">
         <label className="text-[10px] uppercase font-mono font-bold tracking-wider text-slate-400 block mb-1.5">
           Select Profile Section:
         </label>
@@ -1521,7 +1565,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               soundEngine.playUiClick();
               setIsMobileTabDropdownOpen(!isMobileTabDropdownOpen);
             }}
-            className={`w-full min-h-[48px] px-4 py-3 rounded-xl bg-zinc-900/95 backdrop-blur-md border text-white text-xs font-black flex items-center justify-between transition-all duration-200 cursor-pointer touch-manipulation bft-touch-scale ${
+            className={`w-full min-h-[46px] px-3.5 py-2.5 rounded-xl bg-zinc-900/95 backdrop-blur-md border text-white text-xs font-black flex items-center justify-between transition-all duration-200 cursor-pointer touch-manipulation bft-touch-scale ${
               isMobileTabDropdownOpen
                 ? 'border-[#ff8800] shadow-[0_0_20px_rgba(255,136,0,0.22)]'
                 : 'border-[#ff8800]/45 hover:border-[#ff8800]/75 shadow-[0_8px_24px_rgba(0,0,0,0.65)]'
@@ -1626,71 +1670,120 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
       {/* Tab 1: My Trading Accounts */}
       {activeTab === 'accounts' && (
         <div className="space-y-4">
-          {/* Summary Card: Total Wins, Losses, and Overall Profit/Loss Across All Accounts */}
-          {trades.length > 0 && (
-            <div
-              data-testid="dashboard-trades-summary-card"
-              className="p-5 sm:p-6 rounded-2xl bg-[#0e0e12] border border-[#ff8800]/40 shadow-2xl mb-4 font-mono"
-            >
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-white/10">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-[#ff8800]/15 border border-[#ff8800]/40 flex items-center justify-center text-[#ff8800] shrink-0">
-                    <TrendingUp className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h3 className="text-base sm:text-lg font-black text-white flex items-center gap-2">
-                      <span>Overall Trading Summary</span>
-                      <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30">
-                        {totalTradesCount} Total Trades
-                      </span>
-                    </h3>
-                    <p className="text-xs text-slate-400">
-                      Calculated across all accounts based on existing trades state.
-                    </p>
-                  </div>
+          {/* Overall Trading Summary Card: Real Trading Statistics from Supabase `user_trades` */}
+          <div
+            data-testid="dashboard-trades-summary-card"
+            className="p-4 sm:p-6 rounded-2xl bg-[#0e0e12] border border-[#ff8800]/40 shadow-2xl mb-4 font-mono"
+          >
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 sm:pb-4 border-b border-white/10">
+              <div className="flex items-center gap-2.5 sm:gap-3">
+                <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-[#ff8800]/15 border border-[#ff8800]/40 flex items-center justify-center text-[#ff8800] shrink-0">
+                  <TrendingUp className="w-4 h-4 sm:w-5 sm:h-5" />
                 </div>
-
-                <div className="flex items-center gap-3">
-                  <div className="text-right">
-                    <span className="text-[10px] text-slate-400 block uppercase font-mono">Overall Profit / Loss</span>
-                    <span className={`text-base sm:text-lg font-black ${overallPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {overallPnl >= 0 ? `+$${overallPnl.toFixed(2)}` : `-$${Math.abs(overallPnl).toFixed(2)}`}
+                <div>
+                  <h3 className="text-sm sm:text-lg font-black text-white flex flex-wrap items-center gap-2">
+                    <span>Overall Trading Summary</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30">
+                      {tradingSummary.totalTradesCount} Total Trades
                     </span>
-                  </div>
+                  </h3>
+                  <p className="text-[11px] sm:text-xs text-slate-400">
+                    Real-time statistics queried from Supabase (<code className="text-[#ff8800]">user_trades</code>).
+                  </p>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
-                <div className="p-3.5 rounded-xl bg-[#14141a] border border-white/10">
-                  <span className="text-[10px] text-slate-400 block uppercase font-mono">Total Wins</span>
-                  <span className="text-sm sm:text-base font-black text-emerald-400 mt-1 block">
-                    {totalWins}
+              <div className="flex items-center justify-between sm:justify-end gap-3 pt-2 sm:pt-0 border-t border-white/5 sm:border-t-0">
+                <span className="text-[10px] text-slate-400 uppercase font-mono sm:hidden">
+                  Total Net Profit/Loss
+                </span>
+                <div className="text-right">
+                  <span className="text-[10px] text-slate-400 hidden sm:block uppercase font-mono">
+                    Total Net Profit / Loss
                   </span>
-                </div>
-
-                <div className="p-3.5 rounded-xl bg-[#14141a] border border-white/10">
-                  <span className="text-[10px] text-slate-400 block uppercase font-mono">Total Losses</span>
-                  <span className="text-sm sm:text-base font-black text-rose-400 mt-1 block">
-                    {totalLosses}
-                  </span>
-                </div>
-
-                <div className="p-3.5 rounded-xl bg-[#14141a] border border-white/10">
-                  <span className="text-[10px] text-slate-400 block uppercase font-mono">Win Rate</span>
-                  <span className="text-sm sm:text-base font-black text-cyan-400 mt-1 block">
-                    {overallWinRate}%
-                  </span>
-                </div>
-
-                <div className="p-3.5 rounded-xl bg-[#14141a] border border-white/10">
-                  <span className="text-[10px] text-slate-400 block uppercase font-mono">Settled / Total</span>
-                  <span className="text-sm sm:text-base font-black text-white mt-1 block">
-                    {totalSettledAll} / {totalTradesCount}
+                  <span
+                    data-testid="summary-net-pnl"
+                    className={`text-sm sm:text-lg font-black ${
+                      tradingSummary.totalNetProfitLoss > 0
+                        ? 'text-emerald-400'
+                        : tradingSummary.totalNetProfitLoss < 0
+                        ? 'text-rose-400'
+                        : 'text-slate-200'
+                    }`}
+                  >
+                    {tradingSummary.formattedNetProfitLoss}
                   </span>
                 </div>
               </div>
             </div>
-          )}
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3 mt-3 sm:mt-4">
+              <div className="p-3 sm:p-3.5 rounded-xl bg-[#14141a] border border-white/10">
+                <span className="text-[10px] text-slate-400 block uppercase font-mono">
+                  Total Trades Count
+                </span>
+                <span
+                  data-testid="summary-total-trades"
+                  className="text-sm sm:text-base font-black text-white mt-1 block"
+                >
+                  {tradingSummary.totalTradesCount}
+                </span>
+                <span className="text-[10px] text-slate-500 block mt-0.5">
+                  {tradingSummary.winningTradesCount}W / {tradingSummary.losingTradesCount}L ({tradingSummary.totalCompletedTrades} Settled)
+                </span>
+              </div>
+
+              <div className="p-3 sm:p-3.5 rounded-xl bg-[#14141a] border border-white/10">
+                <span className="text-[10px] text-slate-400 block uppercase font-mono">
+                  Win Rate (%)
+                </span>
+                <span
+                  data-testid="summary-win-rate"
+                  className="text-sm sm:text-base font-black text-cyan-400 mt-1 block"
+                >
+                  {tradingSummary.formattedWinRate}
+                </span>
+                <span className="text-[10px] text-slate-500 block mt-0.5">
+                  Wins / Completed Trades
+                </span>
+              </div>
+
+              <div className="p-3 sm:p-3.5 rounded-xl bg-[#14141a] border border-white/10">
+                <span className="text-[10px] text-slate-400 block uppercase font-mono">
+                  Total Net Profit/Loss
+                </span>
+                <span
+                  className={`text-sm sm:text-base font-black mt-1 block ${
+                    tradingSummary.totalNetProfitLoss > 0
+                      ? 'text-emerald-400'
+                      : tradingSummary.totalNetProfitLoss < 0
+                      ? 'text-rose-400'
+                      : 'text-slate-200'
+                  }`}
+                >
+                  {tradingSummary.formattedNetProfitLoss}
+                </span>
+                <span className="text-[10px] text-slate-500 block mt-0.5">
+                  Realized Net P&amp;L
+                </span>
+              </div>
+
+              <div className="p-3 sm:p-3.5 rounded-xl bg-[#14141a] border border-white/10">
+                <span className="text-[10px] text-slate-400 block uppercase font-mono">
+                  Total Volume Traded
+                </span>
+                <span
+                  data-testid="summary-total-volume"
+                  className="text-sm sm:text-base font-black text-[#ff8800] mt-1 block"
+                >
+                  {tradingSummary.formattedVolumeTraded}
+                </span>
+                <span className="text-[10px] text-slate-500 block mt-0.5">
+                  Cumulative Stake Volume
+                </span>
+              </div>
+            </div>
+          </div>
 
           {accounts.length === 0 ? (
             <div

@@ -28,11 +28,13 @@ export function generate30DayPerformance(
   activeTrades: BinaryTrade[] = []
 ): { points: DailyPerformancePoint[]; stats: PerformanceStats } {
   const points: DailyPerformancePoint[] = [];
-  const baseWinRate = account.winRate > 0 ? account.winRate : 68;
-  const currentNetProfit = account.currentBalance - account.initialBalance;
+  const now = new Date();
 
-  if ((account.tradesCount || 0) === 0 && Math.abs(currentNetProfit) < 0.01 && activeTrades.length === 0) {
-    const now = new Date();
+  const completedTrades = Array.isArray(activeTrades)
+    ? activeTrades.filter((t) => t.status === 'won' || t.status === 'lost' || t.status === 'tie')
+    : [];
+
+  if (completedTrades.length === 0) {
     for (let i = 29; i >= 0; i--) {
       const d = new Date(now);
       d.setDate(d.getDate() - i);
@@ -64,7 +66,6 @@ export function generate30DayPerformance(
     };
   }
 
-  // Generate 30 days of trading curve ending at current account state
   let cumulative = 0;
   let totalWins = 0;
   let totalLosses = 0;
@@ -75,57 +76,71 @@ export function generate30DayPerformance(
   let currentStreak = 0;
   let maxStreak = 0;
 
-  const now = new Date();
+  const sortedTrades = [...completedTrades].sort((a, b) => (a.startTime || 0) - (b.startTime || 0));
+  for (const t of sortedTrades) {
+    if (t.status === 'won') {
+      currentStreak += 1;
+      if (currentStreak > maxStreak) maxStreak = currentStreak;
+    } else if (t.status === 'lost') {
+      currentStreak = 0;
+    }
+  }
 
-  // Distribute profit curve naturally over 30 days
   for (let i = 29; i >= 0; i--) {
     const d = new Date(now);
     d.setDate(d.getDate() - i);
     const dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
-    // Weekends have zero trades or minor OTC
-    const isWeekend = d.getDay() === 0 || d.getDay() === 6;
-    const dailyTrades = isWeekend ? Math.floor(Math.random() * 2) : Math.floor(Math.random() * 4) + 2;
+    const dayTrades = completedTrades.filter((t) => {
+      const ts = Number(t.endTime || t.startTime || 0);
+      if (!ts) return i === 0;
+      const td = new Date(ts);
+      return (
+        td.getFullYear() === d.getFullYear() &&
+        td.getMonth() === d.getMonth() &&
+        td.getDate() === d.getDate()
+      );
+    });
 
     let dayWins = 0;
     let dayLosses = 0;
     let dayPnL = 0;
 
-    for (let t = 0; t < dailyTrades; t++) {
-      const isWin = Math.random() * 100 <= baseWinRate;
-      const stake = (account.size * 0.01) + (Math.random() * 20); // ~ 1%
-      if (isWin) {
-        dayWins++;
-        currentStreak++;
-        if (currentStreak > maxStreak) maxStreak = currentStreak;
-        const gain = stake * 0.88;
-        dayPnL += gain;
-        grossWins += gain;
-      } else {
-        dayLosses++;
-        currentStreak = 0;
-        dayPnL -= stake;
-        grossLosses += stake;
+    for (const t of dayTrades) {
+      const stake = Number(t.investment || 0);
+      const tradePnl =
+        typeof t.pnl === 'number'
+          ? t.pnl
+          : t.status === 'won'
+          ? Number(t.potentialPayout ?? stake * 0.85)
+          : t.status === 'lost'
+          ? -stake
+          : 0;
+
+      if (t.status === 'won') {
+        dayWins += 1;
+        dayPnL += tradePnl;
+        grossWins += Math.max(0, tradePnl);
+      } else if (t.status === 'lost') {
+        dayLosses += 1;
+        dayPnL += tradePnl;
+        grossLosses += Math.abs(Math.min(0, tradePnl));
       }
     }
 
-    // On the last day (today), calibrate to match actual account current profit
-    if (i === 0 && currentNetProfit !== 0) {
-      const adjustment = currentNetProfit - cumulative;
-      dayPnL = Number(adjustment.toFixed(2));
-      cumulative = currentNetProfit;
-    } else {
-      cumulative += dayPnL;
-    }
-
+    cumulative += dayPnL;
     totalWins += dayWins;
     totalLosses += dayLosses;
 
-    if (dayPnL > bestDay) bestDay = dayPnL;
-    if (dayPnL < worstDay) worstDay = dayPnL;
+    if (dayTrades.length > 0) {
+      if (dayPnL > bestDay) bestDay = dayPnL;
+      if (dayPnL < worstDay) worstDay = dayPnL;
+    }
 
-    const dayWinRate = dailyTrades > 0 ? Math.round((dayWins / dailyTrades) * 100) : baseWinRate;
-    const drawdownPercent = Math.max(0, Number(((Math.abs(Math.min(0, dayPnL)) / account.size) * 100).toFixed(2)));
+    const daySettled = dayWins + dayLosses;
+    const dayWinRate = daySettled > 0 ? Number(((dayWins / daySettled) * 100).toFixed(1)) : 0;
+    const safeSize = Math.max(1, Number(account.size || account.initialBalance || 10000));
+    const drawdownPercent = Math.max(0, Number(((Math.abs(Math.min(0, dayPnL)) / safeSize) * 100).toFixed(2)));
 
     points.push({
       date: dateStr,
@@ -133,16 +148,18 @@ export function generate30DayPerformance(
       dailyPnL: Number(dayPnL.toFixed(2)),
       cumulativeProfit: Number(cumulative.toFixed(2)),
       winRate: dayWinRate,
-      tradesCount: dailyTrades,
+      tradesCount: dayTrades.length,
       wins: dayWins,
       losses: dayLosses,
       drawdownPercent,
     });
   }
 
-  const totalTrades30Days = totalWins + totalLosses;
-  const overallWinRate = totalTrades30Days > 0 ? Number(((totalWins / totalTrades30Days) * 100).toFixed(1)) : baseWinRate;
-  const profitFactor = grossLosses > 0 ? Number((grossWins / grossLosses).toFixed(2)) : 2.5;
+  const totalTrades30Days = completedTrades.length;
+  const overallWinRate =
+    totalWins + totalLosses > 0 ? Number(((totalWins / (totalWins + totalLosses)) * 100).toFixed(1)) : 0;
+  const profitFactor =
+    grossLosses > 0 ? Number((grossWins / grossLosses).toFixed(2)) : grossWins > 0 ? Number(grossWins.toFixed(2)) : 0;
 
   return {
     points,
@@ -151,10 +168,11 @@ export function generate30DayPerformance(
       averageDailyProfit: Number((cumulative / 30).toFixed(2)),
       overallWinRate,
       profitFactor,
-      bestDayProfit: Number(bestDay.toFixed(2)),
-      worstDayProfit: Number(worstDay.toFixed(2)),
-      maxWinStreak: Math.max(maxStreak, 4),
+      bestDayProfit: Number.isFinite(bestDay) ? Number(bestDay.toFixed(2)) : 0,
+      worstDayProfit: Number.isFinite(worstDay) ? Number(worstDay.toFixed(2)) : 0,
+      maxWinStreak: maxStreak,
       totalTrades30Days,
     },
   };
 }
+

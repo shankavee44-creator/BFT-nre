@@ -1117,3 +1117,133 @@ export function computeAssetActiveTradeBadge(
   };
 }
 
+export interface UserTradingSummaryMetrics {
+  totalTradesCount: number;
+  winningTradesCount: number;
+  losingTradesCount: number;
+  totalCompletedTrades: number;
+  winRatePercent: number;
+  formattedWinRate: string;
+  totalNetProfitLoss: number;
+  formattedNetProfitLoss: string;
+  totalVolumeTraded: number;
+  formattedVolumeTraded: string;
+}
+
+/**
+ * Dynamically computes the user's real trading statistics from Supabase `user_trades` records:
+ * - Total Trades Count
+ * - Win Rate (%) = (Winning Trades / Total Completed Trades) * 100
+ * - Total Net Profit/Loss ($)
+ * - Total Volume Traded ($)
+ * When the user has no trade history yet, returns `$0.00` and `0%` accurately.
+ */
+export function computeUserTradingSummary(
+  trades: Array<BinaryTrade | Record<string, any>> | undefined | null
+): UserTradingSummaryMetrics {
+  if (!Array.isArray(trades) || trades.length === 0) {
+    return {
+      totalTradesCount: 0,
+      winningTradesCount: 0,
+      losingTradesCount: 0,
+      totalCompletedTrades: 0,
+      winRatePercent: 0,
+      formattedWinRate: '0%',
+      totalNetProfitLoss: 0,
+      formattedNetProfitLoss: '$0.00',
+      totalVolumeTraded: 0,
+      formattedVolumeTraded: '$0.00',
+    };
+  }
+
+  let totalTradesCount = 0;
+  let winningTradesCount = 0;
+  let losingTradesCount = 0;
+  let tieTradesCount = 0;
+  let netProfitLoss = 0;
+  let totalVolume = 0;
+
+  for (const rawTrade of trades) {
+    if (!rawTrade || typeof rawTrade !== 'object') continue;
+    totalTradesCount += 1;
+
+    const stake = Math.max(0, Number((rawTrade as any).investment ?? (rawTrade as any).amount ?? 0) || 0);
+    totalVolume += stake;
+
+    const rawStatus = String((rawTrade as any).status || '')
+      .toUpperCase()
+      .trim();
+
+    const isWin = rawStatus === 'WON' || rawStatus === 'WIN';
+    const isLoss = rawStatus === 'LOST' || rawStatus === 'LOSS';
+    const isTie = rawStatus === 'TIE';
+
+    if (isWin) {
+      winningTradesCount += 1;
+      const explicitPnl = (rawTrade as any).pnl;
+      if (typeof explicitPnl === 'number' && Number.isFinite(explicitPnl)) {
+        netProfitLoss += explicitPnl;
+      } else {
+        const payoutPct = Number((rawTrade as any).payoutPercentage ?? 85) || 85;
+        const potential = Number((rawTrade as any).potentialPayout ?? (stake * payoutPct) / 100) || 0;
+        netProfitLoss += potential;
+      }
+    } else if (isLoss) {
+      losingTradesCount += 1;
+      const explicitPnl = (rawTrade as any).pnl;
+      if (typeof explicitPnl === 'number' && Number.isFinite(explicitPnl) && explicitPnl < 0) {
+        netProfitLoss += explicitPnl;
+      } else {
+        netProfitLoss -= stake;
+      }
+    } else if (isTie) {
+      tieTradesCount += 1;
+    }
+  }
+
+  const totalCompletedTrades = winningTradesCount + losingTradesCount + tieTradesCount;
+  const rawWinRate =
+    totalCompletedTrades > 0 ? (winningTradesCount / totalCompletedTrades) * 100 : 0;
+  const winRatePercent = Number(rawWinRate.toFixed(1));
+  const formattedWinRate =
+    totalCompletedTrades === 0
+      ? '0%'
+      : Number.isInteger(winRatePercent)
+      ? `${winRatePercent}%`
+      : `${winRatePercent.toFixed(1)}%`;
+
+  const totalNetProfitLoss = Number(netProfitLoss.toFixed(2));
+  const formattedNetProfitLoss =
+    totalTradesCount === 0 || totalNetProfitLoss === 0
+      ? '$0.00'
+      : totalNetProfitLoss > 0
+      ? `+$${totalNetProfitLoss.toLocaleString('en-US', {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })}`
+      : `-$${Math.abs(totalNetProfitLoss).toLocaleString('en-US', {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })}`;
+
+  const totalVolumeTraded = Number(totalVolume.toFixed(2));
+  const formattedVolumeTraded = `$${totalVolumeTraded.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+
+  return {
+    totalTradesCount,
+    winningTradesCount,
+    losingTradesCount,
+    totalCompletedTrades,
+    winRatePercent,
+    formattedWinRate,
+    totalNetProfitLoss,
+    formattedNetProfitLoss,
+    totalVolumeTraded,
+    formattedVolumeTraded,
+  };
+}
+
+
