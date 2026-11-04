@@ -663,7 +663,7 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
       style={{
         background: "url('/1793209787676.jpg.jpeg') center/cover no-repeat",
         transform: 'translateZ(0)',
-        touchAction: 'pan-y',
+        touchAction: 'none',
       }}
     >
       {/* Loading state indicator when data is empty, switching symbol, or validating */}
