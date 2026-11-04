@@ -400,6 +400,9 @@ CREATE POLICY "Allow select user_trades"
 
 DROP POLICY IF EXISTS "Users can insert own trades" ON public.user_trades;
 DROP POLICY IF EXISTS "Allow insert user_trades" ON public.user_trades;
+DROP POLICY IF EXISTS "Allow authenticated inserts" ON public.user_trades;
+CREATE POLICY "Allow authenticated inserts"
+  ON public.user_trades FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
 CREATE POLICY "Allow insert user_trades"
   ON public.user_trades FOR INSERT TO anon, authenticated WITH CHECK (true);
 

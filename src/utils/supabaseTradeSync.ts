@@ -40,6 +40,16 @@ export function ensureTradeUuid(tradeId: string): string {
  * If input userId is a valid UUID, returns it. Otherwise checks auth session or generates deterministic UUID.
  */
 export async function getEffectiveSupabaseUserId(userId?: string | null): Promise<string | null> {
+  try {
+    const { data: userData } = await supabase.auth.getUser();
+    const authUid = userData?.user?.id;
+    if (authUid && isValidUuid(authUid)) {
+      return authUid.trim();
+    }
+  } catch {
+    // ignore
+  }
+
   if (userId && isValidUuid(userId)) {
     return userId.trim();
   }
@@ -167,22 +177,51 @@ export async function fetchUserTrades(userId: string): Promise<BinaryTrade[]> {
 export async function createSupabaseTrade(trade: BinaryTrade, userId: string): Promise<void> {
   if (!userId) return;
   const effectiveUserId = await getEffectiveSupabaseUserId(userId);
-  if (!effectiveUserId) return;
+  if (!effectiveUserId) {
+    console.warn('[SupabaseTradeSync] createSupabaseTrade: No effective user ID found');
+    return;
+  }
 
   try {
-    const payload: Record<string, any> = { ...mapToSupabaseRow(trade, effectiveUserId) };
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const { error } = await supabase.from('user_trades').insert(payload);
-      if (!error) break;
-      const missingColMatch = error.message?.match(/Could not find the '([^']+)' column/i);
-      if (missingColMatch && missingColMatch[1] in payload) {
-        delete payload[missingColMatch[1]];
-        continue;
+    let accountType = 'DEMO';
+    const tier = (trade as any).accountTier || 'demo';
+    if (tier === 'personal' || tier === 'real') accountType = 'REAL';
+    else if (tier === 'one-step') accountType = 'ONE_STEP';
+    else if (tier === 'two-step') accountType = 'TWO_STEP';
+    else if (tier === 'instant') accountType = 'INSTANT';
+    else if (tier === 'self_funded' || tier === 'self') accountType = 'SELF_FUNDED';
+    else if (tier === 'funded') accountType = 'FUNDED';
+    else if (tier === 'demo' || trade.accountId?.startsWith('BFT-DEMO')) accountType = 'DEMO';
+
+    const insertPayload = {
+      id: ensureTradeUuid(trade.id),
+      user_id: effectiveUserId,
+      asset_symbol: trade.asset,
+      trade_type: trade.direction, // 'CALL' or 'PUT'
+      amount: Number(trade.investment),
+      entry_price: Number(trade.strikePrice),
+      duration_seconds: Number(trade.durationSeconds || 60),
+      status: trade.status === 'active' ? 'OPEN' : trade.status.toUpperCase(),
+      account_type: accountType, // 'DEMO', 'SELF_FUNDED', 'FUNDED'
+      account_id: trade.accountId || 'BFT-DEMO-001'
+    };
+
+    console.log('[SupabaseTradeSync] Inserting trade into user_trades:', insertPayload);
+    const { data, error } = await supabase.from('user_trades').insert([insertPayload]);
+    if (error) {
+      console.error("Trade Insert Error:", error);
+      const mappedRow = mapToSupabaseRow(trade, effectiveUserId);
+      const { data: data2, error: error2 } = await supabase.from('user_trades').insert([mappedRow]);
+      if (error2) {
+        console.error("Trade Insert Fallback Error:", error2);
+      } else {
+        console.log("Trade Insert Fallback Success:", data2);
       }
-      break;
+    } else {
+      console.log("Trade Insert Success:", data);
     }
-  } catch {
-    // Non-fatal background sync
+  } catch (err: any) {
+    console.error('[SupabaseTradeSync] Exception in createSupabaseTrade:', err);
   }
 }
 
