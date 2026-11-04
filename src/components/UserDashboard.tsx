@@ -1169,6 +1169,14 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   const totalSettled = wonTradesCount + lostTradesCount;
   const winRatePercent = totalSettled > 0 ? Number(((wonTradesCount / totalSettled) * 100).toFixed(1)) : 0;
 
+  // Overall totals across all accounts based on trades state
+  const totalTradesCount = trades.length;
+  const totalWins = trades.filter((t) => t.status === 'won').length;
+  const totalLosses = trades.filter((t) => t.status === 'lost').length;
+  const totalSettledAll = totalWins + totalLosses;
+  const overallWinRate = totalSettledAll > 0 ? ((totalWins / totalSettledAll) * 100).toFixed(1) : '0.0';
+  const overallPnl = trades.reduce((sum, t) => sum + (t.pnl || (t.status === 'won' ? (t.potentialPayout || t.investment * 0.85) : t.status === 'lost' ? -t.investment : 0)), 0);
+
   const winLossPieData =
     totalSettled > 0
       ? [
@@ -1581,6 +1589,72 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
       {/* Tab 1: My Trading Accounts */}
       {activeTab === 'accounts' && (
         <div className="space-y-4">
+          {/* Summary Card: Total Wins, Losses, and Overall Profit/Loss Across All Accounts */}
+          {trades.length > 0 && (
+            <div
+              data-testid="dashboard-trades-summary-card"
+              className="p-5 sm:p-6 rounded-2xl bg-[#0e0e12] border border-[#ff8800]/40 shadow-2xl mb-4 font-mono"
+            >
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-white/10">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-[#ff8800]/15 border border-[#ff8800]/40 flex items-center justify-center text-[#ff8800] shrink-0">
+                    <TrendingUp className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base sm:text-lg font-black text-white flex items-center gap-2">
+                      <span>Overall Trading Summary</span>
+                      <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30">
+                        {totalTradesCount} Total Trades
+                      </span>
+                    </h3>
+                    <p className="text-xs text-slate-400">
+                      Calculated across all accounts based on existing trades state.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <div className="text-right">
+                    <span className="text-[10px] text-slate-400 block uppercase font-mono">Overall Profit / Loss</span>
+                    <span className={`text-base sm:text-lg font-black ${overallPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {overallPnl >= 0 ? `+$${overallPnl.toFixed(2)}` : `-$${Math.abs(overallPnl).toFixed(2)}`}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
+                <div className="p-3.5 rounded-xl bg-[#14141a] border border-white/10">
+                  <span className="text-[10px] text-slate-400 block uppercase font-mono">Total Wins</span>
+                  <span className="text-sm sm:text-base font-black text-emerald-400 mt-1 block">
+                    {totalWins}
+                  </span>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-[#14141a] border border-white/10">
+                  <span className="text-[10px] text-slate-400 block uppercase font-mono">Total Losses</span>
+                  <span className="text-sm sm:text-base font-black text-rose-400 mt-1 block">
+                    {totalLosses}
+                  </span>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-[#14141a] border border-white/10">
+                  <span className="text-[10px] text-slate-400 block uppercase font-mono">Win Rate</span>
+                  <span className="text-sm sm:text-base font-black text-cyan-400 mt-1 block">
+                    {overallWinRate}%
+                  </span>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-[#14141a] border border-white/10">
+                  <span className="text-[10px] text-slate-400 block uppercase font-mono">Settled / Total</span>
+                  <span className="text-sm sm:text-base font-black text-white mt-1 block">
+                    {totalSettledAll} / {totalTradesCount}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
           {accounts.length === 0 ? (
             <div
               data-testid="no-active-account-state"
