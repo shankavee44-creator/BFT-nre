@@ -253,7 +253,37 @@ ALTER TABLE public.withdrawals ADD CONSTRAINT withdrawals_status_check
   CHECK (status IN ('pending', 'completed', 'success', 'approved', 'rejected', 'declined', 'cancelled', 'processing', 'failed', 'paid'));
 
 -- ============================================================================
--- 7. ADMIN AUTHORIZATION FUNCTION
+-- 7. USER TRADES TABLE & CONSTRAINTS
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS public.user_trades (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  account_id TEXT NOT NULL DEFAULT 'BFT-DEMO-001',
+  symbol TEXT NOT NULL,
+  asset_symbol TEXT,
+  trade_type TEXT NOT NULL,
+  amount NUMERIC(15, 2) NOT NULL CHECK (amount > 0),
+  entry_price NUMERIC(15, 6) NOT NULL,
+  exit_price NUMERIC(15, 6),
+  duration_seconds INT NOT NULL DEFAULT 60,
+  payout_multiplier NUMERIC(5, 2) NOT NULL DEFAULT 1.85,
+  status TEXT NOT NULL DEFAULT 'OPEN',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '1 minute'),
+  account_type TEXT DEFAULT 'DEMO'
+);
+
+ALTER TABLE public.user_trades ADD COLUMN IF NOT EXISTS account_id TEXT;
+ALTER TABLE public.user_trades ADD COLUMN IF NOT EXISTS asset_symbol TEXT;
+ALTER TABLE public.user_trades ADD COLUMN IF NOT EXISTS exit_price NUMERIC(15, 6);
+ALTER TABLE public.user_trades ADD COLUMN IF NOT EXISTS payout_multiplier NUMERIC(5, 2) DEFAULT 1.85;
+ALTER TABLE public.user_trades ADD COLUMN IF NOT EXISTS account_type TEXT DEFAULT 'DEMO';
+
+CREATE INDEX IF NOT EXISTS idx_user_trades_user_status ON public.user_trades(user_id, status);
+
+-- ============================================================================
+-- 8. ADMIN AUTHORIZATION FUNCTION
 -- ============================================================================
 
 CREATE OR REPLACE FUNCTION public.is_bft_admin()

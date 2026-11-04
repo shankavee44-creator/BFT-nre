@@ -3588,6 +3588,11 @@ Sitemap: https://binaryfundedtrader.com/sitemap.xml`);
     });
     app.use(vite.middlewares);
 
+    // Explicit API 404 handler for unmatched /api/* requests to prevent fallback to index.html (MIME text/html errors for EventSource / REST)
+    app.all('/api/*', (req, res) => {
+      res.status(404).json({ ok: false, error: `API endpoint not found: ${req.method} ${req.url}` });
+    });
+
     // Development SPA Fallback: Serve index.html for all non-API/non-sitemap requests
     app.get('*', async (req, res, next) => {
       if (
@@ -3612,6 +3617,10 @@ Sitemap: https://binaryfundedtrader.com/sitemap.xml`);
         },
       })
     );
+    app.all('/api/*', (req, res) => {
+      res.status(404).json({ ok: false, error: `API endpoint not found: ${req.method} ${req.url}` });
+    });
+
     app.get('*', (req, res, next) => {
       if (
         req.url.startsWith('/api/') ||
