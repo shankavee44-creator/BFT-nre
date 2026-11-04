@@ -1,16 +1,50 @@
 /**
- * Web Audio API Sound Effects Engine for Binary Funded Trader (BFT)
- * Ultra-lightweight, zero-latency, synthesized audio with no external network dependencies.
+ * Web Audio API Sound Effects & Mobile Haptic Feedback Engine (Vibration API)
+ * for Binary Funded Trader (BFT)
+ * Ultra-lightweight, zero-latency synthesized audio + tactile mobile vibration patterns.
  */
+
+export const HAPTIC_PATTERNS = {
+  uiTap: 10,
+  tradeEntryCall: [22, 30, 35] as number[],
+  tradeEntryPut: [35, 30, 22] as number[],
+  withdrawalRequest: [20, 40, 25] as number[],
+  withdrawalSuccess: [30, 45, 40, 45, 70] as number[],
+  tradeWin: [25, 35, 50] as number[],
+  tradeLoss: 45,
+  errorAlert: [50, 40, 50] as number[],
+};
+
+/**
+ * Safely triggers the Web Vibration API on supported mobile browsers/devices.
+ * Returns true if navigator.vibrate was invoked, false otherwise.
+ */
+export function triggerHapticFeedback(
+  pattern: number | number[],
+  nav?: { vibrate?: (p: number | number[]) => boolean }
+): boolean {
+  try {
+    const targetNav = nav || (typeof navigator !== 'undefined' ? navigator : undefined);
+    if (targetNav && typeof targetNav.vibrate === 'function') {
+      return Boolean(targetNav.vibrate(pattern));
+    }
+  } catch {
+    // Ignore policies blocking vibration prior to user gesture or unsupported contexts
+  }
+  return false;
+}
 
 class SoundEffectsEngine {
   private audioCtx: AudioContext | null = null;
   private soundEnabled: boolean = true;
+  private hapticsEnabled: boolean = true;
 
   constructor() {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('bft_sound_enabled');
       this.soundEnabled = saved !== null ? saved === 'true' : true;
+      const savedHaptics = localStorage.getItem('bft_haptics_enabled');
+      this.hapticsEnabled = savedHaptics !== null ? savedHaptics === 'true' : true;
     }
   }
 
@@ -40,6 +74,22 @@ class SoundEffectsEngine {
     }
   }
 
+  public isHapticsEnabled(): boolean {
+    return this.hapticsEnabled;
+  }
+
+  public setHapticsEnabled(enabled: boolean): void {
+    this.hapticsEnabled = enabled;
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('bft_haptics_enabled', enabled ? 'true' : 'false');
+    }
+  }
+
+  public vibrate(pattern: number | number[] = HAPTIC_PATTERNS.uiTap): boolean {
+    if (!this.hapticsEnabled) return false;
+    return triggerHapticFeedback(pattern);
+  }
+
   public toggle(): boolean {
     const newState = !this.soundEnabled;
     this.setEnabled(newState);
@@ -50,9 +100,10 @@ class SoundEffectsEngine {
   }
 
   /**
-   * UI Click / Tap Sound: Soft, modern haptic-style digital tap
+   * UI Click / Tap Sound + Light Tactile Haptic Tap
    */
   public playUiClick(): void {
+    this.vibrate(HAPTIC_PATTERNS.uiTap);
     if (!this.soundEnabled) return;
     const ctx = this.getContext();
     if (!ctx) return;
@@ -79,9 +130,15 @@ class SoundEffectsEngine {
   }
 
   /**
-   * Trade Placement Sound: Satisfying mechanical click / digital pop
+   * Trade Placement Sound & Directional Tactile Haptic Pulse:
+   * Distinct double-pulse vibration for CALL (Buy) vs PUT (Sell) trade entry.
    */
   public playTradePlacement(direction: 'CALL' | 'PUT' = 'CALL'): void {
+    this.vibrate(
+      direction === 'CALL'
+        ? HAPTIC_PATTERNS.tradeEntryCall
+        : HAPTIC_PATTERNS.tradeEntryPut
+    );
     if (!this.soundEnabled) return;
     const ctx = this.getContext();
     if (!ctx) return;
@@ -116,9 +173,10 @@ class SoundEffectsEngine {
   }
 
   /**
-   * Trade Win Sound: Crisp, rewarding, uplifting cash/success chime chord
+   * Trade Win Sound + Rewarding Haptic Pulse
    */
   public playTradeWin(): void {
+    this.vibrate(HAPTIC_PATTERNS.tradeWin);
     if (!this.soundEnabled) return;
     const ctx = this.getContext();
     if (!ctx) return;
@@ -151,9 +209,10 @@ class SoundEffectsEngine {
   }
 
   /**
-   * Trade Loss Sound: Subtle, low-pitch professional notification sound
+   * Trade Loss Sound + Muted Haptic Pulse
    */
   public playTradeLoss(): void {
+    this.vibrate(HAPTIC_PATTERNS.tradeLoss);
     if (!this.soundEnabled) return;
     const ctx = this.getContext();
     if (!ctx) return;
@@ -182,9 +241,17 @@ class SoundEffectsEngine {
   }
 
   /**
-   * Withdrawal Request Sound: Celebratory institutional success flourish
+   * Withdrawal Request Initiation Haptic & Sound Feedback
+   */
+  public triggerWithdrawalHaptic(): void {
+    this.vibrate(HAPTIC_PATTERNS.withdrawalRequest);
+  }
+
+  /**
+   * Withdrawal Request Confirmed Sound + Celebratory Multi-Pulse Haptic Feedback
    */
   public playWithdrawalSuccess(): void {
+    this.vibrate(HAPTIC_PATTERNS.withdrawalSuccess);
     if (!this.soundEnabled) return;
     const ctx = this.getContext();
     if (!ctx) return;
@@ -217,9 +284,10 @@ class SoundEffectsEngine {
   }
 
   /**
-   * Error Alert Sound: Attention chime for invalid input or validation rejection
+   * Error Alert Sound + Double-Buzz Warning Haptic
    */
   public playErrorAlert(): void {
+    this.vibrate(HAPTIC_PATTERNS.errorAlert);
     if (!this.soundEnabled) return;
     const ctx = this.getContext();
     if (!ctx) return;

@@ -9,6 +9,7 @@ import {
   resolveMobileTradesDrawerAction,
   computeMobileTerminalViewportBudget,
 } from './quotexMobile';
+import { HAPTIC_PATTERNS, triggerHapticFeedback } from './soundEffects';
 
 test('formatSecondsToTimer formats durations accurately in Quotex MM:SS:00 style', () => {
   assert.equal(formatSecondsToTimer(30), '00:30:00');
@@ -140,5 +141,28 @@ test('computeMobileTerminalViewportBudget guarantees generous chart canvas heigh
   assert.equal(iphoneSE.chartCanvasPx, 341);
   assert.equal(iphoneSE.fitsWithoutOverflow, true);
   assert.ok(iphoneSE.chartCanvasPx >= 300);
+});
+
+test('triggerHapticFeedback invokes Web Vibration API patterns for trade entry and withdrawal requests safely', () => {
+  const recordedPatterns: Array<number | number[]> = [];
+  const mockNav = {
+    vibrate: (p: number | number[]) => {
+      recordedPatterns.push(p);
+      return true;
+    },
+  };
+
+  assert.equal(triggerHapticFeedback(HAPTIC_PATTERNS.tradeEntryCall, mockNav), true);
+  assert.equal(triggerHapticFeedback(HAPTIC_PATTERNS.tradeEntryPut, mockNav), true);
+  assert.equal(triggerHapticFeedback(HAPTIC_PATTERNS.withdrawalRequest, mockNav), true);
+  assert.equal(triggerHapticFeedback(HAPTIC_PATTERNS.withdrawalSuccess, mockNav), true);
+
+  assert.deepEqual(recordedPatterns[0], [22, 30, 35]);
+  assert.deepEqual(recordedPatterns[1], [35, 30, 22]);
+  assert.deepEqual(recordedPatterns[2], [20, 40, 25]);
+  assert.deepEqual(recordedPatterns[3], [30, 45, 40, 45, 70]);
+
+  // Gracefully returns false when Vibration API is unavailable
+  assert.equal(triggerHapticFeedback(HAPTIC_PATTERNS.uiTap, {}), false);
 });
 

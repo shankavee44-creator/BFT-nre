@@ -644,6 +644,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
     setShowTwoFactorModal(true);
     setWithdrawalTotpCode('');
     setTotpError(null);
+    soundEngine.triggerWithdrawalHaptic();
     soundEngine.playUiClick();
   };
 
