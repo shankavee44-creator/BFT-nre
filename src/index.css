@@ -109,6 +109,9 @@ canvas,
   touch-action: pan-x pan-y pinch-zoom;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
+  will-change: transform;
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 .tradingview-chart-container canvas,
@@ -117,9 +120,21 @@ canvas,
   touch-action: pan-x pan-y pinch-zoom !important;
 }
 
-.gpu-accelerated {
+.gpu-accelerated,
+.mobile-trading-controls,
+[data-testid="quotex-mobile-dock"],
+[data-testid="quotex-mobile-nav"] {
   transform: translateZ(0);
   will-change: transform;
+  backface-visibility: hidden;
+}
+
+.mobile-trading-controls button,
+.mobile-trading-controls input,
+[data-testid="quotex-mobile-dock"] button,
+[data-testid="quotex-mobile-dock"] input,
+[data-testid="quotex-mobile-nav"] button {
+  touch-action: manipulation;
 }
 
 /* Mobile GPU Acceleration, Unfreeze Scroll & Render Optimization (< 1024px) */
@@ -165,10 +180,14 @@ canvas,
   }
 
   .hw-accelerate,
+  .tradingview-chart-container,
+  .tv-chart-container,
+  [data-testid="quotex-mobile-dock"],
   [role="dialog"] > div,
   .modal-overlay > div {
-    will-change: scroll-position, transform;
+    will-change: transform;
     transform: translateZ(0);
+    backface-visibility: hidden;
   }
 }
 

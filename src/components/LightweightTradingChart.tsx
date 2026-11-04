@@ -91,7 +91,8 @@ export function prepareLightweightBars(
 ): FormattedBar[] {
   if (!candles || candles.length === 0) return [];
   if (asset && !validateCandlesForAsset(asset, candles)) return [];
-  const windowed = candles.length > 500 ? candles.slice(-500) : candles;
+  const maxBars = typeof window !== 'undefined' && window.innerWidth < 768 ? 280 : 500;
+  const windowed = candles.length > maxBars ? candles.slice(-maxBars) : candles;
   const source = chartType === 'heikin-ashi' ? calculateHeikinAshi(windowed) : windowed;
   const bySec = new Map<number, FormattedBar>();
   for (const c of source) {
@@ -226,7 +227,9 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
         const py = series.priceToCoordinate(priceToUse);
         if (typeof py === 'number' && !Number.isNaN(py)) {
           const roundedY = Math.round(py);
-          if (Math.abs(roundedY - lastPriceYRef.current) >= 1) {
+          const minPixelDelta =
+            typeof window !== 'undefined' && window.innerWidth < 768 ? 2 : 1;
+          if (Math.abs(roundedY - lastPriceYRef.current) >= minPixelDelta) {
             lastPriceYRef.current = roundedY;
             setCurrentPriceY(roundedY);
           }
@@ -681,10 +684,11 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
   return (
     <div
       ref={containerRef}
-      className="relative w-full h-full overflow-hidden select-none tradingview-chart-container tv-chart-container chart-container hw-accelerate"
+      className="relative w-full h-full overflow-hidden select-none tradingview-chart-container tv-chart-container chart-container hw-accelerate gpu-accelerated"
       style={{
         background: "url('/1793209787676.jpg.jpeg') center/cover no-repeat",
         transform: 'translateZ(0)',
+        willChange: 'transform',
         touchAction: 'pan-x pan-y pinch-zoom',
         WebkitOverflowScrolling: 'touch',
       }}
@@ -704,8 +708,8 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
       {/* Live Moving Price Tag & Candle Countdown Timer pinned right below it on the price axis */}
       {isDataValidAndReady && currentPriceY > 0 && (
         <div
-          className="absolute right-[60px] z-35 px-2 py-1 rounded bg-[#0b0e14] border border-cyan-500/70 shadow-2xl flex flex-col items-end font-mono text-[10px] select-none transition-all duration-75 pointer-events-none"
-          style={{ top: `${currentPriceY - 14}px` }}
+          className="absolute right-[60px] z-35 px-2 py-1 rounded bg-[#0b0e14] border border-cyan-500/70 shadow-2xl flex flex-col items-end font-mono text-[10px] select-none transition-all duration-75 pointer-events-none gpu-accelerated"
+          style={{ top: `${currentPriceY - 14}px`, willChange: 'transform' }}
         >
           <span className="font-bold text-cyan-300 tabular-nums">
             {Number(

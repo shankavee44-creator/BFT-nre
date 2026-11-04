@@ -42,7 +42,7 @@ interface AssetRowItemProps {
   onToggleFavorite: (e: React.MouseEvent, symbol: string) => void;
 }
 
-const ROW_HEIGHT = 64; // px
+const ROW_HEIGHT = 56; // px
 
 const AssetRowItem: React.FC<AssetRowItemProps> = React.memo(({
   asset,
@@ -66,8 +66,8 @@ const AssetRowItem: React.FC<AssetRowItemProps> = React.memo(({
       data-testid={`asset-row-${tvResolved.cleanTicker.replace(/[^A-Z0-9]/g, '')}`}
       data-has-active-trade={activeBadge.hasActiveTrades ? 'true' : 'false'}
       onClick={() => onSelect(asset, livePayout)}
-      style={{ height: `${ROW_HEIGHT - 4}px` }}
-      className={`flex items-center justify-between p-2.5 sm:p-3 rounded-xl transition-colors cursor-pointer hw-accelerate gpu-accelerated mb-1 ${
+      style={{ height: `${ROW_HEIGHT - 4}px`, willChange: 'transform' }}
+      className={`flex items-center justify-between px-2 py-1.5 sm:p-3 rounded-lg sm:rounded-xl transition-colors cursor-pointer hw-accelerate gpu-accelerated mb-1 ${
         isSelected
           ? 'bg-[#ff8800]/15 border border-[#ff8800]/50 text-white'
           : activeBadge.hasActiveTrades
@@ -75,41 +75,41 @@ const AssetRowItem: React.FC<AssetRowItemProps> = React.memo(({
           : 'hover:bg-white/5 text-slate-300'
       }`}
     >
-      <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1 mr-2">
+      <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1 mr-1.5">
         <button
           type="button"
           onClick={(e) => onToggleFavorite(e, asset.symbol)}
-          className="p-1 hover:text-[#ff8800] text-slate-600 transition-colors cursor-pointer shrink-0"
+          className="p-0.5 sm:p-1 hover:text-[#ff8800] text-slate-600 transition-colors cursor-pointer shrink-0"
         >
           <Star
-            className={`w-4 h-4 ${
+            className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${
               isFav ? 'fill-[#ff8800] text-[#ff8800]' : ''
             }`}
           />
         </button>
 
-        <div className="relative w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-[#16161d] border border-white/10 flex items-center justify-center text-sm font-bold shrink-0">
-          <AssetFlagIcon symbol={asset.symbol} category={asset.category} flagEmoji={asset.flag} size="md" />
+        <div className="relative w-7 h-7 sm:w-9 sm:h-9 rounded-lg sm:rounded-xl bg-[#16161d] border border-white/10 flex items-center justify-center text-xs sm:text-sm font-bold shrink-0">
+          <AssetFlagIcon symbol={asset.symbol} category={asset.category} flagEmoji={asset.flag} size="sm" />
           {activeBadge.hasActiveTrades && (
-            <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
+            <span className="absolute -top-0.5 -right-0.5 flex h-2 w-2 sm:h-2.5 sm:w-2.5">
               <span className="active-trade-dot-pulse absolute inline-flex h-full w-full rounded-full bg-[#00e676]" />
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#00e676] border border-[#0e0e12]" />
+              <span className="relative inline-flex rounded-full h-2 w-2 sm:h-2.5 sm:w-2.5 bg-[#00e676] border border-[#0e0e12]" />
             </span>
           )}
         </div>
 
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="font-black text-white text-xs sm:text-sm truncate">
+          <div className="flex items-center gap-1 sm:gap-1.5 flex-wrap">
+            <span className="font-black text-white text-[11px] sm:text-sm truncate">
               {asset.symbol.includes('R_') ? asset.symbol : `${asset.symbol} (OTC)`}
             </span>
-            <span className="text-[9px] sm:text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-bold shrink-0">
+            <span className="text-[8.5px] sm:text-[10px] px-1 sm:px-1.5 py-0.2 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-bold shrink-0 hidden xs:inline">
               {tvResolved.tvSymbol}
             </span>
             {activeBadge.hasActiveTrades && (
               <span
                 data-testid={`modal-asset-active-trade-badge-${tvResolved.cleanTicker.replace(/[^A-Z0-9]/g, '')}`}
-                className={`active-trade-badge-pulse inline-flex items-center gap-1 text-[9px] sm:text-[10px] px-1.5 py-0.5 rounded font-mono font-black shrink-0 border ${
+                className={`active-trade-badge-pulse inline-flex items-center gap-1 text-[8.5px] sm:text-[10px] px-1.5 py-0.2 rounded font-mono font-black shrink-0 border ${
                   activeBadge.isWinning
                     ? 'active-trade-badge-pulse-win bg-[#00e676]/20 text-[#00e676] border-[#00e676]/50'
                     : 'active-trade-badge-pulse-loss bg-[#ff334b]/20 text-[#ff334b] border-[#ff334b]/50'
@@ -125,24 +125,24 @@ const AssetRowItem: React.FC<AssetRowItemProps> = React.memo(({
               </span>
             )}
           </div>
-          <span className="text-[10px] sm:text-[11px] text-slate-400 block font-mono truncate">
+          <span className="text-[9.5px] sm:text-[11px] text-slate-400 block font-mono truncate">
             {asset.symbol.includes('R_') ? asset.name : `${asset.name} (OTC)`} • {displayPrice.toFixed(asset.pipDecimals)}
           </span>
         </div>
       </div>
 
-      <div className="flex items-center gap-2 sm:gap-4 text-right shrink-0">
-        <div className="hidden xs:block sm:block">
-          <span className="text-[9px] sm:text-[10px] text-slate-400 block font-sans flex items-center justify-end gap-1">
+      <div className="flex items-center gap-1.5 sm:gap-4 text-right shrink-0">
+        <div>
+          <span className="text-[9px] sm:text-[10px] text-slate-400 hidden sm:flex font-sans items-center justify-end gap-1">
             <Activity className="w-2.5 h-2.5 text-emerald-400" /> Live Payout
           </span>
-          <span className="text-xs sm:text-sm font-black text-emerald-400 bg-emerald-950/70 border border-emerald-500/40 px-2 sm:px-2.5 py-0.5 rounded inline-block mt-0.5">
+          <span className="text-[11px] sm:text-sm font-black text-emerald-400 bg-emerald-950/70 border border-emerald-500/40 px-1.5 sm:px-2.5 py-0.5 rounded inline-block">
             +{livePayout}%
           </span>
         </div>
 
         <button
-          className={`px-2.5 sm:px-3.5 py-1.5 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold font-sans transition-all cursor-pointer ${
+          className={`px-2 sm:px-3.5 py-1 sm:py-1.5 rounded-md sm:rounded-xl text-[10px] sm:text-xs font-bold font-sans transition-all cursor-pointer ${
             isSelected
               ? 'bg-[#ff8800] text-slate-950 font-black'
               : 'bg-[#1a1a22] hover:bg-[#ff8800] hover:text-slate-950 text-slate-200 border border-white/10'
@@ -157,7 +157,7 @@ const AssetRowItem: React.FC<AssetRowItemProps> = React.memo(({
 
 AssetRowItem.displayName = 'AssetRowItem';
 
-export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
+export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = React.memo(({
   isOpen,
   onClose,
   onSelectAsset,
@@ -298,18 +298,18 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
   return (
     <div
       data-testid="native-asset-selector-modal"
-      className="fixed inset-0 z-50 flex flex-col sm:items-center sm:justify-center p-0 sm:p-4 bg-black/95 sm:bg-black/90 hw-accelerate gpu-accelerated animate-bft-modal"
+      className="fixed inset-0 z-50 flex flex-col sm:items-center sm:justify-center p-0 sm:p-4 bg-black/95 sm:bg-black/90 hw-accelerate gpu-accelerated mobile-trading-controls animate-bft-modal"
     >
       <div className="w-full h-full sm:h-auto sm:max-w-3xl sm:rounded-2xl rounded-none bg-[#0e0e12] sm:border sm:border-[#ff8800]/40 shadow-2xl overflow-hidden flex flex-col max-h-full sm:max-h-[88vh] hw-accelerate gpu-accelerated">
         {/* Header */}
-        <div className="p-3 sm:p-4 bg-[#0a0a0d] border-b border-white/10 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1 mr-2">
-            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-[#ff8800]/15 border border-[#ff8800]/40 flex items-center justify-center text-[#ff8800] shrink-0">
-              <TrendingUp className="w-4 h-4 sm:w-5 sm:h-5" />
+        <div className="px-3 py-2 sm:p-4 bg-[#0a0a0d] border-b border-white/10 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1 mr-2">
+            <div className="w-7 h-7 sm:w-9 sm:h-9 rounded-lg sm:rounded-xl bg-[#ff8800]/15 border border-[#ff8800]/40 flex items-center justify-center text-[#ff8800] shrink-0">
+              <TrendingUp className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
             </div>
             <div className="min-w-0 flex-1">
-              <h3 className="text-xs sm:text-base font-black text-white font-mono flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 truncate">
-                <span className="truncate">Select TradingView Market</span>
+              <h3 className="text-xs sm:text-base font-black text-white font-mono flex items-center gap-1.5 sm:gap-2 truncate">
+                <span className="truncate">Select Market</span>
                 <span className="text-[9px] sm:text-[10px] px-1.5 sm:px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30 w-fit shrink-0">
                   {allAssets.length}+ Markets
                 </span>
@@ -326,28 +326,27 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
               soundEngine.playUiClick();
               onClose();
             }}
-            className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-colors cursor-pointer shrink-0"
+            className="p-1.5 sm:p-2 rounded-lg sm:rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-colors cursor-pointer shrink-0"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Search & Category Tabs */}
-        <div className="p-4 border-b border-white/10 space-y-3 bg-[#111116] shrink-0">
+        <div className="px-3 py-2 sm:p-4 border-b border-white/10 space-y-2 sm:space-y-3 bg-[#111116] shrink-0">
           <div className="relative">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+            <Search className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
               data-testid="asset-modal-search-input"
-              placeholder="Search 260+ markets or TradingView tickers (e.g. FX:EURUSD, BINANCE:BTCUSDT, NASDAQ:AAPL, OANDA:XAUUSD)..."
+              placeholder="Search 260+ markets or tickers (e.g. EURUSD, BTCUSDT, AAPL, XAUUSD)..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2.5 bg-[#0a0a0d] border border-white/15 rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-[#ff8800] transition-colors font-mono"
-              autoFocus
+              className="w-full pl-9 pr-3 py-1.5 sm:py-2.5 bg-[#0a0a0d] border border-white/15 rounded-lg sm:rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-[#ff8800] transition-colors font-mono"
             />
           </div>
 
-          <div className="flex gap-1.5 overflow-x-auto pb-1 font-mono text-xs touch-scroll">
+          <div className="flex gap-1 sm:gap-1.5 overflow-x-auto pb-0.5 font-mono text-[11px] sm:text-xs touch-scroll no-scrollbar">
             {categoryTabs.map((tab) => {
               const isActive = activeCategory === tab.id && searchQuery.trim().length === 0;
               return (
@@ -360,7 +359,7 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
                     setSearchQuery('');
                     setActiveCategory(tab.id);
                   }}
-                  className={`px-3 py-2 rounded-xl font-bold transition-colors whitespace-nowrap cursor-pointer flex items-center gap-1.5 border ${
+                  className={`px-2.5 py-1 sm:px-3 sm:py-2 rounded-lg sm:rounded-xl font-bold transition-colors whitespace-nowrap cursor-pointer flex items-center gap-1 sm:gap-1.5 border ${
                     isActive
                       ? 'bg-[#ff8800] text-slate-950 font-black border-[#ff8800]'
                       : 'bg-[#16161d] text-slate-300 hover:text-white hover:bg-[#1f1f29] border-white/10'
@@ -368,7 +367,7 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
                 >
                   <span>{tab.label}</span>
                   <span
-                    className={`text-[10px] px-1.5 py-0.2 rounded font-black ${
+                    className={`text-[9px] sm:text-[10px] px-1 sm:px-1.5 py-0.2 rounded font-black ${
                       isActive ? 'bg-slate-950/20 text-slate-950' : 'bg-black/40 text-[#ffaa00]'
                     }`}
                   >
@@ -384,11 +383,11 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
         <div
           ref={listContainerRef}
           onScroll={handleScroll}
-          className="p-3 overflow-y-auto font-mono flex-1 touch-scroll custom-scrollbar relative"
-          style={{ minHeight: '280px' }}
+          className="p-2 sm:p-3 overflow-y-auto font-mono flex-1 touch-scroll custom-scrollbar relative"
+          style={{ minHeight: '240px' }}
         >
           {filteredAssets.length === 0 ? (
-            <div className="py-12 text-center text-slate-500 text-xs">
+            <div className="py-10 text-center text-slate-500 text-xs">
               No matching trading instruments found.
             </div>
           ) : (
@@ -430,14 +429,17 @@ export const QuotexAssetModal: React.FC<QuotexAssetModalProps> = ({
         </div>
 
         {/* Footer info */}
-        <div className="p-3 bg-[#0a0a0d] border-t border-white/10 flex items-center justify-between text-[11px] text-slate-400 font-mono shrink-0">
-          <span className="flex items-center gap-1.5 text-[#ffaa00]">
-            <Sparkles className="w-3.5 h-3.5 text-[#ff8800]" /> 24/7 Institutional Algorithmic OTC Feeds ({filteredAssets.length} active)
+        <div className="px-3 py-2 sm:p-3 bg-[#0a0a0d] border-t border-white/10 flex items-center justify-between text-[10px] sm:text-[11px] text-slate-400 font-mono shrink-0">
+          <span className="flex items-center gap-1.5 text-[#ffaa00] truncate">
+            <Sparkles className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#ff8800] shrink-0" /> 24/7 OTC Feeds ({filteredAssets.length} active)
           </span>
-          <span className="text-emerald-400 font-bold">Zero Slippage • Global Sync Enabled</span>
+          <span className="text-emerald-400 font-bold shrink-0">Zero Slippage</span>
         </div>
       </div>
     </div>
   );
-};
+});
+
+QuotexAssetModal.displayName = 'QuotexAssetModal';
+
 

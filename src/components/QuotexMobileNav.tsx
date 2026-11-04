@@ -34,7 +34,7 @@ interface QuotexMobileNavProps {
   signalsCount?: number;
 }
 
-export const QuotexMobileNav: React.FC<QuotexMobileNavProps> = ({
+export const QuotexMobileNav: React.FC<QuotexMobileNavProps> = React.memo(({
   activeTab,
   onChangeTab,
   onOpenSignalsDrawer,
@@ -54,7 +54,8 @@ export const QuotexMobileNav: React.FC<QuotexMobileNavProps> = ({
       {/* Bottom Navigation Bar for Mobile Terminal */}
       <nav
         data-testid="quotex-mobile-nav"
-        className="md:hidden shrink-0 z-40 bg-[#0a0a0a] border-t border-white/10 py-1 px-1 flex items-center justify-around select-none safe-area-pb max-w-[100vw] overflow-x-hidden w-full"
+        style={{ willChange: 'transform', transform: 'translateZ(0)' }}
+        className="md:hidden h-[48px] shrink-0 z-40 bg-[#0a0a0a] border-t border-white/10 py-0.5 px-1 flex items-center justify-around select-none safe-area-pb max-w-[100vw] overflow-x-hidden w-full hw-accelerate gpu-accelerated mobile-trading-controls"
       >
         {/* Chart Button */}
         <button
@@ -343,4 +344,7 @@ export const QuotexMobileNav: React.FC<QuotexMobileNavProps> = ({
       )}
     </>
   );
-};
+});
+
+QuotexMobileNav.displayName = 'QuotexMobileNav';
+

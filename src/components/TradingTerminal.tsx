@@ -1003,22 +1003,49 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       if (!isValidPriceForAsset(selectedAssetRef.current, price)) return;
 
       const nowMs = getSynchronizedNowMs();
-      const minThrottleMs =
-        typeof window !== 'undefined' && window.innerWidth < 768 ? 380 : 220;
+      const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+      const minThrottleMs = isMobile ? 550 : 220;
       if (nowMs - lastUiTickUpdateMsRef.current < minThrottleMs) return;
       lastUiTickUpdateMsRef.current = nowMs;
 
-      setCurrentPrice(price);
-      targetPriceRef.current = price;
+      const decimals = selectedAssetRef.current.pipDecimals ?? 5;
+      const roundedPrice = Number(price.toFixed(decimals));
+      setCurrentPrice((prev) => (prev === roundedPrice ? prev : roundedPrice));
+      targetPriceRef.current = roundedPrice;
 
       const sec = TIMEFRAME_SECONDS[timeframe];
-      const liveCandlesSeries = aggregateCandlesForTimeframe(selectedAssetRef.current, sec);
-      setCandlesAssetSymbol(selectedAssetRef.current.symbol);
-      setCandles(liveCandlesSeries);
+      const bucketMs = sec * 1000;
+      const symbolOffsetMs = getAssetTimeOffsetMs(selectedAssetRef.current.symbol, sec);
+      const currentBucketTime =
+        Math.floor((nowMs + symbolOffsetMs) / bucketMs) * bucketMs - symbolOffsetMs;
 
-      const symbolOffsetSec = Math.floor(
-        getAssetTimeOffsetMs(selectedAssetRef.current.symbol, sec) / 1000
-      );
+      setCandlesAssetSymbol(selectedAssetRef.current.symbol);
+      setCandles((prevCandles) => {
+        if (isMobile && prevCandles.length > 0) {
+          const last = prevCandles[prevCandles.length - 1];
+          if (last && Math.abs(last.time - currentBucketTime) < bucketMs) {
+            if (
+              last.close === roundedPrice &&
+              roundedPrice <= last.high &&
+              roundedPrice >= last.low
+            ) {
+              return prevCandles;
+            }
+            const updatedLast = {
+              ...last,
+              close: roundedPrice,
+              high: Math.max(last.high, roundedPrice),
+              low: Math.min(last.low, roundedPrice),
+            };
+            const next = prevCandles.slice();
+            next[next.length - 1] = updatedLast;
+            return next;
+          }
+        }
+        return aggregateCandlesForTimeframe(selectedAssetRef.current, sec);
+      });
+
+      const symbolOffsetSec = Math.floor(symbolOffsetMs / 1000);
       const nextCountdown = calculateCandleCountdown(nowMs, sec, symbolOffsetSec);
       setCandleCountdown((prev) =>
         prev.remainingSeconds === nextCountdown.remainingSeconds ? prev : nextCountdown
@@ -1232,15 +1259,20 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   useEffect(() => {
     const isMobileViewport =
       typeof window !== 'undefined' && window.innerWidth < 768;
-    const tickIntervalMs = isMobileViewport ? 400 : 250;
+    const tickIntervalMs = isMobileViewport ? 600 : 250;
 
     const interval = setInterval(() => {
       if (isLoadingChartRef.current) return;
       const activeAsset = selectedAssetRef.current;
       if (!activeAsset || activeAsset.symbol !== selectedAsset.symbol) return;
 
-      const sec = TIMEFRAME_SECONDS[timeframe];
       const nowMs = getSynchronizedNowMs();
+      // Skip synthetic pulse if a real-time SSE/WebSocket tick already updated the UI moments ago
+      if (nowMs - lastUiTickUpdateMsRef.current < (isMobileViewport ? 480 : 180)) {
+        return;
+      }
+
+      const sec = TIMEFRAME_SECONDS[timeframe];
       const assetActiveTrades = activeTradesRef.current.filter(
         (t) => t.asset === activeAsset.symbol && t.status === 'active'
       );
@@ -1254,14 +1286,43 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       if (!isValidPriceForAsset(activeAsset, newPrice)) return;
 
       lastUiTickUpdateMsRef.current = nowMs;
-      setCurrentPrice(newPrice);
-      targetPriceRef.current = newPrice;
+      const decimals = activeAsset.pipDecimals ?? 5;
+      const roundedPrice = Number(newPrice.toFixed(decimals));
+      setCurrentPrice((prev) => (prev === roundedPrice ? prev : roundedPrice));
+      targetPriceRef.current = roundedPrice;
 
-      const liveCandlesSeries = aggregateCandlesForTimeframe(activeAsset, sec);
+      const bucketMs = sec * 1000;
+      const symbolOffsetMs = getAssetTimeOffsetMs(activeAsset.symbol, sec);
+      const currentBucketTime =
+        Math.floor((nowMs + symbolOffsetMs) / bucketMs) * bucketMs - symbolOffsetMs;
+
       setCandlesAssetSymbol(activeAsset.symbol);
-      setCandles(liveCandlesSeries);
+      setCandles((prevCandles) => {
+        if (isMobileViewport && prevCandles.length > 0) {
+          const last = prevCandles[prevCandles.length - 1];
+          if (last && Math.abs(last.time - currentBucketTime) < bucketMs) {
+            if (
+              last.close === roundedPrice &&
+              roundedPrice <= last.high &&
+              roundedPrice >= last.low
+            ) {
+              return prevCandles;
+            }
+            const updatedLast = {
+              ...last,
+              close: roundedPrice,
+              high: Math.max(last.high, roundedPrice),
+              low: Math.min(last.low, roundedPrice),
+            };
+            const next = prevCandles.slice();
+            next[next.length - 1] = updatedLast;
+            return next;
+          }
+        }
+        return aggregateCandlesForTimeframe(activeAsset, sec);
+      });
 
-      const symbolOffsetSec = Math.floor(getAssetTimeOffsetMs(activeAsset.symbol, sec) / 1000);
+      const symbolOffsetSec = Math.floor(symbolOffsetMs / 1000);
       const nextCountdown = calculateCandleCountdown(nowMs, sec, symbolOffsetSec);
       setCandleCountdown((prev) =>
         prev.remainingSeconds === nextCountdown.remainingSeconds ? prev : nextCountdown
@@ -3135,7 +3196,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   }, []);
 
   return (
-    <div className="flex flex-col min-h-[100dvh] md:h-[calc(100vh-60px)] md:min-h-[720px] bg-[#0a0a0a] text-slate-100 overflow-x-hidden overflow-y-auto touch-scroll terminal-scroll-area hw-accelerate font-sans select-none relative">
+    <div className="flex flex-col h-[100dvh] md:h-[calc(100vh-60px)] md:min-h-[720px] bg-[#0a0a0a] text-slate-100 overflow-hidden hw-accelerate gpu-accelerated font-sans select-none relative">
       {/* Global Assets Loading Overlay */}
       {isLoadingAssets && (
         <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-[#0a0a0a]/98 backdrop-blur-md pointer-events-auto font-mono text-center px-6">
@@ -3167,23 +3228,24 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       {/* 0. COMPACT MOBILE TOP NAVIGATION HEADER (Quotex Mobile View) */}
       <div
         data-testid="quotex-mobile-top-header"
-        className="flex md:hidden h-11 bg-[#0a0a0a] border-b border-white/10 items-center justify-between px-2.5 shrink-0 relative z-50"
+        style={{ willChange: 'transform', transform: 'translateZ(0)' }}
+        className="flex md:hidden h-9 bg-[#0a0a0a] border-b border-white/10 items-center justify-between px-2 shrink-0 relative z-50 mobile-trading-controls"
       >
-        <div className="flex items-center gap-1.5 min-w-0">
+        <div className="flex items-center gap-1 min-w-0">
           <button
             onClick={() => {
               soundEngine.playUiClick();
               onNavigateTab?.('home');
             }}
-            className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[#141720] border border-white/10 text-xs font-mono font-bold text-slate-300 shrink-0"
+            className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-[#141720] border border-white/10 text-[11px] font-mono font-bold text-slate-300 shrink-0"
             title="Return to BFT Portal"
           >
             <BftLogo
-              imgClassName="h-6 w-auto"
+              imgClassName="h-5 w-auto"
               testId="terminal-mobile-bft-logo"
               alt="BFT Bull Logo"
             />
-            <span className="font-black text-white text-[11px]">BFT</span>
+            <span className="font-black text-white text-[10.5px]">BFT</span>
             <span className="text-[8px] px-1 py-0.2 rounded bg-[#ff8800]/20 text-[#ff8800] font-bold">OTC</span>
           </button>
 
@@ -3192,7 +3254,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             <button
               onClick={() => setAccountDropdownOpen(!accountDropdownOpen)}
               data-testid="mobile-account-switcher"
-              className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[#141720] border border-white/10 text-xs font-mono"
+              className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#141720] border border-white/10 text-[11px] font-mono"
             >
               <div
                 className={`w-2 h-2 rounded-full ${
@@ -3652,7 +3714,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       </div>
 
       {/* Main Trading Stage: Left Sidebar + Central Chart + Right Execution Panel */}
-      <div className="flex-1 flex flex-col md:flex-row overflow-y-auto md:overflow-hidden relative touch-scroll terminal-scroll-area">
+      <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative min-h-0">
         {/* 2. LEFT-SIDE ICON NAVIGATION BAR */}
         <div className="hidden md:flex w-14 bg-[#1e222d] border-r border-[#2a2e39] flex flex-col items-center justify-between py-3 shrink-0 z-10">
           <div className="flex flex-col items-center gap-3">
@@ -3843,11 +3905,11 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         </div>
 
         {/* 3. CENTRAL SUPER-SMOOTH OTC ALGORITHMIC CHART ENGINE */}
-        <div className="flex-1 flex flex-col relative overflow-hidden bg-[#0a0a0a] min-h-0">
+        <div className="flex-1 flex flex-col relative overflow-hidden bg-[#0a0a0a] min-h-0 pb-[136px] md:pb-0">
           {/* 1. TOP MULTI-ASSET SCROLLING TICKER BAR (Quotex Style) */}
           <div
             data-testid="top-multi-asset-ticker-bar"
-            className="flex items-center gap-1.5 overflow-x-auto px-2 py-1.5 md:px-3 md:py-2 bg-[#0a0a0a] border-b border-white/10 shrink-0 z-25 font-mono text-xs select-none no-scrollbar"
+            className="flex items-center gap-1 md:gap-1.5 overflow-x-auto px-1.5 py-1 md:px-3 md:py-2 bg-[#0a0a0a] border-b border-white/10 shrink-0 z-25 font-mono text-xs select-none no-scrollbar mobile-trading-controls"
           >
             {openTabs.map((tabAsset) => {
               const isTabActive =
@@ -3873,7 +3935,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                   data-testid={`open-asset-tab-${cleanTestKey}`}
                   data-has-active-trade={activeBadge.hasActiveTrades ? 'true' : 'false'}
                   onClick={() => handleSelectTabAsset(tabAsset)}
-                  className={`relative flex items-center gap-1.5 px-2.5 py-1 md:px-3 md:py-1.5 rounded-lg border transition-all cursor-pointer shrink-0 ${
+                  className={`relative flex items-center gap-1 md:gap-1.5 px-2 py-0.5 md:px-3 md:py-1.5 rounded-md md:rounded-lg border transition-all cursor-pointer shrink-0 ${
                     isTabActive
                       ? 'bg-[#141720] border-[#ff8800] text-white shadow-sm'
                       : activeBadge.hasActiveTrades
@@ -3888,24 +3950,24 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                       symbol={tabAsset.symbol}
                       category={tabAsset.category}
                       flagEmoji={tabAsset.flag}
-                      size="sm"
+                      size="xs"
                     />
                     {activeBadge.hasActiveTrades && (
                       <span
-                        className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5"
+                        className="absolute -top-0.5 -right-0.5 flex h-2 w-2 md:h-2.5 md:w-2.5"
                         title={`${activeBadge.activeCount} Active Trade(s) on ${tabAsset.symbol}`}
                       >
                         <span className="active-trade-dot-pulse absolute inline-flex h-full w-full rounded-full bg-[#00e676]" />
-                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#00e676] border border-[#0a0a0a]" />
+                        <span className="relative inline-flex rounded-full h-2 w-2 md:h-2.5 md:w-2.5 bg-[#00e676] border border-[#0a0a0a]" />
                       </span>
                     )}
                   </div>
 
-                  <div className="flex flex-col text-left">
+                  <div className="flex flex-col text-left leading-tight">
                     <div className="flex items-center gap-1">
-                      <span className="font-bold text-xs whitespace-nowrap">{tabAsset.symbol}</span>
+                      <span className="font-bold text-[10.5px] md:text-xs whitespace-nowrap">{tabAsset.symbol}</span>
                     </div>
-                    <span className="text-[10px] text-slate-400 font-mono">
+                    <span className="text-[9px] md:text-[10px] text-slate-400 font-mono">
                       {displayPrice.toFixed(tabAsset.pipDecimals)}
                     </span>
                   </div>
@@ -3913,7 +3975,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                   {activeBadge.hasActiveTrades ? (
                     <div
                       data-testid={`asset-tab-active-trade-badge-${cleanTestKey}`}
-                      className={`active-trade-badge-pulse flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[10px] font-mono font-black shrink-0 ml-1 ${
+                      className={`active-trade-badge-pulse flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[9.5px] md:text-[10px] font-mono font-black shrink-0 ml-0.5 md:ml-1 ${
                         activeBadge.isWinning
                           ? 'active-trade-badge-pulse-win bg-[#00e676]/15 border-[#00e676]/50 text-[#00e676]'
                           : 'active-trade-badge-pulse-loss bg-[#ff334b]/15 border-[#ff334b]/50 text-[#ff334b]'
@@ -3924,13 +3986,13 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                         <span className="active-trade-dot-pulse absolute inline-flex h-full w-full rounded-full bg-[#00e676]" />
                         <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-[#00e676]" />
                       </span>
-                      <span className="px-1 rounded bg-black/40 text-white text-[9px] font-black">
+                      <span className="px-1 rounded bg-black/40 text-white text-[8.5px] md:text-[9px] font-black">
                         {activeBadge.activeCount}
                       </span>
                       <span>{activeBadge.formattedPnL}</span>
                     </div>
                   ) : (
-                    <span className="text-[11px] font-black text-[#00e676] shrink-0 ml-1">
+                    <span className="text-[10px] md:text-[11px] font-black text-[#00e676] shrink-0 ml-0.5 md:ml-1">
                       {livePayout}%
                     </span>
                   )}
@@ -3940,9 +4002,9 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                       type="button"
                       aria-label={`Close tab ${tabAsset.symbol}`}
                       onClick={(e) => handleCloseTab(e, tabAsset.symbol)}
-                      className="p-0.5 rounded hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer ml-1"
+                      className="p-0.5 rounded hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer ml-0.5 md:ml-1"
                     >
-                      <X className="w-3 h-3" />
+                      <X className="w-2.5 h-2.5 md:w-3 md:h-3" />
                     </button>
                   )}
                 </div>
@@ -3956,10 +4018,10 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                 soundEngine.playUiClick();
                 setIsAssetModalOpen(true);
               }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#141822] hover:bg-[#1e2536] border border-dashed border-[#ff8800]/50 text-[#ff8800] font-bold text-xs cursor-pointer shrink-0 transition-colors"
+              className="flex items-center gap-1 px-2 py-1 md:px-3 md:py-1.5 rounded-lg md:rounded-xl bg-[#141822] hover:bg-[#1e2536] border border-dashed border-[#ff8800]/50 text-[#ff8800] font-bold text-[10.5px] md:text-xs cursor-pointer shrink-0 transition-colors"
               title="Add Asset Pair"
             >
-              <Plus className="w-3.5 h-3.5" />
+              <Plus className="w-3 h-3 md:w-3.5 md:h-3.5" />
               <span>Add Asset</span>
             </button>
 
@@ -4580,7 +4642,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             return (
               <div
                 data-testid="chart-ohlc-bar"
-                className="absolute top-12 left-2.5 md:top-14 md:left-3 z-20 px-2.5 py-1 rounded-lg bg-[#141722]/92 backdrop-blur-md border border-white/10 flex flex-wrap items-center gap-2 md:gap-3 font-mono text-[10px] md:text-[11px] select-none"
+                className="absolute top-11 left-2 md:top-14 md:left-3 z-20 px-2 py-0.5 md:px-2.5 md:py-1 rounded-md md:rounded-lg bg-[#141722]/92 border border-white/10 flex flex-wrap items-center gap-1.5 md:gap-3 font-mono text-[9.5px] md:text-[11px] select-none"
               >
                 {/* Native Platform Symbol Selector Override for TradingView Chart */}
                 <button
@@ -4591,12 +4653,12 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                     setIsAssetModalOpen(true);
                   }}
                   title="Switch TradingView Chart Market (Forex, Crypto, Stocks, Commodities)"
-                  className="font-black text-white flex items-center gap-1.5 hover:text-[#ff8800] transition-colors cursor-pointer pointer-events-auto"
+                  className="font-black text-white flex items-center gap-1 md:gap-1.5 hover:text-[#ff8800] transition-colors cursor-pointer pointer-events-auto"
                 >
                   <span data-testid="tv-chart-active-symbol">{selectedAsset.symbol}</span>
                   <span
                     data-testid="tv-chart-resolved-symbol"
-                    className="text-[9px] px-1.5 py-0.2 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-bold"
+                    className="text-[8.5px] md:text-[9px] px-1 md:px-1.5 py-0.2 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-bold"
                   >
                     {tvResolved.tvSymbol}
                   </span>
@@ -4606,24 +4668,24 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                   >
                     {tvResolved.marketCategory}
                   </span>
-                  <span className="text-[9px] px-1.5 py-0.2 rounded bg-[#ff8800]/20 text-[#ff8800] font-bold">
+                  <span className="text-[8.5px] md:text-[9px] px-1 md:px-1.5 py-0.2 rounded bg-[#ff8800]/20 text-[#ff8800] font-bold">
                     {timeframe}
                   </span>
                   <ChevronDown className="w-3 h-3 text-slate-400" />
                 </button>
-                <span className="text-slate-400 pointer-events-none">
+                <span className="text-slate-400 pointer-events-none hidden sm:inline">
                   O{' '}
                   <strong className={isBull ? 'text-[#00e676]' : 'text-[#ff334b]'}>
                     {inspectedCandle.open.toFixed(selectedAsset.pipDecimals)}
                   </strong>
                 </span>
-                <span className="text-slate-400 pointer-events-none">
+                <span className="text-slate-400 pointer-events-none hidden sm:inline">
                   H{' '}
                   <strong className={isBull ? 'text-[#00e676]' : 'text-[#ff334b]'}>
                     {inspectedCandle.high.toFixed(selectedAsset.pipDecimals)}
                   </strong>
                 </span>
-                <span className="text-slate-400 pointer-events-none">
+                <span className="text-slate-400 pointer-events-none hidden sm:inline">
                   L{' '}
                   <strong className={isBull ? 'text-[#00e676]' : 'text-[#ff334b]'}>
                     {inspectedCandle.low.toFixed(selectedAsset.pipDecimals)}
@@ -4652,10 +4714,12 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
           <div
             ref={chartContainerRef}
             data-testid="otc-chart-container"
-            className="tradingview-chart-container tv-chart-container flex-1 min-h-[350px] sm:min-h-[420px] md:min-h-0 relative w-full h-full select-none overflow-hidden"
+            className="tradingview-chart-container tv-chart-container flex-1 min-h-[200px] sm:min-h-[360px] md:min-h-0 relative w-full h-full select-none overflow-hidden hw-accelerate gpu-accelerated"
             style={{
               touchAction: 'pan-x pan-y pinch-zoom',
               WebkitOverflowScrolling: 'touch',
+              willChange: 'transform',
+              transform: 'translateZ(0)',
             }}
           >
             <LightweightTradingChart
