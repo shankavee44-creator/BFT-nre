@@ -67,7 +67,7 @@ import {
   PENDING_WITHDRAWAL_WARNING_MESSAGE,
   commitProfileBalanceToSupabase,
 } from '../utils/supabaseRealtimeSync';
-import { computeUserTradingSummary } from '../utils/supabaseTradeSync';
+import { computeUserTradingSummary, filterTradesForActiveAccount } from '../utils/supabaseTradeSync';
 
 
 interface WithdrawalModalProps {
@@ -127,8 +127,8 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
   const firstWithdrawalCheck = useMemo(() => checkFirstWithdrawalWaitingPeriod(account), [account]);
 
   const accountTrades = useMemo(() => {
-    return account ? trades.filter((t) => !t.accountId || t.accountId === account.id) : trades;
-  }, [trades, account?.id]);
+    return filterTradesForActiveAccount(trades, account);
+  }, [trades, account]);
 
   const accountTradingSummary = useMemo(
     () => computeUserTradingSummary(accountTrades),
@@ -2145,9 +2145,6 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
               <div className="flex items-center justify-between mb-4">
                 <div>
                   <h2 className="text-base font-bold text-white">Closed & Active OTC Trades</h2>
-                  <p className="text-xs text-[#8c96a6]">
-                    Real-time execution log for account {account?.id || 'BFT-91823'}.
-                  </p>
                 </div>
                 {onNavigateTab && (
                   <button
