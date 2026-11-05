@@ -350,13 +350,22 @@ export async function saveCopyTradingSubscriptionToSupabase(
   };
 
   try {
+    console.log('[CopyTradingSync] Inserting copy subscription row into Supabase:', insertPayload);
     const { data, error } = await supabase
       .from('copy_trading_subscriptions')
       .insert([insertPayload])
       .select('*')
-      .single();
+      .maybeSingle();
 
     if (error) {
+      console.error('[Supabase copy_trading_subscriptions Insert Error]:', {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        payload: insertPayload,
+      });
+
       // Check if duplicate key violation was thrown by database unique constraint
       if (
         error.code === '23505' ||
@@ -375,12 +384,14 @@ export async function saveCopyTradingSubscriptionToSupabase(
       };
     }
 
+    console.log('[CopyTradingSync] Subscription created successfully:', data || insertPayload);
     return {
       ok: true,
-      subscription: data as CopyTradingSubscriptionRow,
+      subscription: (data || insertPayload) as CopyTradingSubscriptionRow,
       message: 'Subscription created successfully in copy_trading_subscriptions.',
     };
   } catch (err: any) {
+    console.error('[Supabase copy_trading_subscriptions Exception]:', err);
     return {
       ok: false,
       error: `Network/Database Error: ${err?.message || 'Failed to insert subscription record.'}`,

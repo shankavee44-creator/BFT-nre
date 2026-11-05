@@ -2672,6 +2672,7 @@ export async function apiCopyTrader(params: {
   providerId: string;
   providerNumericId?: string | number;
   providerName?: string;
+  providerCategory?: string;
   copierAccountId?: string;
   copierAccountType?: string;
   perTradeAllocationType?: 'amount' | 'percentage';
@@ -2700,6 +2701,7 @@ export async function apiCopyTrader(params: {
     providerId: params.providerId,
     providerNumericId: params.providerNumericId,
     providerName: params.providerName,
+    providerCategory: params.providerCategory,
     trade_amount: tradeAmount,
     stop_loss: stopLoss,
     take_profit: takeProfit,

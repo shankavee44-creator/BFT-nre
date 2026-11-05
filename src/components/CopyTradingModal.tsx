@@ -688,6 +688,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
       providerId: showRiskConfigModal.id,
       providerNumericId: showRiskConfigModal.numeric_id,
       providerName: showRiskConfigModal.provider_name,
+      providerCategory: showRiskConfigModal.account_category,
       copierAccountId: targetAccount?.id,
       copierAccountType: singleAccountEval.accountCategory,
       perTradeAllocationType,
