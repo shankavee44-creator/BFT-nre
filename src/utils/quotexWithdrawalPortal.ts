@@ -1,4 +1,5 @@
 import { TradingAccount, WithdrawalRequest } from '../types';
+import type { NormalizedPurchaseRecord } from '../config/directDeposit';
 
 export type QuotexPortalTab =
   | 'withdrawal'
@@ -304,18 +305,77 @@ export function mapWithdrawalRequestToQuotexTransaction(req: WithdrawalRequest):
   };
 }
 
+export function mapPurchaseRecordToQuotexTransaction(
+  p: NormalizedPurchaseRecord
+): QuotexTransactionItem {
+  const ts = p.created_at ? new Date(p.created_at).getTime() : Date.now();
+  const dt = formatQuotexDateAndTime(ts);
+
+  const statusMap: Record<string, QuotexTransactionItem['status']> = {
+    completed: 'Succeeded',
+    pending: 'Waiting confirmation',
+    failed: 'Canceled',
+    expired: 'Canceled',
+  };
+
+  const amountVal = Number(p.amount || p.package_amount || 0);
+
+  const pkgName = String(p.package_name || '').toLowerCase();
+  let paymentSystem = 'USDT';
+  let network = 'TRON (TRC-20)';
+
+  if (pkgName.includes('binance')) {
+    paymentSystem = 'Binance Pay';
+    network = 'BSC (BEP20)';
+  } else if (pkgName.includes('btc') || pkgName.includes('bitcoin')) {
+    paymentSystem = 'Bitcoin (BTC)';
+    network = 'Bitcoin Network';
+  } else if (pkgName.includes('eth') || pkgName.includes('ethereum')) {
+    paymentSystem = 'Ethereum (ETH)';
+    network = 'Ethereum (ERC-20)';
+  } else if (pkgName.includes('bank')) {
+    paymentSystem = 'Bank Transfer';
+    network = 'Wire / Bank Transfer';
+  } else {
+    paymentSystem = 'USDT TRC-20';
+    network = 'TRON (TRC-20)';
+  }
+
+  return {
+    id: p.id,
+    orderNumber: String(p.id).replace(/^(DEP|PUR|ORD)-/i, '82910').slice(0, 12),
+    timestamp: ts,
+    dateFormatted: dt.dateFormatted,
+    timeFormatted: dt.timeFormatted,
+    status: statusMap[p.status] || (p.status === 'completed' ? 'Succeeded' : 'Pending'),
+    rawStatus: p.status as any,
+    type: 'Deposit',
+    paymentSystem,
+    network,
+    txHash: p.tx_hash || undefined,
+    amount: amountVal,
+    signedAmountFormatted: `+${amountVal.toFixed(2)} $`,
+    accountId: p.account_id || 'BFT-LIVE',
+  };
+}
+
 export function buildMergedTransactionLedger(
-  withdrawals: WithdrawalRequest[],
+  withdrawals: WithdrawalRequest[] = [],
+  purchases: NormalizedPurchaseRecord[] = [],
   includeDemoHistory: boolean = true
 ): QuotexTransactionItem[] {
   const mappedUserWithdrawals = withdrawals.map(mapWithdrawalRequestToQuotexTransaction);
+  const mappedUserPurchases = (purchases || []).map(mapPurchaseRecordToQuotexTransaction);
+
+  const combinedUserLedger = [...mappedUserWithdrawals, ...mappedUserPurchases];
+
   if (!includeDemoHistory) {
-    return mappedUserWithdrawals.sort((a, b) => b.timestamp - a.timestamp);
+    return combinedUserLedger.sort((a, b) => b.timestamp - a.timestamp);
   }
-  const existingIds = new Set(mappedUserWithdrawals.map((w) => w.id));
+  const existingIds = new Set(combinedUserLedger.map((w) => w.id));
 
   const combined = [
-    ...mappedUserWithdrawals,
+    ...combinedUserLedger,
     ...DEFAULT_QUOTEX_PAYMENT_HISTORY.filter((item) => !existingIds.has(item.id)),
   ];
 

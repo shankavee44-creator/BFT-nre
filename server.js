@@ -14851,6 +14851,12 @@ var copyTradingAlterColumns = [
   `ALTER TABLE copy_trading_subscriptions ADD COLUMN trade_sizing_type TEXT DEFAULT 'proportionate';`,
   `ALTER TABLE copy_trading_subscriptions ADD COLUMN sizing_multiplier REAL DEFAULT 1.0;`,
   `ALTER TABLE copy_trading_subscriptions ADD COLUMN current_pnl REAL DEFAULT 0;`,
+  `ALTER TABLE copy_trading_subscriptions ADD COLUMN copier_user_id TEXT;`,
+  `ALTER TABLE copy_trading_subscriptions ADD COLUMN copier_account_id TEXT;`,
+  `ALTER TABLE copy_trading_subscriptions ADD COLUMN trade_amount REAL DEFAULT 100;`,
+  `ALTER TABLE copy_trading_subscriptions ADD COLUMN stop_loss REAL DEFAULT 0;`,
+  `ALTER TABLE copy_trading_subscriptions ADD COLUMN take_profit REAL DEFAULT 0;`,
+  `ALTER TABLE copy_trading_subscriptions ADD COLUMN max_drawdown REAL DEFAULT 5.0;`,
   `ALTER TABLE copy_trading_profiles ADD COLUMN profit_factor REAL DEFAULT 2.15;`,
   `ALTER TABLE copy_trading_profiles ADD COLUMN max_drawdown REAL DEFAULT 4.2;`,
   `ALTER TABLE copy_trading_profiles ADD COLUMN sharpe_ratio REAL DEFAULT 1.85;`,
@@ -17974,9 +17980,21 @@ function findAssetBySymbol(symbol) {
 
 // src/utils/priceFeedEngine.ts
 var serverTimeOffsetMs = 0;
+var lastServerTimeSyncMs = 0;
+function setServerTimeOffset(serverTimestampMs, clientReferenceMs = Date.now()) {
+  if (typeof serverTimestampMs !== "number" || !Number.isFinite(serverTimestampMs) || serverTimestampMs <= 0) {
+    return;
+  }
+  const offset = serverTimestampMs - clientReferenceMs;
+  if (Math.abs(offset) < 86400 * 1e3) {
+    serverTimeOffsetMs = offset;
+    lastServerTimeSyncMs = clientReferenceMs;
+  }
+}
 function getSynchronizedNowMs() {
   return Date.now() + serverTimeOffsetMs;
 }
+var masterStores = /* @__PURE__ */ new Map();
 var GLOBAL_EPOCH = 17040672e5;
 var GLOBAL_OCTAVE_PERIODS_SEC = [5, 15, 30, 60, 180, 300, 900, 1800, 3600];
 function hashSymbol(str) {
@@ -18138,6 +18156,111 @@ function computeDeterministicCandleForBucket(asset, timeframeSeconds, candleTime
     close,
     volume: isCurrentActiveBucket ? Math.max(1, Math.floor((45 + wickHash % 115) * progress)) : Math.floor(45 + wickHash % 115)
   };
+}
+function generateDeterministicTimeframeCandles(asset, timeframeSeconds, count = 1500, anchorEndPrice, referenceNowMs = getSynchronizedNowMs()) {
+  const canonical = normalizeAssetSymbol(asset.symbol);
+  const tf = Math.max(5, timeframeSeconds);
+  const tfMs = tf * 1e3;
+  const offsetMs = getAssetTimeOffsetMs(canonical, tf);
+  const currentBucketTime = Math.floor((referenceNowMs + offsetMs) / tfMs) * tfMs - offsetMs;
+  const startBucketTime = currentBucketTime - (count - 1) * tfMs;
+  const liveEndPrice = typeof anchorEndPrice === "number" && anchorEndPrice > 0 ? anchorEndPrice : computeSynchronizedTickAtTime(asset, referenceNowMs).price;
+  const result = new Array(count);
+  for (let i = 0; i < count; i++) {
+    const candleTime = startBucketTime + i * tfMs;
+    const isLast = i === count - 1;
+    result[i] = computeDeterministicCandleForBucket(
+      asset,
+      tf,
+      candleTime,
+      isLast,
+      isLast ? liveEndPrice : void 0,
+      referenceNowMs
+    );
+  }
+  return result;
+}
+var lastSteppedTimeBySymbol = /* @__PURE__ */ new Map();
+function getOrCreateMasterHistory(asset) {
+  const symbolKey = normalizeAssetSymbol(asset.symbol);
+  if (!masterStores.has(symbolKey)) {
+    const seed = hashSymbol(symbolKey);
+    const catParams = getCategoryParameters(asset.category, symbolKey);
+    const initialRegimes = [
+      "bullish_trend",
+      "bearish_trend",
+      "consolidation",
+      "volatile_breakout",
+      "mean_reverting"
+    ];
+    const initialRegime = initialRegimes[seed % initialRegimes.length];
+    const initialTicks = catParams.trendLengthMin + (seed >> 5) % (catParams.trendLengthMax - catParams.trendLengthMin);
+    const primaryFrequency = 0.16 + seed % 100 / 100 * 0.44;
+    const secondaryFrequency = 0.04 + (seed >> 4) % 100 / 100 * 0.14;
+    const phaseOffset = (seed >> 8) % 1e3 / 1e3 * Math.PI * 2;
+    const initNow = getSynchronizedNowMs();
+    const liveSnap = computeSynchronizedTickAtTime(asset, initNow);
+    const baseCandles = generateDeterministicTimeframeCandles(asset, 5, 1500, liveSnap.price, initNow);
+    lastSteppedTimeBySymbol.set(symbolKey, initNow);
+    const lastPrice = liveSnap.price;
+    const timeframeMap = /* @__PURE__ */ new Map();
+    timeframeMap.set(5, baseCandles);
+    const newState = {
+      symbol: symbolKey,
+      category: asset.category,
+      baseTicks: baseCandles,
+      timeframeSeries: timeframeMap,
+      lastPrice,
+      prevPrice: liveSnap.open,
+      momentum: 0,
+      volatilityRegime: 1,
+      tickCounter: Math.floor((initNow - GLOBAL_EPOCH) / 5e3),
+      regime: initialRegime,
+      regimeTicksRemaining: initialTicks,
+      regimeIntensity: 0.7 + seed % 50 / 50 * 0.8,
+      phaseOffset,
+      primaryFrequency,
+      secondaryFrequency,
+      dynamicSupport: lastPrice - asset.volatility * 40,
+      dynamicResistance: lastPrice + asset.volatility * 40,
+      seed
+    };
+    masterStores.set(symbolKey, newState);
+    if (asset.symbol !== symbolKey) {
+      masterStores.set(asset.symbol, newState);
+    }
+  }
+  const existingStore = masterStores.get(symbolKey);
+  if (!isValidPriceForAsset(asset, existingStore.lastPrice)) {
+    const snap = computeSynchronizedTickAtTime(asset, getSynchronizedNowMs());
+    existingStore.lastPrice = snap.price;
+    existingStore.prevPrice = snap.open;
+    existingStore.timeframeSeries.clear();
+  }
+  return existingStore;
+}
+function syncAssetStoreWithServerTime(asset, timeframeSeconds, serverTimestampMs, authoritativePrice) {
+  if (typeof serverTimestampMs === "number" && serverTimestampMs > 0) {
+    setServerTimeOffset(serverTimestampMs);
+  }
+  const nowMs = getSynchronizedNowMs();
+  const symbolKey = normalizeAssetSymbol(asset.symbol);
+  const store = getOrCreateMasterHistory(asset);
+  const liveSnap = computeSynchronizedTickAtTime(asset, nowMs);
+  const resolvedPrice = typeof authoritativePrice === "number" && isValidPriceForAsset(asset, authoritativePrice) ? authoritativePrice : liveSnap.price;
+  store.prevPrice = liveSnap.open;
+  store.lastPrice = resolvedPrice;
+  lastSteppedTimeBySymbol.set(symbolKey, nowMs);
+  const tf = Math.max(5, timeframeSeconds);
+  const freshSeries = generateDeterministicTimeframeCandles(asset, tf, 1500, resolvedPrice, nowMs);
+  store.timeframeSeries.set(tf, freshSeries);
+  return [...freshSeries];
+}
+function isValidPriceForAsset(asset, price) {
+  if (!asset || typeof price !== "number" || !Number.isFinite(price) || price <= 0) return false;
+  const base = Number(asset.basePrice) || 0;
+  if (base <= 0) return price > 0;
+  return price >= base * 0.88 && price <= base * 1.12;
 }
 
 // src/server/marketEngine.ts
@@ -27203,6 +27326,687 @@ var supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   }
 });
 
+// src/utils/liveMarketFeed.ts
+var LiveMarketFeedEngine = class {
+  constructor() {
+    this.currentActiveSymbol = null;
+    this.currentTimeframeSeconds = 60;
+    this.isDestroyed = false;
+    this.restPollInterval = null;
+    this.activeSymbolPollInterval = null;
+    this.activeSymbolAbortController = null;
+    this.microTickInterval = null;
+    this.heartbeatWatchdogInterval = null;
+    this.eventSource = null;
+    this.sseRetryCount = 0;
+    this.sseRetryTimer = null;
+    this.lastServerHeartbeatMs = Date.now();
+    this.reconnectCount = 0;
+    this.serverApiAvailable = null;
+    this.latestPrices = /* @__PURE__ */ new Map();
+    this.prevPrices = /* @__PURE__ */ new Map();
+    this.tickListeners = /* @__PURE__ */ new Set();
+    this.statusListeners = /* @__PURE__ */ new Set();
+    this.resyncListeners = /* @__PURE__ */ new Set();
+    this.boundVisibilityHandler = null;
+    this.boundOnlineHandler = null;
+    this.status = {
+      binanceStatus: "connected",
+      forexStatus: "synchronized",
+      latencyMs: 12,
+      lastTickTime: Date.now(),
+      lastHeartbeatTime: Date.now(),
+      reconnectCount: 0,
+      totalTicksReceived: 0,
+      activePairsCount: OTC_ASSETS_CATALOG.length,
+      connectedStream: `Global Realtime Stream (${OTC_ASSETS_CATALOG.length} Markets \u2022 Synced)`
+    };
+    this.lastReconnectMs = 0;
+    const now = getSynchronizedNowMs();
+    for (const asset of OTC_ASSETS_CATALOG) {
+      const snap = computeSynchronizedTickAtTime(asset, now);
+      this.latestPrices.set(asset.symbol, snap.price);
+      this.prevPrices.set(asset.symbol, snap.open);
+    }
+    if (typeof window !== "undefined") {
+      this.init();
+    }
+  }
+  init() {
+    this.isDestroyed = false;
+    this.startRestPollingEngine();
+    this.startSynchronizedMicroTickEngine();
+    this.startHeartbeatWatchdog();
+    this.attachBrowserLifecycleListeners();
+  }
+  addTickListener(cb) {
+    this.tickListeners.add(cb);
+    return () => this.tickListeners.delete(cb);
+  }
+  addStatusListener(cb) {
+    this.statusListeners.add(cb);
+    cb(this.status);
+    return () => this.statusListeners.delete(cb);
+  }
+  addResyncListener(cb) {
+    this.resyncListeners.add(cb);
+    return () => this.resyncListeners.delete(cb);
+  }
+  getStatus() {
+    return { ...this.status };
+  }
+  getLatestPrice(symbol) {
+    const canonical = normalizeAssetSymbol(symbol);
+    const asset = findAssetBySymbol(canonical);
+    if (asset) {
+      const snap = computeSynchronizedTickAtTime(asset, getSynchronizedNowMs());
+      this.latestPrices.set(canonical, snap.price);
+      return snap.price;
+    }
+    if (this.latestPrices.has(canonical)) {
+      return this.latestPrices.get(canonical);
+    }
+    return void 0;
+  }
+  /**
+   * Completely unsubscribes and disconnects the active asset polling interval, SSE stream, and in-flight requests
+   */
+  unsubscribeActiveSymbol() {
+    if (this.activeSymbolPollInterval) {
+      clearInterval(this.activeSymbolPollInterval);
+      this.activeSymbolPollInterval = null;
+    }
+    if (this.activeSymbolAbortController) {
+      try {
+        this.activeSymbolAbortController.abort();
+      } catch {
+      }
+      this.activeSymbolAbortController = null;
+    }
+    if (this.eventSource) {
+      try {
+        this.eventSource.close();
+      } catch {
+      }
+      this.eventSource = null;
+    }
+    if (this.sseRetryTimer) {
+      clearTimeout(this.sseRetryTimer);
+      this.sseRetryTimer = null;
+    }
+    this.currentActiveSymbol = null;
+  }
+  isJsonApiResponse(res) {
+    if (!res || !res.ok) return false;
+    const contentType = String(res.headers?.get?.("content-type") || "").toLowerCase();
+    if (contentType.includes("text/html")) return false;
+    return true;
+  }
+  disableServerApiStreamAndPolling() {
+    this.serverApiAvailable = false;
+    if (this.eventSource) {
+      try {
+        this.eventSource.close();
+      } catch {
+      }
+      this.eventSource = null;
+    }
+    if (this.sseRetryTimer) {
+      clearTimeout(this.sseRetryTimer);
+      this.sseRetryTimer = null;
+    }
+    if (this.activeSymbolPollInterval) {
+      clearInterval(this.activeSymbolPollInterval);
+      this.activeSymbolPollInterval = null;
+    }
+    if (this.restPollInterval) {
+      clearInterval(this.restPollInterval);
+      this.restPollInterval = null;
+    }
+  }
+  /**
+   * Sets the currently active symbol & timeframe, connects to the live SSE stream,
+   * and immediately fetches the authoritative server snapshot so no manual refresh is needed.
+   */
+  setActiveSymbol(symbol, timeframeSeconds = 60) {
+    this.unsubscribeActiveSymbol();
+    this.currentActiveSymbol = normalizeAssetSymbol(symbol);
+    this.currentTimeframeSeconds = Math.max(5, Number(timeframeSeconds) || 60);
+    if (this.currentActiveSymbol && typeof window !== "undefined") {
+      const targetSym = this.currentActiveSymbol;
+      const targetTf = this.currentTimeframeSeconds;
+      this.syncActiveSymbolSnapshot(targetSym, targetTf).catch(() => {
+      });
+      if (this.serverApiAvailable !== false) {
+        if (this.serverApiAvailable === true) {
+          this.connectServerStream(targetSym, targetTf);
+        }
+        this.activeSymbolPollInterval = setInterval(() => {
+          if (!this.isDestroyed && this.currentActiveSymbol === targetSym && this.serverApiAvailable !== false) {
+            this.pollActiveSymbolFromServerProxy(targetSym);
+          }
+        }, 1e3);
+      }
+    }
+  }
+  /**
+   * Connects to `/api/market/stream` (SSE) to receive live server ticks and heartbeats in real time.
+   */
+  connectServerStream(symbol, timeframeSeconds) {
+    if (typeof window === "undefined" || typeof EventSource === "undefined" || this.isDestroyed || this.serverApiAvailable === false) {
+      return;
+    }
+    if (this.eventSource) {
+      try {
+        this.eventSource.close();
+      } catch {
+      }
+      this.eventSource = null;
+    }
+    try {
+      const url = `/api/market/stream?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(
+        String(timeframeSeconds)
+      )}&_t=${Date.now()}`;
+      const es = new EventSource(url);
+      this.eventSource = es;
+      es.addEventListener("init", (event) => {
+        if (this.isDestroyed || this.currentActiveSymbol !== symbol) return;
+        try {
+          const data = JSON.parse(event.data);
+          if (data?.serverTime) {
+            setServerTimeOffset(Number(data.serverTime));
+          }
+          this.lastServerHeartbeatMs = Date.now();
+          const asset = findAssetBySymbol(symbol);
+          const freshCandles = syncAssetStoreWithServerTime(
+            asset,
+            timeframeSeconds,
+            data?.serverTime,
+            Number(data?.price)
+          );
+          const livePrice = Number(data?.price) || freshCandles[freshCandles.length - 1]?.close || asset.basePrice;
+          this.dispatchTick({
+            symbol,
+            price: livePrice,
+            prevPrice: Number(data?.prevPrice) || livePrice,
+            timestamp: getSynchronizedNowMs(),
+            serverTime: data?.serverTime,
+            activeCandle: data?.activeCandle,
+            source: "server_stream"
+          });
+          this.notifyResyncListeners({
+            symbol,
+            timeframeSeconds,
+            price: livePrice,
+            prevPrice: Number(data?.prevPrice) || livePrice,
+            serverTime: Number(data?.serverTime) || getSynchronizedNowMs(),
+            activeCandle: data?.activeCandle,
+            candles: freshCandles
+          });
+        } catch {
+        }
+      });
+      es.addEventListener("tick", (event) => {
+        if (this.isDestroyed || this.currentActiveSymbol !== symbol) return;
+        try {
+          const data = JSON.parse(event.data);
+          if (data?.serverTime) {
+            setServerTimeOffset(Number(data.serverTime));
+          }
+          this.lastServerHeartbeatMs = Date.now();
+          if (data?.prices && typeof data.prices === "object") {
+            Object.entries(data.prices).forEach(([sym, val]) => {
+              const num = Number(val);
+              if (!Number.isNaN(num) && num > 0) {
+                this.latestPrices.set(sym, num);
+              }
+            });
+          }
+          const livePrice = Number(data?.price);
+          if (!Number.isNaN(livePrice) && livePrice > 0) {
+            this.dispatchTick({
+              symbol,
+              price: livePrice,
+              prevPrice: this.latestPrices.get(symbol) || livePrice,
+              timestamp: getSynchronizedNowMs(),
+              serverTime: data?.serverTime,
+              activeCandle: data?.activeCandle,
+              source: "server_stream"
+            });
+          }
+        } catch {
+        }
+      });
+      es.addEventListener("heartbeat", (event) => {
+        if (this.isDestroyed) return;
+        try {
+          const data = JSON.parse(event.data);
+          if (data?.serverTime) {
+            setServerTimeOffset(Number(data.serverTime));
+          }
+          this.lastServerHeartbeatMs = Date.now();
+          this.updateStatus({
+            binanceStatus: "connected",
+            forexStatus: "synchronized",
+            lastHeartbeatTime: this.lastServerHeartbeatMs
+          });
+        } catch {
+        }
+      });
+      es.onopen = () => {
+        this.sseRetryCount = 0;
+      };
+      es.onerror = () => {
+        try {
+          es.close();
+        } catch {
+        }
+        if (this.eventSource === es) {
+          this.eventSource = null;
+        }
+        this.updateStatus({
+          binanceStatus: "fallback",
+          forexStatus: "synchronized"
+        });
+        if (!this.isDestroyed && this.serverApiAvailable === true && this.currentActiveSymbol === symbol && !this.sseRetryTimer) {
+          const delay = Math.min(3e4, 2e3 * Math.pow(2, Math.min(4, this.sseRetryCount)));
+          this.sseRetryCount++;
+          this.sseRetryTimer = setTimeout(() => {
+            this.sseRetryTimer = null;
+            if (!this.isDestroyed && this.serverApiAvailable === true && this.currentActiveSymbol === symbol && !this.eventSource) {
+              this.connectServerStream(symbol, timeframeSeconds);
+            }
+          }, delay);
+        }
+      };
+    } catch {
+    }
+  }
+  /**
+   * Fetches the authoritative server market snapshot (`/api/market/snapshot`) with `cache: 'no-store'`,
+   * aligns the local server clock offset, rebuilds the deterministic candle state, and notifies subscribers.
+   */
+  async syncActiveSymbolSnapshot(symbol, timeframeSeconds) {
+    const targetSymbol = normalizeAssetSymbol(symbol || this.currentActiveSymbol || "EUR/USD (OTC)");
+    const targetTf = Math.max(5, Number(timeframeSeconds || this.currentTimeframeSeconds || 60));
+    const asset = findAssetBySymbol(targetSymbol);
+    const startMs = typeof performance !== "undefined" ? performance.now() : Date.now();
+    try {
+      if (typeof fetch !== "undefined" && this.serverApiAvailable !== false) {
+        const res = await fetch(
+          `/api/market/snapshot?symbol=${encodeURIComponent(targetSymbol)}&timeframe=${encodeURIComponent(
+            String(targetTf)
+          )}&count=250&_t=${Date.now()}`,
+          {
+            cache: "no-store",
+            headers: {
+              Accept: "application/json",
+              "Cache-Control": "no-cache, no-store, must-revalidate",
+              Pragma: "no-cache"
+            }
+          }
+        );
+        if (!this.isJsonApiResponse(res)) {
+          this.disableServerApiStreamAndPolling();
+        } else {
+          const data = await res.json();
+          if (data?.ok) {
+            this.serverApiAvailable = true;
+            if (this.currentActiveSymbol === targetSymbol && !this.eventSource) {
+              this.connectServerStream(targetSymbol, targetTf);
+            }
+            const rttMs = Math.max(
+              4,
+              Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - startMs)
+            );
+            const estimatedServerNow = Number(data.serverTime || Date.now()) + Math.round(rttMs / 2);
+            setServerTimeOffset(estimatedServerNow);
+            this.lastServerHeartbeatMs = Date.now();
+            const authoritativePrice = Number(data.price);
+            const syncedCandles = syncAssetStoreWithServerTime(
+              asset,
+              targetTf,
+              estimatedServerNow,
+              authoritativePrice
+            );
+            const finalPrice = !Number.isNaN(authoritativePrice) && authoritativePrice > 0 ? authoritativePrice : syncedCandles[syncedCandles.length - 1]?.close || asset.basePrice;
+            this.dispatchTick({
+              symbol: targetSymbol,
+              price: finalPrice,
+              prevPrice: Number(data.prevPrice) || finalPrice,
+              timestamp: getSynchronizedNowMs(),
+              serverTime: estimatedServerNow,
+              activeCandle: data.activeCandle,
+              source: "server_sync"
+            });
+            this.updateStatus({
+              binanceStatus: "connected",
+              forexStatus: "synchronized",
+              latencyMs: rttMs,
+              lastTickTime: Date.now(),
+              lastHeartbeatTime: this.lastServerHeartbeatMs
+            });
+            const payload2 = {
+              symbol: targetSymbol,
+              timeframeSeconds: targetTf,
+              price: finalPrice,
+              prevPrice: Number(data.prevPrice) || finalPrice,
+              serverTime: estimatedServerNow,
+              activeCandle: syncedCandles[syncedCandles.length - 1],
+              candles: syncedCandles
+            };
+            this.notifyResyncListeners(payload2);
+            return payload2;
+          }
+        }
+      }
+    } catch {
+    }
+    const syncedNow = getSynchronizedNowMs();
+    const fallbackCandles = syncAssetStoreWithServerTime(asset, targetTf, syncedNow);
+    const fallbackPrice = fallbackCandles[fallbackCandles.length - 1]?.close || asset.basePrice;
+    const payload = {
+      symbol: targetSymbol,
+      timeframeSeconds: targetTf,
+      price: fallbackPrice,
+      prevPrice: fallbackCandles[fallbackCandles.length - 1]?.open || fallbackPrice,
+      serverTime: syncedNow,
+      activeCandle: fallbackCandles[fallbackCandles.length - 1],
+      candles: fallbackCandles
+    };
+    this.notifyResyncListeners(payload);
+    return payload;
+  }
+  /**
+   * Automatic Heartbeat & Reconnection Watchdog:
+   * Monitors connection health every 2 seconds. If the connection lags (> 4s without server heartbeat),
+   * automatically reconnects the real-time stream and catches up to the current global market state.
+   */
+  startHeartbeatWatchdog() {
+    if (this.heartbeatWatchdogInterval) clearInterval(this.heartbeatWatchdogInterval);
+    this.heartbeatWatchdogInterval = setInterval(() => {
+      if (this.isDestroyed || typeof window === "undefined" || this.serverApiAvailable === false) return;
+      const elapsedSinceHeartbeat = Date.now() - this.lastServerHeartbeatMs;
+      if (elapsedSinceHeartbeat > 4e3) {
+        this.reconnectAndCatchUp();
+      }
+    }, 2e3);
+  }
+  attachBrowserLifecycleListeners() {
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+    this.boundVisibilityHandler = () => {
+      if (document.visibilityState === "visible" && !this.isDestroyed) {
+        this.reconnectAndCatchUp();
+      }
+    };
+    this.boundOnlineHandler = () => {
+      if (!this.isDestroyed) {
+        this.reconnectAndCatchUp();
+      }
+    };
+    document.addEventListener("visibilitychange", this.boundVisibilityHandler);
+    window.addEventListener("online", this.boundOnlineHandler);
+    window.addEventListener("focus", this.boundOnlineHandler);
+  }
+  /**
+   * Forces an immediate reconnection of the real-time stream and catches up the chart state.
+   */
+  reconnectAndCatchUp() {
+    if (this.isDestroyed) return;
+    const now = Date.now();
+    if (now - this.lastReconnectMs < 4e3) {
+      return;
+    }
+    this.lastReconnectMs = now;
+    this.reconnectCount += 1;
+    this.lastServerHeartbeatMs = now;
+    const activeSym = this.currentActiveSymbol || "EUR/USD (OTC)";
+    const activeTf = this.currentTimeframeSeconds || 60;
+    this.updateStatus({
+      binanceStatus: "connected",
+      forexStatus: "synchronized",
+      reconnectCount: this.reconnectCount,
+      lastHeartbeatTime: this.lastServerHeartbeatMs
+    });
+    if (typeof window !== "undefined" && this.currentActiveSymbol && this.serverApiAvailable === true) {
+      this.connectServerStream(activeSym, activeTf);
+    }
+    this.syncActiveSymbolSnapshot(activeSym, activeTf).catch(() => {
+    });
+    if (this.serverApiAvailable !== false) {
+      this.fetchInitialSnapshots().catch(() => {
+      });
+    }
+  }
+  resolveBinanceSymbol(symbol) {
+    const matched = findAssetBySymbol(symbol);
+    if (matched && !matched.category.toLowerCase().includes("crypto")) {
+      return null;
+    }
+    const clean = symbol.replace(/\s*\(OTC\)/gi, "").replace(/\//g, "").trim().toUpperCase();
+    const fiatPrefixes = ["EUR", "GBP", "AUD", "NZD", "USD", "CAD", "CHF", "JPY", "XAU", "XAG", "WTI"];
+    if (fiatPrefixes.some((fiat) => clean.startsWith(fiat))) {
+      return null;
+    }
+    if (clean.endsWith("USDT")) return clean;
+    if (clean.endsWith("USD")) return `${clean}T`;
+    return null;
+  }
+  startRestPollingEngine() {
+    if (this.restPollInterval) clearInterval(this.restPollInterval);
+    this.fetchInitialSnapshots();
+    this.restPollInterval = setInterval(() => {
+      if (!this.isDestroyed && this.serverApiAvailable !== false) {
+        this.fetchInitialSnapshots();
+      }
+    }, 1500);
+  }
+  async pollActiveSymbolFromServerProxy(symbol) {
+    if (this.serverApiAvailable === false) return;
+    const canonical = normalizeAssetSymbol(symbol);
+    if (this.currentActiveSymbol !== canonical) return;
+    if (this.activeSymbolAbortController) {
+      try {
+        this.activeSymbolAbortController.abort();
+      } catch {
+      }
+    }
+    const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+    this.activeSymbolAbortController = controller;
+    const startMs = performance.now();
+    try {
+      const res = await fetch(
+        `/api/market/ticker?symbol=${encodeURIComponent(canonical)}&timeframe=${encodeURIComponent(
+          String(this.currentTimeframeSeconds)
+        )}&_t=${Date.now()}`,
+        {
+          cache: "no-store",
+          headers: { Accept: "application/json" },
+          ...controller ? { signal: controller.signal } : {}
+        }
+      );
+      if (!this.isJsonApiResponse(res)) {
+        this.disableServerApiStreamAndPolling();
+        return;
+      }
+      const data = await res.json();
+      if (this.currentActiveSymbol !== canonical) return;
+      const rtt = Math.max(4, Math.round(performance.now() - startMs));
+      if (data?.serverTime) {
+        setServerTimeOffset(Number(data.serverTime) + Math.round(rtt / 2));
+      }
+      this.lastServerHeartbeatMs = Date.now();
+      const rawPrice = Number(data?.price);
+      if (!Number.isNaN(rawPrice) && rawPrice > 0) {
+        const now = getSynchronizedNowMs();
+        this.dispatchTick({
+          symbol: canonical,
+          price: rawPrice,
+          prevPrice: this.latestPrices.get(canonical) || rawPrice,
+          timestamp: now,
+          serverTime: data?.serverTime,
+          activeCandle: data?.activeCandle,
+          source: "server_sync"
+        });
+        this.updateStatus({
+          binanceStatus: "connected",
+          forexStatus: "synchronized",
+          latencyMs: rtt,
+          lastTickTime: now,
+          lastHeartbeatTime: this.lastServerHeartbeatMs
+        });
+      }
+    } catch {
+    }
+  }
+  async fetchInitialSnapshots() {
+    if (this.serverApiAvailable === false) return;
+    const startMs = typeof performance !== "undefined" ? performance.now() : Date.now();
+    try {
+      const res = await fetch(`/api/market/live-prices?_t=${Date.now()}`, {
+        cache: "no-store",
+        headers: { Accept: "application/json" }
+      });
+      if (!this.isJsonApiResponse(res)) {
+        this.disableServerApiStreamAndPolling();
+        return;
+      }
+      const data = await res.json();
+      if (data?.ok && data.prices && typeof data.prices === "object") {
+        this.serverApiAvailable = true;
+        if (this.currentActiveSymbol && !this.eventSource) {
+          this.connectServerStream(this.currentActiveSymbol, this.currentTimeframeSeconds);
+        }
+        const latency = Math.max(
+          4,
+          Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - startMs)
+        );
+        if (data.serverTime || data.timestamp) {
+          setServerTimeOffset(Number(data.serverTime || data.timestamp) + Math.round(latency / 2));
+        }
+        this.lastServerHeartbeatMs = Date.now();
+        const now = getSynchronizedNowMs();
+        Object.entries(data.prices).forEach(([sym, priceVal]) => {
+          const numPrice = Number(priceVal);
+          if (!Number.isNaN(numPrice) && numPrice > 0) {
+            this.latestPrices.set(sym, numPrice);
+          }
+        });
+        if (this.currentActiveSymbol) {
+          const activePrice = this.latestPrices.get(this.currentActiveSymbol);
+          if (activePrice) {
+            this.dispatchTick({
+              symbol: this.currentActiveSymbol,
+              price: activePrice,
+              prevPrice: this.prevPrices.get(this.currentActiveSymbol) || activePrice,
+              timestamp: now,
+              serverTime: data.serverTime || data.timestamp,
+              source: "server_sync"
+            });
+          }
+        }
+        this.updateStatus({
+          binanceStatus: "connected",
+          forexStatus: "synchronized",
+          latencyMs: latency,
+          lastTickTime: now,
+          lastHeartbeatTime: this.lastServerHeartbeatMs,
+          activePairsCount: OTC_ASSETS_CATALOG.length
+        });
+      }
+    } catch {
+    }
+  }
+  startSynchronizedMicroTickEngine() {
+    if (this.microTickInterval) clearInterval(this.microTickInterval);
+    this.microTickInterval = setInterval(() => {
+      if (!this.isDestroyed) {
+        this.generateSynchronizedTicks();
+      }
+    }, 250);
+  }
+  generateSynchronizedTicks() {
+    const now = getSynchronizedNowMs();
+    if (this.currentActiveSymbol) {
+      const activeAsset = findAssetBySymbol(this.currentActiveSymbol);
+      if (activeAsset) {
+        const snap = computeSynchronizedTickAtTime(activeAsset, now);
+        const prev = this.latestPrices.get(activeAsset.symbol) || snap.price;
+        this.dispatchTick({
+          symbol: activeAsset.symbol,
+          price: snap.price,
+          prevPrice: prev,
+          timestamp: now,
+          source: activeAsset.category.includes("Crypto") ? "binance_rest" : activeAsset.category.includes("Commodit") ? "commodities" : "interbank_forex"
+        });
+      }
+    }
+    const secBucket = Math.floor(now / 250) % 4;
+    const batchSize = Math.ceil(OTC_ASSETS_CATALOG.length / 4);
+    const startIdx = secBucket * batchSize;
+    const endIdx = Math.min(OTC_ASSETS_CATALOG.length, startIdx + batchSize);
+    for (let i = startIdx; i < endIdx; i++) {
+      const asset = OTC_ASSETS_CATALOG[i];
+      if (asset.symbol === this.currentActiveSymbol) continue;
+      const snap = computeSynchronizedTickAtTime(asset, now);
+      this.prevPrices.set(asset.symbol, this.latestPrices.get(asset.symbol) || snap.price);
+      this.latestPrices.set(asset.symbol, snap.price);
+    }
+  }
+  dispatchTick(tick) {
+    this.prevPrices.set(tick.symbol, this.latestPrices.get(tick.symbol) || tick.price);
+    this.latestPrices.set(tick.symbol, tick.price);
+    this.status.lastTickTime = tick.timestamp;
+    this.status.totalTicksReceived++;
+    for (const listener of this.tickListeners) {
+      try {
+        listener(tick);
+      } catch {
+      }
+    }
+  }
+  notifyResyncListeners(payload) {
+    for (const listener of this.resyncListeners) {
+      try {
+        listener(payload);
+      } catch {
+      }
+    }
+  }
+  updateStatus(partial) {
+    this.status = { ...this.status, ...partial };
+    for (const listener of this.statusListeners) {
+      try {
+        listener(this.status);
+      } catch {
+      }
+    }
+  }
+  destroy() {
+    this.isDestroyed = true;
+    this.unsubscribeActiveSymbol();
+    if (this.restPollInterval) clearInterval(this.restPollInterval);
+    if (this.activeSymbolPollInterval) clearInterval(this.activeSymbolPollInterval);
+    if (this.microTickInterval) clearInterval(this.microTickInterval);
+    if (this.heartbeatWatchdogInterval) clearInterval(this.heartbeatWatchdogInterval);
+    if (this.sseRetryTimer) {
+      clearTimeout(this.sseRetryTimer);
+      this.sseRetryTimer = null;
+    }
+    if (typeof document !== "undefined" && this.boundVisibilityHandler) {
+      document.removeEventListener("visibilitychange", this.boundVisibilityHandler);
+    }
+    if (typeof window !== "undefined" && this.boundOnlineHandler) {
+      window.removeEventListener("online", this.boundOnlineHandler);
+      window.removeEventListener("focus", this.boundOnlineHandler);
+    }
+    this.tickListeners.clear();
+    this.statusListeners.clear();
+    this.resyncListeners.clear();
+  }
+};
+var liveMarketFeed = new LiveMarketFeedEngine();
+
 // src/utils/supabaseRealtimeSync.ts
 var LEDGER_STORAGE_KEY = "bft_active_trades_ledger_v1";
 var SETTLED_STORAGE_KEY = "bft_settled_trades_v1";
@@ -30077,11 +30881,16 @@ data: ${JSON.stringify({
       const userId = String(user?.id || req.body?.userId || "usr_bft_001").trim();
       const {
         providerId,
+        copierAccountId,
         allocatedCapital,
+        tradeAmount,
         perTradeAllocationType,
         perTradeAllocationValue,
         maxLossLimit,
+        stopLoss,
         takeProfitLimit,
+        takeProfit,
+        maxDrawdown,
         tradeSizingType,
         sizingMultiplier
       } = req.body || {};
@@ -30092,16 +30901,23 @@ data: ${JSON.stringify({
         fullName: user?.full_name || "Pro Funded Trader"
       });
       const id = `SUB-${userId}-${providerId}-${Date.now().toString(36)}`;
-      const cleanAllocated = Math.max(1, Number(allocatedCapital || perTradeAllocationValue || 100));
-      const cleanMaxLoss = Math.max(5, Number(maxLossLimit || 50));
-      const cleanTakeProfit = Math.max(5, Number(takeProfitLimit || 150));
-      const existing = db.prepare("SELECT id FROM copy_trading_subscriptions WHERE user_id = ? AND provider_id = ?").get(userId, providerId);
+      const cleanAllocated = Math.max(1, Number(tradeAmount || allocatedCapital || perTradeAllocationValue || 100));
+      const cleanMaxLoss = Math.max(0, Number(stopLoss ?? maxLossLimit ?? 50));
+      const cleanTakeProfit = Math.max(0, Number(takeProfit ?? takeProfitLimit ?? 150));
+      const cleanMaxDrawdown = Math.max(0.5, Number(maxDrawdown ?? 5));
+      const cleanAccountId = String(copierAccountId || "").trim();
+      const existing = db.prepare("SELECT id FROM copy_trading_subscriptions WHERE (user_id = ? OR copier_user_id = ?) AND provider_id = ?").get(userId, userId, providerId);
       if (existing) {
         db.prepare(`
           UPDATE copy_trading_subscriptions SET
             allocated_capital = ?,
+            trade_amount = ?,
             max_loss_limit = ?,
+            stop_loss = ?,
             take_profit_limit = ?,
+            take_profit = ?,
+            max_drawdown = ?,
+            copier_account_id = ?,
             trade_sizing_type = ?,
             sizing_multiplier = ?,
             status = 'active',
@@ -30109,8 +30925,13 @@ data: ${JSON.stringify({
           WHERE id = ?
         `).run(
           cleanAllocated,
+          cleanAllocated,
+          cleanMaxLoss,
           cleanMaxLoss,
           cleanTakeProfit,
+          cleanTakeProfit,
+          cleanMaxDrawdown,
+          cleanAccountId,
           tradeSizingType || (perTradeAllocationType === "percentage" ? "proportionate" : "fixed"),
           Number(sizingMultiplier || 1),
           Date.now(),
@@ -30119,16 +30940,23 @@ data: ${JSON.stringify({
       } else {
         db.prepare(`
           INSERT INTO copy_trading_subscriptions (
-            id, user_id, provider_id, allocated_capital, max_loss_limit, 
-            take_profit_limit, trade_sizing_type, sizing_multiplier, status, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+            id, user_id, copier_user_id, copier_account_id, provider_id, allocated_capital, trade_amount,
+            max_loss_limit, stop_loss, take_profit_limit, take_profit, max_drawdown,
+            trade_sizing_type, sizing_multiplier, status, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
         `).run(
           id,
           userId,
+          userId,
+          cleanAccountId,
           providerId,
           cleanAllocated,
+          cleanAllocated,
+          cleanMaxLoss,
           cleanMaxLoss,
           cleanTakeProfit,
+          cleanTakeProfit,
+          cleanMaxDrawdown,
           tradeSizingType || (perTradeAllocationType === "percentage" ? "proportionate" : "fixed"),
           Number(sizingMultiplier || 1),
           Date.now()

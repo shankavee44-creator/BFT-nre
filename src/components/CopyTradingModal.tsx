@@ -53,6 +53,7 @@ import {
   generate200TraderPool,
   getRotationWindowInfo,
   queryCopyTradersPool,
+  validateCopyTradingAccountTypeMatch,
   type CopyTraderProfileData,
   type CopySubscriptionData,
 } from '../utils/copyTradingRules';
@@ -73,6 +74,7 @@ interface MasterTraderCardItemProps {
   displayRank: number;
   isCopying: boolean;
   isFull: boolean;
+  activeAccount?: TradingAccount | null;
   onViewStats: (trader: CopyTraderProfileData) => void;
   onCancelSubscription: (trader: CopyTraderProfileData) => void;
   onOpenCopyConfig: (trader: CopyTraderProfileData) => void;
@@ -83,11 +85,13 @@ const MasterTraderCardItem: React.FC<MasterTraderCardItemProps> = React.memo(({
   displayRank,
   isCopying,
   isFull,
+  activeAccount,
   onViewStats,
   onCancelSubscription,
   onOpenCopyConfig,
 }) => {
   const [isDetailsOpen, setIsDetailsOpen] = useState<boolean>(displayRank === 1);
+  const matchResult = validateCopyTradingAccountTypeMatch(activeAccount, trader);
 
   return (
     <div
@@ -144,6 +148,12 @@ const MasterTraderCardItem: React.FC<MasterTraderCardItemProps> = React.memo(({
               </span>
               <span className="text-[8.5px] sm:text-[10px] font-mono font-bold px-1.5 py-0.2 rounded bg-emerald-500/15 border border-emerald-500/30 text-[#00F5A0]">
                 3M Win: {trader.win_rate_3m}%
+              </span>
+              <span
+                data-testid={`trader-compatibility-badge-${trader.numeric_id}`}
+                className={`text-[8.5px] sm:text-[10px] font-mono font-bold px-1.5 py-0.2 rounded border ${matchResult.badgeColor}`}
+              >
+                {matchResult.badgeLabel}
               </span>
             </div>
           </div>
@@ -552,6 +562,20 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
       return;
     }
 
+    // Check if the currently selected account (or active account) matches the trader's account type
+    const activeTargetAccount = accounts.find((a) => a.id === selectedCopyAccountId) || activeAccount;
+    const typeMatchEval = validateCopyTradingAccountTypeMatch(activeTargetAccount, trader);
+
+    if (!typeMatchEval.isMatch) {
+      setShowEligibilityModal({
+        trader,
+        reason: typeMatchEval.error || 'Account type mismatch.',
+        code: 'ACCOUNT_TYPE_MISMATCH',
+      });
+      triggerToast(typeMatchEval.error || 'Account type mismatch.', 'error');
+      return;
+    }
+
     // Check if the currently selected account (or any user account) is eligible
     const evalForTarget = resolveCopierEligibilityForUser({
       selectedAccountId: selectedCopyAccountId || activeAccount?.id,
@@ -614,7 +638,16 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
     setRiskErrorNotice(null);
 
     const targetAccount =
-      accounts.find((a) => a.id === selectedCopyAccountId) || copierEligibility.selectedAccount;
+      accounts.find((a) => a.id === selectedCopyAccountId) || copierEligibility.selectedAccount || activeAccount;
+
+    const matchValidation = validateCopyTradingAccountTypeMatch(targetAccount, showRiskConfigModal);
+    if (!matchValidation.isMatch) {
+      const errorMsg = matchValidation.error || 'Account type mismatch: Incompatible account types.';
+      setRiskErrorNotice(errorMsg);
+      triggerToast(errorMsg, 'error');
+      return;
+    }
+
     const singleAccountEval = evaluateSingleAccountCopyEligibility({
       account: targetAccount,
       userProfile,
@@ -1468,6 +1501,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                       displayRank={displayRank}
                       isCopying={isCopying}
                       isFull={isFull}
+                      activeAccount={copierEligibility.selectedAccount || activeAccount}
                       onViewStats={setViewingTrader}
                       onCancelSubscription={handleCancelSubscription}
                       onOpenCopyConfig={handleOpenCopyConfig}

@@ -59,6 +59,7 @@ import { supabase } from '../utils/supabase';
 import {
   insertSupabaseWithdrawal,
   fetchSupabaseWithdrawalsForUser,
+  fetchSupabasePurchasesForUser,
   mapSupabaseWithdrawalToRequest,
   computeWithdrawalDeduction,
   computeWithdrawalRefund,
@@ -68,6 +69,7 @@ import {
   commitProfileBalanceToSupabase,
 } from '../utils/supabaseRealtimeSync';
 import { computeUserTradingSummary, filterTradesForActiveAccount } from '../utils/supabaseTradeSync';
+import type { NormalizedPurchaseRecord } from '../config/directDeposit';
 
 
 interface WithdrawalModalProps {
@@ -77,6 +79,7 @@ interface WithdrawalModalProps {
   onClose: () => void;
   onUpdateAccount: (updated: TradingAccount) => void;
   withdrawals: WithdrawalRequest[];
+  purchases?: NormalizedPurchaseRecord[];
   onAddWithdrawal: (req: WithdrawalRequest) => void;
   onUpdateWithdrawal: (req: WithdrawalRequest) => void;
   onWithdrawalCommissionTriggered?: (payoutAmount: number) => void;
@@ -98,6 +101,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
   onClose,
   onUpdateAccount,
   withdrawals,
+  purchases: purchasesProp = [],
   onAddWithdrawal,
   onUpdateWithdrawal,
   onWithdrawalCommissionTriggered,
@@ -116,6 +120,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
   const [mobilePortalDropdownOpen, setMobilePortalDropdownOpen] = useState(false);
   const [tradesPage, setTradesPage] = useState(1);
   const [tradesPageSize, setTradesPageSize] = useState(10);
+  const [userPurchases, setUserPurchases] = useState<NormalizedPurchaseRecord[]>(purchasesProp);
 
   useEffect(() => {
     setTradesPage(1);
@@ -226,6 +231,25 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
           } else {
             onAddWithdrawal(mapped);
           }
+        }
+      })
+      .catch(() => {});
+    return () => {
+      isMounted = false;
+    };
+  }, [userProfile?.id, userProfile?.email]);
+
+  // Sync user's latest crypto_deposits & user_purchases from Supabase on mount
+  useEffect(() => {
+    let isMounted = true;
+    fetchSupabasePurchasesForUser({
+      userId: userProfile?.id || account?.ownerId,
+      userEmail: userProfile?.email,
+    })
+      .then((rows) => {
+        if (!isMounted) return;
+        if (Array.isArray(rows)) {
+          setUserPurchases(rows);
         }
       })
       .catch(() => {});
@@ -385,8 +409,26 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
   const hasActivePending = Boolean(activePendingRequest);
   const activeRequest = activePendingRequest;
 
-  // Merged Transaction Ledger & Pagination (strictly real user withdrawals, no fake demo rows)
-  const allTransactions = useMemo(() => buildMergedTransactionLedger(withdrawals, false), [withdrawals]);
+  const combinedPurchases = useMemo(() => {
+    const map = new Map<string, NormalizedPurchaseRecord>();
+    if (Array.isArray(purchasesProp)) {
+      for (const p of purchasesProp) {
+        if (p && p.id) map.set(String(p.id), p);
+      }
+    }
+    if (Array.isArray(userPurchases)) {
+      for (const p of userPurchases) {
+        if (p && p.id) map.set(String(p.id), p);
+      }
+    }
+    return Array.from(map.values());
+  }, [purchasesProp, userPurchases]);
+
+  // Merged Transaction Ledger & Pagination (payouts + deposits from Supabase)
+  const allTransactions = useMemo(
+    () => buildMergedTransactionLedger(withdrawals, combinedPurchases, false),
+    [withdrawals, combinedPurchases]
+  );
   const filteredTransactions = useMemo(() => {
     if (typeFilter === 'ALL') return allTransactions;
     return allTransactions.filter((t) => t.type === typeFilter);

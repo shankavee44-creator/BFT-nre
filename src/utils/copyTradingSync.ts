@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import { isValidUuid, ensureTradeUuid } from './supabaseTradeSync';
+import { resolveCanonicalCopyAccountType } from './copyTradingRules';
 
 export interface CopySubscriptionParams {
   userId?: string | null;
@@ -10,6 +11,7 @@ export interface CopySubscriptionParams {
   providerId: string;
   providerNumericId?: string | number | null;
   providerName?: string | null;
+  providerCategory?: string | null;
   trade_amount: number;
   stop_loss: number;
   take_profit: number;
@@ -279,6 +281,36 @@ export async function saveCopyTradingSubscriptionToSupabase(
       ok: false,
       error: 'Trading Account Error: Unable to resolve active trading account ID for copy trading.',
     };
+  }
+
+  // 3.5. Enforce Account Type Matching Rules
+  const copierCanonical = resolveCanonicalCopyAccountType(params.accountType || params.accountCategory || params.accountId);
+  if (copierCanonical === 'DEMO') {
+    return {
+      ok: false,
+      error: 'Account type mismatch: Demo accounts cannot copy Master Traders.',
+    };
+  }
+  if (copierCanonical === 'CHALLENGE') {
+    return {
+      ok: false,
+      error: 'Account type mismatch: Challenge Evaluation accounts are not permitted to copy traders.',
+    };
+  }
+  if (params.providerCategory) {
+    const providerCanonical = resolveCanonicalCopyAccountType(params.providerCategory);
+    if (copierCanonical === 'PERSONAL_LIVE' && providerCanonical !== 'PERSONAL_LIVE') {
+      return {
+        ok: false,
+        error: 'Account type mismatch: Personal Live accounts can only copy Personal Live traders.',
+      };
+    }
+    if (copierCanonical === 'INSTANT_FUNDED' && providerCanonical !== 'INSTANT_FUNDED') {
+      return {
+        ok: false,
+        error: 'Account type mismatch: Instant Funded accounts can only copy Instant Funded traders.',
+      };
+    }
   }
 
   // 4. Resolve provider_id (UUID from copy_trading_profiles)

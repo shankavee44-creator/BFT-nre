@@ -99,12 +99,212 @@ export interface CopierEligibilityResult {
     | 'SELF_CAPITAL_BELOW_100'
     | 'DEMO_ACCOUNT_BARRED'
     | 'ACCOUNT_INACTIVE'
-    | 'NO_ACCOUNT';
+    | 'NO_ACCOUNT'
+    | 'ACCOUNT_TYPE_MISMATCH';
   accountCategory: 'instant_funded' | 'self_capital' | 'challenge' | 'demo' | 'none';
   accountLabel: string;
   availableBalance: number;
   realSelfBalance?: number;
   reason: string;
+}
+
+export type CanonicalCopyAccountType = 'PERSONAL_LIVE' | 'INSTANT_FUNDED' | 'CHALLENGE' | 'DEMO';
+
+export function resolveCanonicalCopyAccountType(
+  accountOrCategory: any
+): CanonicalCopyAccountType {
+  if (!accountOrCategory) return 'DEMO';
+
+  if (typeof accountOrCategory === 'string') {
+    const raw = accountOrCategory.toLowerCase().trim();
+    if (raw === 'demo') return 'DEMO';
+    if (
+      raw === 'personal' ||
+      raw === 'personal_live' ||
+      raw === 'self_funded' ||
+      raw === 'self_capital' ||
+      raw === 'real' ||
+      raw.includes('personal') ||
+      raw.includes('self')
+    ) {
+      return 'PERSONAL_LIVE';
+    }
+    if (
+      raw === 'instant' ||
+      raw === 'instant_funded' ||
+      raw === 'funded' ||
+      raw.includes('instant') ||
+      raw.includes('funded')
+    ) {
+      return 'INSTANT_FUNDED';
+    }
+    if (
+      raw === 'challenge' ||
+      raw === 'one_step' ||
+      raw === 'one-step' ||
+      raw === 'two_step' ||
+      raw === 'two-step' ||
+      raw.includes('challenge') ||
+      raw.includes('phase') ||
+      raw.includes('step')
+    ) {
+      return 'CHALLENGE';
+    }
+    return 'DEMO';
+  }
+
+  const tier = String(accountOrCategory.tier || '').toLowerCase();
+  const accountType = String(
+    accountOrCategory.accountType || accountOrCategory.account_type || ''
+  ).toLowerCase();
+  const category = String(
+    accountOrCategory.accountCategory ||
+      accountOrCategory.account_category ||
+      accountOrCategory.category ||
+      ''
+  ).toLowerCase();
+  const label = String(
+    accountOrCategory.account_type_label || accountOrCategory.tierName || ''
+  ).toLowerCase();
+  const id = String(accountOrCategory.id || '').toUpperCase();
+
+  if (
+    tier === 'demo' ||
+    accountType === 'demo' ||
+    category === 'demo' ||
+    id.startsWith('BFT-DEMO') ||
+    id === 'BFT-10000'
+  ) {
+    return 'DEMO';
+  }
+
+  if (
+    tier === 'personal' ||
+    accountType === 'personal' ||
+    accountType === 'self_funded' ||
+    category === 'personal_live' ||
+    category === 'self_capital' ||
+    category === 'self_funded' ||
+    label.includes('personal') ||
+    label.includes('self') ||
+    id.includes('PERS')
+  ) {
+    return 'PERSONAL_LIVE';
+  }
+
+  if (
+    tier === 'one-step' ||
+    tier === 'two-step' ||
+    accountType === 'one_step' ||
+    accountType === 'two_step' ||
+    accountType === 'challenge' ||
+    category === 'challenge' ||
+    label.includes('challenge') ||
+    label.includes('phase') ||
+    label.includes('step')
+  ) {
+    return 'CHALLENGE';
+  }
+
+  if (
+    tier === 'instant' ||
+    accountType === 'instant' ||
+    accountType === 'funded' ||
+    category === 'instant_funded' ||
+    label.includes('instant') ||
+    label.includes('funded') ||
+    id.startsWith('BFT-')
+  ) {
+    return 'INSTANT_FUNDED';
+  }
+
+  return 'DEMO';
+}
+
+export function validateCopyTradingAccountTypeMatch(
+  copierAccount: TradingAccount | null | undefined,
+  masterTrader: CopyTraderProfileData | null | undefined
+): {
+  isMatch: boolean;
+  copierType: CanonicalCopyAccountType;
+  masterType: CanonicalCopyAccountType;
+  error?: string;
+  badgeLabel: string;
+  badgeColor: string;
+} {
+  const copierType = resolveCanonicalCopyAccountType(copierAccount);
+  const masterType = resolveCanonicalCopyAccountType(masterTrader);
+
+  if (copierType === 'DEMO') {
+    return {
+      isMatch: false,
+      copierType,
+      masterType,
+      error: 'Demo accounts cannot copy Master Traders. Please switch to an active Personal Live or Instant Funded account.',
+      badgeLabel: 'Incompatible (Demo)',
+      badgeColor: 'bg-rose-500/20 text-rose-400 border-rose-500/30',
+    };
+  }
+
+  if (copierType === 'CHALLENGE') {
+    return {
+      isMatch: false,
+      copierType,
+      masterType,
+      error: 'Account type mismatch: Challenge Evaluation accounts are not permitted to copy traders.',
+      badgeLabel: 'Incompatible (Challenge)',
+      badgeColor: 'bg-rose-500/20 text-rose-400 border-rose-500/30',
+    };
+  }
+
+  if (copierType === 'PERSONAL_LIVE') {
+    if (masterType !== 'PERSONAL_LIVE') {
+      return {
+        isMatch: false,
+        copierType,
+        masterType,
+        error: 'Account type mismatch: Personal Live accounts can only copy Personal Live traders.',
+        badgeLabel: 'Incompatible (Needs Personal Live)',
+        badgeColor: 'bg-rose-500/20 text-rose-400 border-rose-500/30',
+      };
+    }
+    return {
+      isMatch: true,
+      copierType,
+      masterType,
+      badgeLabel: 'Compatible (Personal Live)',
+      badgeColor: 'bg-emerald-500/20 text-[#00F5A0] border-emerald-500/30',
+    };
+  }
+
+  if (copierType === 'INSTANT_FUNDED') {
+    if (masterType !== 'INSTANT_FUNDED') {
+      return {
+        isMatch: false,
+        copierType,
+        masterType,
+        error: 'Account type mismatch: Instant Funded accounts can only copy Instant Funded traders.',
+        badgeLabel: 'Incompatible (Needs Instant Funded)',
+        badgeColor: 'bg-rose-500/20 text-rose-400 border-rose-500/30',
+      };
+    }
+    return {
+      isMatch: true,
+      copierType,
+      masterType,
+      badgeLabel: 'Compatible (Instant Funded)',
+      badgeColor: 'bg-emerald-500/20 text-[#00F5A0] border-emerald-500/30',
+    };
+  }
+
+  return {
+    isMatch: false,
+    copierType,
+    masterType,
+    error: 'Account type mismatch: Incompatible trading account type.',
+    badgeLabel: 'Incompatible',
+    badgeColor: 'bg-rose-500/20 text-rose-400 border-rose-500/30',
+  };
 }
 
 export interface CopyRiskValidationResult {

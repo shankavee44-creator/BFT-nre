@@ -1745,6 +1745,7 @@ export default function App() {
               onClose={() => handleNavigateTab('dashboard')}
               onUpdateAccount={handleUpdateSingleAccount}
               withdrawals={withdrawals}
+              purchases={purchases}
               onAddWithdrawal={handleAddWithdrawal}
               onUpdateWithdrawal={handleUpdateWithdrawal}
               onWithdrawalCommissionTriggered={handleWithdrawalCommission}

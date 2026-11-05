@@ -1,0 +1,2 @@
+# SPA fallback routing rule for Cloudflare Pages and Netlify
+/*    /index.html   200

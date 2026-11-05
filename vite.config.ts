@@ -16,6 +16,7 @@ export default defineConfig(() => {
       target: 'es2020',
       outDir: 'dist',
       assetsDir: 'assets',
+      emptyOutDir: true,
       sourcemap: false,
       modulePreload: {
         polyfill: true,
