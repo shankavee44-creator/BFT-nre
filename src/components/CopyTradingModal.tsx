@@ -61,6 +61,8 @@ import {
 import {
   resolveSelectedFollowerAccount,
   isPlaceholderOrUnselectedAccountValue,
+  resolveAuthUserId,
+  resolveCopierAccountId,
 } from '../utils/copyTradingSync';
 import { isValidUuid } from '../utils/supabaseTradeSync';
 import { isDemoAccount } from '../utils/propRules';
@@ -589,6 +591,29 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
     }
   }, [selectedCopyAccountId, resolvedFollowerSelection.selectedOptionValue]);
 
+  // Listen for automatic stop-out or take-profit events from check_copy_trade_limits
+  useEffect(() => {
+    const handleStopped = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail;
+      if (!detail) return;
+      setActiveSubscriptions((prev) => {
+        const next = { ...prev };
+        for (const k of Object.keys(next)) {
+          if (
+            next[k]?.id === detail.subscriptionId ||
+            next[k]?.provider_id === detail.providerId ||
+            k === detail.providerId
+          ) {
+            delete next[k];
+          }
+        }
+        return next;
+      });
+    };
+    window.addEventListener('bft-copy-subscription-stopped', handleStopped);
+    return () => window.removeEventListener('bft-copy-subscription-stopped', handleStopped);
+  }, []);
+
   if (!isOpen) return null;
 
   const displayedTraders = queryResult.traders;
@@ -755,7 +780,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
     const takeProfit = validation.targetProfitStopUsd;
     const maxDrawdown = maxDrawdownPercent;
 
-    const resolvedSupabaseAccountUuid =
+    let resolvedSupabaseAccountUuid =
       (targetAccount.supabaseAccountId && isValidUuid(targetAccount.supabaseAccountId)
         ? targetAccount.supabaseAccountId
         : null) ||
@@ -772,8 +797,27 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
       (userProfile?.id && isValidUuid(userProfile.id) ? userProfile.id : null) ||
       dbAccountId;
 
+    const authUserUuid = await resolveAuthUserId(userProfile?.id, userProfile?.email);
+    if (authUserUuid) {
+      const verifiedDbAccountUuid = await resolveCopierAccountId({
+        userId: authUserUuid,
+        accountId: resolvedSupabaseAccountUuid,
+        supabaseAccountId: targetAccount.supabaseAccountId || resolvedSupabaseAccountUuid,
+        accountType: singleAccountEval.accountCategory,
+        startingBalance: Number(
+          targetAccount.initialBalance || targetAccount.size || singleAccountEval.availableBalance || 50000
+        ),
+        currentBalance: Number(
+          singleAccountEval.availableBalance || targetAccount.currentBalance || 50000
+        ),
+      });
+      if (verifiedDbAccountUuid && isValidUuid(verifiedDbAccountUuid)) {
+        resolvedSupabaseAccountUuid = verifiedDbAccountUuid;
+      }
+    }
+
     const res = await apiCopyTrader({
-      userId: userProfile?.id,
+      userId: authUserUuid || userProfile?.id,
       userEmail: userProfile?.email,
       providerId: showRiskConfigModal.id,
       providerNumericId: showRiskConfigModal.numeric_id,

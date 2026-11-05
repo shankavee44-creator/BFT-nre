@@ -5,6 +5,9 @@ import {
   normalizeDbTradingAccountType,
   isPlaceholderOrUnselectedAccountValue,
   resolveCopierAccountId,
+  evaluateCopySubscriptionLimits,
+  mapCopyExecutedTradeRowToBinaryTrade,
+  triggerCheckCopyTradeLimits,
 } from './copyTradingSync';
 import { getCanonicalAccountDatabaseUuid, resolveCopierEligibilityForUser } from './copyTradingRules';
 import type { TradingAccount, UserProfile } from '../types';
@@ -221,4 +224,92 @@ describe('Copy Trading Follower Account Resolution & Active Live Account UUID Fa
     assert.ok(resolvedId, 'Expected a non-null UUID');
     assert.equal(resolvedId, SAMPLE_LIVE_UUID);
   });
+
+  it('maps copy_executed_trades row into a seamless BinaryTrade with per-trade allocation and no bot text', () => {
+    const mapped = mapCopyExecutedTradeRowToBinaryTrade(
+      {
+        id: '77777777-8888-4999-8aaa-bbbbbbbbbbbb',
+        subscription_id: '66666666-7777-4888-8999-aaaaaaaaaaaa',
+        copier_user_id: SAMPLE_PROFILE_UUID,
+        copier_account_id: SAMPLE_LIVE_UUID,
+        provider_id: '55555555-6666-4777-8888-999999999999',
+        asset_symbol: 'EUR/USD',
+        trade_type: 'CALL',
+        amount: 150,
+        entry_price: 1.085,
+        exit_price: 1.0858,
+        status: 'WIN',
+        pnl: 127.5,
+        created_at: '2026-11-05T10:00:00.000Z',
+      },
+      'instant'
+    );
+
+    assert.equal(mapped.asset, 'EUR/USD');
+    assert.equal(mapped.direction, 'CALL');
+    assert.equal(mapped.investment, 150);
+    assert.equal(mapped.strikePrice, 1.085);
+    assert.equal(mapped.closePrice, 1.0858);
+    assert.equal(mapped.status, 'won');
+    assert.equal(mapped.pnl, 127.5);
+    assert.equal(mapped.accountId, SAMPLE_LIVE_UUID);
+  });
+
+  it('evaluates check_copy_trade_limits stop_loss, take_profit, and max_drawdown accurately', () => {
+    const sub = {
+      stop_loss: 250,
+      take_profit: 500,
+      max_drawdown: 5.0,
+    };
+
+    const withinLimits = evaluateCopySubscriptionLimits({
+      subscription: sub,
+      realizedPnl: 120,
+      floatingPnl: 0,
+      accountStartingBalance: 50000,
+    });
+    assert.equal(withinLimits.breached, false);
+
+    const hitStopLoss = evaluateCopySubscriptionLimits({
+      subscription: sub,
+      realizedPnl: -200,
+      floatingPnl: -60,
+      accountStartingBalance: 50000,
+    });
+    assert.equal(hitStopLoss.breached, true);
+    assert.equal(hitStopLoss.reason, 'stop_loss');
+
+    const hitTakeProfit = evaluateCopySubscriptionLimits({
+      subscription: sub,
+      realizedPnl: 520,
+      floatingPnl: 0,
+      accountStartingBalance: 50000,
+    });
+    assert.equal(hitTakeProfit.breached, true);
+    assert.equal(hitTakeProfit.reason, 'take_profit');
+
+    const hitMaxDrawdown = evaluateCopySubscriptionLimits({
+      subscription: { stop_loss: 0, take_profit: 0, max_drawdown: 5.0 },
+      realizedPnl: -300,
+      floatingPnl: 0,
+      accountStartingBalance: 5000, // -300 / 5000 = 6.0% drawdown >= 5.0%
+    });
+    assert.equal(hitMaxDrawdown.breached, true);
+    assert.equal(hitMaxDrawdown.reason, 'max_drawdown');
+  });
+
+  it('triggerCheckCopyTradeLimits executes cleanly on price updates', async () => {
+    const res = await triggerCheckCopyTradeLimits({
+      userId: SAMPLE_PROFILE_UUID,
+      accountId: SAMPLE_LIVE_UUID,
+      assetSymbol: 'EUR/USD',
+      currentPrice: 1.0854,
+      accountStartingBalance: 50000,
+      forceRpc: true,
+    });
+
+    assert.equal(res.triggered, true);
+    assert.ok(Array.isArray(res.stoppedSubscriptionIds));
+  });
 });
+

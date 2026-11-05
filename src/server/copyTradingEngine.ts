@@ -133,35 +133,124 @@ export class CopyTradingEngine {
     }
   }
 
+  private lastBackendTradeAtBySub: Map<string, number> = new Map();
+
   private refreshLeaderboardData() {
     try {
       const now = Date.now();
       const pool = this.getFullPool(now);
 
-      // Sync active subscriptions PnL and enforce Max Loss Stop / Target Profit Stop
-      for (const trader of pool) {
-        const traderDailyRoiRatio =
-          trader.starting_balance > 0 ? trader.daily_profit / trader.starting_balance : 0.02;
+      // 1. Settle matured OPEN trades in copy_executed_trades and update subscription PnL
+      this.settleAndExecuteBackendMirroredTrades(now, pool);
 
-        db.prepare(`
-          UPDATE copy_trading_subscriptions 
-          SET current_pnl = ROUND(allocated_capital * ? * 0.35, 2)
-          WHERE provider_id = ? AND status = 'active'
-        `).run(Number(traderDailyRoiRatio.toFixed(6)), trader.id);
-      }
+      // 2. Trigger check_copy_trade_limits logic to automatically stop out or take profit when limits are reached
+      this.checkCopyTradeLimits();
+    } catch {
+      // ignore background sync error
+    }
+  }
 
-      // Auto-terminate subscriptions that hit Stop Loss or Take Profit
+  public checkCopyTradeLimits() {
+    try {
       db.prepare(`
         UPDATE copy_trading_subscriptions 
         SET status = 'cancelled'
         WHERE status = 'active' 
         AND (
-          (max_loss_limit > 0 AND current_pnl <= -max_loss_limit) OR
-          (take_profit_limit > 0 AND current_pnl >= take_profit_limit)
+          (COALESCE(stop_loss, max_loss_limit, 0) > 0 AND current_pnl <= -COALESCE(stop_loss, max_loss_limit, 0)) OR
+          (COALESCE(take_profit, take_profit_limit, 0) > 0 AND current_pnl >= COALESCE(take_profit, take_profit_limit, 0))
         )
       `).run();
     } catch {
-      // ignore background sync error
+      // ignore
+    }
+  }
+
+  private settleAndExecuteBackendMirroredTrades(now: number, pool: CopyTraderProfileData[]) {
+    try {
+      const openRows = db
+        .prepare(`SELECT * FROM copy_executed_trades WHERE status = 'OPEN'`)
+        .all() as any[];
+
+      for (const row of openRows) {
+        const createdMs = Number(row.created_at || now);
+        if (now - createdMs >= 60000) {
+          const entry = Number(row.entry_price || 1.085);
+          const isWin = Math.random() < 0.72;
+          const isCall = String(row.trade_type || 'CALL').toUpperCase() !== 'PUT';
+          const delta = entry * 0.00045 * (isWin ? 1 : -1);
+          const exitPrice = Number((entry + (isCall ? delta : -delta)).toFixed(5));
+          const amt = Number(row.amount || 100);
+          const pnl = isWin ? Number((amt * 0.85).toFixed(2)) : -amt;
+          const finalStatus = isWin ? 'WIN' : 'LOSS';
+
+          db.prepare(
+            `UPDATE copy_executed_trades SET exit_price = ?, status = ?, pnl = ? WHERE id = ?`
+          ).run(exitPrice, finalStatus, pnl, row.id);
+
+          db.prepare(
+            `UPDATE copy_trading_subscriptions SET current_pnl = ROUND(COALESCE(current_pnl, 0) + ?, 2) WHERE id = ?`
+          ).run(pnl, row.subscription_id);
+        }
+      }
+
+      const activeSubs = db
+        .prepare(`SELECT * FROM copy_trading_subscriptions WHERE status = 'active'`)
+        .all() as any[];
+
+      const assets = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'BTC/USDT', 'ETH/USDT', 'XAU/USD'];
+      const basePrices: Record<string, number> = {
+        'EUR/USD': 1.08542,
+        'GBP/USD': 1.26815,
+        'USD/JPY': 154.62,
+        'BTC/USDT': 89420.5,
+        'ETH/USDT': 3125.4,
+        'XAU/USD': 2685.3,
+      };
+
+      for (const sub of activeSubs) {
+        const subId = String(sub.id);
+        const lastAt = this.lastBackendTradeAtBySub.get(subId) || 0;
+        if (now - lastAt < 45000) continue;
+
+        const hasOpen = db
+          .prepare(
+            `SELECT COUNT(*) as c FROM copy_executed_trades WHERE subscription_id = ? AND status = 'OPEN'`
+          )
+          .get(subId) as { c: number };
+        if (Number(hasOpen?.c || 0) > 0) continue;
+
+        const tradeAmount = Math.max(
+          1,
+          Number(sub.trade_amount ?? sub.allocated_capital ?? 100)
+        );
+        const assetSymbol = assets[Math.floor(Math.random() * assets.length)];
+        const tradeType = Math.random() >= 0.45 ? 'CALL' : 'PUT';
+        const entryPrice = basePrices[assetSymbol] || 1.08542;
+        const execId = `CET-${subId.slice(0, 8)}-${now.toString(36)}`;
+
+        db.prepare(`
+          INSERT INTO copy_executed_trades (
+            id, subscription_id, copier_user_id, copier_account_id, provider_id,
+            asset_symbol, trade_type, amount, entry_price, status, pnl, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', 0, ?)
+        `).run(
+          execId,
+          subId,
+          String(sub.copier_user_id || sub.user_id || 'usr_bft_001'),
+          String(sub.copier_account_id || 'BFT-LIVE'),
+          String(sub.provider_id),
+          assetSymbol,
+          tradeType,
+          tradeAmount,
+          entryPrice,
+          now
+        );
+
+        this.lastBackendTradeAtBySub.set(subId, now);
+      }
+    } catch {
+      // ignore
     }
   }
 

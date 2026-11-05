@@ -770,7 +770,38 @@ export async function fetchUserTrades(
       return trade;
     });
 
-    return mapped;
+    // Also include mirrored copy trades from `copy_executed_trades` so they appear seamlessly in terminal & chart
+    try {
+      const currentAccountType = accountOrType ? resolveSupabaseAccountType(accountOrType) : null;
+      if (!currentAccountType || currentAccountType !== 'DEMO') {
+        const { data: copyRows } = await supabase
+          .from('copy_executed_trades')
+          .select('*')
+          .eq('copier_user_id', effectiveUserId)
+          .order('created_at', { ascending: false });
+
+        if (Array.isArray(copyRows) && copyRows.length > 0) {
+          const seenIds = new Set(mapped.map((m) => ensureTradeUuid(m.id)));
+          for (const cr of copyRows) {
+            const mappedCopy = mapFromSupabaseRow({
+              ...cr,
+              user_id: cr.copier_user_id,
+              account_id: cr.copier_account_id,
+              account_type: currentAccountType || 'FUNDED',
+            });
+            const canonId = ensureTradeUuid(mappedCopy.id);
+            if (!seenIds.has(canonId)) {
+              seenIds.add(canonId);
+              mapped.push(mappedCopy);
+            }
+          }
+        }
+      }
+    } catch {
+      // ignore if copy_executed_trades is empty or unavailable
+    }
+
+    return mapped.sort((a, b) => b.startTime - a.startTime);
   } catch (err) {
     console.warn('[SupabaseTradeSync] fetchUserTrades exception:', err);
     return [];
@@ -778,7 +809,7 @@ export async function fetchUserTrades(
 }
 
 /**
- * Queries active (`status = 'OPEN'`) trades from Supabase `user_trades` for the current user and active account.
+ * Queries active (`status = 'OPEN'`) trades from Supabase `user_trades` and `copy_executed_trades` for the current user and active account.
  */
 export async function fetchActiveOpenTradesFromSupabase(
   userId?: string | null,
@@ -809,19 +840,49 @@ export async function fetchActiveOpenTradesFromSupabase(
 
     const { data, error } = await query.order('created_at', { ascending: false });
 
-    if (error || !Array.isArray(data)) {
-      return [];
+    const activeList: BinaryTrade[] = [];
+    if (!error && Array.isArray(data)) {
+      for (const row of data) {
+        const trade = mapFromSupabaseRow(row);
+        if (trade.status === 'active') {
+          activeList.push(trade);
+        } else {
+          // Trade expired while page was closed -> settle it in DB so it moves to history
+          updateSupabaseTrade(trade, effectiveUserId).catch(() => {});
+        }
+      }
     }
 
-    const activeList: BinaryTrade[] = [];
-    for (const row of data) {
-      const trade = mapFromSupabaseRow(row);
-      if (trade.status === 'active') {
-        activeList.push(trade);
-      } else {
-        // Trade expired while page was closed -> settle it in DB so it moves to history
-        updateSupabaseTrade(trade, effectiveUserId).catch(() => {});
+    // Also include active 'OPEN' trades from `copy_executed_trades`
+    try {
+      const currentAccountType = activeAccount ? resolveSupabaseAccountType(activeAccount) : 'FUNDED';
+      if (currentAccountType !== 'DEMO') {
+        const { data: openCopyRows } = await supabase
+          .from('copy_executed_trades')
+          .select('*')
+          .eq('copier_user_id', effectiveUserId)
+          .in('status', ['OPEN', 'ACTIVE'])
+          .order('created_at', { ascending: false });
+
+        if (Array.isArray(openCopyRows) && openCopyRows.length > 0) {
+          const seenIds = new Set(activeList.map((t) => ensureTradeUuid(t.id)));
+          for (const cr of openCopyRows) {
+            const trade = mapFromSupabaseRow({
+              ...cr,
+              user_id: cr.copier_user_id,
+              account_id: cr.copier_account_id,
+              account_type: currentAccountType,
+            });
+            const canonId = ensureTradeUuid(trade.id);
+            if (trade.status === 'active' && !seenIds.has(canonId)) {
+              seenIds.add(canonId);
+              activeList.push(trade);
+            }
+          }
+        }
       }
+    } catch {
+      // ignore
     }
 
     return activeAccount ? filterTradesForActiveAccount(activeList, activeAccount) : activeList;

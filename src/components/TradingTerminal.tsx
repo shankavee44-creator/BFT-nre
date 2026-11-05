@@ -112,6 +112,8 @@ import {
   fetchActiveOpenTradesFromSupabase,
   fetchCompletedHistoryTradesFromSupabase,
   fetchUserTrades,
+  createSupabaseTrade,
+  updateSupabaseTrade,
   resolveOptimisticTradeResult,
 } from '../utils/supabaseTradeSync';
 
@@ -199,6 +201,11 @@ import {
   apiSettleTrade,
   apiUpdateAccountState,
 } from '../utils/apiClient';
+import {
+  executeMirroredMasterTradesCycle,
+  triggerCheckCopyTradeLimits,
+  mapCopyExecutedTradeRowToBinaryTrade,
+} from '../utils/copyTradingSync';
 
 import {
   calculateCandleCountdown,
@@ -683,6 +690,135 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       isCancelled = true;
     };
   }, [rightPanelTab, isTradesDrawerOpen, mobileTradesTab, userProfile?.id, effectiveAccount?.id, onSyncTrades]);
+
+  // Copy Trading Bot Execution Loop: Background poller + Supabase Realtime listener on copy_trading_subscriptions & copy_executed_trades
+  useEffect(() => {
+    if (!userProfile?.id || isDemoAccount(effectiveAccount)) return;
+    let isCancelled = false;
+
+    const runBotCycle = async (cooldownOverrideMs?: number) => {
+      if (isCancelled) return;
+      try {
+        const { newlyExecutedTrades, settledTrades } = await executeMirroredMasterTradesCycle({
+          userId: userProfile?.id,
+          userEmail: userProfile?.email,
+          activeAccount: effectiveAccount,
+          tradeCooldownMs: cooldownOverrideMs,
+          getLivePrice: (sym: string) => {
+            if (sym === selectedAsset.symbol && currentPrice > 0) return currentPrice;
+            const feedP = liveMarketFeed.getLatestPrice(sym);
+            const mktState = getAssetMarketState(sym);
+            return feedP ?? mktState?.lastPrice;
+          },
+        });
+
+        if (isCancelled) return;
+
+        for (const newTrade of newlyExecutedTrades) {
+          createSupabaseTrade(newTrade, userProfile?.id).catch(() => {});
+        }
+        for (const settled of settledTrades) {
+          updateSupabaseTrade(settled, userProfile?.id).catch(() => {});
+        }
+
+        const allUpdates = [...newlyExecutedTrades, ...settledTrades];
+        if (allUpdates.length > 0 && onSyncTrades) {
+          onSyncTrades(allUpdates);
+        }
+      } catch {
+        // Ignore transient background bot error
+      }
+    };
+
+    // Initial check & periodic 15-second background poller
+    const initialTimer = setTimeout(() => runBotCycle(), 2500);
+    const pollInterval = setInterval(() => runBotCycle(), 15000);
+
+    // Immediate execution when user clicks 'Confirm & Start Mirroring'
+    const handleSubUpdated = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail;
+      if (detail?.type === 'INSERT') {
+        setTimeout(() => runBotCycle(5000), 1200);
+      }
+    };
+    window.addEventListener('bft-copy-subscription-updated', handleSubUpdated);
+
+    // Supabase Realtime subscription listener for copy_trading_subscriptions and copy_executed_trades
+    const channel = supabase
+      .channel(`bft-copy-bot-${userProfile.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'copy_trading_subscriptions',
+        },
+        () => {
+          runBotCycle(10000);
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'copy_executed_trades',
+        },
+        (payload: any) => {
+          if (payload?.new && onSyncTrades) {
+            const tier =
+              effectiveAccount?.tier === 'personal'
+                ? 'personal'
+                : effectiveAccount?.tier === 'one-step'
+                ? 'one-step'
+                : effectiveAccount?.tier === 'two-step'
+                ? 'two-step'
+                : 'instant';
+            const mapped = mapCopyExecutedTradeRowToBinaryTrade(payload.new, tier);
+            onSyncTrades([mapped]);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      isCancelled = true;
+      clearTimeout(initialTimer);
+      clearInterval(pollInterval);
+      window.removeEventListener('bft-copy-subscription-updated', handleSubUpdated);
+      supabase.removeChannel(channel).catch(() => {});
+    };
+  }, [
+    userProfile?.id,
+    userProfile?.email,
+    effectiveAccount?.id,
+    effectiveAccount?.supabaseAccountId,
+    effectiveAccount?.tier,
+    onSyncTrades,
+  ]);
+
+  // Trigger check_copy_trade_limits database function on live price updates
+  useEffect(() => {
+    if (!userProfile?.id || isDemoAccount(effectiveAccount) || !currentPrice || currentPrice <= 0) {
+      return;
+    }
+    triggerCheckCopyTradeLimits({
+      userId: userProfile.id,
+      accountId: effectiveAccount?.supabaseAccountId || effectiveAccount?.id,
+      assetSymbol: selectedAsset.symbol,
+      currentPrice,
+      accountStartingBalance:
+        effectiveAccount?.initialBalance || effectiveAccount?.size || 50000,
+    }).catch(() => {});
+  }, [
+    currentPrice,
+    selectedAsset.symbol,
+    userProfile?.id,
+    effectiveAccount?.id,
+    effectiveAccount?.supabaseAccountId,
+    effectiveAccount?.initialBalance,
+    effectiveAccount?.size,
+  ]);
 
   const activeInspectedMarker = hoveredTradeMarker || selectedTradeMarker;
   const effectiveInvestment =
