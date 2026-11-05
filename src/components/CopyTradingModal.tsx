@@ -57,6 +57,8 @@ import {
   type CopyTraderProfileData,
   type CopySubscriptionData,
 } from '../utils/copyTradingRules';
+import { isValidUuid } from '../utils/supabaseTradeSync';
+import { isDemoAccount } from '../utils/propRules';
 
 interface CopyTradingModalProps {
   isOpen: boolean;
@@ -534,12 +536,19 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
     });
   }, [selectedCopyAccountId, activeAccount?.id, accounts, userProfile, activeTab]);
 
-  // Keep selectedCopyAccountId synced to an eligible account if available
+  // Keep selectedCopyAccountId synced to an eligible account if available, with robust fallback to active live account UUID
   useEffect(() => {
-    if (!selectedCopyAccountId && copierEligibility.selectedAccount) {
-      setSelectedCopyAccountId(copierEligibility.selectedAccount.id);
+    if (!selectedCopyAccountId) {
+      const defaultAcc =
+        copierEligibility.selectedAccount ||
+        accounts.find((a) => !isDemoAccount(a) && Number(a.currentBalance ?? a.equity ?? 0) > 0) ||
+        activeAccount ||
+        accounts[0];
+      if (defaultAcc?.id) {
+        setSelectedCopyAccountId(defaultAcc.id);
+      }
     }
-  }, [selectedCopyAccountId, copierEligibility.selectedAccount]);
+  }, [selectedCopyAccountId, copierEligibility.selectedAccount, activeAccount, accounts]);
 
   if (!isOpen) return null;
 
@@ -638,8 +647,29 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
     soundEngine.playUiClick();
     setRiskErrorNotice(null);
 
+    const fallbackActiveLive =
+      accounts.find((a) => !isDemoAccount(a) && Number(a.currentBalance ?? a.equity ?? 0) > 0) ||
+      activeAccount ||
+      accounts[0];
+
     const targetAccount =
-      accounts.find((a) => a.id === selectedCopyAccountId) || copierEligibility.selectedAccount || activeAccount;
+      accounts.find((a) => a.id === selectedCopyAccountId) ||
+      accounts.find((a) => a.supabaseAccountId === selectedCopyAccountId) ||
+      copierEligibility.selectedAccount ||
+      fallbackActiveLive;
+
+    const dbAccountId =
+      targetAccount?.supabaseAccountId ||
+      (targetAccount?.id && isValidUuid(targetAccount.id) ? targetAccount.id : null) ||
+      fallbackActiveLive?.supabaseAccountId ||
+      fallbackActiveLive?.id;
+
+    if (!targetAccount || !dbAccountId) {
+      const errorMsg = 'Trading Account Error: Unable to resolve active trading account ID for copy trading.';
+      setRiskErrorNotice(errorMsg);
+      triggerToast(errorMsg, 'error');
+      return;
+    }
 
     const matchValidation = validateCopyTradingAccountTypeMatch(targetAccount, showRiskConfigModal);
     if (!matchValidation.isMatch) {
@@ -690,8 +720,8 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
       providerNumericId: showRiskConfigModal.numeric_id,
       providerName: showRiskConfigModal.provider_name,
       providerCategory: showRiskConfigModal.account_category,
-      copierAccountId: targetAccount?.id,
-      copierSupabaseAccountId: targetAccount?.supabaseAccountId,
+      copierAccountId: dbAccountId,
+      copierSupabaseAccountId: targetAccount?.supabaseAccountId || dbAccountId,
       copierAccountType: singleAccountEval.accountCategory,
       perTradeAllocationType,
       perTradeAllocationValue,
