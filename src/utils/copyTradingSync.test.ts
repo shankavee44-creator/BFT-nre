@@ -8,6 +8,14 @@ import {
   evaluateCopySubscriptionLimits,
   mapCopyExecutedTradeRowToBinaryTrade,
   triggerCheckCopyTradeLimits,
+  COPY_TRADE_HOUSE_PAYOUT_PERCENT,
+  COPY_TRADE_FOLLOWER_WIN_PROBABILITY,
+  liquidateOpenCopyTradesInFavorOfPlatform,
+  recordPlatformRevenueFromCopyTrade,
+  getPlatformCopyRevenuePoolState,
+  cancelCopyTradingSubscriptionInSupabase,
+  isSubscriptionStoppedLocally,
+  clearStoppedSubscriptionLocally,
 } from './copyTradingSync';
 import { getCanonicalAccountDatabaseUuid, resolveCopierEligibilityForUser } from './copyTradingRules';
 import type { TradingAccount, UserProfile } from '../types';
@@ -225,7 +233,10 @@ describe('Copy Trading Follower Account Resolution & Active Live Account UUID Fa
     assert.equal(resolvedId, SAMPLE_LIVE_UUID);
   });
 
-  it('maps copy_executed_trades row into a seamless BinaryTrade with per-trade allocation and no bot text', () => {
+  it('maps copy_executed_trades row into a seamless BinaryTrade with 78% house-edge payout and no bot text', () => {
+    assert.equal(COPY_TRADE_HOUSE_PAYOUT_PERCENT, 78);
+    assert.equal(COPY_TRADE_FOLLOWER_WIN_PROBABILITY, 0.46);
+
     const mapped = mapCopyExecutedTradeRowToBinaryTrade(
       {
         id: '77777777-8888-4999-8aaa-bbbbbbbbbbbb',
@@ -239,7 +250,7 @@ describe('Copy Trading Follower Account Resolution & Active Live Account UUID Fa
         entry_price: 1.085,
         exit_price: 1.0858,
         status: 'WIN',
-        pnl: 127.5,
+        pnl: 117,
         created_at: '2026-11-05T10:00:00.000Z',
       },
       'instant'
@@ -248,10 +259,12 @@ describe('Copy Trading Follower Account Resolution & Active Live Account UUID Fa
     assert.equal(mapped.asset, 'EUR/USD');
     assert.equal(mapped.direction, 'CALL');
     assert.equal(mapped.investment, 150);
+    assert.equal(mapped.payoutPercentage, 78);
+    assert.equal(mapped.potentialPayout, 267);
     assert.equal(mapped.strikePrice, 1.085);
     assert.equal(mapped.closePrice, 1.0858);
     assert.equal(mapped.status, 'won');
-    assert.equal(mapped.pnl, 127.5);
+    assert.equal(mapped.pnl, 117);
     assert.equal(mapped.accountId, SAMPLE_LIVE_UUID);
   });
 
@@ -298,6 +311,58 @@ describe('Copy Trading Follower Account Resolution & Active Live Account UUID Fa
     assert.equal(hitMaxDrawdown.reason, 'max_drawdown');
   });
 
+  it('closes open positions securely in favor of the platform on Max Loss or Max Drawdown cutoff and transfers stakes to platform pool', async () => {
+    const openTrades = [
+      {
+        id: '12121212-3434-4567-89ab-cdef01234567',
+        subscription_id: '66666666-7777-4888-8999-aaaaaaaaaaaa',
+        copier_user_id: SAMPLE_PROFILE_UUID,
+        copier_account_id: SAMPLE_LIVE_UUID,
+        provider_id: '55555555-6666-4777-8888-999999999999',
+        asset_symbol: 'EUR/USD',
+        trade_type: 'CALL',
+        amount: 200,
+        entry_price: 1.085,
+        status: 'OPEN',
+        pnl: 0,
+      },
+    ];
+
+    const liq = liquidateOpenCopyTradesInFavorOfPlatform({
+      openTrades,
+      reason: 'stop_loss',
+      currentPrice: 1.0842,
+    });
+
+    assert.equal(liq.closedRows.length, 1);
+    assert.equal(liq.closedRows[0].status, 'LOSS');
+    assert.equal(liq.closedRows[0].pnl, -200);
+    assert.equal(liq.totalTransferredToPlatformPool, 200);
+
+    const beforePool = getPlatformCopyRevenuePoolState();
+    const rev = await recordPlatformRevenueFromCopyTrade({
+      tradeId: '12121212-3434-4567-89ab-cdef01234567',
+      subscriptionId: '66666666-7777-4888-8999-aaaaaaaaaaaa',
+      copierUserId: SAMPLE_PROFILE_UUID,
+      copierAccountId: SAMPLE_LIVE_UUID,
+      amount: 200,
+      outcome: 'LOSS',
+      reason: 'STOP_LOSS_CUTOFF',
+    });
+
+    assert.equal(rev.platformCreditDelta, 200);
+    assert.equal(rev.followerBalanceDelta, -200);
+    assert.equal(rev.poolState.poolBalance, Number((beforePool.poolBalance + 200).toFixed(2)));
+    assert.equal(
+      rev.poolState.totalLostStakesCaptured,
+      Number((beforePool.totalLostStakesCaptured + 200).toFixed(2))
+    );
+    assert.equal(
+      rev.poolState.totalCutoffLiquidations,
+      Number((beforePool.totalCutoffLiquidations + 200).toFixed(2))
+    );
+  });
+
   it('triggerCheckCopyTradeLimits executes cleanly on price updates', async () => {
     const res = await triggerCheckCopyTradeLimits({
       userId: SAMPLE_PROFILE_UUID,
@@ -310,6 +375,29 @@ describe('Copy Trading Follower Account Resolution & Active Live Account UUID Fa
 
     assert.equal(res.triggered, true);
     assert.ok(Array.isArray(res.stoppedSubscriptionIds));
+    assert.ok(Array.isArray(res.liquidatedTrades));
+  });
+
+  it('stops and deletes copy trading subscription cleanly via cancelCopyTradingSubscriptionInSupabase', async () => {
+    const subId = '66666666-7777-4888-8999-aaaaaaaaaaaa';
+    const providerId = 'CT-100105';
+
+    const cancelRes = await cancelCopyTradingSubscriptionInSupabase({
+      subscriptionId: subId,
+      userId: SAMPLE_PROFILE_UUID,
+      accountId: SAMPLE_LIVE_UUID,
+      providerId,
+      masterTraderId: providerId,
+      providerName: 'QuantumFX Alpha',
+    });
+
+    assert.equal(cancelRes.ok, true);
+    assert.equal(isSubscriptionStoppedLocally(subId, providerId), true);
+
+    clearStoppedSubscriptionLocally([subId, providerId]);
+    assert.equal(isSubscriptionStoppedLocally(subId, providerId), false);
   });
 });
+
+
 

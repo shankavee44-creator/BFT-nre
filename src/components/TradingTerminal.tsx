@@ -699,18 +699,19 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     const runBotCycle = async (cooldownOverrideMs?: number) => {
       if (isCancelled) return;
       try {
-        const { newlyExecutedTrades, settledTrades } = await executeMirroredMasterTradesCycle({
-          userId: userProfile?.id,
-          userEmail: userProfile?.email,
-          activeAccount: effectiveAccount,
-          tradeCooldownMs: cooldownOverrideMs,
-          getLivePrice: (sym: string) => {
-            if (sym === selectedAsset.symbol && currentPrice > 0) return currentPrice;
-            const feedP = liveMarketFeed.getLatestPrice(sym);
-            const mktState = getAssetMarketState(sym);
-            return feedP ?? mktState?.lastPrice;
-          },
-        });
+        const { newlyExecutedTrades, settledTrades, netFollowerBalanceDelta } =
+          await executeMirroredMasterTradesCycle({
+            userId: userProfile?.id,
+            userEmail: userProfile?.email,
+            activeAccount: effectiveAccount,
+            tradeCooldownMs: cooldownOverrideMs,
+            getLivePrice: (sym: string) => {
+              if (sym === selectedAsset.symbol && currentPrice > 0) return currentPrice;
+              const feedP = liveMarketFeed.getLatestPrice(sym);
+              const mktState = getAssetMarketState(sym);
+              return feedP ?? mktState?.lastPrice;
+            },
+          });
 
         if (isCancelled) return;
 
@@ -719,6 +720,18 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         }
         for (const settled of settledTrades) {
           updateSupabaseTrade(settled, userProfile?.id).catch(() => {});
+        }
+
+        if (netFollowerBalanceDelta !== 0 && effectiveAccount && onUpdateAccount) {
+          const updatedBal = Math.max(
+            0,
+            Number((Number(effectiveAccount.currentBalance || 0) + netFollowerBalanceDelta).toFixed(2))
+          );
+          onUpdateAccount({
+            ...effectiveAccount,
+            currentBalance: updatedBal,
+            equity: updatedBal,
+          });
         }
 
         const allUpdates = [...newlyExecutedTrades, ...settledTrades];
@@ -809,7 +822,41 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       currentPrice,
       accountStartingBalance:
         effectiveAccount?.initialBalance || effectiveAccount?.size || 50000,
-    }).catch(() => {});
+      accountTier:
+        effectiveAccount?.tier === 'personal'
+          ? 'personal'
+          : effectiveAccount?.tier === 'one-step'
+          ? 'one-step'
+          : effectiveAccount?.tier === 'two-step'
+          ? 'two-step'
+          : 'instant',
+    })
+      .then((res) => {
+        if (res.liquidatedTrades.length > 0) {
+          for (const liq of res.liquidatedTrades) {
+            updateSupabaseTrade(liq, userProfile.id).catch(() => {});
+          }
+          if (onSyncTrades) {
+            onSyncTrades(res.liquidatedTrades);
+          }
+        }
+        if (res.netFollowerBalanceDelta !== 0 && effectiveAccount && onUpdateAccount) {
+          const updatedBal = Math.max(
+            0,
+            Number(
+              (
+                Number(effectiveAccount.currentBalance || 0) + res.netFollowerBalanceDelta
+              ).toFixed(2)
+            )
+          );
+          onUpdateAccount({
+            ...effectiveAccount,
+            currentBalance: updatedBal,
+            equity: updatedBal,
+          });
+        }
+      })
+      .catch(() => {});
   }, [
     currentPrice,
     selectedAsset.symbol,

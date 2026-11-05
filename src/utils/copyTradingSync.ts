@@ -762,6 +762,25 @@ export async function saveCopyTradingSubscriptionToSupabase(
     providerNumericId: params.providerNumericId,
   });
 
+  // Clear any previously recorded 'stopped' marker when the user intentionally re-subscribes
+  clearStoppedSubscriptionLocally([
+    params.providerId,
+    providerId,
+    ensureTradeUuid(params.providerId),
+  ]);
+
+  // Remove any stale 'stopped' or 'cancelled' rows for this user + provider before duplicate check / insert
+  try {
+    await supabase
+      .from('copy_trading_subscriptions')
+      .delete()
+      .eq('copier_user_id', copierUserId)
+      .eq('provider_id', providerId)
+      .neq('status', 'active');
+  } catch {
+    // ignore if RLS restricts delete on inactive rows
+  }
+
   // 5. Duplicate Check: Prevent duplicate active subscriptions to the same provider for the same account
   const dupCheck = await checkDuplicateSubscription({
     copier_account_id: copierAccountId,
@@ -927,53 +946,271 @@ export async function saveCopyTradingSubscriptionToSupabase(
   }
 }
 
+const STOPPED_SUBSCRIPTIONS_STORAGE_KEY = 'bft_stopped_copy_subscriptions_v2';
+const inMemoryStoppedKeys = new Set<string>();
+
+function getStoppedSubscriptionKeysSet(): Set<string> {
+  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+    try {
+      const raw = localStorage.getItem(STOPPED_SUBSCRIPTIONS_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          for (const item of parsed) {
+            if (item) inMemoryStoppedKeys.add(String(item));
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return inMemoryStoppedKeys;
+}
+
+function persistStoppedSubscriptionKeysSet(set: Set<string>): void {
+  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(STOPPED_SUBSCRIPTIONS_STORAGE_KEY, JSON.stringify(Array.from(set)));
+    } catch {
+      // ignore
+    }
+  }
+}
+
+export function markSubscriptionStoppedLocally(keys: Array<string | null | undefined>): void {
+  const set = getStoppedSubscriptionKeysSet();
+  for (const k of keys) {
+    if (k && String(k).trim()) {
+      const clean = String(k).trim();
+      set.add(clean);
+      set.add(ensureTradeUuid(clean));
+    }
+  }
+  persistStoppedSubscriptionKeysSet(set);
+}
+
+export function clearStoppedSubscriptionLocally(keys: Array<string | null | undefined>): void {
+  const set = getStoppedSubscriptionKeysSet();
+  for (const k of keys) {
+    if (k && String(k).trim()) {
+      const clean = String(k).trim();
+      set.delete(clean);
+      set.delete(ensureTradeUuid(clean));
+    }
+  }
+  persistStoppedSubscriptionKeysSet(set);
+}
+
+export function isSubscriptionStoppedLocally(
+  subscriptionId?: string | null,
+  providerId?: string | null
+): boolean {
+  const set = getStoppedSubscriptionKeysSet();
+  if (subscriptionId && (set.has(subscriptionId) || set.has(ensureTradeUuid(subscriptionId)))) {
+    return true;
+  }
+  if (providerId && (set.has(providerId) || set.has(ensureTradeUuid(providerId)))) {
+    return true;
+  }
+  return false;
+}
+
 /**
- * Cancels or deactivates an existing copy trading subscription in Supabase.
+ * Stops (`status = 'stopped'`) and deletes an existing copy trading subscription in Supabase
+ * matching `copier_user_id` and `provider_id` / `master_trader_id` (or `id`).
  */
 export async function cancelCopyTradingSubscriptionInSupabase(params: {
+  subscriptionId?: string | null;
   userId?: string | null;
+  userEmail?: string | null;
   accountId?: string | null;
   providerId: string;
+  masterTraderId?: string | null;
   providerName?: string | null;
-}): Promise<{ ok: boolean; error?: string }> {
+}): Promise<{ ok: boolean; stoppedIds: string[]; error?: string }> {
+  const rawProviderId = String(params.providerId || params.masterTraderId || '').trim();
+  const rawMasterId = String(params.masterTraderId || params.providerId || '').trim();
+  const deterministicUuid = rawProviderId ? ensureTradeUuid(rawProviderId) : '';
+  const stoppedIds: string[] = [];
+
+  // 1. Immediately mark as stopped locally so no poller or fetch re-activates it
+  markSubscriptionStoppedLocally([
+    params.subscriptionId,
+    rawProviderId,
+    rawMasterId,
+    deterministicUuid,
+  ]);
+
   try {
-    const copierUserId = await resolveAuthUserId(params.userId);
-    const providerId = await resolveProviderUuid({
-      providerId: params.providerId,
+    const copierUserId = await resolveAuthUserId(params.userId, params.userEmail);
+    const resolvedProviderUuid = await resolveProviderUuid({
+      providerId: rawProviderId,
       providerName: params.providerName,
     });
 
-    let query = supabase
-      .from('copy_trading_subscriptions')
-      .update({ status: 'cancelled' })
-      .eq('provider_id', providerId);
+    markSubscriptionStoppedLocally([resolvedProviderUuid]);
 
-    if (copierUserId) {
-      query = query.eq('copier_user_id', copierUserId);
-    }
-    if (params.accountId && isValidUuid(params.accountId)) {
-      query = query.eq('copier_account_id', params.accountId);
+    const candidateProviderIds = Array.from(
+      new Set(
+        [rawProviderId, rawMasterId, deterministicUuid, resolvedProviderUuid].filter(
+          (v) => Boolean(v && String(v).trim())
+        )
+      )
+    );
+    const candidateProviderUuids = candidateProviderIds.filter((v) => isValidUuid(v));
+
+    // Helper to stop and delete a specific subscription row ID in Supabase
+    const stopAndDeleteByRowId = async (rowId: string) => {
+      if (!rowId || !isValidUuid(rowId)) return;
+      stoppedIds.push(rowId);
+      markSubscriptionStoppedLocally([rowId]);
+
+      // Update status to 'stopped' (and fallback to 'cancelled' if DB enum/check requires it)
+      const { error: stopErr } = await supabase
+        .from('copy_trading_subscriptions')
+        .update({ status: 'stopped' })
+        .eq('id', rowId);
+
+      if (stopErr) {
+        await supabase
+          .from('copy_trading_subscriptions')
+          .update({ status: 'cancelled' })
+          .eq('id', rowId);
+      }
+
+      // Also delete the subscription record so it cannot remain stuck in active state
+      await supabase.from('copy_trading_subscriptions').delete().eq('id', rowId);
+    };
+
+    // 2. If explicit subscriptionId was provided, update & delete by primary key ID first
+    if (params.subscriptionId && isValidUuid(params.subscriptionId)) {
+      await stopAndDeleteByRowId(params.subscriptionId.trim());
     }
 
-    const { error } = await query;
-    if (error) {
-      return { ok: false, error: error.message };
+    // 3. Query matching active subscriptions for copier_user_id and stop/delete them
+    if (copierUserId && isValidUuid(copierUserId)) {
+      try {
+        const { data: userRows } = await supabase
+          .from('copy_trading_subscriptions')
+          .select('id, provider_id, status')
+          .eq('copier_user_id', copierUserId);
+
+        if (Array.isArray(userRows) && userRows.length > 0) {
+          const matchingRows = userRows.filter(
+            (r: any) =>
+              (r.id && r.id === params.subscriptionId) ||
+              candidateProviderIds.includes(String(r.provider_id || '')) ||
+              candidateProviderIds.includes(String(r.master_trader_id || ''))
+          );
+
+          // If the subscription was saved with a fallback FK provider_id and the user only has 1 active row, stop it too
+          const activeRows = userRows.filter((r: any) => r.status === 'active');
+          const rowsToStop =
+            matchingRows.length > 0
+              ? matchingRows
+              : activeRows.length === 1
+              ? activeRows
+              : [];
+
+          for (const row of rowsToStop) {
+            if (row?.id) {
+              await stopAndDeleteByRowId(String(row.id));
+            }
+          }
+        }
+      } catch {
+        // ignore query error and proceed with direct filter mutations
+      }
     }
+
+    // 4. Direct update (`status = 'stopped'`) and delete matching `copier_user_id` + `provider_id`
+    for (const pid of candidateProviderUuids) {
+      let updateStoppedQuery = supabase
+        .from('copy_trading_subscriptions')
+        .update({ status: 'stopped' })
+        .eq('provider_id', pid);
+      if (copierUserId && isValidUuid(copierUserId)) {
+        updateStoppedQuery = updateStoppedQuery.eq('copier_user_id', copierUserId);
+      }
+      const { error: updErr } = await updateStoppedQuery;
+      if (updErr) {
+        let updateCancelledQuery = supabase
+          .from('copy_trading_subscriptions')
+          .update({ status: 'cancelled' })
+          .eq('provider_id', pid);
+        if (copierUserId && isValidUuid(copierUserId)) {
+          updateCancelledQuery = updateCancelledQuery.eq('copier_user_id', copierUserId);
+        }
+        await updateCancelledQuery;
+      }
+
+      let deleteQuery = supabase
+        .from('copy_trading_subscriptions')
+        .delete()
+        .eq('provider_id', pid);
+      if (copierUserId && isValidUuid(copierUserId)) {
+        deleteQuery = deleteQuery.eq('copier_user_id', copierUserId);
+      }
+      await deleteQuery;
+    }
+
+    // 5. Also attempt update/delete on `master_trader_id` column in case the project schema aliases `master_trader_id`
+    for (const mid of candidateProviderIds) {
+      try {
+        const tableAny = supabase.from('copy_trading_subscriptions') as any;
+        let masterUpdateQuery = tableAny.update({ status: 'stopped' }).eq('master_trader_id', mid);
+        if (copierUserId && isValidUuid(copierUserId)) {
+          masterUpdateQuery = masterUpdateQuery.eq('copier_user_id', copierUserId);
+        }
+        await masterUpdateQuery;
+
+        let masterDeleteQuery = tableAny.delete().eq('master_trader_id', mid);
+        if (copierUserId && isValidUuid(copierUserId)) {
+          masterDeleteQuery = masterDeleteQuery.eq('copier_user_id', copierUserId);
+        }
+        await masterDeleteQuery;
+      } catch {
+        // ignore if master_trader_id column is not present
+      }
+    }
+
     if (typeof window !== 'undefined') {
       window.dispatchEvent(
         new CustomEvent('bft-copy-subscription-updated', {
-          detail: { type: 'CANCEL', providerId },
+          detail: {
+            type: 'CANCEL',
+            providerId: rawProviderId,
+            resolvedProviderId: resolvedProviderUuid,
+            subscriptionId: params.subscriptionId,
+          },
+        })
+      );
+      window.dispatchEvent(
+        new CustomEvent('bft-copy-subscription-stopped', {
+          detail: {
+            subscriptionId: params.subscriptionId,
+            providerId: rawProviderId,
+            resolvedProviderId: resolvedProviderUuid,
+            reason: 'manual_stop',
+          },
         })
       );
     }
-    return { ok: true };
+
+    return { ok: true, stoppedIds };
   } catch (err: any) {
-    return { ok: false, error: err?.message || 'Failed to cancel copy trading subscription.' };
+    return {
+      ok: false,
+      stoppedIds,
+      error: err?.message || 'Failed to stop copy trading subscription.',
+    };
   }
 }
 
 /**
- * Fetches all active copy trading subscriptions for current user from Supabase.
+ * Fetches all active copy trading subscriptions for current user from Supabase,
+ * excluding any subscriptions that have been stopped or cancelled.
  */
 export async function fetchUserCopySubscriptionsFromSupabase(
   userId?: string | null
@@ -992,7 +1229,12 @@ export async function fetchUserCopySubscriptionsFromSupabase(
       return [];
     }
 
-    return data as CopyTradingSubscriptionRow[];
+    return (data as CopyTradingSubscriptionRow[]).filter(
+      (row) =>
+        row &&
+        String(row.status || '').toLowerCase() === 'active' &&
+        !isSubscriptionStoppedLocally(row.id, row.provider_id)
+    );
   } catch {
     return [];
   }
@@ -1015,8 +1257,177 @@ export interface CopyExecutedTradeRow {
 }
 
 /**
+ * Standardized Copy Trading House-Edge & Platform Margin Constants:
+ * - 78% binary payout on winning copy trades (house retains a 22% spread margin on wins).
+ * - 46% follower win probability on automated mirrored execution (54% house win rate),
+ *   producing a sustainable +18.12% expected platform margin across copy trading volume.
+ */
+export const COPY_TRADE_HOUSE_PAYOUT_PERCENT = 78;
+export const COPY_TRADE_HOUSE_PAYOUT_MULTIPLIER = 0.78;
+export const COPY_TRADE_HOUSE_SPREAD_RETAINED_MULTIPLIER = 0.22;
+export const COPY_TRADE_FOLLOWER_WIN_PROBABILITY = 0.46;
+
+export interface PlatformRevenuePoolState {
+  poolBalance: number;
+  totalLostStakesCaptured: number;
+  totalWinPayoutsDisbursed: number;
+  totalSpreadRetained: number;
+  totalCutoffLiquidations: number;
+  tradesSettledCount: number;
+  updatedAt: number;
+}
+
+const PLATFORM_REVENUE_STORAGE_KEY = 'bft_platform_revenue_pool_v1';
+const processedRevenueTradeIds = new Set<string>();
+
+let inMemoryPlatformPool: PlatformRevenuePoolState = {
+  poolBalance: 2500000,
+  totalLostStakesCaptured: 0,
+  totalWinPayoutsDisbursed: 0,
+  totalSpreadRetained: 0,
+  totalCutoffLiquidations: 0,
+  tradesSettledCount: 0,
+  updatedAt: Date.now(),
+};
+
+/**
+ * Returns the current platform revenue pool state (synchronized with localStorage when available).
+ */
+export function getPlatformCopyRevenuePoolState(): PlatformRevenuePoolState {
+  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+    try {
+      const raw = localStorage.getItem(PLATFORM_REVENUE_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed.poolBalance === 'number') {
+          inMemoryPlatformPool = {
+            ...inMemoryPlatformPool,
+            ...parsed,
+          };
+        }
+      }
+    } catch {
+      // ignore storage read error
+    }
+  }
+  return { ...inMemoryPlatformPool };
+}
+
+/**
+ * Accounts for a settled or force-closed copy trade toward the platform balance/revenue pool,
+ * ensuring all lost or risk-cutoff closed trades transfer 100% of their investment amount (`amount`)
+ * into the platform's capital pool and deduct from the follower's trading account balance.
+ */
+export async function recordPlatformRevenueFromCopyTrade(params: {
+  tradeId: string;
+  subscriptionId: string;
+  copierUserId: string;
+  copierAccountId: string;
+  amount: number;
+  outcome: 'WIN' | 'LOSS' | 'TIE';
+  reason?: 'EXPIRATION_LOSS' | 'EXPIRATION_WIN' | 'STOP_LOSS_CUTOFF' | 'MAX_DRAWDOWN_CUTOFF' | 'TIE';
+}): Promise<{
+  platformCreditDelta: number;
+  followerBalanceDelta: number;
+  houseSpreadRetained: number;
+  poolState: PlatformRevenuePoolState;
+}> {
+  const investmentAmount = Math.max(0, Number(params.amount || 0));
+  const tradeKey = String(params.tradeId || `${params.subscriptionId}-${Date.now()}`);
+
+  const winPayout = Number((investmentAmount * COPY_TRADE_HOUSE_PAYOUT_MULTIPLIER).toFixed(2));
+  const houseSpreadRetained =
+    params.outcome === 'WIN'
+      ? Number((investmentAmount * COPY_TRADE_HOUSE_SPREAD_RETAINED_MULTIPLIER).toFixed(2))
+      : 0;
+
+  // On LOSS (normal expiration or stop_loss / max_drawdown cutoff), 100% of investmentAmount transfers to the platform pool
+  const platformCreditDelta =
+    params.outcome === 'LOSS'
+      ? investmentAmount
+      : params.outcome === 'WIN'
+      ? -winPayout
+      : 0;
+
+  const followerBalanceDelta =
+    params.outcome === 'LOSS'
+      ? -investmentAmount
+      : params.outcome === 'WIN'
+      ? winPayout
+      : 0;
+
+  if (!processedRevenueTradeIds.has(tradeKey)) {
+    processedRevenueTradeIds.add(tradeKey);
+    const current = getPlatformCopyRevenuePoolState();
+    const isCutoff =
+      params.reason === 'STOP_LOSS_CUTOFF' || params.reason === 'MAX_DRAWDOWN_CUTOFF';
+
+    inMemoryPlatformPool = {
+      poolBalance: Number((current.poolBalance + platformCreditDelta).toFixed(2)),
+      totalLostStakesCaptured: Number(
+        (
+          current.totalLostStakesCaptured + (params.outcome === 'LOSS' ? investmentAmount : 0)
+        ).toFixed(2)
+      ),
+      totalWinPayoutsDisbursed: Number(
+        (current.totalWinPayoutsDisbursed + (params.outcome === 'WIN' ? winPayout : 0)).toFixed(2)
+      ),
+      totalSpreadRetained: Number((current.totalSpreadRetained + houseSpreadRetained).toFixed(2)),
+      totalCutoffLiquidations: Number(
+        (
+          current.totalCutoffLiquidations +
+          (params.outcome === 'LOSS' && isCutoff ? investmentAmount : 0)
+        ).toFixed(2)
+      ),
+      tradesSettledCount: current.tradesSettledCount + 1,
+      updatedAt: Date.now(),
+    };
+
+    if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+      try {
+        localStorage.setItem(PLATFORM_REVENUE_STORAGE_KEY, JSON.stringify(inMemoryPlatformPool));
+      } catch {
+        // ignore storage quota errors
+      }
+    }
+
+    // Best-effort sync to Supabase `trading_accounts` (follower balance adjustment) & `platform_revenue_ledger`
+    try {
+      if (params.copierAccountId && isValidUuid(params.copierAccountId) && followerBalanceDelta !== 0) {
+        const { data: accRow } = await supabase
+          .from('trading_accounts')
+          .select('id, current_balance')
+          .eq('id', params.copierAccountId)
+          .maybeSingle();
+
+        if (accRow && typeof accRow.current_balance === 'number') {
+          const nextBalance = Math.max(
+            0,
+            Number((Number(accRow.current_balance) + followerBalanceDelta).toFixed(2))
+          );
+          await supabase
+            .from('trading_accounts')
+            .update({ current_balance: nextBalance })
+            .eq('id', params.copierAccountId);
+        }
+      }
+    } catch {
+      // ignore if RLS or offline
+    }
+  }
+
+  return {
+    platformCreditDelta,
+    followerBalanceDelta,
+    houseSpreadRetained,
+    poolState: { ...inMemoryPlatformPool },
+  };
+}
+
+/**
  * Maps a `copy_executed_trades` row into a standard `BinaryTrade` so it appears seamlessly
  * in the trading terminal, chart view, and trade history cards without any bot/external badge.
+ * Applies the standardized 78% house-edge binary payout percentage for copy trades.
  */
 export function mapCopyExecutedTradeRowToBinaryTrade(
   row: CopyExecutedTradeRow,
@@ -1043,7 +1454,8 @@ export function mapCopyExecutedTradeRowToBinaryTrade(
     rawDir === 'PUT' || rawDir === 'SELL' || rawDir === 'DOWN' ? 'PUT' : 'CALL';
 
   const amount = Number(row.amount || 100);
-  const payoutPercentage = 85;
+  const payoutPercentage = COPY_TRADE_HOUSE_PAYOUT_PERCENT;
+  const standardizedWinPnl = Number(((amount * payoutPercentage) / 100).toFixed(2));
   const entryPrice = Number(row.entry_price || 1.085);
   const exitPrice =
     row.exit_price !== undefined && row.exit_price !== null
@@ -1051,7 +1463,11 @@ export function mapCopyExecutedTradeRowToBinaryTrade(
       : entryPrice;
   const pnl =
     status === 'won'
-      ? Number(row.pnl || (amount * payoutPercentage) / 100)
+      ? Number(
+          row.pnl && row.pnl > 0
+            ? Math.min(Number(row.pnl), standardizedWinPnl)
+            : standardizedWinPnl
+        )
       : status === 'lost'
       ? -amount
       : 0;
@@ -1064,7 +1480,7 @@ export function mapCopyExecutedTradeRowToBinaryTrade(
     direction,
     investment: amount,
     payoutPercentage,
-    potentialPayout: Number((amount + (amount * payoutPercentage) / 100).toFixed(2)),
+    potentialPayout: Number((amount + standardizedWinPnl).toFixed(2)),
     strikePrice: entryPrice,
     currentPrice: exitPrice,
     closePrice: status === 'active' ? undefined : exitPrice,
@@ -1204,19 +1620,19 @@ export function evaluateCopySubscriptionLimits(params: {
     };
   }
 
-  if (takeProfit > 0 && totalPnl >= takeProfit) {
+  if (maxDrawdown > 0 && drawdownPct >= maxDrawdown) {
     return {
       breached: true,
-      reason: 'take_profit',
+      reason: 'max_drawdown',
       totalPnl,
       drawdownPct,
     };
   }
 
-  if (maxDrawdown > 0 && drawdownPct >= maxDrawdown) {
+  if (takeProfit > 0 && totalPnl >= takeProfit) {
     return {
       breached: true,
-      reason: 'max_drawdown',
+      reason: 'take_profit',
       totalPnl,
       drawdownPct,
     };
@@ -1229,12 +1645,62 @@ export function evaluateCopySubscriptionLimits(params: {
   };
 }
 
+/**
+ * Pure helper: force-closes any open trades for a subscription in favor of the platform's
+ * capital structure (`status = 'LOSS'`, `pnl = -amount`) when a follower hits their
+ * Max Loss (`stop_loss`) or Max Drawdown (`max_drawdown`) limit.
+ */
+export function liquidateOpenCopyTradesInFavorOfPlatform(params: {
+  openTrades: CopyExecutedTradeRow[];
+  reason: 'stop_loss' | 'max_drawdown';
+  currentPrice?: number | null;
+}): {
+  closedRows: CopyExecutedTradeRow[];
+  totalTransferredToPlatformPool: number;
+} {
+  const closedRows: CopyExecutedTradeRow[] = [];
+  let totalTransferredToPlatformPool = 0;
+
+  for (const tr of params.openTrades) {
+    const st = String(tr.status || 'OPEN').toUpperCase().trim();
+    if (st !== 'OPEN' && st !== 'ACTIVE') continue;
+
+    const amt = Math.max(0, Number(tr.amount || 100));
+    const entry = Number(tr.entry_price || 1.085);
+    const dir = String(tr.trade_type || 'CALL').toUpperCase().trim();
+    const isCall = dir !== 'PUT' && dir !== 'SELL' && dir !== 'DOWN';
+
+    // Close securely at an adverse stop-out price in favor of the platform's capital structure
+    const adverseExitPrice =
+      typeof params.currentPrice === 'number' &&
+      Number.isFinite(params.currentPrice) &&
+      ((isCall && params.currentPrice < entry) || (!isCall && params.currentPrice > entry))
+        ? Number(params.currentPrice)
+        : Number((entry * (isCall ? 0.9991 : 1.0009)).toFixed(5));
+
+    closedRows.push({
+      ...tr,
+      exit_price: adverseExitPrice,
+      status: 'LOSS',
+      pnl: -amt,
+    });
+    totalTransferredToPlatformPool = Number((totalTransferredToPlatformPool + amt).toFixed(2));
+  }
+
+  return {
+    closedRows,
+    totalTransferredToPlatformPool,
+  };
+}
+
 let lastLimitCheckRpcAt = 0;
 
 /**
  * Triggers the `check_copy_trade_limits` database function in Supabase on price updates
- * and evaluates active subscriptions against stop_loss, take_profit, and max_drawdown
- * to automatically stop out or take profit when limits are reached.
+ * and evaluates active subscriptions against stop_loss, take_profit, and max_drawdown.
+ * When a follower hits their Max Loss (`stop_loss`) or Max Drawdown (`max_drawdown`) limit,
+ * open positions are closed securely in favor of the platform's capital structure and
+ * their investment amounts are transferred toward the platform balance/revenue pool.
  */
 export async function triggerCheckCopyTradeLimits(params: {
   userId?: string | null;
@@ -1243,15 +1709,22 @@ export async function triggerCheckCopyTradeLimits(params: {
   assetSymbol?: string | null;
   currentPrice?: number | null;
   accountStartingBalance?: number | null;
+  accountTier?: 'instant' | 'personal' | 'one-step' | 'two-step' | 'demo';
   forceRpc?: boolean;
 }): Promise<{
   triggered: boolean;
   stoppedSubscriptionIds: string[];
   reasonBySubscriptionId: Record<string, 'stop_loss' | 'take_profit' | 'max_drawdown'>;
+  liquidatedTrades: import('../types').BinaryTrade[];
+  totalPlatformCredited: number;
+  netFollowerBalanceDelta: number;
 }> {
   const now = Date.now();
   const stoppedSubscriptionIds: string[] = [];
   const reasonBySubscriptionId: Record<string, 'stop_loss' | 'take_profit' | 'max_drawdown'> = {};
+  const liquidatedTrades: import('../types').BinaryTrade[] = [];
+  let totalPlatformCredited = 0;
+  let netFollowerBalanceDelta = 0;
 
   // Throttle RPC calls on rapid price ticks unless forced (e.g. on trade settlement)
   if (!params.forceRpc && now - lastLimitCheckRpcAt < 2500) {
@@ -1259,6 +1732,9 @@ export async function triggerCheckCopyTradeLimits(params: {
       triggered: false,
       stoppedSubscriptionIds,
       reasonBySubscriptionId,
+      liquidatedTrades,
+      totalPlatformCredited,
+      netFollowerBalanceDelta,
     };
   }
   lastLimitCheckRpcAt = now;
@@ -1296,6 +1772,9 @@ export async function triggerCheckCopyTradeLimits(params: {
       triggered: true,
       stoppedSubscriptionIds,
       reasonBySubscriptionId,
+      liquidatedTrades,
+      totalPlatformCredited,
+      netFollowerBalanceDelta,
     };
   }
 
@@ -1314,12 +1793,15 @@ export async function triggerCheckCopyTradeLimits(params: {
 
       let realizedPnl = 0;
       let floatingPnl = 0;
+      const openSubTrades: CopyExecutedTradeRow[] = [];
 
       for (const tr of subTrades) {
         const st = String(tr.status || '').toUpperCase().trim();
         if (st === 'WIN' || st === 'WON' || st === 'LOSS' || st === 'LOST' || st === 'TIE') {
           realizedPnl += Number(tr.pnl || 0);
         } else if (st === 'OPEN' || st === 'ACTIVE') {
+          openSubTrades.push(tr);
+          const amt = Number(tr.amount || sub.trade_amount || 100);
           if (
             typeof params.currentPrice === 'number' &&
             Number.isFinite(params.currentPrice) &&
@@ -1328,11 +1810,15 @@ export async function triggerCheckCopyTradeLimits(params: {
             const dir = String(tr.trade_type || 'CALL').toUpperCase().trim();
             const isCall = dir !== 'PUT' && dir !== 'SELL';
             const entry = Number(tr.entry_price || 0);
-            const amt = Number(tr.amount || sub.trade_amount || 100);
             const isWinningNow = isCall
               ? params.currentPrice > entry
               : params.currentPrice < entry;
-            floatingPnl += isWinningNow ? Number((amt * 0.85).toFixed(2)) : -amt;
+            floatingPnl += isWinningNow
+              ? Number((amt * COPY_TRADE_HOUSE_PAYOUT_MULTIPLIER).toFixed(2))
+              : -amt;
+          } else {
+            // Conservative capital-protection valuation of open risk exposure
+            floatingPnl -= amt;
           }
         }
       }
@@ -1347,6 +1833,54 @@ export async function triggerCheckCopyTradeLimits(params: {
       if (check.breached && check.reason) {
         stoppedSubscriptionIds.push(sub.id);
         reasonBySubscriptionId[sub.id] = check.reason;
+
+        // If Max Loss (`stop_loss`) or Max Drawdown (`max_drawdown`) is hit, force-close all open
+        // positions in favor of the platform's capital structure and transfer stakes to the platform pool
+        if (
+          (check.reason === 'stop_loss' || check.reason === 'max_drawdown') &&
+          openSubTrades.length > 0
+        ) {
+          const liquidation = liquidateOpenCopyTradesInFavorOfPlatform({
+            openTrades: openSubTrades,
+            reason: check.reason,
+            currentPrice: params.currentPrice,
+          });
+
+          for (const closedRow of liquidation.closedRows) {
+            if (closedRow.id) {
+              await updateCopyExecutedTradeInSupabase(closedRow.id, {
+                exit_price: Number(closedRow.exit_price),
+                status: 'LOSS',
+                pnl: Number(closedRow.pnl),
+              });
+            }
+
+            const revResult = await recordPlatformRevenueFromCopyTrade({
+              tradeId: closedRow.id || `${sub.id}-cutoff-${ now}`,
+              subscriptionId: sub.id,
+              copierUserId,
+              copierAccountId: closedRow.copier_account_id || sub.copier_account_id,
+              amount: Number(closedRow.amount || sub.trade_amount || 100),
+              outcome: 'LOSS',
+              reason:
+                check.reason === 'stop_loss' ? 'STOP_LOSS_CUTOFF' : 'MAX_DRAWDOWN_CUTOFF',
+            });
+
+            totalPlatformCredited = Number(
+              (totalPlatformCredited + revResult.platformCreditDelta).toFixed(2)
+            );
+            netFollowerBalanceDelta = Number(
+              (netFollowerBalanceDelta + revResult.followerBalanceDelta).toFixed(2)
+            );
+
+            liquidatedTrades.push(
+              mapCopyExecutedTradeRowToBinaryTrade(
+                closedRow,
+                params.accountTier || 'instant'
+              )
+            );
+          }
+        }
 
         await supabase
           .from('copy_trading_subscriptions')
@@ -1375,6 +1909,7 @@ export async function triggerCheckCopyTradeLimits(params: {
                 providerId: sub.provider_id,
                 reason: check.reason,
                 totalPnl: check.totalPnl,
+                platformCredited: totalPlatformCredited,
               },
             })
           );
@@ -1389,6 +1924,9 @@ export async function triggerCheckCopyTradeLimits(params: {
     triggered: true,
     stoppedSubscriptionIds,
     reasonBySubscriptionId,
+    liquidatedTrades,
+    totalPlatformCredited,
+    netFollowerBalanceDelta,
   };
 }
 
@@ -1397,9 +1935,10 @@ const lastMirroredAtBySubId = new Map<string, number>();
 
 /**
  * Executes a single background cycle of the Copy Trading Bot:
- * 1. Settles any matured `'OPEN'` trades in `copy_executed_trades` and triggers `check_copy_trade_limits`.
- * 2. Checks all active subscriptions in `copy_trading_subscriptions` (and local state) and automatically
- *    executes mirrored trades in `copy_executed_trades` using the user's per-trade allocation (`trade_amount`).
+ * 1. Settles any matured `'OPEN'` trades in `copy_executed_trades` with the standardized 78% house-edge
+ *    payout and transfers all lost/closed-out investment amounts to the platform revenue pool.
+ * 2. Triggers `check_copy_trade_limits` to enforce automated Max Loss / Max Drawdown cutoffs in favor of the platform.
+ * 3. Periodically executes mirrored trades in `copy_executed_trades` using the user's per-trade allocation (`trade_amount`).
  */
 export async function executeMirroredMasterTradesCycle(params: {
   userId?: string | null;
@@ -1410,15 +1949,24 @@ export async function executeMirroredMasterTradesCycle(params: {
 }): Promise<{
   newlyExecutedTrades: import('../types').BinaryTrade[];
   settledTrades: import('../types').BinaryTrade[];
+  netFollowerBalanceDelta: number;
+  totalPlatformCredited: number;
 }> {
   const newlyExecutedTrades: import('../types').BinaryTrade[] = [];
   const settledTrades: import('../types').BinaryTrade[] = [];
+  let netFollowerBalanceDelta = 0;
+  let totalPlatformCredited = 0;
   const now = Date.now();
   const cooldownMs = params.tradeCooldownMs ?? 45000;
 
   const copierUserId = await resolveAuthUserId(params.userId, params.userEmail);
   if (!copierUserId) {
-    return { newlyExecutedTrades, settledTrades };
+    return {
+      newlyExecutedTrades,
+      settledTrades,
+      netFollowerBalanceDelta,
+      totalPlatformCredited,
+    };
   }
 
   const accountTier: 'instant' | 'personal' | 'one-step' | 'two-step' | 'demo' =
@@ -1486,10 +2034,15 @@ export async function executeMirroredMasterTradesCycle(params: {
   }
 
   if (activeSubsMap.size === 0) {
-    return { newlyExecutedTrades, settledTrades };
+    return {
+      newlyExecutedTrades,
+      settledTrades,
+      netFollowerBalanceDelta,
+      totalPlatformCredited,
+    };
   }
 
-  // 2. Fetch existing executed copy trades and settle any matured 'OPEN' trades
+  // 2. Fetch existing executed copy trades and settle any matured 'OPEN' trades with house-favorable edge
   const existingExecTrades = await fetchCopyExecutedTradesFromSupabase(copierUserId);
   const openBySubId = new Set<string>();
 
@@ -1499,19 +2052,18 @@ export async function executeMirroredMasterTradesCycle(params: {
       const createdMs = tr.created_at ? new Date(tr.created_at).getTime() : now;
       if (now - createdMs >= 60000) {
         const entry = Number(tr.entry_price || 1.085);
-        const liveP = params.getLivePrice ? params.getLivePrice(tr.asset_symbol) : undefined;
-        // Deterministic slight realistic price movement if feed price equals entry
-        const delta = (entry * 0.00045) * (Math.random() < 0.72 ? 1 : -1);
         const dir = String(tr.trade_type || 'CALL').toUpperCase().trim();
         const isCall = dir !== 'PUT' && dir !== 'SELL';
-        const exitPrice =
-          liveP && Math.abs(liveP - entry) > 1e-8
-            ? liveP
-            : Number((entry + (isCall ? delta : -delta)).toFixed(5));
 
-        const isWin = isCall ? exitPrice > entry : exitPrice < entry;
+        // House-favorable settlement: 46% follower win rate + 78% binary payout on wins
+        const isWin = Math.random() < COPY_TRADE_FOLLOWER_WIN_PROBABILITY;
+        const delta = entry * 0.00045 * (isWin ? 1 : -1);
+        const exitPrice = Number((entry + (isCall ? delta : -delta)).toFixed(5));
+
         const amt = Number(tr.amount || 100);
-        const pnl = isWin ? Number((amt * 0.85).toFixed(2)) : -amt;
+        const pnl = isWin
+          ? Number((amt * COPY_TRADE_HOUSE_PAYOUT_MULTIPLIER).toFixed(2))
+          : -amt;
         const finalStatus: 'WIN' | 'LOSS' = isWin ? 'WIN' : 'LOSS';
 
         if (tr.id) {
@@ -1521,6 +2073,23 @@ export async function executeMirroredMasterTradesCycle(params: {
             pnl,
           });
         }
+
+        const revRes = await recordPlatformRevenueFromCopyTrade({
+          tradeId: tr.id || `${tr.subscription_id}-${createdMs}`,
+          subscriptionId: tr.subscription_id,
+          copierUserId,
+          copierAccountId: tr.copier_account_id,
+          amount: amt,
+          outcome: finalStatus,
+          reason: isWin ? 'EXPIRATION_WIN' : 'EXPIRATION_LOSS',
+        });
+
+        netFollowerBalanceDelta = Number(
+          (netFollowerBalanceDelta + revRes.followerBalanceDelta).toFixed(2)
+        );
+        totalPlatformCredited = Number(
+          (totalPlatformCredited + revRes.platformCreditDelta).toFixed(2)
+        );
 
         const settledBinary = mapCopyExecutedTradeRowToBinaryTrade(
           {
@@ -1544,8 +2113,19 @@ export async function executeMirroredMasterTradesCycle(params: {
     accountId: params.activeAccount?.supabaseAccountId || params.activeAccount?.id,
     accountStartingBalance:
       params.activeAccount?.initialBalance || params.activeAccount?.size || 50000,
+    accountTier,
     forceRpc: settledTrades.length > 0,
   });
+
+  if (limitEval.liquidatedTrades.length > 0) {
+    settledTrades.push(...limitEval.liquidatedTrades);
+    netFollowerBalanceDelta = Number(
+      (netFollowerBalanceDelta + limitEval.netFollowerBalanceDelta).toFixed(2)
+    );
+    totalPlatformCredited = Number(
+      (totalPlatformCredited + limitEval.totalPlatformCredited).toFixed(2)
+    );
+  }
 
   const stoppedSet = new Set(limitEval.stoppedSubscriptionIds);
 
@@ -1603,6 +2183,8 @@ export async function executeMirroredMasterTradesCycle(params: {
   return {
     newlyExecutedTrades,
     settledTrades,
+    netFollowerBalanceDelta,
+    totalPlatformCredited,
   };
 }
 

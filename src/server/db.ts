@@ -242,7 +242,43 @@ db.exec(`
     pnl REAL DEFAULT 0,
     created_at INTEGER NOT NULL
   );
+
+  -- 11. Platform Revenue Pool & House Capital Structure Ledger
+  CREATE TABLE IF NOT EXISTS platform_revenue_pool (
+    id TEXT PRIMARY KEY,
+    pool_balance REAL DEFAULT 2500000.0,
+    total_lost_stakes_captured REAL DEFAULT 0.0,
+    total_win_payouts_disbursed REAL DEFAULT 0.0,
+    total_spread_retained REAL DEFAULT 0.0,
+    total_cutoff_liquidations REAL DEFAULT 0.0,
+    trades_settled_count INTEGER DEFAULT 0,
+    updated_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS platform_revenue_ledger (
+    id TEXT PRIMARY KEY,
+    trade_id TEXT NOT NULL,
+    subscription_id TEXT NOT NULL,
+    copier_user_id TEXT NOT NULL,
+    copier_account_id TEXT NOT NULL,
+    investment_amount REAL NOT NULL,
+    platform_credit REAL NOT NULL,
+    house_spread_retained REAL DEFAULT 0.0,
+    settlement_reason TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
 `);
+
+try {
+  db.prepare(`
+    INSERT OR IGNORE INTO platform_revenue_pool (
+      id, pool_balance, total_lost_stakes_captured, total_win_payouts_disbursed,
+      total_spread_retained, total_cutoff_liquidations, trades_settled_count, updated_at
+    ) VALUES ('HOUSE_POOL_MAIN', 2500000.0, 0.0, 0.0, 0.0, 0.0, 0, ?)
+  `).run(Date.now());
+} catch {
+  // ignore if already initialized
+}
 
 const copyTradingAlterColumns = [
   `ALTER TABLE copy_trading_subscriptions ADD COLUMN allocated_capital REAL DEFAULT 100;`,

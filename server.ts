@@ -3502,15 +3502,39 @@ Sitemap: https://binaryfundedtrader.com/sitemap.xml`);
       const user = getAuthenticatedUser(req);
       const userId = String(user?.id || req.body?.userId || 'usr_bft_001').trim();
 
-      const { providerId } = req.body || {};
-      if (!providerId) return res.status(400).json({ ok: false, error: 'Provider ID required.' });
+      const { providerId, masterTraderId, subscriptionId } = req.body || {};
+      const targetProviderId = String(providerId || masterTraderId || '').trim();
+      if (!targetProviderId && !subscriptionId) {
+        return res.status(400).json({ ok: false, error: 'Provider ID or Subscription ID required.' });
+      }
 
-      db.prepare(`
-        DELETE FROM copy_trading_subscriptions 
-        WHERE user_id = ? AND provider_id = ?
-      `).run(userId, providerId);
+      if (subscriptionId) {
+        db.prepare(`
+          UPDATE copy_trading_subscriptions
+          SET status = 'stopped'
+          WHERE id = ?
+        `).run(String(subscriptionId));
 
-      return res.json({ ok: true, message: 'Successfully cancelled copy trading subscription.' });
+        db.prepare(`
+          DELETE FROM copy_trading_subscriptions
+          WHERE id = ?
+        `).run(String(subscriptionId));
+      }
+
+      if (targetProviderId) {
+        db.prepare(`
+          UPDATE copy_trading_subscriptions
+          SET status = 'stopped'
+          WHERE (user_id = ? OR copier_user_id = ?) AND provider_id = ?
+        `).run(userId, userId, targetProviderId);
+
+        db.prepare(`
+          DELETE FROM copy_trading_subscriptions 
+          WHERE (user_id = ? OR copier_user_id = ?) AND provider_id = ?
+        `).run(userId, userId, targetProviderId);
+      }
+
+      return res.json({ ok: true, message: 'Successfully stopped copy trading subscription.' });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err?.message || 'Failed to cancel subscription.' });
     }
@@ -3535,9 +3559,9 @@ Sitemap: https://binaryfundedtrader.com/sitemap.xml`);
             status, 
             created_at 
           FROM copy_trading_subscriptions 
-          WHERE user_id = ?
+          WHERE (user_id = ? OR copier_user_id = ?) AND status = 'active'
         `)
-        .all(userId) as any[];
+        .all(userId, userId) as any[];
 
       return res.json({
         ok: true,

@@ -2537,6 +2537,7 @@ import {
   saveCopyTradingSubscriptionToSupabase,
   cancelCopyTradingSubscriptionInSupabase,
   fetchUserCopySubscriptionsFromSupabase,
+  isSubscriptionStoppedLocally,
 } from './copyTradingSync';
 
 export async function apiGetCopyTraders(
@@ -2768,51 +2769,81 @@ export async function apiCopyTrader(params: {
   };
 }
 
-export async function apiCancelCopy(providerId: string, userId?: string, accountId?: string) {
-  // 1. Cancel in Supabase copy_trading_subscriptions
-  await cancelCopyTradingSubscriptionInSupabase({
+export async function apiCancelCopy(
+  providerId: string,
+  userId?: string,
+  accountId?: string,
+  extra?: {
+    subscriptionId?: string;
+    masterTraderId?: string;
+    providerName?: string;
+    userEmail?: string;
+  }
+) {
+  // 1. Stop ('stopped') and delete in Supabase copy_trading_subscriptions
+  const supaRes = await cancelCopyTradingSubscriptionInSupabase({
+    subscriptionId: extra?.subscriptionId,
     providerId,
+    masterTraderId: extra?.masterTraderId || providerId,
+    providerName: extra?.providerName,
     userId,
+    userEmail: extra?.userEmail,
     accountId,
   });
 
-  // 2. Cancel in backend server
+  // 2. Stop/delete in backend server
   try {
     const effectiveUserId = userId || 'usr_bft_001';
     await fetch(`${API_BASE}/api/copy-trading/cancel`, {
       method: 'POST',
       headers: getAuthHeaders(),
-      body: JSON.stringify({ providerId, userId: effectiveUserId }),
+      body: JSON.stringify({
+        providerId,
+        masterTraderId: extra?.masterTraderId || providerId,
+        subscriptionId: extra?.subscriptionId,
+        userId: effectiveUserId,
+      }),
     });
   } catch {
     // fallback
   }
 
-  return { ok: true, message: 'Successfully stopped copying trader.' };
+  return {
+    ok: true,
+    stoppedIds: supaRes.stoppedIds,
+    message: 'Successfully stopped copying trader.',
+  };
 }
 
 export async function apiGetSubscriptions(userId?: string) {
   // 1. Fetch from Supabase copy_trading_subscriptions
   const supaSubs = await fetchUserCopySubscriptionsFromSupabase(userId);
-  const mappedSupa: any[] = supaSubs.map((s) => ({
-    id: s.id,
-    provider_id: s.provider_id,
-    copier_account_id: s.copier_account_id,
-    per_trade_allocation_type: 'amount',
-    per_trade_allocation_value: Number(s.trade_amount || 100),
-    allocated_capital: Number(s.trade_amount || 100),
-    trade_amount: Number(s.trade_amount || 100),
-    max_loss_limit: Number(s.stop_loss || 0),
-    stop_loss: Number(s.stop_loss || 0),
-    take_profit_limit: Number(s.take_profit || 0),
-    take_profit: Number(s.take_profit || 0),
-    max_drawdown: Number(s.max_drawdown || 5.0),
-    trade_sizing_type: 'fixed',
-    sizing_multiplier: 1.0,
-    status: s.status,
-    current_pnl: 0,
-    commission_pct: 0,
-  }));
+  const mappedSupa: any[] = supaSubs
+    .filter(
+      (s) =>
+        s &&
+        String(s.status || '').toLowerCase() === 'active' &&
+        !isSubscriptionStoppedLocally(s.id, s.provider_id)
+    )
+    .map((s) => ({
+      id: s.id,
+      provider_id: s.provider_id,
+      copier_account_id: s.copier_account_id,
+      per_trade_allocation_type: 'amount',
+      per_trade_allocation_value: Number(s.trade_amount || 100),
+      allocated_capital: Number(s.trade_amount || 100),
+      trade_amount: Number(s.trade_amount || 100),
+      max_loss_limit: Number(s.stop_loss || 0),
+      stop_loss: Number(s.stop_loss || 0),
+      take_profit_limit: Number(s.take_profit || 0),
+      take_profit: Number(s.take_profit || 0),
+      max_drawdown: Number(s.max_drawdown || 5.0),
+      trade_sizing_type: 'fixed',
+      sizing_multiplier: 1.0,
+      status: s.status,
+      current_pnl: 0,
+      commission_pct: 0,
+    }));
 
   try {
     const qs = userId ? `?userId=${encodeURIComponent(userId)}` : '';
@@ -2823,7 +2854,12 @@ export async function apiGetSubscriptions(userId?: string) {
     if (serverData.ok && Array.isArray(serverData.subscriptions)) {
       const existingSet = new Set(mappedSupa.map((m) => m.provider_id));
       for (const s of serverData.subscriptions) {
-        if (!existingSet.has(s.provider_id)) {
+        if (
+          s &&
+          String(s.status || '').toLowerCase() === 'active' &&
+          !isSubscriptionStoppedLocally(s.id, s.provider_id) &&
+          !existingSet.has(s.provider_id)
+        ) {
           mappedSupa.push(s);
           existingSet.add(s.provider_id);
         }
@@ -2835,4 +2871,5 @@ export async function apiGetSubscriptions(userId?: string) {
 
   return { ok: true, subscriptions: mappedSupa };
 }
+
 

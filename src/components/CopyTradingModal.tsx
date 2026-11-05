@@ -63,8 +63,9 @@ import {
   isPlaceholderOrUnselectedAccountValue,
   resolveAuthUserId,
   resolveCopierAccountId,
+  isSubscriptionStoppedLocally,
 } from '../utils/copyTradingSync';
-import { isValidUuid } from '../utils/supabaseTradeSync';
+import { isValidUuid, ensureTradeUuid } from '../utils/supabaseTradeSync';
 import { isDemoAccount } from '../utils/propRules';
 
 interface CopyTradingModalProps {
@@ -371,15 +372,77 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
   const [activeSubscriptions, setActiveSubscriptions] = useState<Record<string, CopySubscriptionData>>(() => {
     try {
       const raw = localStorage.getItem(SUBSCRIPTIONS_STORAGE_KEY);
-      return raw ? JSON.parse(raw) : {};
+      if (!raw) return {};
+      const parsed = JSON.parse(raw) || {};
+      const cleaned: Record<string, CopySubscriptionData> = {};
+      for (const [k, val] of Object.entries(parsed)) {
+        const sub = val as CopySubscriptionData;
+        if (
+          sub &&
+          sub.status === 'active' &&
+          !isSubscriptionStoppedLocally(sub.id, sub.provider_id) &&
+          !isSubscriptionStoppedLocally(k, sub.provider_id)
+        ) {
+          cleaned[k] = sub;
+        }
+      }
+      return cleaned;
     } catch {
       return {};
     }
   });
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
+  const findMatchingSubscriptionForTrader = (
+    trader: CopyTraderProfileData,
+    subsMap: Record<string, CopySubscriptionData> = activeSubscriptions
+  ): CopySubscriptionData | undefined => {
+    if (!trader) return undefined;
+    const traderUuid = ensureTradeUuid(trader.id);
+    const direct = subsMap[trader.id] || subsMap[traderUuid];
+    if (
+      direct &&
+      direct.status === 'active' &&
+      !isSubscriptionStoppedLocally(direct.id, direct.provider_id)
+    ) {
+      return direct;
+    }
+    for (const s of Object.values(subsMap)) {
+      if (
+        s &&
+        s.status === 'active' &&
+        !isSubscriptionStoppedLocally(s.id, s.provider_id) &&
+        (s.provider_id === trader.id ||
+          s.provider_id === traderUuid ||
+          ensureTradeUuid(String(s.provider_id || '')) === traderUuid ||
+          (s.provider_numeric_id &&
+            String(s.provider_numeric_id) === String(trader.numeric_id)) ||
+          (s.provider_name && s.provider_name === trader.provider_name))
+      ) {
+        return s;
+      }
+    }
+    return undefined;
+  };
+
   const activeSubscriptionsList = useMemo(() => {
-    return Object.values(activeSubscriptions).filter((s) => s.status === 'active');
+    const seenTraders = new Set<string>();
+    const list: CopySubscriptionData[] = [];
+    for (const s of Object.values(activeSubscriptions)) {
+      if (
+        !s ||
+        s.status !== 'active' ||
+        isSubscriptionStoppedLocally(s.id, s.provider_id)
+      ) {
+        continue;
+      }
+      const dedupeKey = ensureTradeUuid(String(s.provider_id || s.id));
+      if (!seenTraders.has(dedupeKey)) {
+        seenTraders.add(dedupeKey);
+        list.push(s);
+      }
+    }
+    return list;
   }, [activeSubscriptions]);
   const activeSubsCount = activeSubscriptionsList.length;
 
@@ -434,40 +497,136 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
     }
   };
 
-  const loadCopyTradingData = async () => {
-    setIsLoading(true);
+  const loadCopyTradingData = async (options?: { silent?: boolean }) => {
+    if (!options?.silent) {
+      setIsLoading(true);
+    }
     try {
       const freshPool = generate200TraderPool(Date.now());
       setFullPool(freshPool);
       setRotationInfo(getRotationWindowInfo(Date.now()));
 
       const subsRes = await apiGetSubscriptions(userProfile?.id);
-      if (subsRes.ok && Array.isArray(subsRes.subscriptions) && subsRes.subscriptions.length > 0) {
-        const merged: Record<string, CopySubscriptionData> = { ...activeSubscriptions };
-        subsRes.subscriptions.forEach((sub: any) => {
-          if (sub && sub.provider_id && sub.status === 'active') {
-            merged[sub.provider_id] = {
-              id: sub.id || `SUB-${sub.provider_id}`,
-              provider_id: sub.provider_id,
-              per_trade_allocation_type: sub.per_trade_allocation_type || 'amount',
-              per_trade_allocation_value: Number(sub.per_trade_allocation_value ?? sub.allocated_capital ?? 100),
-              allocated_capital: Number(sub.allocated_capital ?? 100),
-              max_loss_limit: Number(sub.max_loss_limit ?? 250),
-              take_profit_limit: Number(sub.take_profit_limit ?? 500),
-              trade_sizing_type: sub.trade_sizing_type || 'proportionate',
-              sizing_multiplier: Number(sub.sizing_multiplier ?? 1),
+      if (subsRes.ok && Array.isArray(subsRes.subscriptions)) {
+        setActiveSubscriptions((prev) => {
+          const nextMap: Record<string, CopySubscriptionData> = {};
+
+          // Preserve valid active local subscriptions that have not been stopped
+          for (const [k, existing] of Object.entries(prev)) {
+            if (
+              existing &&
+              existing.status === 'active' &&
+              !isSubscriptionStoppedLocally(existing.id, existing.provider_id) &&
+              !isSubscriptionStoppedLocally(k, existing.provider_id)
+            ) {
+              nextMap[k] = existing;
+            }
+          }
+
+          // Merge active subscriptions from Supabase, normalizing keys to match pool traders
+          for (const sub of subsRes.subscriptions) {
+            if (
+              !sub ||
+              !sub.provider_id ||
+              String(sub.status || '').toLowerCase() !== 'active' ||
+              isSubscriptionStoppedLocally(sub.id, sub.provider_id)
+            ) {
+              continue;
+            }
+
+            const matchedTrader = freshPool.find(
+              (t) =>
+                t.id === sub.provider_id ||
+                ensureTradeUuid(t.id) === sub.provider_id ||
+                (sub.provider_numeric_id &&
+                  String(t.numeric_id) === String(sub.provider_numeric_id)) ||
+                (sub.provider_name && t.provider_name === sub.provider_name)
+            );
+
+            const canonicalKey = matchedTrader ? matchedTrader.id : sub.provider_id;
+            const prevEntry = nextMap[canonicalKey] || nextMap[sub.provider_id];
+
+            if (canonicalKey !== sub.provider_id && nextMap[sub.provider_id]) {
+              delete nextMap[sub.provider_id];
+            }
+
+            nextMap[canonicalKey] = {
+              id: sub.id || prevEntry?.id || `SUB-${canonicalKey}`,
+              provider_id: canonicalKey,
+              provider_numeric_id:
+                sub.provider_numeric_id ||
+                prevEntry?.provider_numeric_id ||
+                matchedTrader?.numeric_id,
+              provider_name:
+                sub.provider_name ||
+                prevEntry?.provider_name ||
+                matchedTrader?.provider_name,
+              copier_account_id: sub.copier_account_id || prevEntry?.copier_account_id,
+              copier_account_type:
+                sub.copier_account_type ||
+                prevEntry?.copier_account_type ||
+                matchedTrader?.account_category,
+              per_trade_allocation_type:
+                sub.per_trade_allocation_type ||
+                prevEntry?.per_trade_allocation_type ||
+                'amount',
+              per_trade_allocation_value: Number(
+                sub.per_trade_allocation_value ??
+                  sub.trade_amount ??
+                  sub.allocated_capital ??
+                  prevEntry?.per_trade_allocation_value ??
+                  100
+              ),
+              allocated_capital: Number(
+                sub.allocated_capital ??
+                  sub.trade_amount ??
+                  prevEntry?.allocated_capital ??
+                  100
+              ),
+              max_loss_limit: Number(
+                sub.max_loss_limit ?? sub.stop_loss ?? prevEntry?.max_loss_limit ?? 250
+              ),
+              stop_loss: Number(
+                sub.stop_loss ?? sub.max_loss_limit ?? prevEntry?.stop_loss ?? 250
+              ),
+              take_profit_limit: Number(
+                sub.take_profit_limit ??
+                  sub.take_profit ??
+                  prevEntry?.take_profit_limit ??
+                  500
+              ),
+              take_profit: Number(
+                sub.take_profit ??
+                  sub.take_profit_limit ??
+                  prevEntry?.take_profit ??
+                  500
+              ),
+              max_drawdown: Number(sub.max_drawdown ?? prevEntry?.max_drawdown ?? 5.0),
+              trade_sizing_type:
+                sub.trade_sizing_type || prevEntry?.trade_sizing_type || 'proportionate',
+              sizing_multiplier: Number(
+                sub.sizing_multiplier ?? prevEntry?.sizing_multiplier ?? 1
+              ),
               status: 'active',
-              current_pnl: Number(sub.current_pnl ?? 0),
+              current_pnl: Number(sub.current_pnl ?? prevEntry?.current_pnl ?? 0),
               commission_pct: 0,
             };
           }
+
+          try {
+            localStorage.setItem(SUBSCRIPTIONS_STORAGE_KEY, JSON.stringify(nextMap));
+          } catch {
+            // ignore
+          }
+          return nextMap;
         });
-        saveSubscriptionsMap(merged);
       }
 
       await apiGetCopyTraders(activeTab, searchQuery, LEADERBOARD_TOP_LIMIT).catch(() => {});
     } finally {
-      setIsLoading(false);
+      if (!options?.silent) {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -591,21 +750,33 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
     }
   }, [selectedCopyAccountId, resolvedFollowerSelection.selectedOptionValue]);
 
-  // Listen for automatic stop-out or take-profit events from check_copy_trade_limits
+  // Listen for automatic or manual stop-out / take-profit events
   useEffect(() => {
     const handleStopped = (e: Event) => {
       const detail = (e as CustomEvent)?.detail;
       if (!detail) return;
       setActiveSubscriptions((prev) => {
         const next = { ...prev };
+        const targetProviderUuid = detail.providerId ? ensureTradeUuid(String(detail.providerId)) : '';
         for (const k of Object.keys(next)) {
+          const item = next[k];
           if (
-            next[k]?.id === detail.subscriptionId ||
-            next[k]?.provider_id === detail.providerId ||
-            k === detail.providerId
+            !item ||
+            item.id === detail.subscriptionId ||
+            item.provider_id === detail.providerId ||
+            item.provider_id === detail.resolvedProviderId ||
+            (targetProviderUuid && ensureTradeUuid(String(item.provider_id || '')) === targetProviderUuid) ||
+            k === detail.providerId ||
+            k === detail.resolvedProviderId ||
+            (targetProviderUuid && ensureTradeUuid(k) === targetProviderUuid)
           ) {
             delete next[k];
           }
+        }
+        try {
+          localStorage.setItem(SUBSCRIPTIONS_STORAGE_KEY, JSON.stringify(next));
+        } catch {
+          // ignore
         }
         return next;
       });
@@ -622,9 +793,9 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
     soundEngine.playUiClick();
     setRiskErrorNotice(null);
 
-    const sub = activeSubscriptions[trader.id];
+    const sub = findMatchingSubscriptionForTrader(trader, activeSubscriptions);
     if (sub && sub.status === 'active') {
-      handleCancelSubscription(trader);
+      handleCancelSubscription(trader, sub);
       return;
     }
 
@@ -700,22 +871,69 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
     setShowRiskConfigModal(trader);
   };
 
-  const handleCancelSubscription = async (trader: CopyTraderProfileData) => {
+  const handleCancelSubscription = async (
+    trader: CopyTraderProfileData,
+    explicitSub?: CopySubscriptionData
+  ) => {
     soundEngine.playUiClick();
+
+    const matchedSub = explicitSub || findMatchingSubscriptionForTrader(trader, activeSubscriptions);
+    const traderUuid = ensureTradeUuid(trader.id);
+
+    // 1. Instantly update UI state to reflect that the user is no longer copying this trader
+    const next: Record<string, CopySubscriptionData> = {};
+    for (const [k, item] of Object.entries(activeSubscriptions)) {
+      const isTarget =
+        k === trader.id ||
+        k === traderUuid ||
+        (matchedSub?.id && item?.id === matchedSub.id) ||
+        (matchedSub?.provider_id && item?.provider_id === matchedSub.provider_id) ||
+        item?.provider_id === trader.id ||
+        item?.provider_id === traderUuid ||
+        ensureTradeUuid(String(item?.provider_id || '')) === traderUuid ||
+        (item?.provider_numeric_id &&
+          String(item.provider_numeric_id) === String(trader.numeric_id)) ||
+        (item?.provider_name && item.provider_name === trader.provider_name);
+
+      if (!isTarget && item) {
+        next[k] = item;
+      }
+    }
+    saveSubscriptionsMap(next);
+
+    // Decrement copier count on the trader card immediately
+    setFullPool((prev) =>
+      prev.map((t) =>
+        t.id === trader.id || t.numeric_id === trader.numeric_id
+          ? { ...t, current_copiers: Math.max(0, t.current_copiers - 1) }
+          : t
+      )
+    );
+
+    setViewingTrader(null);
+
+    triggerToast(
+      `Stopped copying ${trader.provider_name} (#${trader.numeric_id}). Subscription removed and 100% of your profits remain in your account.`,
+      'success'
+    );
+
+    // 2. Execute update (`status = 'stopped'`) and delete mutation on Supabase `copy_trading_subscriptions`
     const targetAccountId =
+      matchedSub?.copier_account_id ||
       resolvedFollowerSelection.dbAccountId ||
       selectedCopyAccountId ||
       activeAccount?.supabaseAccountId ||
       activeAccount?.id;
-    await apiCancelCopy(trader.id, userProfile?.id, targetAccountId);
-    const next = { ...activeSubscriptions };
-    delete next[trader.id];
-    saveSubscriptionsMap(next);
-    triggerToast(
-      `Stopped copying ${trader.provider_name} (#${trader.numeric_id}). 100% of your profits remain in your account.`,
-      'success'
-    );
-    setViewingTrader(null);
+
+    await apiCancelCopy(trader.id, userProfile?.id, targetAccountId, {
+      subscriptionId: matchedSub?.id,
+      masterTraderId: matchedSub?.provider_id || trader.id,
+      providerName: trader.provider_name,
+      userEmail: userProfile?.email,
+    });
+
+    // 3. Refresh active subscriptions list silently to confirm synchronized state
+    await loadCopyTradingData({ silent: true });
   };
 
   const handleConfirmCopySubscription = async () => {
@@ -1260,6 +1478,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                   const trader: CopyTraderProfileData = combinedPool.find(
                     (t) =>
                       t.id === sub.provider_id ||
+                      ensureTradeUuid(t.id) === sub.provider_id ||
                       t.numeric_id === sub.provider_numeric_id ||
                       t.user_id === sub.provider_id ||
                       t.provider_name === sub.provider_name
@@ -1415,7 +1634,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                           <button
                             type="button"
                             data-testid={`uncopy-sub-btn-${trader.numeric_id}`}
-                            onClick={() => handleCancelSubscription(trader)}
+                            onClick={() => handleCancelSubscription(trader, sub)}
                             className="px-3 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-rose-300 font-mono font-black text-[10.5px] sm:text-xs uppercase tracking-wider flex items-center gap-1.5 cursor-pointer bft-touch-scale"
                           >
                             <StopCircle className="w-3.5 h-3.5" />
@@ -1521,7 +1740,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                   >
                     {displayedTraders.slice(0, 3).map((topTrader, idx) => {
                       const topRank = topTrader.rank || idx + 1;
-                      const topSub = activeSubscriptions[topTrader.id];
+                      const topSub = findMatchingSubscriptionForTrader(topTrader, activeSubscriptions);
                       const topIsCopying = Boolean(topSub && topSub.status === 'active');
                       const topIsFull = topTrader.current_copiers >= MAX_COPIERS_PER_TRADER && !topIsCopying;
                       return (
@@ -1589,7 +1808,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                               data-testid={`mobile-quick-copy-${topTrader.numeric_id}`}
                               onClick={() =>
                                 topIsCopying
-                                  ? handleCancelSubscription(topTrader)
+                                  ? handleCancelSubscription(topTrader, topSub)
                                   : handleOpenCopyConfig(topTrader)
                               }
                               className={`flex-1 py-1 px-2 rounded-lg font-black text-[10px] uppercase tracking-wider flex items-center justify-center gap-1 bft-touch-scale cursor-pointer ${
@@ -1637,7 +1856,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                 </div>
               ) : (
                 displayedTraders.map((trader, index) => {
-                  const sub = activeSubscriptions[trader.id];
+                  const sub = findMatchingSubscriptionForTrader(trader, activeSubscriptions);
                   const isCopying = Boolean(sub && sub.status === 'active');
                   const isFull = trader.current_copiers >= MAX_COPIERS_PER_TRADER && !isCopying;
                   const displayRank = trader.rank || index + 1;
@@ -1651,7 +1870,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                       isFull={isFull}
                       activeAccount={copierEligibility.selectedAccount || activeAccount}
                       onViewStats={setViewingTrader}
-                      onCancelSubscription={handleCancelSubscription}
+                      onCancelSubscription={(t) => handleCancelSubscription(t, sub)}
                       onOpenCopyConfig={handleOpenCopyConfig}
                     />
                   );
@@ -1817,7 +2036,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                 onClick={() => handleOpenCopyConfig(viewingTrader)}
                 className="w-full sm:w-auto px-6 py-3 rounded-xl bg-[#00F5A0] hover:brightness-110 text-[#07080B] font-black text-xs uppercase tracking-wider cursor-pointer shadow-lg touch-manipulation"
               >
-                {activeSubscriptions[viewingTrader.id]?.status === 'active'
+                {findMatchingSubscriptionForTrader(viewingTrader, activeSubscriptions)?.status === 'active'
                   ? 'Stop Copying Trader'
                   : `Copy ${viewingTrader.provider_name} (#${viewingTrader.numeric_id})`}
               </button>
