@@ -54,9 +54,14 @@ import {
   getRotationWindowInfo,
   queryCopyTradersPool,
   validateCopyTradingAccountTypeMatch,
+  getCanonicalAccountDatabaseUuid,
   type CopyTraderProfileData,
   type CopySubscriptionData,
 } from '../utils/copyTradingRules';
+import {
+  resolveSelectedFollowerAccount,
+  isPlaceholderOrUnselectedAccountValue,
+} from '../utils/copyTradingSync';
 import { isValidUuid } from '../utils/supabaseTradeSync';
 import { isDemoAccount } from '../utils/propRules';
 
@@ -525,30 +530,64 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
     });
   }, [combinedPool, activeTab, searchQuery]);
 
+  // Merge accounts list with global activeAccount context so the active live account is always available
+  const effectiveAccounts = useMemo(() => {
+    const list: TradingAccount[] = Array.isArray(accounts) ? [...accounts] : [];
+    if (
+      activeAccount &&
+      !list.some(
+        (a) =>
+          a.id === activeAccount.id ||
+          (a.supabaseAccountId &&
+            activeAccount.supabaseAccountId &&
+            a.supabaseAccountId === activeAccount.supabaseAccountId)
+      )
+    ) {
+      list.push(activeAccount);
+    }
+    return list;
+  }, [accounts, activeAccount]);
+
   // Evaluate copier eligibility across all user accounts
   const copierEligibility = useMemo(() => {
+    const cleanSelected = !isPlaceholderOrUnselectedAccountValue(selectedCopyAccountId)
+      ? selectedCopyAccountId
+      : activeAccount?.supabaseAccountId || activeAccount?.id;
     return resolveCopierEligibilityForUser({
-      selectedAccountId: selectedCopyAccountId || activeAccount?.id,
-      accounts,
+      selectedAccountId: cleanSelected,
+      accounts: effectiveAccounts,
       userProfile,
       bonusFunds: 0,
       targetProviderCategory: activeTab,
     });
-  }, [selectedCopyAccountId, activeAccount?.id, accounts, userProfile, activeTab]);
+  }, [selectedCopyAccountId, activeAccount, effectiveAccounts, userProfile, activeTab]);
 
-  // Keep selectedCopyAccountId synced to an eligible account if available, with robust fallback to active live account UUID
+  // Resolve the active follower account and its database UUID with automatic fallback to global activeAccount
+  const resolvedFollowerSelection = useMemo(() => {
+    return resolveSelectedFollowerAccount({
+      selectedCopyAccountId,
+      accounts: effectiveAccounts,
+      activeAccount,
+      userProfile,
+      copierSelectedAccount: copierEligibility.selectedAccount,
+    });
+  }, [
+    selectedCopyAccountId,
+    effectiveAccounts,
+    activeAccount,
+    userProfile,
+    copierEligibility.selectedAccount,
+  ]);
+
+  // Keep selectedCopyAccountId synced to an eligible/active live account UUID if unselected
   useEffect(() => {
-    if (!selectedCopyAccountId) {
-      const defaultAcc =
-        copierEligibility.selectedAccount ||
-        accounts.find((a) => !isDemoAccount(a) && Number(a.currentBalance ?? a.equity ?? 0) > 0) ||
-        activeAccount ||
-        accounts[0];
-      if (defaultAcc?.id) {
-        setSelectedCopyAccountId(defaultAcc.id);
-      }
+    if (
+      isPlaceholderOrUnselectedAccountValue(selectedCopyAccountId) &&
+      resolvedFollowerSelection.selectedOptionValue
+    ) {
+      setSelectedCopyAccountId(resolvedFollowerSelection.selectedOptionValue);
     }
-  }, [selectedCopyAccountId, copierEligibility.selectedAccount, activeAccount, accounts]);
+  }, [selectedCopyAccountId, resolvedFollowerSelection.selectedOptionValue]);
 
   if (!isOpen) return null;
 
@@ -573,7 +612,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
     }
 
     // Check if the currently selected account (or active account) matches the trader's account type
-    const activeTargetAccount = accounts.find((a) => a.id === selectedCopyAccountId) || activeAccount;
+    const activeTargetAccount = resolvedFollowerSelection.targetAccount || activeAccount;
     const typeMatchEval = validateCopyTradingAccountTypeMatch(activeTargetAccount, trader);
 
     if (!typeMatchEval.isMatch) {
@@ -588,8 +627,13 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
 
     // Check if the currently selected account (or any user account) is eligible
     const evalForTarget = resolveCopierEligibilityForUser({
-      selectedAccountId: selectedCopyAccountId || activeAccount?.id,
-      accounts,
+      selectedAccountId:
+        (!isPlaceholderOrUnselectedAccountValue(selectedCopyAccountId)
+          ? selectedCopyAccountId
+          : undefined) ||
+        activeAccount?.supabaseAccountId ||
+        activeAccount?.id,
+      accounts: effectiveAccounts,
       userProfile,
       bonusFunds: 0,
       targetProviderCategory: trader.account_category,
@@ -611,7 +655,10 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
       : evalForTarget.eligibleAccounts[0];
 
     if (bestEligible?.account) {
-      setSelectedCopyAccountId(bestEligible.account.id);
+      const canonicalOptionId =
+        getCanonicalAccountDatabaseUuid(bestEligible.account, userProfile) ||
+        bestEligible.account.id;
+      setSelectedCopyAccountId(canonicalOptionId);
       const avail = bestEligible.result.availableBalance;
       const defaultPerTrade =
         bestEligible.result.accountCategory === 'instant_funded'
@@ -630,7 +677,11 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
 
   const handleCancelSubscription = async (trader: CopyTraderProfileData) => {
     soundEngine.playUiClick();
-    const targetAccountId = selectedCopyAccountId || activeAccount?.id;
+    const targetAccountId =
+      resolvedFollowerSelection.dbAccountId ||
+      selectedCopyAccountId ||
+      activeAccount?.supabaseAccountId ||
+      activeAccount?.id;
     await apiCancelCopy(trader.id, userProfile?.id, targetAccountId);
     const next = { ...activeSubscriptions };
     delete next[trader.id];
@@ -647,22 +698,13 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
     soundEngine.playUiClick();
     setRiskErrorNotice(null);
 
-    const fallbackActiveLive =
-      accounts.find((a) => !isDemoAccount(a) && Number(a.currentBalance ?? a.equity ?? 0) > 0) ||
-      activeAccount ||
-      accounts[0];
-
-    const targetAccount =
-      accounts.find((a) => a.id === selectedCopyAccountId) ||
-      accounts.find((a) => a.supabaseAccountId === selectedCopyAccountId) ||
-      copierEligibility.selectedAccount ||
-      fallbackActiveLive;
-
-    const dbAccountId =
-      targetAccount?.supabaseAccountId ||
-      (targetAccount?.id && isValidUuid(targetAccount.id) ? targetAccount.id : null) ||
-      fallbackActiveLive?.supabaseAccountId ||
-      fallbackActiveLive?.id;
+    const { targetAccount, dbAccountId } = resolveSelectedFollowerAccount({
+      selectedCopyAccountId,
+      accounts: effectiveAccounts,
+      activeAccount,
+      userProfile,
+      copierSelectedAccount: copierEligibility.selectedAccount,
+    });
 
     if (!targetAccount || !dbAccountId) {
       const errorMsg = 'Trading Account Error: Unable to resolve active trading account ID for copy trading.';
@@ -713,6 +755,23 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
     const takeProfit = validation.targetProfitStopUsd;
     const maxDrawdown = maxDrawdownPercent;
 
+    const resolvedSupabaseAccountUuid =
+      (targetAccount.supabaseAccountId && isValidUuid(targetAccount.supabaseAccountId)
+        ? targetAccount.supabaseAccountId
+        : null) ||
+      (isValidUuid(dbAccountId) ? dbAccountId : null) ||
+      (activeAccount &&
+      !isDemoAccount(activeAccount) &&
+      activeAccount.supabaseAccountId &&
+      isValidUuid(activeAccount.supabaseAccountId)
+        ? activeAccount.supabaseAccountId
+        : null) ||
+      (activeAccount && !isDemoAccount(activeAccount) && isValidUuid(activeAccount.id)
+        ? activeAccount.id
+        : null) ||
+      (userProfile?.id && isValidUuid(userProfile.id) ? userProfile.id : null) ||
+      dbAccountId;
+
     const res = await apiCopyTrader({
       userId: userProfile?.id,
       userEmail: userProfile?.email,
@@ -720,9 +779,15 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
       providerNumericId: showRiskConfigModal.numeric_id,
       providerName: showRiskConfigModal.provider_name,
       providerCategory: showRiskConfigModal.account_category,
-      copierAccountId: dbAccountId,
-      copierSupabaseAccountId: targetAccount?.supabaseAccountId || dbAccountId,
+      copierAccountId: resolvedSupabaseAccountUuid,
+      copierSupabaseAccountId: resolvedSupabaseAccountUuid,
       copierAccountType: singleAccountEval.accountCategory,
+      startingBalance: Number(
+        targetAccount.initialBalance || targetAccount.size || singleAccountEval.availableBalance || 50000
+      ),
+      currentBalance: Number(
+        singleAccountEval.availableBalance || targetAccount.currentBalance || 50000
+      ),
       perTradeAllocationType,
       perTradeAllocationValue,
       allocatedCapital: tradeAmount,
@@ -742,7 +807,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
         provider_id: showRiskConfigModal.id,
         provider_numeric_id: showRiskConfigModal.numeric_id,
         provider_name: showRiskConfigModal.provider_name,
-        copier_account_id: targetAccount?.id,
+        copier_account_id: res.subscription?.copier_account_id || resolvedSupabaseAccountUuid,
         copier_account_type: singleAccountEval.accountCategory,
         per_trade_allocation_type: perTradeAllocationType,
         per_trade_allocation_value: perTradeAllocationValue,
@@ -957,16 +1022,20 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
               <select
                 aria-label="Select Copying Account"
                 data-testid="copy-account-selector"
-                value={selectedCopyAccountId}
+                value={resolvedFollowerSelection.selectedOptionValue}
                 onChange={(e) => setSelectedCopyAccountId(e.target.value)}
                 className="flex-1 sm:flex-none sm:max-w-xs bg-[#141926] border border-slate-700 rounded-lg px-2 py-1 text-[11px] sm:text-xs font-mono text-white outline-none focus:border-[#00F5A0] truncate"
               >
-                {copierEligibility.allEvaluations.map(({ account, result }) => (
-                  <option key={account.id} value={account.id}>
-                    {account.tierName || account.id} (${Number(account.currentBalance || 0).toLocaleString()}) —{' '}
-                    {result.eligible ? 'ELIGIBLE' : 'RESTRICTED'}
-                  </option>
-                ))}
+                {copierEligibility.allEvaluations.map(({ account, result }) => {
+                  const optionDbId =
+                    getCanonicalAccountDatabaseUuid(account, userProfile) || account.id;
+                  return (
+                    <option key={account.id} value={optionDbId}>
+                      {account.tierName || account.id} (${Number(account.currentBalance || 0).toLocaleString()}) —{' '}
+                      {result.eligible ? 'ELIGIBLE' : 'RESTRICTED'}
+                    </option>
+                  );
+                })}
               </select>
             </div>
 
@@ -1796,16 +1865,20 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
               <select
                 aria-label="Follower Account for Copy Trading"
                 data-testid="risk-modal-account-select"
-                value={selectedCopyAccountId}
+                value={resolvedFollowerSelection.selectedOptionValue}
                 onChange={(e) => setSelectedCopyAccountId(e.target.value)}
                 className="w-full bg-[#121726] border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs font-mono text-white outline-none focus:border-[#00F5A0]"
               >
-                {copierEligibility.allEvaluations.map(({ account, result }) => (
-                  <option key={account.id} value={account.id}>
-                    {account.tierName || account.id} (${Number(account.currentBalance || 0).toLocaleString()}) —{' '}
-                    {result.eligible ? 'ELIGIBLE' : `BLOCKED: ${result.code}`}
-                  </option>
-                ))}
+                {copierEligibility.allEvaluations.map(({ account, result }) => {
+                  const optionDbId =
+                    getCanonicalAccountDatabaseUuid(account, userProfile) || account.id;
+                  return (
+                    <option key={account.id} value={optionDbId}>
+                      {account.tierName || account.id} (${Number(account.currentBalance || 0).toLocaleString()}) —{' '}
+                      {result.eligible ? 'ELIGIBLE' : `BLOCKED: ${result.code}`}
+                    </option>
+                  );
+                })}
               </select>
             </div>
 

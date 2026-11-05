@@ -2676,6 +2676,8 @@ export async function apiCopyTrader(params: {
   copierAccountId?: string;
   copierSupabaseAccountId?: string;
   copierAccountType?: string;
+  startingBalance?: number;
+  currentBalance?: number;
   perTradeAllocationType?: 'amount' | 'percentage';
   perTradeAllocationValue?: number;
   allocatedCapital: number;
@@ -2700,6 +2702,8 @@ export async function apiCopyTrader(params: {
     accountId: params.copierAccountId,
     supabaseAccountId: params.copierSupabaseAccountId,
     accountType: params.copierAccountType,
+    startingBalance: params.startingBalance,
+    currentBalance: params.currentBalance,
     providerId: params.providerId,
     providerNumericId: params.providerNumericId,
     providerName: params.providerName,

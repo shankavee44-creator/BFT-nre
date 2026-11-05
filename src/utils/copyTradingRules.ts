@@ -536,6 +536,45 @@ export function evaluateSingleAccountCopyEligibility(params: {
   };
 }
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Extracts the canonical database account UUID for a TradingAccount,
+ * preferring `supabaseAccountId`, then a UUID `id`, or `userProfile.id` for personal live accounts.
+ */
+export function getCanonicalAccountDatabaseUuid(
+  account?: TradingAccount | null,
+  userProfile?: UserProfile | null
+): string {
+  if (!account) {
+    if (userProfile?.id && UUID_PATTERN.test(String(userProfile.id).trim())) {
+      return String(userProfile.id).trim();
+    }
+    return '';
+  }
+
+  const supaId = String(account.supabaseAccountId || '').trim();
+  if (supaId && UUID_PATTERN.test(supaId)) {
+    return supaId;
+  }
+
+  const rawId = String(account.id || '').trim();
+  if (rawId && UUID_PATTERN.test(rawId)) {
+    return rawId;
+  }
+
+  const canonicalType = resolveCanonicalCopyAccountType(account);
+  if (
+    canonicalType === 'PERSONAL_LIVE' &&
+    userProfile?.id &&
+    UUID_PATTERN.test(String(userProfile.id).trim())
+  ) {
+    return String(userProfile.id).trim();
+  }
+
+  return supaId || rawId;
+}
+
 /**
  * Resolves the best eligible copying account for a user or explains why their current account is blocked.
  */
@@ -565,9 +604,26 @@ export function resolveCopierEligibilityForUser(params: {
 
   const eligibleAccounts = allEvaluations.filter((item) => item.result.eligible);
 
-  // If a specific account ID was chosen, evaluate it directly
-  if (selectedAccountId) {
-    const found = allEvaluations.find((item) => item.account.id === selectedAccountId);
+  // If a specific account ID was chosen, evaluate it directly (matching id, supabaseAccountId, or canonical DB UUID)
+  const cleanSelectedId = String(selectedAccountId || '').trim();
+  const isPlaceholderSelection =
+    !cleanSelectedId ||
+    cleanSelectedId.toLowerCase() === 'select' ||
+    cleanSelectedId.toLowerCase() === 'none' ||
+    cleanSelectedId.toLowerCase() === 'unselected' ||
+    cleanSelectedId.toLowerCase() === 'placeholder';
+
+  if (!isPlaceholderSelection) {
+    const found = allEvaluations.find((item) => {
+      const accId = String(item.account.id || '').trim();
+      const supaId = String(item.account.supabaseAccountId || '').trim();
+      const canonicalUuid = getCanonicalAccountDatabaseUuid(item.account, userProfile);
+      return (
+        accId === cleanSelectedId ||
+        (supaId && supaId === cleanSelectedId) ||
+        (canonicalUuid && canonicalUuid === cleanSelectedId)
+      );
+    });
     if (found) {
       return {
         selectedResult: found.result,
