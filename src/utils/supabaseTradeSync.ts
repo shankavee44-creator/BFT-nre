@@ -1,5 +1,7 @@
 import { supabase } from './supabase.ts';
 import type { BinaryTrade, BinaryOptionDirection } from '../types/index.ts';
+import { liveMarketFeed } from './liveMarketFeed.ts';
+import { getAssetMarketState } from './priceFeedEngine.ts';
 
 /**
  * UUID validator utility (RFC 4122 standard).
@@ -27,7 +29,7 @@ export function ensureTradeUuid(tradeId: string): string {
   h2 = ((h2 ^ (h2 >>> 13)) >>> 0);
 
   const hex1 = (h1 >>> 0).toString(16).padStart(8, '0');
-  const hex2 = (h2 >>> 0).toString(16).padStart(8, '0');
+  const hex2 = (hex1 + (h2 >>> 0).toString(16)).slice(0, 8);
   const hex3 = ((h1 ^ 0xa5a5a5a5) >>> 0).toString(16).padStart(8, '0');
   const hex4 = ((h2 ^ 0x5a5a5a5a) >>> 0).toString(16).padStart(8, '0');
   const fullHex = (hex1 + hex2 + hex3 + hex4).slice(0, 32);
@@ -268,12 +270,30 @@ export function resolveOptimisticTradeResult(
   }
 
   const strike = Number(trade.strikePrice || 0);
+
+  // Live price feed lookup if latestExitPrice is not passed directly
+  let liveFeedPrice: number | undefined = undefined;
+  if (typeof window !== 'undefined') {
+    try {
+      const feedPrice = liveMarketFeed.getLatestPrice(trade.asset);
+      const marketState = getAssetMarketState(trade.asset);
+      liveFeedPrice = feedPrice ?? marketState?.lastPrice;
+    } catch {
+      // ignore
+    }
+  }
+
   const exitPrice =
     latestExitPrice !== undefined && Number.isFinite(latestExitPrice) && latestExitPrice > 0
       ? Number(latestExitPrice)
       : trade.closePrice !== undefined && trade.closePrice !== null && Number(trade.closePrice) > 0
       ? Number(trade.closePrice)
-      : trade.currentPrice !== undefined && trade.currentPrice !== null && Number(trade.currentPrice) > 0
+      : liveFeedPrice !== undefined && Number.isFinite(liveFeedPrice) && liveFeedPrice > 0
+      ? Number(liveFeedPrice)
+      : trade.currentPrice !== undefined &&
+        trade.currentPrice !== null &&
+        Number(trade.currentPrice) > 0 &&
+        Number(trade.currentPrice) !== strike
       ? Number(trade.currentPrice)
       : strike;
 

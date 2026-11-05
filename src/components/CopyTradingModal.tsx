@@ -333,6 +333,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
   onNavigateToPricing,
   onOpenDepositModal,
 }) => {
+  const [mainViewMode, setMainViewMode] = useState<'leaderboard' | 'my_subscriptions'>('leaderboard');
   const [activeTab, setActiveTab] = useState<'instant_funded' | 'self_capital'>('instant_funded');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isMobileRulesOpen, setIsMobileRulesOpen] = useState<boolean>(false);
@@ -356,6 +357,11 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
     }
   });
   const [isLoading, setIsLoading] = useState<boolean>(false);
+
+  const activeSubscriptionsList = useMemo(() => {
+    return Object.values(activeSubscriptions).filter((s) => s.status === 'active');
+  }, [activeSubscriptions]);
+  const activeSubsCount = activeSubscriptionsList.length;
 
   // Modals & Alerts
   const [showEligibilityModal, setShowEligibilityModal] = useState<{
@@ -957,237 +963,521 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                   Self-Capital: <strong className="text-[#00F5A0]">$100+ Balance</strong>
                 </span>
                 <span className="px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-bold">
-                  Active Subs: {Object.values(activeSubscriptions).filter((s) => s.status === 'active').length}
+                  Active Subs: {activeSubsCount}
                 </span>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Category Tabs + 200-Pool Numeric ID Search Bar (Compact on Mobile) */}
-        <div className="px-3 sm:px-6 py-2 sm:py-3 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2 sm:gap-3 border-b border-slate-800/40 bg-[#090B10] shrink-0">
-          <div className="flex bg-[#111520] p-0.5 sm:p-1 rounded-xl border border-slate-800 w-full md:w-auto">
+        {/* View Mode Navigation Switcher: All Traders (Leaderboard) vs My Active Subscriptions */}
+        <div className="px-3 sm:px-6 py-2 bg-[#0B0E17] border-b border-slate-800/60 flex items-center justify-between gap-2 shrink-0">
+          <div className="flex bg-[#121726] p-1 rounded-xl border border-slate-800/80 w-full sm:w-auto">
             <button
               type="button"
-              data-testid="tab-instant-funded"
+              data-testid="view-leaderboard-tab"
               onClick={() => {
                 soundEngine.playUiClick();
-                setActiveTab('instant_funded');
+                setMainViewMode('leaderboard');
               }}
-              className={`flex-1 sm:flex-none px-2.5 sm:px-6 py-1.5 sm:py-2 rounded-lg font-black text-[10.5px] sm:text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer bft-touch-scale ${
-                activeTab === 'instant_funded'
-                  ? 'bg-[#00F5A0] text-[#07080B] shadow-md'
+              className={`flex-1 sm:flex-none px-3 sm:px-5 py-1.5 sm:py-2 rounded-lg font-black text-[11px] sm:text-xs transition-all flex items-center justify-center gap-2 cursor-pointer bft-touch-scale ${
+                mainViewMode === 'leaderboard'
+                  ? 'bg-gradient-to-r from-[#00F5A0] to-[#00D282] text-[#07080B] shadow-md'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
               <Trophy className="w-3.5 h-3.5 shrink-0" />
-              <span>
-                <span className="hidden sm:inline">INSTANT FUNDED TRADERS (100)</span>
-                <span className="sm:hidden">INSTANT FUNDED (100)</span>
-              </span>
+              <span>All Traders (Leaderboard)</span>
             </button>
+
             <button
               type="button"
-              data-testid="tab-self-capital"
+              data-testid="view-subscriptions-tab"
               onClick={() => {
                 soundEngine.playUiClick();
-                setActiveTab('self_capital');
+                setMainViewMode('my_subscriptions');
               }}
-              className={`flex-1 sm:flex-none px-2.5 sm:px-6 py-1.5 sm:py-2 rounded-lg font-black text-[10.5px] sm:text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer bft-touch-scale ${
-                activeTab === 'self_capital'
-                  ? 'bg-[#00F5A0] text-[#07080B] shadow-md'
+              className={`flex-1 sm:flex-none px-3 sm:px-5 py-1.5 sm:py-2 rounded-lg font-black text-[11px] sm:text-xs transition-all flex items-center justify-center gap-2 cursor-pointer bft-touch-scale ${
+                mainViewMode === 'my_subscriptions'
+                  ? 'bg-gradient-to-r from-[#00F5A0] to-[#00D282] text-[#07080B] shadow-md'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
-              <DollarSign className="w-3.5 h-3.5 shrink-0" />
-              <span>
-                <span className="hidden sm:inline">SELF-CAPITAL TRADERS (100)</span>
-                <span className="sm:hidden">SELF-CAPITAL (100)</span>
+              <Activity className="w-3.5 h-3.5 shrink-0" />
+              <span>My Active Subscriptions</span>
+              <span
+                data-testid="active-subscriptions-badge"
+                className={`px-1.5 py-0.2 rounded-full font-mono text-[10px] font-bold ${
+                  mainViewMode === 'my_subscriptions'
+                    ? 'bg-[#07080B]/20 text-[#07080B]'
+                    : activeSubsCount > 0
+                    ? 'bg-[#00F5A0] text-[#07080B]'
+                    : 'bg-white/10 text-slate-400'
+                }`}
+              >
+                {activeSubsCount}
               </span>
             </button>
           </div>
 
-          {/* Search across all 200 traders by numeric ID (#100101 - #100300) or name */}
-          <div className="relative w-full md:max-w-md">
-            <Search className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-            <input
-              type="text"
-              data-testid="copy-trader-search-input"
-              aria-label="Search 200 Traders by Numeric ID or Name"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search 200 traders by ID (e.g. 100105) or name..."
-              className="w-full bg-[#111520] border border-slate-700/80 focus:border-[#00F5A0] rounded-lg sm:rounded-xl pl-9 pr-8 py-1.5 sm:py-2 text-xs font-mono text-white placeholder:text-slate-500 outline-none transition-all"
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                aria-label="Clear Trader Search"
-                onClick={() => setSearchQuery('')}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer touch-manipulation"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
+          {mainViewMode === 'my_subscriptions' && activeSubsCount > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                soundEngine.playUiClick();
+                setMainViewMode('leaderboard');
+              }}
+              className="hidden sm:flex items-center gap-1.5 text-xs font-mono font-bold text-[#00F5A0] hover:underline cursor-pointer"
+            >
+              <span>+ Explore More Master Traders</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
 
-        {/* Main Leaderboard Feed with Mobile Horizontal Swipable Top 3 Spotlight */}
-        <div
-          data-testid="copy-traders-list"
-          className="flex-1 overflow-y-auto px-3 sm:px-6 py-2.5 sm:py-4 space-y-2 sm:space-y-3 custom-scrollbar overscroll-contain touch-scroll hw-accelerate"
-        >
-          {/* Mobile Horizontal Swipable Top 3 Podium Cards */}
-          {!isLoading && !queryResult.isSearchActive && displayedTraders.length >= 3 && (
-            <div className="sm:hidden pb-1">
-              <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 mb-1.5 px-0.5">
-                <span className="font-bold text-white flex items-center gap-1">
-                  <Trophy className="w-3 h-3 text-amber-400" /> Top 3 Spotlight (Swipe →)
-                </span>
-                <span className="text-[#00F5A0] font-bold">
-                  Tap card chevron for full ROI
-                </span>
-              </div>
+        {/* View Content: Either Leaderboard Search Feed OR My Active Subscriptions List */}
+        {mainViewMode === 'my_subscriptions' ? (
+          <div
+            data-testid="active-subscriptions-section"
+            className="flex-1 overflow-y-auto px-3 sm:px-6 py-3 sm:py-4 space-y-3 custom-scrollbar overscroll-contain touch-scroll hw-accelerate"
+          >
+            {activeSubsCount === 0 ? (
               <div
-                data-testid="mobile-swipable-top-traders"
-                className="bft-snap-strip gap-2 pb-1"
+                data-testid="empty-active-subscriptions"
+                className="flex flex-col items-center justify-center py-16 px-4 text-center space-y-4"
               >
-                {displayedTraders.slice(0, 3).map((topTrader, idx) => {
-                  const topRank = topTrader.rank || idx + 1;
-                  const topSub = activeSubscriptions[topTrader.id];
-                  const topIsCopying = Boolean(topSub && topSub.status === 'active');
-                  const topIsFull = topTrader.current_copiers >= MAX_COPIERS_PER_TRADER && !topIsCopying;
+                <div className="w-16 h-16 rounded-3xl bg-[#00F5A0]/10 border border-[#00F5A0]/25 flex items-center justify-center text-[#00F5A0]">
+                  <Users className="w-8 h-8" />
+                </div>
+                <div className="max-w-md">
+                  <h3 className="text-base sm:text-lg font-black text-white uppercase tracking-tight">
+                    No Active Copy Subscriptions
+                  </h3>
+                  <p className="text-xs font-mono text-slate-400 mt-1.5 leading-relaxed">
+                    You are not copying any master traders yet. Browse the Daily Top 10 Leaderboard to copy verified top traders with 100% profit keep (0% fee).
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  data-testid="explore-leaderboard-cta"
+                  onClick={() => {
+                    soundEngine.playUiClick();
+                    setMainViewMode('leaderboard');
+                  }}
+                  className="px-6 py-2.5 rounded-xl bg-[#00F5A0] hover:brightness-110 text-[#07080B] font-black text-xs uppercase tracking-wider cursor-pointer shadow-lg bft-touch-scale flex items-center gap-2"
+                >
+                  <Trophy className="w-4 h-4" />
+                  <span>Explore Daily Top 10 Leaderboard</span>
+                </button>
+              </div>
+            ) : (
+              <div data-testid="active-subscriptions-feed" className="space-y-3">
+                <div className="flex items-center justify-between text-xs font-mono text-slate-400 px-1">
+                  <span>Showing <strong>{activeSubsCount}</strong> active provider subscription{activeSubsCount > 1 ? 's' : ''}:</span>
+                  <span className="text-[#00F5A0] font-bold">100% Profit Keep (0% Fee)</span>
+                </div>
+
+                {activeSubscriptionsList.map((sub) => {
+                  const trader: CopyTraderProfileData = combinedPool.find(
+                    (t) =>
+                      t.id === sub.provider_id ||
+                      t.numeric_id === sub.provider_numeric_id ||
+                      t.user_id === sub.provider_id ||
+                      t.provider_name === sub.provider_name
+                  ) || {
+                    id: sub.provider_id,
+                    numeric_id: sub.provider_numeric_id || '100101',
+                    provider_name: sub.provider_name || 'Master Trader',
+                    country_code: 'US',
+                    country: 'United States',
+                    flag: '🇺🇸',
+                    avatar_url: '🇺🇸',
+                    account_category: (sub.copier_account_type || 'instant_funded') as any,
+                    account_type_label: sub.copier_account_type === 'self_capital' ? 'Self-Capital Live' : 'Instant Funded ($50K)',
+                    strategy_title: 'Institutional OTC Strategy',
+                    tier_name: 'Verified Master',
+                    vip_level: 'Master Trader',
+                    starting_balance: 50000,
+                    current_balance: 54000,
+                    all_time_withdrawals: 12000,
+                    lifetime_earnings: 12000,
+                    daily_profit: 1500,
+                    daily_profit_pct: 3.0,
+                    weekly_profit: 4500,
+                    weekly_profit_pct: 9.0,
+                    monthly_profit: 12000,
+                    monthly_profit_pct: 24.0,
+                    three_month_profit: 28000,
+                    three_month_profit_pct: 56.0,
+                    win_rate_3m: 78.5,
+                    profit_factor: 2.15,
+                    max_drawdown: 3.2,
+                    sharpe_ratio: 1.85,
+                    avg_holding_time: '2m 30s',
+                    total_trades: 450,
+                    current_copiers: 120,
+                    max_copiers: 200,
+                    commission_pct: 0,
+                    follower_profit_keep_pct: 100,
+                  };
+
+                  const tradeAllocLabel =
+                    sub.per_trade_allocation_type === 'percentage'
+                      ? `${sub.per_trade_allocation_value}% of Balance`
+                      : `$${(sub.allocated_capital || sub.per_trade_allocation_value || 100).toLocaleString()}/trade`;
+
+                  const stopLossVal = sub.max_loss_limit || sub.stop_loss || 250;
+                  const takeProfitVal = sub.take_profit_limit || sub.take_profit || 500;
+                  const maxDdVal = sub.max_drawdown || 5.0;
+                  const currentPnl = sub.current_pnl || 0;
+
                   return (
                     <div
-                      key={`swipe-${topTrader.id}`}
-                      className="bft-snap-card w-[235px] p-2.5 rounded-xl bg-gradient-to-br from-[#131929] to-[#0D111C] border border-slate-700/80 flex flex-col justify-between gap-2"
+                      key={sub.id || sub.provider_id}
+                      data-testid={`active-sub-card-${trader.numeric_id}`}
+                      className="p-3 sm:p-4 rounded-2xl bg-[#10141F] border border-[#00F5A0]/40 shadow-lg flex flex-col gap-3 transition-all"
                     >
-                      <div className="flex items-center justify-between gap-1.5">
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <span
-                            className={`w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-black font-mono shrink-0 ${
-                              topRank === 1
-                                ? 'bg-amber-400 text-slate-950'
-                                : topRank === 2
-                                ? 'bg-slate-300 text-slate-950'
-                                : 'bg-amber-600 text-white'
-                            }`}
-                          >
-                            #{topRank}
-                          </span>
-                          <CountryFlagIcon
-                            isoCode={topTrader.country_code}
-                            country={topTrader.country}
-                            flagEmoji={topTrader.flag}
-                            className="w-4 h-3 object-cover rounded-xs shrink-0"
-                          />
-                          <span className="text-xs font-black text-white truncate">
-                            {topTrader.provider_name}
-                          </span>
+                      {/* Top Line: Flag, Name, Numeric ID, Category, Active Badge */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/80 pb-2.5">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-[#161C2B] border border-slate-700 flex items-center justify-center shrink-0 overflow-hidden">
+                            <CountryFlagIcon
+                              isoCode={trader.country_code}
+                              country={trader.country}
+                              flagEmoji={trader.flag}
+                              className="w-5 h-3.5 sm:w-6 sm:h-4 object-cover rounded-xs"
+                            />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <h4 className="text-xs sm:text-base font-black text-white truncate max-w-[130px] sm:max-w-xs">
+                                {trader.provider_name}
+                              </h4>
+                              <CheckCircle2 className="w-3.5 h-3.5 text-[#00F5A0] shrink-0" />
+                              <span className="px-1.5 py-0.2 rounded bg-cyan-500/15 border border-cyan-500/30 font-mono text-[8.5px] sm:text-[10px] font-bold text-cyan-300">
+                                ID #{trader.numeric_id}
+                              </span>
+                            </div>
+                            <p className="text-[9px] sm:text-[10.5px] font-mono text-slate-400 mt-0.5">
+                              {trader.account_type_label} • {trader.win_rate_3m}% 3M Win Rate
+                            </p>
+                          </div>
                         </div>
-                        <span className="text-[9px] font-mono font-bold text-[#00F5A0] bg-emerald-500/15 px-1.5 py-0.2 rounded shrink-0">
-                          {topTrader.win_rate_3m}% WR
-                        </span>
-                      </div>
 
-                      <div className="flex items-center justify-between font-mono bg-[#090C14] px-2 py-1 rounded-lg border border-slate-800/80">
-                        <div>
-                          <span className="text-[8px] text-slate-400 uppercase block">24H Profit</span>
-                          <span className="text-xs font-black text-[#00F5A0]">
-                            +${topTrader.daily_profit.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                          </span>
-                        </div>
-                        <div className="text-right">
-                          <span className="text-[8px] text-slate-400 uppercase block">90D ROI</span>
-                          <span className="text-xs font-black text-amber-300">
-                            +{topTrader.three_month_profit_pct}%
+                        <div className="flex items-center gap-2">
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-[9px] sm:text-[10.5px] font-mono font-bold text-[#00F5A0] flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#00F5A0] animate-pulse" />
+                            <span>ACTIVE COPYING</span>
                           </span>
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-1.5">
+                      {/* Copy Risk Settings Grid */}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 font-mono text-[10px] sm:text-xs">
+                        <div className="p-2 sm:p-2.5 rounded-xl bg-[#0B0E17] border border-slate-800">
+                          <span className="text-[8px] sm:text-[9.5px] text-slate-400 uppercase block">Trade Allocation</span>
+                          <span className="font-bold text-[#00F5A0] mt-0.5 block truncate">{tradeAllocLabel}</span>
+                        </div>
+
+                        <div className="p-2 sm:p-2.5 rounded-xl bg-[#0B0E17] border border-slate-800">
+                          <span className="text-[8px] sm:text-[9.5px] text-slate-400 uppercase block">Max Loss Stop</span>
+                          <span className="font-bold text-rose-400 mt-0.5 block truncate">${stopLossVal.toFixed(2)}</span>
+                        </div>
+
+                        <div className="p-2 sm:p-2.5 rounded-xl bg-[#0B0E17] border border-slate-800">
+                          <span className="text-[8px] sm:text-[9.5px] text-slate-400 uppercase block">Target Profit</span>
+                          <span className="font-bold text-[#00F5A0] mt-0.5 block truncate">${takeProfitVal.toFixed(2)}</span>
+                        </div>
+
+                        <div className="p-2 sm:p-2.5 rounded-xl bg-[#0B0E17] border border-slate-800">
+                          <span className="text-[8px] sm:text-[9.5px] text-slate-400 uppercase block">Realized Copied P&L</span>
+                          <span className={`font-black mt-0.5 block truncate ${currentPnl >= 0 ? 'text-[#00F5A0]' : 'text-rose-400'}`}>
+                            {currentPnl >= 0 ? `+$${currentPnl.toFixed(2)}` : `-$${Math.abs(currentPnl).toFixed(2)}`}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Card Action Buttons: Edit Settings & Uncopy */}
+                      <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-800/60">
                         <button
                           type="button"
+                          data-testid={`view-stats-active-${trader.numeric_id}`}
                           onClick={() => {
                             soundEngine.playUiClick();
-                            setViewingTrader(topTrader);
+                            setViewingTrader(trader);
                           }}
-                          className="px-2 py-1 rounded-lg bg-white/5 border border-white/10 text-[10px] font-mono font-bold text-slate-300 bft-touch-scale cursor-pointer"
+                          className="px-2.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 font-mono font-bold text-[10px] sm:text-xs cursor-pointer bft-touch-scale"
                         >
-                          Stats
+                          Trader Stats
                         </button>
-                        <button
-                          type="button"
-                          disabled={topIsFull}
-                          onClick={() =>
-                            topIsCopying
-                              ? handleCancelSubscription(topTrader)
-                              : handleOpenCopyConfig(topTrader)
-                          }
-                          className={`flex-1 py-1 px-2 rounded-lg font-black text-[10px] uppercase tracking-wider bft-touch-scale cursor-pointer ${
-                            topIsCopying
-                              ? 'bg-rose-500/20 border border-rose-500/40 text-rose-300'
-                              : topIsFull
-                              ? 'bg-slate-800 text-slate-500'
-                              : 'bg-[#00F5A0] text-[#07080B]'
-                          }`}
-                        >
-                          {topIsCopying ? 'Stop' : topIsFull ? 'Full' : 'Copy'}
-                        </button>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            data-testid={`edit-sub-btn-${trader.numeric_id}`}
+                            onClick={() => {
+                              soundEngine.playUiClick();
+                              if (sub.copier_account_id) {
+                                setSelectedCopyAccountId(sub.copier_account_id);
+                              }
+                              setPerTradeAllocationType(sub.per_trade_allocation_type || 'amount');
+                              setPerTradeAllocationValue(sub.per_trade_allocation_value || sub.allocated_capital || 100);
+                              setMaxLossStopUsd(sub.max_loss_limit || sub.stop_loss || 250);
+                              setTargetProfitStopUsd(sub.take_profit_limit || sub.take_profit || 500);
+                              setMaxDrawdownPercent(sub.max_drawdown || 5.0);
+                              setShowRiskConfigModal(trader);
+                            }}
+                            className="px-3 py-1.5 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/40 text-cyan-300 font-mono font-bold text-[10.5px] sm:text-xs flex items-center gap-1.5 cursor-pointer bft-touch-scale"
+                          >
+                            <Settings2 className="w-3.5 h-3.5" />
+                            <span>Edit Settings</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            data-testid={`uncopy-sub-btn-${trader.numeric_id}`}
+                            onClick={() => handleCancelSubscription(trader)}
+                            className="px-3 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-rose-300 font-mono font-black text-[10.5px] sm:text-xs uppercase tracking-wider flex items-center gap-1.5 cursor-pointer bft-touch-scale"
+                          >
+                            <StopCircle className="w-3.5 h-3.5" />
+                            <span>Uncopy</span>
+                          </button>
+                        </div>
                       </div>
                     </div>
                   );
                 })}
               </div>
-            </div>
-          )}
-
-          {isLoading ? (
-            <div className="flex flex-col items-center justify-center py-16 space-y-3">
-              <RefreshCw className="w-7 h-7 text-[#00F5A0] animate-spin" />
-              <p className="text-slate-400 font-mono text-xs uppercase tracking-widest">
-                Synchronizing 200-Trader Master Pool...
-              </p>
-            </div>
-          ) : displayedTraders.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-14 space-y-3 text-center">
-              <ShieldAlert className="w-8 h-8 text-amber-400" />
-              <div>
-                <p className="text-white font-bold text-xs sm:text-sm">No Master Trader Found Matching "{searchQuery}"</p>
-                <p className="text-slate-400 font-mono text-[11px] mt-1">
-                  Try searching any numeric Trader ID between #100101 and #100300.
-                </p>
+            )}
+          </div>
+        ) : (
+          <>
+            {/* Category Tabs + 200-Pool Numeric ID Search Bar (Compact on Mobile) */}
+            <div className="px-3 sm:px-6 py-2 sm:py-3 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2 sm:gap-3 border-b border-slate-800/40 bg-[#090B10] shrink-0">
+              <div className="flex bg-[#111520] p-0.5 sm:p-1 rounded-xl border border-slate-800 w-full md:w-auto">
+                <button
+                  type="button"
+                  data-testid="tab-instant-funded"
+                  onClick={() => {
+                    soundEngine.playUiClick();
+                    setActiveTab('instant_funded');
+                  }}
+                  className={`flex-1 sm:flex-none px-2.5 sm:px-6 py-1.5 sm:py-2 rounded-lg font-black text-[10.5px] sm:text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer bft-touch-scale ${
+                    activeTab === 'instant_funded'
+                      ? 'bg-[#00F5A0] text-[#07080B] shadow-md'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Trophy className="w-3.5 h-3.5 shrink-0" />
+                  <span>
+                    <span className="hidden sm:inline">INSTANT FUNDED TRADERS (100)</span>
+                    <span className="sm:hidden">INSTANT FUNDED (100)</span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  data-testid="tab-self-capital"
+                  onClick={() => {
+                    soundEngine.playUiClick();
+                    setActiveTab('self_capital');
+                  }}
+                  className={`flex-1 sm:flex-none px-2.5 sm:px-6 py-1.5 sm:py-2 rounded-lg font-black text-[10.5px] sm:text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer bft-touch-scale ${
+                    activeTab === 'self_capital'
+                      ? 'bg-[#00F5A0] text-[#07080B] shadow-md'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <DollarSign className="w-3.5 h-3.5 shrink-0" />
+                  <span>
+                    <span className="hidden sm:inline">SELF-CAPITAL TRADERS (100)</span>
+                    <span className="sm:hidden">SELF-CAPITAL (100)</span>
+                  </span>
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => setSearchQuery('')}
-                className="px-4 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-mono text-white cursor-pointer bft-touch-scale"
-              >
-                Reset Search to Daily Top 10
-              </button>
-            </div>
-          ) : (
-            displayedTraders.map((trader, index) => {
-              const sub = activeSubscriptions[trader.id];
-              const isCopying = Boolean(sub && sub.status === 'active');
-              const isFull = trader.current_copiers >= MAX_COPIERS_PER_TRADER && !isCopying;
-              const displayRank = trader.rank || index + 1;
 
-              return (
-                <MasterTraderCardItem
-                  key={trader.id}
-                  trader={trader}
-                  displayRank={displayRank}
-                  isCopying={isCopying}
-                  isFull={isFull}
-                  onViewStats={setViewingTrader}
-                  onCancelSubscription={handleCancelSubscription}
-                  onOpenCopyConfig={handleOpenCopyConfig}
+              {/* Search across all 200 traders by numeric ID (#100101 - #100300) or name */}
+              <div className="relative w-full md:max-w-md">
+                <Search className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  data-testid="copy-trader-search-input"
+                  aria-label="Search 200 Traders by Numeric ID or Name"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search 200 traders by ID (e.g. 100105) or name..."
+                  className="w-full bg-[#111520] border border-slate-700/80 focus:border-[#00F5A0] rounded-lg sm:rounded-xl pl-9 pr-8 py-1.5 sm:py-2 text-xs font-mono text-white placeholder:text-slate-500 outline-none transition-all"
                 />
-              );
-            })
-          )}
-        </div>
+                {searchQuery && (
+                  <button
+                    type="button"
+                    aria-label="Clear Trader Search"
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer touch-manipulation"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Main Leaderboard Feed with Mobile Horizontal Swipable Top 3 Spotlight */}
+            <div
+              data-testid="copy-traders-list"
+              className="flex-1 overflow-y-auto px-3 sm:px-6 py-2.5 sm:py-4 space-y-2 sm:space-y-3 custom-scrollbar overscroll-contain touch-scroll hw-accelerate"
+            >
+              {/* Mobile Horizontal Swipable Top 3 Podium Cards */}
+              {!isLoading && !queryResult.isSearchActive && displayedTraders.length >= 3 && (
+                <div className="sm:hidden pb-1">
+                  <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 mb-1.5 px-0.5">
+                    <span className="font-bold text-white flex items-center gap-1">
+                      <Trophy className="w-3 h-3 text-amber-400" /> Top 3 Spotlight (Swipe →)
+                    </span>
+                    <span className="text-[#00F5A0] font-bold">
+                      Tap card chevron for full ROI
+                    </span>
+                  </div>
+                  <div
+                    data-testid="mobile-swipable-top-traders"
+                    className="bft-snap-strip gap-2 pb-1"
+                  >
+                    {displayedTraders.slice(0, 3).map((topTrader, idx) => {
+                      const topRank = topTrader.rank || idx + 1;
+                      const topSub = activeSubscriptions[topTrader.id];
+                      const topIsCopying = Boolean(topSub && topSub.status === 'active');
+                      const topIsFull = topTrader.current_copiers >= MAX_COPIERS_PER_TRADER && !topIsCopying;
+                      return (
+                        <div
+                          key={`swipe-${topTrader.id}`}
+                          className="bft-snap-card w-[235px] p-2.5 rounded-xl bg-gradient-to-br from-[#131929] to-[#0D111C] border border-slate-700/80 flex flex-col justify-between gap-2"
+                        >
+                          <div className="flex items-center justify-between gap-1.5">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span
+                                className={`w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-black font-mono shrink-0 ${
+                                  topRank === 1
+                                    ? 'bg-amber-400 text-slate-950'
+                                    : topRank === 2
+                                    ? 'bg-slate-300 text-slate-950'
+                                    : 'bg-amber-600 text-white'
+                                }`}
+                              >
+                                #{topRank}
+                              </span>
+                              <CountryFlagIcon
+                                isoCode={topTrader.country_code}
+                                country={topTrader.country}
+                                flagEmoji={topTrader.flag}
+                                className="w-4 h-3 object-cover rounded-xs shrink-0"
+                              />
+                              <span className="text-xs font-black text-white truncate">
+                                {topTrader.provider_name}
+                              </span>
+                            </div>
+                            <span className="text-[9px] font-mono font-bold text-[#00F5A0] bg-emerald-500/15 px-1.5 py-0.2 rounded shrink-0">
+                              {topTrader.win_rate_3m}% WR
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between font-mono bg-[#090C14] px-2 py-1 rounded-lg border border-slate-800/80">
+                            <div>
+                              <span className="text-[8px] text-slate-400 uppercase block">24H Profit</span>
+                              <span className="text-xs font-black text-[#00F5A0]">
+                                +${topTrader.daily_profit.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                              </span>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-[8px] text-slate-400 uppercase block">90D ROI</span>
+                              <span className="text-xs font-black text-amber-300">
+                                +{topTrader.three_month_profit_pct}%
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                soundEngine.playUiClick();
+                                setViewingTrader(topTrader);
+                              }}
+                              className="px-2 py-1 rounded-lg bg-white/5 border border-white/10 text-[10px] font-mono font-bold text-slate-300 bft-touch-scale cursor-pointer"
+                            >
+                              Stats
+                            </button>
+                            <button
+                              type="button"
+                              disabled={topIsFull}
+                              onClick={() =>
+                                topIsCopying
+                                  ? handleCancelSubscription(topTrader)
+                                  : handleOpenCopyConfig(topTrader)
+                              }
+                              className={`flex-1 py-1 px-2 rounded-lg font-black text-[10px] uppercase tracking-wider bft-touch-scale cursor-pointer ${
+                                topIsCopying
+                                  ? 'bg-rose-500/20 border border-rose-500/40 text-rose-300'
+                                  : topIsFull
+                                  ? 'bg-slate-800 text-slate-500'
+                                  : 'bg-[#00F5A0] text-[#07080B]'
+                              }`}
+                            >
+                              {topIsCopying ? 'Stop' : topIsFull ? 'Full' : 'Copy'}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {isLoading ? (
+                <div className="flex flex-col items-center justify-center py-16 space-y-3">
+                  <RefreshCw className="w-7 h-7 text-[#00F5A0] animate-spin" />
+                  <p className="text-slate-400 font-mono text-xs uppercase tracking-widest">
+                    Synchronizing 200-Trader Master Pool...
+                  </p>
+                </div>
+              ) : displayedTraders.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-14 space-y-3 text-center">
+                  <ShieldAlert className="w-8 h-8 text-amber-400" />
+                  <div>
+                    <p className="text-white font-bold text-xs sm:text-sm">No Master Trader Found Matching "{searchQuery}"</p>
+                    <p className="text-slate-400 font-mono text-[11px] mt-1">
+                      Try searching any numeric Trader ID between #100101 and #100300.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    className="px-4 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-mono text-white cursor-pointer bft-touch-scale"
+                  >
+                    Reset Search to Daily Top 10
+                  </button>
+                </div>
+              ) : (
+                displayedTraders.map((trader, index) => {
+                  const sub = activeSubscriptions[trader.id];
+                  const isCopying = Boolean(sub && sub.status === 'active');
+                  const isFull = trader.current_copiers >= MAX_COPIERS_PER_TRADER && !isCopying;
+                  const displayRank = trader.rank || index + 1;
+
+                  return (
+                    <MasterTraderCardItem
+                      key={trader.id}
+                      trader={trader}
+                      displayRank={displayRank}
+                      isCopying={isCopying}
+                      isFull={isFull}
+                      onViewStats={setViewingTrader}
+                      onCancelSubscription={handleCancelSubscription}
+                      onOpenCopyConfig={handleOpenCopyConfig}
+                    />
+                  );
+                })
+              )}
+            </div>
+          </>
+        )}
 
         {/* Bottom Footer (Compact on Mobile) */}
         <div className="px-3 sm:px-6 py-2 sm:py-3 border-t border-slate-800/60 bg-[#0B0E17] flex items-center justify-between gap-2 text-[10px] sm:text-[11px] font-mono text-slate-400 shrink-0">

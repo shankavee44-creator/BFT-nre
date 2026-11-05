@@ -75,6 +75,9 @@ export interface CopySubscriptionData {
   current_pnl: number;
   commission_pct?: number;
   created_at?: number | string;
+  stop_loss?: number;
+  take_profit?: number;
+  max_drawdown?: number;
 }
 
 export interface ProviderEligibilityResult {

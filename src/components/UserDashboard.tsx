@@ -1193,7 +1193,10 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     [trades, supabaseUserTrades]
   );
 
-  // Real Trading Summary dynamically computed from Supabase `user_trades` for the active logged-in user
+  // Real Trading Summary dynamically computed for the active logged-in user
+  const currentActiveAccount = accounts.find((a) => a.id === activeAccountId) || accounts[0];
+  const isSelectedAccountDemo = isDemoAccount(currentActiveAccount);
+
   const tradingSummary = React.useMemo(
     () => computeUserTradingSummary(authoritativeUserTrades),
     [authoritativeUserTrades]
@@ -1670,40 +1673,88 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
       {/* Tab 1: My Trading Accounts */}
       {activeTab === 'accounts' && (
         <div className="space-y-4">
-          {/* Overall Trading Summary Card: Real Trading Statistics from Supabase `user_trades` */}
-          <div
-            data-testid="dashboard-trades-summary-card"
-            className="p-4 sm:p-6 rounded-2xl bg-[#0e0e12] border border-[#ff8800]/40 shadow-2xl mb-4 font-mono"
-          >
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 sm:pb-4 border-b border-white/10">
-              <div className="flex items-center gap-2.5 sm:gap-3">
-                <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-[#ff8800]/15 border border-[#ff8800]/40 flex items-center justify-center text-[#ff8800] shrink-0">
-                  <TrendingUp className="w-4 h-4 sm:w-5 sm:h-5" />
+          {/* Overall Trading Summary Card: Displayed ONLY on Real, Instant, or Challenge Accounts */}
+          {!isSelectedAccountDemo && (
+            <div
+              data-testid="dashboard-trades-summary-card"
+              className="p-4 sm:p-6 rounded-2xl bg-[#0e0e12] border border-[#ff8800]/40 shadow-2xl mb-4 font-mono"
+            >
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 sm:pb-4 border-b border-white/10">
+                <div className="flex items-center gap-2.5 sm:gap-3">
+                  <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-[#ff8800]/15 border border-[#ff8800]/40 flex items-center justify-center text-[#ff8800] shrink-0">
+                    <TrendingUp className="w-4 h-4 sm:w-5 sm:h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm sm:text-lg font-black text-white flex flex-wrap items-center gap-2">
+                      <span>Overall Trading Summary</span>
+                      <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30">
+                        {tradingSummary.totalTradesCount} Total Trades
+                      </span>
+                    </h3>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="text-sm sm:text-lg font-black text-white flex flex-wrap items-center gap-2">
-                    <span>Overall Trading Summary</span>
-                    <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30">
-                      {tradingSummary.totalTradesCount} Total Trades
+
+                <div className="flex items-center justify-between sm:justify-end gap-3 pt-2 sm:pt-0 border-t border-white/5 sm:border-t-0">
+                  <span className="text-[10px] text-slate-400 uppercase font-mono sm:hidden">
+                    Total Net Profit/Loss
+                  </span>
+                  <div className="text-right">
+                    <span className="text-[10px] text-slate-400 hidden sm:block uppercase font-mono">
+                      Total Net Profit / Loss
                     </span>
-                  </h3>
-                  <p className="text-[11px] sm:text-xs text-slate-400">
-                    Real-time statistics queried from Supabase (<code className="text-[#ff8800]">user_trades</code>).
-                  </p>
+                    <span
+                      data-testid="summary-net-pnl"
+                      className={`text-sm sm:text-lg font-black ${
+                        tradingSummary.totalNetProfitLoss > 0
+                          ? 'text-emerald-400'
+                          : tradingSummary.totalNetProfitLoss < 0
+                          ? 'text-rose-400'
+                          : 'text-slate-200'
+                      }`}
+                    >
+                      {tradingSummary.formattedNetProfitLoss}
+                    </span>
+                  </div>
                 </div>
               </div>
 
-              <div className="flex items-center justify-between sm:justify-end gap-3 pt-2 sm:pt-0 border-t border-white/5 sm:border-t-0">
-                <span className="text-[10px] text-slate-400 uppercase font-mono sm:hidden">
-                  Total Net Profit/Loss
-                </span>
-                <div className="text-right">
-                  <span className="text-[10px] text-slate-400 hidden sm:block uppercase font-mono">
-                    Total Net Profit / Loss
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3 mt-3 sm:mt-4">
+                <div className="p-3 sm:p-3.5 rounded-xl bg-[#14141a] border border-white/10">
+                  <span className="text-[10px] text-slate-400 block uppercase font-mono">
+                    Total Trades Count
                   </span>
                   <span
-                    data-testid="summary-net-pnl"
-                    className={`text-sm sm:text-lg font-black ${
+                    data-testid="summary-total-trades"
+                    className="text-sm sm:text-base font-black text-white mt-1 block"
+                  >
+                    {tradingSummary.totalTradesCount}
+                  </span>
+                  <span className="text-[10px] text-slate-500 block mt-0.5">
+                    {tradingSummary.winningTradesCount}W / {tradingSummary.losingTradesCount}L ({tradingSummary.totalCompletedTrades} Settled)
+                  </span>
+                </div>
+
+                <div className="p-3 sm:p-3.5 rounded-xl bg-[#14141a] border border-white/10">
+                  <span className="text-[10px] text-slate-400 block uppercase font-mono">
+                    Win Rate (%)
+                  </span>
+                  <span
+                    data-testid="summary-win-rate"
+                    className="text-sm sm:text-base font-black text-cyan-400 mt-1 block"
+                  >
+                    {tradingSummary.formattedWinRate}
+                  </span>
+                  <span className="text-[10px] text-slate-500 block mt-0.5">
+                    Wins / Completed Trades
+                  </span>
+                </div>
+
+                <div className="p-3 sm:p-3.5 rounded-xl bg-[#14141a] border border-white/10">
+                  <span className="text-[10px] text-slate-400 block uppercase font-mono">
+                    Total Net Profit/Loss
+                  </span>
+                  <span
+                    className={`text-sm sm:text-base font-black mt-1 block ${
                       tradingSummary.totalNetProfitLoss > 0
                         ? 'text-emerald-400'
                         : tradingSummary.totalNetProfitLoss < 0
@@ -1713,77 +1764,28 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                   >
                     {tradingSummary.formattedNetProfitLoss}
                   </span>
+                  <span className="text-[10px] text-slate-500 block mt-0.5">
+                    Realized Net P&amp;L
+                  </span>
+                </div>
+
+                <div className="p-3 sm:p-3.5 rounded-xl bg-[#14141a] border border-white/10">
+                  <span className="text-[10px] text-slate-400 block uppercase font-mono">
+                    Total Volume Traded
+                  </span>
+                  <span
+                    data-testid="summary-total-volume"
+                    className="text-sm sm:text-base font-black text-[#ff8800] mt-1 block"
+                  >
+                    {tradingSummary.formattedVolumeTraded}
+                  </span>
+                  <span className="text-[10px] text-slate-500 block mt-0.5">
+                    Cumulative Stake Volume
+                  </span>
                 </div>
               </div>
             </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3 mt-3 sm:mt-4">
-              <div className="p-3 sm:p-3.5 rounded-xl bg-[#14141a] border border-white/10">
-                <span className="text-[10px] text-slate-400 block uppercase font-mono">
-                  Total Trades Count
-                </span>
-                <span
-                  data-testid="summary-total-trades"
-                  className="text-sm sm:text-base font-black text-white mt-1 block"
-                >
-                  {tradingSummary.totalTradesCount}
-                </span>
-                <span className="text-[10px] text-slate-500 block mt-0.5">
-                  {tradingSummary.winningTradesCount}W / {tradingSummary.losingTradesCount}L ({tradingSummary.totalCompletedTrades} Settled)
-                </span>
-              </div>
-
-              <div className="p-3 sm:p-3.5 rounded-xl bg-[#14141a] border border-white/10">
-                <span className="text-[10px] text-slate-400 block uppercase font-mono">
-                  Win Rate (%)
-                </span>
-                <span
-                  data-testid="summary-win-rate"
-                  className="text-sm sm:text-base font-black text-cyan-400 mt-1 block"
-                >
-                  {tradingSummary.formattedWinRate}
-                </span>
-                <span className="text-[10px] text-slate-500 block mt-0.5">
-                  Wins / Completed Trades
-                </span>
-              </div>
-
-              <div className="p-3 sm:p-3.5 rounded-xl bg-[#14141a] border border-white/10">
-                <span className="text-[10px] text-slate-400 block uppercase font-mono">
-                  Total Net Profit/Loss
-                </span>
-                <span
-                  className={`text-sm sm:text-base font-black mt-1 block ${
-                    tradingSummary.totalNetProfitLoss > 0
-                      ? 'text-emerald-400'
-                      : tradingSummary.totalNetProfitLoss < 0
-                      ? 'text-rose-400'
-                      : 'text-slate-200'
-                  }`}
-                >
-                  {tradingSummary.formattedNetProfitLoss}
-                </span>
-                <span className="text-[10px] text-slate-500 block mt-0.5">
-                  Realized Net P&amp;L
-                </span>
-              </div>
-
-              <div className="p-3 sm:p-3.5 rounded-xl bg-[#14141a] border border-white/10">
-                <span className="text-[10px] text-slate-400 block uppercase font-mono">
-                  Total Volume Traded
-                </span>
-                <span
-                  data-testid="summary-total-volume"
-                  className="text-sm sm:text-base font-black text-[#ff8800] mt-1 block"
-                >
-                  {tradingSummary.formattedVolumeTraded}
-                </span>
-                <span className="text-[10px] text-slate-500 block mt-0.5">
-                  Cumulative Stake Volume
-                </span>
-              </div>
-            </div>
-          </div>
+          )}
 
           {accounts.length === 0 ? (
             <div

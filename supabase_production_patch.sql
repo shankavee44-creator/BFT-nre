@@ -618,3 +618,61 @@ ALTER PUBLICATION supabase_realtime ADD TABLE public.user_purchases;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.crypto_deposits;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.trading_accounts;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.user_trades;
+
+-- ============================================================================
+-- 12. COPY TRADING SUBSCRIPTIONS TABLE & PERMISSIVE RLS POLICIES
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS public.copy_trading_subscriptions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  copier_user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
+  copier_account_id UUID REFERENCES public.trading_accounts(id) ON DELETE CASCADE,
+  provider_id UUID NOT NULL REFERENCES public.copy_trading_profiles(id) ON DELETE CASCADE,
+  trade_amount NUMERIC(15, 2) NOT NULL DEFAULT 100.00,
+  allocated_capital NUMERIC(15, 2) DEFAULT 100.00,
+  stop_loss NUMERIC(15, 2) DEFAULT 0.00,
+  max_loss_limit NUMERIC(15, 2) DEFAULT 0.00,
+  take_profit NUMERIC(15, 2) DEFAULT 0.00,
+  take_profit_limit NUMERIC(15, 2) DEFAULT 0.00,
+  max_drawdown NUMERIC(5, 2) DEFAULT 5.00,
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Ensure all required columns exist on existing table
+ALTER TABLE public.copy_trading_subscriptions ADD COLUMN IF NOT EXISTS copier_user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE;
+ALTER TABLE public.copy_trading_subscriptions ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE;
+ALTER TABLE public.copy_trading_subscriptions ADD COLUMN IF NOT EXISTS copier_account_id UUID REFERENCES public.trading_accounts(id) ON DELETE CASCADE;
+ALTER TABLE public.copy_trading_subscriptions ADD COLUMN IF NOT EXISTS trade_amount NUMERIC(15, 2) DEFAULT 100.00;
+ALTER TABLE public.copy_trading_subscriptions ADD COLUMN IF NOT EXISTS allocated_capital NUMERIC(15, 2) DEFAULT 100.00;
+ALTER TABLE public.copy_trading_subscriptions ADD COLUMN IF NOT EXISTS stop_loss NUMERIC(15, 2) DEFAULT 0.00;
+ALTER TABLE public.copy_trading_subscriptions ADD COLUMN IF NOT EXISTS max_loss_limit NUMERIC(15, 2) DEFAULT 0.00;
+ALTER TABLE public.copy_trading_subscriptions ADD COLUMN IF NOT EXISTS take_profit NUMERIC(15, 2) DEFAULT 0.00;
+ALTER TABLE public.copy_trading_subscriptions ADD COLUMN IF NOT EXISTS take_profit_limit NUMERIC(15, 2) DEFAULT 0.00;
+ALTER TABLE public.copy_trading_subscriptions ADD COLUMN IF NOT EXISTS max_drawdown NUMERIC(5, 2) DEFAULT 5.00;
+ALTER TABLE public.copy_trading_subscriptions ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active';
+
+-- Enable Realtime
+ALTER PUBLICATION supabase_realtime ADD TABLE public.copy_trading_subscriptions;
+
+-- RLS Policies for copy_trading_subscriptions
+ALTER TABLE public.copy_trading_subscriptions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view own subscriptions" ON public.copy_trading_subscriptions;
+CREATE POLICY "Users can view own subscriptions" ON public.copy_trading_subscriptions
+  FOR SELECT USING (auth.uid() = copier_user_id OR auth.uid() = user_id OR auth.role() = 'anon');
+
+DROP POLICY IF EXISTS "Users can insert own subscriptions" ON public.copy_trading_subscriptions;
+CREATE POLICY "Users can insert own subscriptions" ON public.copy_trading_subscriptions
+  FOR INSERT WITH CHECK (auth.uid() = copier_user_id OR auth.uid() = user_id OR auth.role() = 'anon');
+
+DROP POLICY IF EXISTS "Users can update own subscriptions" ON public.copy_trading_subscriptions;
+CREATE POLICY "Users can update own subscriptions" ON public.copy_trading_subscriptions
+  FOR UPDATE USING (auth.uid() = copier_user_id OR auth.uid() = user_id OR auth.role() = 'anon');
+
+DROP POLICY IF EXISTS "Users can delete own subscriptions" ON public.copy_trading_subscriptions;
+CREATE POLICY "Users can delete own subscriptions" ON public.copy_trading_subscriptions
+  FOR DELETE USING (auth.uid() = copier_user_id OR auth.uid() = user_id OR auth.role() = 'anon');
+

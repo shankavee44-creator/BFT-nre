@@ -732,9 +732,11 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
           const livePriceFromFeed = liveMarketFeed.getLatestPrice(t.asset);
           const tradeMarket = getAssetMarketState(t.asset);
           const finalPrice =
-            t.asset === selectedAsset.symbol
-              ? currentPrice
-              : (livePriceFromFeed ?? tradeMarket?.lastPrice ?? t.strikePrice);
+            (t.asset === selectedAsset.symbol ? currentPrice : undefined) ??
+            livePriceFromFeed ??
+            tradeMarket?.lastPrice ??
+            (t.closePrice && t.closePrice !== t.strikePrice ? t.closePrice : undefined) ??
+            t.strikePrice;
           return resolveOptimisticTradeResult(t, finalPrice);
         }
         return t;

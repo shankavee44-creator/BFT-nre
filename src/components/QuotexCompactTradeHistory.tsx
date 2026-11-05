@@ -12,6 +12,7 @@ import {
 import { BinaryTrade } from '../types';
 import { findAssetBySymbol } from '../utils/storage';
 import { getAssetMarketState } from '../utils/priceFeedEngine';
+import { liveMarketFeed } from '../utils/liveMarketFeed';
 import { isTradeActiveOrOpen, resolveOptimisticTradeResult } from '../utils/supabaseTradeSync';
 import { AssetFlagIcon } from './CountryFlagIcon';
 import { soundEngine } from '../utils/soundEffects';
@@ -90,14 +91,20 @@ export const QuotexCompactTradeHistory: React.FC<QuotexCompactTradeHistoryProps>
       .filter((t) => !isTradeActiveOrOpen(t) || nowMs >= t.endTime)
       .map((t) => {
         if (isTradeActiveOrOpen(t) && nowMs >= t.endTime) {
+          const livePriceFromFeed = liveMarketFeed.getLatestPrice(t.asset);
           const tradeMarket = getAssetMarketState(t.asset);
-          const livePrice = t.currentPrice ?? tradeMarket?.lastPrice ?? currentPrice;
+          const livePrice =
+            (t.asset === selectedAssetSymbol ? currentPrice : undefined) ??
+            livePriceFromFeed ??
+            tradeMarket?.lastPrice ??
+            (t.closePrice && t.closePrice !== t.strikePrice ? t.closePrice : undefined) ??
+            t.strikePrice;
           return resolveOptimisticTradeResult(t, livePrice);
         }
         return t;
       })
       .sort((a, b) => (b.endTime || b.startTime) - (a.endTime || a.startTime));
-  }, [trades, nowMs, currentPrice]);
+  }, [trades, nowMs, currentPrice, selectedAssetSymbol]);
 
   const toggleExpandTrade = (tradeId: string, e: React.MouseEvent) => {
     e.stopPropagation();

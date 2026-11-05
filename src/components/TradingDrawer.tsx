@@ -19,6 +19,7 @@ import {
 } from '../utils/propRules';
 import { DEFAULT_ASSETS, findAssetBySymbol } from '../utils/storage';
 import { getAssetMarketState } from '../utils/priceFeedEngine';
+import { liveMarketFeed } from '../utils/liveMarketFeed';
 import { isTradeActiveOrOpen, resolveOptimisticTradeResult } from '../utils/supabaseTradeSync';
 import { AssetFlagIcon } from './CountryFlagIcon';
 
@@ -63,8 +64,14 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
       .filter((t) => !isTradeActiveOrOpen(t) || nowMs >= t.endTime)
       .map((t) => {
         if (isTradeActiveOrOpen(t) && nowMs >= t.endTime) {
+          const livePriceFromFeed = liveMarketFeed.getLatestPrice(t.asset);
           const tradeMarket = getAssetMarketState(t.asset);
-          const livePrice = t.currentPrice ?? tradeMarket?.lastPrice ?? currentPrice;
+          const livePrice =
+            livePriceFromFeed ??
+            tradeMarket?.lastPrice ??
+            (t.closePrice && t.closePrice !== t.strikePrice ? t.closePrice : undefined) ??
+            currentPrice ??
+            t.strikePrice;
           return resolveOptimisticTradeResult(t, livePrice);
         }
         return t;
