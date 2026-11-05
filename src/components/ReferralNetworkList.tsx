@@ -8,6 +8,8 @@ import {
   formatPurchasedPackageLabel,
   formatPurchaseAmountDisplay,
 } from '../utils/affiliateEngine';
+import { TablePagination } from './TablePagination';
+import { paginateItems } from '../utils/paginationHelper';
 
 interface ReferralNetworkListProps {
   userId: string;
@@ -29,6 +31,9 @@ export const ReferralNetworkList: React.FC<ReferralNetworkListProps> = ({
   onNetworkLoaded,
 }) => {
   const [copiedLink, setCopiedLink] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [levelFilter, setLevelFilter] = useState<'all' | 1 | 2 | 3>('all');
   const [network, setNetwork] = useState<ReferredUser[]>(() =>
     userId
       ? buildReferredNetworkTree({
@@ -37,6 +42,19 @@ export const ReferralNetworkList: React.FC<ReferralNetworkListProps> = ({
         })
       : []
   );
+
+  const filteredNetwork = React.useMemo(() => {
+    if (levelFilter === 'all') return network;
+    return network.filter((u) => u.level === levelFilter);
+  }, [network, levelFilter]);
+
+  const paginatedNetwork = React.useMemo(() => {
+    return paginateItems(filteredNetwork, currentPage, pageSize);
+  }, [filteredNetwork, currentPage, pageSize]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [levelFilter, network.length]);
 
   const effectiveReferralCode =
     referralCode ||
@@ -259,14 +277,42 @@ export const ReferralNetworkList: React.FC<ReferralNetworkListProps> = ({
       data-testid="referral-network-tree"
       className="p-5 sm:p-6 rounded-3xl bg-[#111115] border border-white/10 mt-8"
     >
-      <div className="flex items-center justify-between gap-3 mb-4">
-        <h3 className="text-lg font-black text-white font-mono flex items-center gap-2">
-          <Users className="w-5 h-5 text-[#ff8800]" />
-          <span>Full Referred Network Tree (L1, L2, L3)</span>
-        </h3>
-        <span className="px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-[11px] font-mono text-slate-400">
-          {network.length} {network.length === 1 ? 'Trader' : 'Traders'}
-        </span>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+        <div>
+          <h3 className="text-lg font-black text-white font-mono flex items-center gap-2">
+            <Users className="w-5 h-5 text-[#ff8800]" />
+            <span>Full Referred Network Tree (L1, L2, L3)</span>
+          </h3>
+          <p className="text-xs text-slate-400 font-mono mt-0.5">
+            Nested referral tree showing direct referrals and extended downline network
+          </p>
+        </div>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <div className="flex items-center gap-1 bg-black/40 p-1 rounded-xl border border-white/10 text-[10px] font-mono">
+            {(['all', 1, 2, 3] as const).map((lvl) => {
+              const count = lvl === 'all' ? network.length : network.filter((u) => u.level === lvl).length;
+              const label = lvl === 'all' ? 'All' : `L${lvl}`;
+              return (
+                <button
+                  key={String(lvl)}
+                  type="button"
+                  data-testid={`referral-level-filter-${lvl}`}
+                  onClick={() => setLevelFilter(lvl)}
+                  className={`px-2 py-0.5 rounded-lg font-bold transition-colors cursor-pointer ${
+                    levelFilter === lvl
+                      ? 'bg-[#ff8800] text-slate-950 font-black'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {label} ({count})
+                </button>
+              );
+            })}
+          </div>
+          <span className="px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-[11px] font-mono text-slate-400">
+            {filteredNetwork.length} {filteredNetwork.length === 1 ? 'Trader' : 'Traders'}
+          </span>
+        </div>
       </div>
 
       {network.length === 0 ? (
@@ -319,6 +365,10 @@ export const ReferralNetworkList: React.FC<ReferralNetworkListProps> = ({
             </span>
           </div>
         </div>
+      ) : filteredNetwork.length === 0 ? (
+        <div className="text-center py-8 text-xs text-slate-400 font-mono">
+          No downline traders found matching Level {levelFilter}.
+        </div>
       ) : (
         <div
           style={{ touchAction: 'pan-x pan-y', WebkitOverflowScrolling: 'touch' }}
@@ -334,7 +384,7 @@ export const ReferralNetworkList: React.FC<ReferralNetworkListProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
-              {network.map((u) => {
+              {paginatedNetwork.map((u) => {
                 const hasPurchase = Boolean(u.latestPurchase && Number(u.latestPurchase.amount) > 0);
                 const displayPkg = hasPurchase
                   ? formatPurchasedPackageLabel(
@@ -349,8 +399,25 @@ export const ReferralNetworkList: React.FC<ReferralNetworkListProps> = ({
 
                 return (
                   <tr key={u.id} className="hover:bg-white/5">
-                    <td className="py-3 pl-2 font-bold text-white">{u.fullName}</td>
-                    <td className="py-3 text-slate-300">Level {u.level}</td>
+                    <td className="py-3 pl-2 font-bold text-white flex items-center gap-2">
+                      <span className={`w-1.5 h-1.5 rounded-full ${
+                        u.level === 1 ? 'bg-[#ff8800]' : u.level === 2 ? 'bg-blue-400' : 'bg-purple-400'
+                      }`} />
+                      <span>{u.fullName}</span>
+                    </td>
+                    <td className="py-3 text-slate-300">
+                      <span
+                        className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${
+                          u.level === 1
+                            ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                            : u.level === 2
+                            ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
+                            : 'bg-purple-500/20 text-purple-300 border border-purple-500/40'
+                        }`}
+                      >
+                        Level {u.level} {u.level === 1 ? '(Direct)' : u.level === 2 ? '(Sub)' : '(Network)'}
+                      </span>
+                    </td>
                     <td className="py-3 text-slate-300">
                       {hasPurchase && displayPkg !== 'No Purchase' ? (
                         <span className="font-bold text-[#ff8800]">{displayPkg}</span>
@@ -366,6 +433,17 @@ export const ReferralNetworkList: React.FC<ReferralNetworkListProps> = ({
               })}
             </tbody>
           </table>
+
+          <TablePagination
+            currentPage={currentPage}
+            totalItems={filteredNetwork.length}
+            pageSize={pageSize}
+            onPageChange={setCurrentPage}
+            onPageSizeChange={setPageSize}
+            pageSizeOptions={[5, 10, 20, 50]}
+            itemLabel="traders"
+            testIdPrefix="affiliate-tree-pagination"
+          />
         </div>
       )}
     </div>

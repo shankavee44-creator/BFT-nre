@@ -48,6 +48,8 @@ import { soundEngine } from '../utils/soundEffects';
 import { apiGetAffiliateDashboard } from '../utils/apiClient';
 import { supabase } from '../utils/supabase';
 import { ReferralNetworkList } from './ReferralNetworkList';
+import { TablePagination } from './TablePagination';
+import { paginateItems } from '../utils/paginationHelper';
 
 interface AffiliateDashboardProps {
   userProfile: UserProfile;
@@ -73,6 +75,12 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
   const [copiedCode, setCopiedCode] = useState(false);
   const [showQrModal, setShowQrModal] = useState(false);
   const [filterLevel, setFilterLevel] = useState<'all' | '1' | '2' | '3' | 'withdrawal' | 'vip'>('all');
+  const [commPage, setCommPage] = useState(1);
+  const [commPageSize, setCommPageSize] = useState(10);
+
+  useEffect(() => {
+    setCommPage(1);
+  }, [filterLevel]);
 
   const [payoutAmount, setPayoutAmount] = useState<number>(50);
   const [payoutMethod, setPayoutMethod] = useState<'USDT (TRC-20)' | 'Bank Transfer'>('USDT (TRC-20)');
@@ -1092,7 +1100,7 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
-                  {filteredReferrals.map((ref) => {
+                  {paginateItems(filteredReferrals, commPage, commPageSize).map((ref) => {
                     const isVipEntry = ref.affiliateTier === 'vip';
                     return (
                       <tr key={ref.id} className="hover:bg-white/5">
@@ -1140,6 +1148,17 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
                   })}
                 </tbody>
               </table>
+
+              <TablePagination
+                currentPage={commPage}
+                totalItems={filteredReferrals.length}
+                pageSize={commPageSize}
+                onPageChange={setCommPage}
+                onPageSizeChange={setCommPageSize}
+                pageSizeOptions={[5, 10, 20, 50]}
+                itemLabel="referrals"
+                testIdPrefix="affiliate-commissions-pagination"
+              />
             </div>
           )}
         </div>

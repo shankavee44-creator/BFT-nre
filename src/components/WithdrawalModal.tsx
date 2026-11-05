@@ -41,6 +41,8 @@ import {
   getAccountStatusBadgeLabel,
 } from '../utils/propRules';
 import { canUserWithdraw, KYC_WITHDRAWAL_LOCK_MESSAGE } from '../utils/kycVerification';
+import { TablePagination } from './TablePagination';
+import { paginateItems } from '../utils/paginationHelper';
 import {
   QuotexPortalTab,
   QuotexCryptoNetwork,
@@ -65,6 +67,8 @@ import {
   PENDING_WITHDRAWAL_WARNING_MESSAGE,
   commitProfileBalanceToSupabase,
 } from '../utils/supabaseRealtimeSync';
+import { computeUserTradingSummary } from '../utils/supabaseTradeSync';
+
 
 interface WithdrawalModalProps {
   account?: TradingAccount | null;
@@ -110,11 +114,35 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
   const [activePortalTab, setActivePortalTab] = useState<QuotexPortalTab>(initialPortalTab);
   const [accountDropdownOpen, setAccountDropdownOpen] = useState(false);
   const [mobilePortalDropdownOpen, setMobilePortalDropdownOpen] = useState(false);
+  const [tradesPage, setTradesPage] = useState(1);
+  const [tradesPageSize, setTradesPageSize] = useState(10);
+
+  useEffect(() => {
+    setTradesPage(1);
+  }, [account?.id, activePortalTab]);
 
   const kycCheck = canUserWithdraw(userProfile);
   const accountSummary = useMemo(() => calculateQuotexAccountSummary(account), [account]);
   const netProfit = accountSummary.availableForWithdrawal;
   const firstWithdrawalCheck = useMemo(() => checkFirstWithdrawalWaitingPeriod(account), [account]);
+
+  const accountTrades = useMemo(() => {
+    return account ? trades.filter((t) => !t.accountId || t.accountId === account.id) : trades;
+  }, [trades, account?.id]);
+
+  const accountTradingSummary = useMemo(
+    () => computeUserTradingSummary(accountTrades),
+    [accountTrades]
+  );
+
+  const realTradingDaysCompleted = useMemo(() => {
+    if (account?.tradingDaysCompleted !== undefined && account?.tradingDaysCompleted !== null && account.tradingDaysCompleted > 0) {
+      return account.tradingDaysCompleted;
+    }
+    const settled = accountTrades.filter((t) => t.status === 'won' || t.status === 'lost' || t.status === 'tie');
+    const daySet = new Set(settled.map((t) => new Date(t.endTime || t.startTime).toISOString().slice(0, 10)));
+    return daySet.size;
+  }, [accountTrades, account?.tradingDaysCompleted]);
 
   // Quotex Form State (Minimum withdrawal $10 for Personal Live, $250 for Funded)
   const isPersonal = isPersonalLiveAccount(account);
@@ -2133,82 +2161,171 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                 )}
               </div>
 
-              {trades.length === 0 ? (
+              {accountTrades.length === 0 ? (
                 <div className="py-10 text-center text-xs text-[#8c96a6]">
-                  No binary options trades recorded in this session yet. Launch the OTC Trading Terminal to execute CALL/PUT contracts.
+                  No binary options trades recorded in this account yet. Launch the OTC Trading Terminal to execute CALL/PUT contracts.
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-xs font-mono tabular-nums">
-                    <thead>
-                      <tr className="border-b border-[#1e2330] text-[#8c96a6]">
-                        <th className="py-2.5 px-3">Asset</th>
-                        <th className="py-2.5 px-3">Direction</th>
-                        <th className="py-2.5 px-3">Investment</th>
-                        <th className="py-2.5 px-3">Status</th>
-                        <th className="py-2.5 px-3 text-right">Net P&L</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[#1e2330]">
-                      {trades
-                        .filter((t) => !account || t.accountId === account.id)
-                        .slice(0, 15)
-                        .map((t) => (
-                        <tr key={t.id}>
-                          <td className="py-2.5 px-3 font-bold text-white">{t.asset}</td>
-                          <td
-                            className={`py-2.5 px-3 font-bold ${
-                              t.direction === 'CALL' ? 'text-[#00c853]' : 'text-rose-400'
-                            }`}
-                          >
-                            {t.direction}
-                          </td>
-                          <td className="py-2.5 px-3 text-white">${t.investment.toFixed(2)}</td>
-                          <td className="py-2.5 px-3 uppercase">{t.status}</td>
-                          <td
-                            className={`py-2.5 px-3 text-right font-bold ${
-                              (t.pnl ?? 0) >= 0 ? 'text-[#00c853]' : 'text-rose-400'
-                            }`}
-                          >
-                            {(t.pnl ?? 0) >= 0 ? `+$${(t.pnl ?? 0).toFixed(2)}` : `-$${Math.abs(t.pnl ?? 0).toFixed(2)}`}
-                          </td>
+                <>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs font-mono tabular-nums">
+                      <thead>
+                        <tr className="border-b border-[#1e2330] text-[#8c96a6]">
+                          <th className="py-2.5 px-3">Asset</th>
+                          <th className="py-2.5 px-3">Direction</th>
+                          <th className="py-2.5 px-3">Entry Price</th>
+                          <th className="py-2.5 px-3">Exit Price</th>
+                          <th className="py-2.5 px-3">Investment</th>
+                          <th className="py-2.5 px-3">Payout</th>
+                          <th className="py-2.5 px-3">Status</th>
+                          <th className="py-2.5 px-3">Timestamp</th>
+                          <th className="py-2.5 px-3 text-right">Net P&L</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </thead>
+                      <tbody className="divide-y divide-[#1e2330]">
+                        {paginateItems(accountTrades, tradesPage, tradesPageSize)
+                          .map((t) => {
+                            const isWin = t.status === 'won';
+                            const isLoss = t.status === 'lost';
+                            const isTie = t.status === 'tie';
+                            const isOpen = t.status === 'active';
+                            const exitPrice = isOpen
+                              ? (t.currentPrice || t.strikePrice)
+                              : (t.closePrice ?? t.currentPrice ?? t.strikePrice);
+                            const payoutAmount = isWin
+                              ? (t.potentialPayout || (t.investment * (1 + (t.payoutPercentage || 85) / 100)))
+                              : isTie
+                              ? t.investment
+                              : 0;
+                            const netPnl = t.pnl ?? (isWin ? (t.potentialPayout || (t.investment * (t.payoutPercentage || 85)) / 100) : isTie ? 0 : -t.investment);
+                            const dateObj = new Date(t.endTime || t.startTime);
+                            const formattedTime = dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                            const formattedDate = dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+
+                            return (
+                              <tr key={t.id} className="hover:bg-[#151922] transition-colors">
+                                <td className="py-2.5 px-3 font-bold text-white whitespace-nowrap">{t.asset}</td>
+                                <td
+                                  className={`py-2.5 px-3 font-bold ${
+                                    t.direction === 'CALL' ? 'text-[#00c853]' : 'text-rose-400'
+                                  }`}
+                                >
+                                  {t.direction === 'CALL' ? '↑ CALL' : '↓ PUT'}
+                                </td>
+                                <td className="py-2.5 px-3 text-slate-300 font-mono">
+                                  {t.strikePrice ? t.strikePrice.toFixed(4) : '—'}
+                                </td>
+                                <td className="py-2.5 px-3 text-slate-300 font-mono">
+                                  {exitPrice ? exitPrice.toFixed(4) : '—'}
+                                </td>
+                                <td className="py-2.5 px-3 text-white">${t.investment.toFixed(2)}</td>
+                                <td className="py-2.5 px-3 text-slate-300 font-mono">
+                                  {payoutAmount > 0 ? `$${payoutAmount.toFixed(2)}` : '$0.00'}
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                                    isOpen
+                                      ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
+                                      : isWin
+                                      ? 'bg-emerald-500/20 text-[#00c853] border border-emerald-500/30'
+                                      : isTie
+                                      ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                                      : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                                  }`}>
+                                    {isOpen ? 'OPEN' : isWin ? 'WIN' : isTie ? 'TIE' : 'LOSS'}
+                                  </span>
+                                </td>
+                                <td className="py-2.5 px-3 text-slate-400 whitespace-nowrap text-[11px]">
+                                  {formattedDate} {formattedTime}
+                                </td>
+                                <td
+                                  className={`py-2.5 px-3 text-right font-bold ${
+                                    isOpen
+                                      ? 'text-cyan-400'
+                                      : netPnl >= 0
+                                      ? 'text-[#00c853]'
+                                      : 'text-rose-400'
+                                  }`}
+                                >
+                                  {isOpen
+                                    ? 'RUNNING'
+                                    : netPnl >= 0
+                                    ? `+$${netPnl.toFixed(2)}`
+                                    : `-$${Math.abs(netPnl).toFixed(2)}`}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <TablePagination
+                    currentPage={tradesPage}
+                    totalItems={accountTrades.length}
+                    pageSize={tradesPageSize}
+                    onPageChange={setTradesPage}
+                    onPageSizeChange={setTradesPageSize}
+                    pageSizeOptions={[10, 15, 25, 50]}
+                    itemLabel="trades"
+                    testIdPrefix="trades-history-pagination"
+                  />
+                </>
               )}
             </div>
           </div>
         )}
 
         {/* =====================================================================
-            VIEW 4: ANALYTICS TAB (Account Telemetry Summary)
+            VIEW 4: ANALYTICS TAB (Account Telemetry Summary - Real Supabase Data)
             ===================================================================== */}
         {activePortalTab === 'analytics' && (
           <div data-testid="portal-analytics-view" className="p-3 sm:p-6 space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="bg-[#141720] border border-[#1e2330] rounded-xl p-4">
-                <span className="text-xs text-[#8c96a6]">Account Win Rate</span>
+                <span className="text-xs text-[#8c96a6] uppercase font-mono block">Account Win Rate</span>
                 <div className="text-xl font-bold font-mono tabular-nums text-[#00c853] mt-1">
-                  {account?.winRate ?? 73.6}%
+                  {accountTradingSummary.formattedWinRate}
                 </div>
+                <span className="text-[10px] text-slate-500 font-mono mt-0.5 block">
+                  {accountTradingSummary.winningTradesCount}W / {accountTradingSummary.losingTradesCount}L ({accountTradingSummary.totalCompletedTrades} settled)
+                </span>
               </div>
               <div className="bg-[#141720] border border-[#1e2330] rounded-xl p-4">
-                <span className="text-xs text-[#8c96a6]">Completed Trading Days</span>
+                <span className="text-xs text-[#8c96a6] uppercase font-mono block">Completed Trading Days</span>
                 <div className="text-xl font-bold font-mono tabular-nums text-white mt-1">
-                  {account?.tradingDaysCompleted ?? 14} Days
+                  {realTradingDaysCompleted} {realTradingDaysCompleted === 1 ? 'Day' : 'Days'}
                 </div>
+                <span className="text-[10px] text-slate-500 font-mono mt-0.5 block">
+                  Active calendar days
+                </span>
               </div>
               <div className="bg-[#141720] border border-[#1e2330] rounded-xl p-4">
-                <span className="text-xs text-[#8c96a6]">Applicable Profit Split</span>
+                <span className="text-xs text-[#8c96a6] uppercase font-mono block">Total Realized Net P&L</span>
+                <div
+                  className={`text-xl font-bold font-mono tabular-nums mt-1 ${
+                    accountTradingSummary.totalNetProfitLoss >= 0 ? 'text-[#00c853]' : 'text-rose-400'
+                  }`}
+                >
+                  {accountTradingSummary.formattedNetProfitLoss}
+                </div>
+                <span className="text-[10px] text-slate-500 font-mono mt-0.5 block">
+                  Volume: {accountTradingSummary.formattedVolumeTraded}
+                </span>
+              </div>
+              <div className="bg-[#141720] border border-[#1e2330] rounded-xl p-4">
+                <span className="text-xs text-[#8c96a6] uppercase font-mono block">Applicable Profit Split</span>
                 <div className="text-xl font-bold font-mono tabular-nums text-[#2b70ff] mt-1">
                   {breakdown.profitSplitPercent}% Split
                 </div>
+                <span className="text-[10px] text-slate-500 font-mono mt-0.5 block">
+                  Current Tier Terms
+                </span>
               </div>
             </div>
           </div>
         )}
+
       </div>
 
       {/* =====================================================================

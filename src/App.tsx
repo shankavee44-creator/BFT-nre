@@ -1224,15 +1224,31 @@ export default function App() {
 
   const handleUpdateTrade = (trade: BinaryTrade) => {
     setTrades((prev) => {
-      const updated = prev.map((t) => (t.id === trade.id ? trade : t));
-      saveTrades(updated);
+      const canonicalTargetId = ensureTradeUuid(trade.id);
+      let found = false;
+      const updated = prev.map((t) => {
+        if (t.id === trade.id || ensureTradeUuid(t.id) === canonicalTargetId) {
+          found = true;
+          return {
+            ...t,
+            ...trade,
+            status: trade.status,
+            closePrice: trade.closePrice ?? t.closePrice,
+            pnl: trade.pnl ?? t.pnl,
+          };
+        }
+        return t;
+      });
+      const finalTrades = found ? updated : [trade, ...prev];
+      saveTrades(finalTrades);
       try {
-        localStorage.setItem('bft_trades', JSON.stringify(updated));
+        localStorage.setItem('bft_trades', JSON.stringify(finalTrades));
       } catch {}
-      rehydrateActiveTradesInLedger(updated);
-      return updated;
+      rehydrateActiveTradesInLedger(finalTrades);
+      return finalTrades;
     });
     broadcastSyncEvent('TRADE_UPDATED', trade);
+
 
     // Update directly in Supabase user_trades for all accounts
     updateSupabaseTrade(trade, userProfileRef.current.id || userProfile.id).catch(() => {});

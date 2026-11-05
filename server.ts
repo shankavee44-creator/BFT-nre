@@ -3375,11 +3375,16 @@ Sitemap: https://binaryfundedtrader.com/sitemap.xml`);
 
       const {
         providerId,
+        copierAccountId,
         allocatedCapital,
+        tradeAmount,
         perTradeAllocationType,
         perTradeAllocationValue,
         maxLossLimit,
+        stopLoss,
         takeProfitLimit,
+        takeProfit,
+        maxDrawdown,
         tradeSizingType,
         sizingMultiplier,
       } = req.body || {};
@@ -3393,20 +3398,27 @@ Sitemap: https://binaryfundedtrader.com/sitemap.xml`);
       });
 
       const id = `SUB-${userId}-${providerId}-${Date.now().toString(36)}`;
-      const cleanAllocated = Math.max(1, Number(allocatedCapital || perTradeAllocationValue || 100));
-      const cleanMaxLoss = Math.max(5, Number(maxLossLimit || 50));
-      const cleanTakeProfit = Math.max(5, Number(takeProfitLimit || 150));
+      const cleanAllocated = Math.max(1, Number(tradeAmount || allocatedCapital || perTradeAllocationValue || 100));
+      const cleanMaxLoss = Math.max(0, Number(stopLoss ?? maxLossLimit ?? 50));
+      const cleanTakeProfit = Math.max(0, Number(takeProfit ?? takeProfitLimit ?? 150));
+      const cleanMaxDrawdown = Math.max(0.5, Number(maxDrawdown ?? 5.0));
+      const cleanAccountId = String(copierAccountId || '').trim();
 
       const existing = db
-        .prepare('SELECT id FROM copy_trading_subscriptions WHERE user_id = ? AND provider_id = ?')
-        .get(userId, providerId) as any;
+        .prepare('SELECT id FROM copy_trading_subscriptions WHERE (user_id = ? OR copier_user_id = ?) AND provider_id = ?')
+        .get(userId, userId, providerId) as any;
 
       if (existing) {
         db.prepare(`
           UPDATE copy_trading_subscriptions SET
             allocated_capital = ?,
+            trade_amount = ?,
             max_loss_limit = ?,
+            stop_loss = ?,
             take_profit_limit = ?,
+            take_profit = ?,
+            max_drawdown = ?,
+            copier_account_id = ?,
             trade_sizing_type = ?,
             sizing_multiplier = ?,
             status = 'active',
@@ -3414,8 +3426,13 @@ Sitemap: https://binaryfundedtrader.com/sitemap.xml`);
           WHERE id = ?
         `).run(
           cleanAllocated,
+          cleanAllocated,
+          cleanMaxLoss,
           cleanMaxLoss,
           cleanTakeProfit,
+          cleanTakeProfit,
+          cleanMaxDrawdown,
+          cleanAccountId,
           tradeSizingType || (perTradeAllocationType === 'percentage' ? 'proportionate' : 'fixed'),
           Number(sizingMultiplier || 1.0),
           Date.now(),
@@ -3424,16 +3441,23 @@ Sitemap: https://binaryfundedtrader.com/sitemap.xml`);
       } else {
         db.prepare(`
           INSERT INTO copy_trading_subscriptions (
-            id, user_id, provider_id, allocated_capital, max_loss_limit, 
-            take_profit_limit, trade_sizing_type, sizing_multiplier, status, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+            id, user_id, copier_user_id, copier_account_id, provider_id, allocated_capital, trade_amount,
+            max_loss_limit, stop_loss, take_profit_limit, take_profit, max_drawdown,
+            trade_sizing_type, sizing_multiplier, status, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
         `).run(
           id,
           userId,
+          userId,
+          cleanAccountId,
           providerId,
           cleanAllocated,
+          cleanAllocated,
+          cleanMaxLoss,
           cleanMaxLoss,
           cleanTakeProfit,
+          cleanTakeProfit,
+          cleanMaxDrawdown,
           tradeSizingType || (perTradeAllocationType === 'percentage' ? 'proportionate' : 'fixed'),
           Number(sizingMultiplier || 1.0),
           Date.now()

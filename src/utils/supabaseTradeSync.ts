@@ -251,6 +251,59 @@ function mapToSupabaseRow(trade: BinaryTrade, userId: string): Record<string, an
 }
 
 /**
+ * Optimistically determines the real-time Win / Loss / Tie result of a trade
+ * upon timer expiry (0:00) using the latest market exit price vs entry price:
+ * - BUY (CALL): Exit Price > Entry Price => WIN (Payout applied), else LOSS ($0 payout)
+ * - SELL (PUT): Exit Price < Entry Price => WIN (Payout applied), else LOSS ($0 payout)
+ * - TIE: Exit Price === Entry Price => TIE (Refund $0 PnL)
+ */
+export function resolveOptimisticTradeResult(
+  trade: BinaryTrade,
+  latestExitPrice?: number
+): BinaryTrade {
+  const isAlreadySettled =
+    trade.status === 'won' || trade.status === 'lost' || trade.status === 'tie';
+  if (isAlreadySettled) {
+    return trade;
+  }
+
+  const strike = Number(trade.strikePrice || 0);
+  const exitPrice =
+    latestExitPrice !== undefined && Number.isFinite(latestExitPrice) && latestExitPrice > 0
+      ? Number(latestExitPrice)
+      : trade.closePrice !== undefined && trade.closePrice !== null && Number(trade.closePrice) > 0
+      ? Number(trade.closePrice)
+      : trade.currentPrice !== undefined && trade.currentPrice !== null && Number(trade.currentPrice) > 0
+      ? Number(trade.currentPrice)
+      : strike;
+
+  const priceDiff = exitPrice - strike;
+  const isTie = Math.abs(priceDiff) < 1e-7;
+  const isCall = trade.direction === 'CALL';
+  const isWin = !isTie && ((isCall && priceDiff > 0) || (!isCall && priceDiff < 0));
+  const status: 'won' | 'lost' | 'tie' = isTie ? 'tie' : isWin ? 'won' : 'lost';
+
+  const stake = Number(trade.investment || 0);
+  const payoutPct = Number(trade.payoutPercentage || 85);
+  const pnl = isWin
+    ? Number(((stake * payoutPct) / 100).toFixed(2))
+    : isTie
+    ? 0
+    : -stake;
+
+  const potentialPayout = Number(((stake * payoutPct) / 100).toFixed(2));
+
+  return {
+    ...trade,
+    status,
+    currentPrice: exitPrice,
+    closePrice: exitPrice,
+    potentialPayout,
+    pnl,
+  };
+}
+
+/**
  * Maps a Supabase user_trades row back to a BinaryTrade object.
  */
 export function mapFromSupabaseRow(row: any): BinaryTrade {
@@ -275,16 +328,29 @@ export function mapFromSupabaseRow(row: any): BinaryTrade {
 
   let status: 'active' | 'won' | 'lost' | 'tie';
   if (rawStatus === 'OPEN' || rawStatus === 'ACTIVE') {
+    const hasExitPrice =
+      row.exit_price !== undefined &&
+      row.exit_price !== null &&
+      Number(row.exit_price) > 0 &&
+      Number(row.exit_price) !== entryPrice;
+
     if (!isExpired) {
       status = 'active';
-    } else if (row.exit_price !== undefined && row.exit_price !== null) {
-      if (direction === 'CALL') {
-        status = exitPrice > entryPrice ? 'won' : exitPrice < entryPrice ? 'lost' : 'tie';
+    } else if (hasExitPrice) {
+      const exitP = Number(row.exit_price);
+      const diff = exitP - entryPrice;
+      const isTie = Math.abs(diff) < 1e-7;
+      if (isTie) {
+        status = 'tie';
+      } else if (direction === 'CALL') {
+        status = diff > 0 ? 'won' : 'lost';
       } else {
-        status = exitPrice < entryPrice ? 'won' : exitPrice > entryPrice ? 'lost' : 'tie';
+        status = diff < 0 ? 'won' : 'lost';
       }
     } else {
-      status = 'lost';
+      // Do NOT arbitrarily mark as 'lost' when exit_price hasn't been written to Supabase yet.
+      // Leave as 'active' so client optimistic settlement calculates the actual win/loss from the live tick.
+      status = 'active';
     }
   } else if (rawStatus === 'WIN' || rawStatus === 'WON') {
     status = 'won';
@@ -293,8 +359,9 @@ export function mapFromSupabaseRow(row: any): BinaryTrade {
   } else if (rawStatus === 'TIE') {
     status = 'tie';
   } else {
-    status = 'lost';
+    status = isExpired ? 'lost' : 'active';
   }
+
 
   const rawAccType = String(row.account_type || 'DEMO').toUpperCase().trim();
   let accountTier = 'demo';
@@ -486,20 +553,42 @@ export function mergeTradesAuthoritatively(
           byCanonicalId.set(key, local);
         }
       } else {
-        // Both exist: if local trade is already settled ('won'|'lost'|'tie') while remote was still 'active', keep local settled state
-        if (local.status !== 'active' && existingRemote.status === 'active') {
+        // Both exist:
+        // Priority 1: Remote is definitively settled ('won'|'lost'|'tie') -> accept settled outcome
+        if (existingRemote.status !== 'active') {
           byCanonicalId.set(key, {
             ...existingRemote,
-            id: local.id,
+            id: local.id || existingRemote.id,
+            accountId: local.accountId || existingRemote.accountId,
+            accountTier: local.accountTier || existingRemote.accountTier,
+            closePrice: existingRemote.closePrice ?? local.closePrice,
+            pnl: existingRemote.pnl ?? local.pnl,
+          });
+        }
+        // Priority 2: Local trade is already settled ('won'|'lost'|'tie') while remote was still 'active' -> preserve local settled result!
+        else if (local.status !== 'active' && existingRemote.status === 'active') {
+          byCanonicalId.set(key, {
+            ...existingRemote,
+            id: local.id || existingRemote.id,
             accountId: local.accountId || existingRemote.accountId,
             status: local.status,
             closePrice: local.closePrice ?? existingRemote.closePrice,
             pnl: local.pnl ?? existingRemote.pnl,
           });
+        }
+        // Priority 3: Both still 'active' but timer reached expiry -> resolve optimistically so it immediately appears in history
+        else if (nowMs >= (Number(local.endTime) || Number(existingRemote.endTime) || 0)) {
+          const optimistic = resolveOptimisticTradeResult(local);
+          byCanonicalId.set(key, {
+            ...existingRemote,
+            ...optimistic,
+            id: local.id || existingRemote.id,
+          });
         } else {
           // Preserve original local accountId if remote had generic fallback accountId
           byCanonicalId.set(key, {
             ...existingRemote,
+            id: local.id || existingRemote.id,
             accountId:
               local.accountId && !existingRemote.accountId?.startsWith('BFT-DEMO')
                 ? local.accountId
@@ -508,6 +597,7 @@ export function mergeTradesAuthoritatively(
           });
         }
       }
+
     }
   }
 
@@ -918,16 +1008,49 @@ export function subscribeUserTrades(userId: string, callback: (payload: any) => 
             .on(
               'postgres_changes',
               {
-                event: '*',
+                event: 'UPDATE',
                 schema: 'public',
                 table: 'user_trades',
                 filter: `user_id=eq.${effectiveUserId}`,
               },
               (payload: any) => {
                 if (!active) return;
-                const eventType = payload.eventType || payload.event;
                 callback({
-                  eventType,
+                  eventType: 'UPDATE',
+                  new: payload.new,
+                  old: payload.old,
+                });
+              }
+            )
+            .on(
+              'postgres_changes',
+              {
+                event: 'INSERT',
+                schema: 'public',
+                table: 'user_trades',
+                filter: `user_id=eq.${effectiveUserId}`,
+              },
+              (payload: any) => {
+                if (!active) return;
+                callback({
+                  eventType: 'INSERT',
+                  new: payload.new,
+                  old: payload.old,
+                });
+              }
+            )
+            .on(
+              'postgres_changes',
+              {
+                event: 'DELETE',
+                schema: 'public',
+                table: 'user_trades',
+                filter: `user_id=eq.${effectiveUserId}`,
+              },
+              (payload: any) => {
+                if (!active) return;
+                callback({
+                  eventType: 'DELETE',
                   new: payload.new,
                   old: payload.old,
                 });
@@ -947,11 +1070,13 @@ export function subscribeUserTrades(userId: string, callback: (payload: any) => 
     const detail = (e as CustomEvent)?.detail;
     if (detail?.trade) {
       callback({
-        eventType: 'SYNC',
+        eventType: detail.type || 'UPDATE',
         trades: [detail.trade],
+        new: mapToSupabaseRow(detail.trade, userId),
       });
     }
   };
+
   if (typeof window !== 'undefined') {
     window.addEventListener('bft-supabase-trade-synced', handleLocalTradeSync);
   }

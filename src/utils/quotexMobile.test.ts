@@ -205,6 +205,163 @@ test('computeUserTradingSummary calculates real trading stats and returns $0.00 
   assert.equal(realSummary.formattedNetProfitLoss, '+$205.00');
   assert.equal(realSummary.totalVolumeTraded, 400);
   assert.equal(realSummary.formattedVolumeTraded, '$400.00');
+
+  // Test Supabase raw rows with uppercase status, 'amount' column, and negative P&L
+  const supaRows = [
+    { id: 's1', amount: 150, status: 'WIN', payout_multiplier: 1.85, potentialPayout: 127.5 },
+    { id: 's2', amount: 100, status: 'LOSS' },
+    { id: 's3', amount: 50, status: 'TIE' },
+    { id: 's4', amount: 200, status: 'OPEN' },
+  ];
+  const supaSummary = computeUserTradingSummary(supaRows);
+  assert.equal(supaSummary.totalTradesCount, 4);
+  assert.equal(supaSummary.winningTradesCount, 1);
+  assert.equal(supaSummary.losingTradesCount, 1);
+  assert.equal(supaSummary.totalCompletedTrades, 3); // 1 win + 1 loss + 1 tie
+  assert.equal(supaSummary.winRatePercent, 33.3);
+  assert.equal(supaSummary.totalVolumeTraded, 500);
+  assert.equal(supaSummary.totalNetProfitLoss, 27.5);
+  assert.equal(supaSummary.formattedNetProfitLoss, '+$27.50');
+});
+
+test('filterTradesForActiveAccount correctly segregates DEMO, SELF_FUNDED, and FUNDED trades', async () => {
+  const { filterTradesForActiveAccount } = await import('./supabaseTradeSync');
+
+  const trades = [
+    { id: 't1', accountId: 'BFT-DEMO', accountTier: 'demo', asset: 'EUR/USD (OTC)' },
+    { id: 't2', accountId: 'BFT-SELF', accountTier: 'personal', asset: 'BTC/USD (OTC)' },
+    { id: 't3', accountId: 'BFT-FUNDED-1', accountTier: 'instant', asset: 'GOLD (OTC)' },
+  ] as any[];
+
+  const demoFiltered = filterTradesForActiveAccount(trades, { id: 'BFT-DEMO', tier: 'demo' });
+  assert.equal(demoFiltered.length, 1);
+  assert.equal(demoFiltered[0].id, 't1');
+
+  const personalFiltered = filterTradesForActiveAccount(trades, { id: 'BFT-SELF', tier: 'personal' });
+  assert.equal(personalFiltered.length, 1);
+  assert.equal(personalFiltered[0].id, 't2');
+
+  const fundedFiltered = filterTradesForActiveAccount(trades, { id: 'BFT-FUNDED-1', tier: 'instant' });
+  assert.equal(fundedFiltered.length, 1);
+  assert.equal(fundedFiltered[0].id, 't3');
+});
+
+test('resolveOptimisticTradeResult accurately resolves CALL, PUT, and TIE trades instantly at expiry', async () => {
+  const { resolveOptimisticTradeResult } = await import('./supabaseTradeSync');
+
+  // Test 1: CALL Win (exit > strike)
+  const callWin = resolveOptimisticTradeResult(
+    {
+      id: 'TRD-CALL-WIN',
+      status: 'active',
+      direction: 'CALL',
+      strikePrice: 1.0850,
+      investment: 100,
+      payoutPercentage: 85,
+    } as any,
+    1.0855
+  );
+  assert.equal(callWin.status, 'won');
+  assert.equal(callWin.pnl, 85);
+  assert.equal(callWin.closePrice, 1.0855);
+
+  // Test 2: CALL Loss (exit < strike)
+  const callLoss = resolveOptimisticTradeResult(
+    {
+      id: 'TRD-CALL-LOSS',
+      status: 'active',
+      direction: 'CALL',
+      strikePrice: 1.0850,
+      investment: 100,
+      payoutPercentage: 85,
+    } as any,
+    1.0845
+  );
+  assert.equal(callLoss.status, 'lost');
+  assert.equal(callLoss.pnl, -100);
+  assert.equal(callLoss.closePrice, 1.0845);
+
+  // Test 3: PUT Win (exit < strike)
+  const putWin = resolveOptimisticTradeResult(
+    {
+      id: 'TRD-PUT-WIN',
+      status: 'active',
+      direction: 'PUT',
+      strikePrice: 1.0850,
+      investment: 100,
+      payoutPercentage: 85,
+    } as any,
+    1.0845
+  );
+  assert.equal(putWin.status, 'won');
+  assert.equal(putWin.pnl, 85);
+  assert.equal(putWin.closePrice, 1.0845);
+
+  // Test 4: PUT Loss (exit > strike)
+  const putLoss = resolveOptimisticTradeResult(
+    {
+      id: 'TRD-PUT-LOSS',
+      status: 'active',
+      direction: 'PUT',
+      strikePrice: 1.0850,
+      investment: 100,
+      payoutPercentage: 85,
+    } as any,
+    1.0855
+  );
+  assert.equal(putLoss.status, 'lost');
+  assert.equal(putLoss.pnl, -100);
+  assert.equal(putLoss.closePrice, 1.0855);
+
+  // Test 5: TIE (exit == strike)
+  const tieTrade = resolveOptimisticTradeResult(
+    {
+      id: 'TRD-TIE',
+      status: 'active',
+      direction: 'CALL',
+      strikePrice: 1.0850,
+      investment: 100,
+      payoutPercentage: 85,
+    } as any,
+    1.0850
+  );
+  assert.equal(tieTrade.status, 'tie');
+  assert.equal(tieTrade.pnl, 0);
+  assert.equal(tieTrade.closePrice, 1.0850);
+});
+
+test('mergeTradesAuthoritatively preserves local settled trade outcome against stale remote OPEN status', async () => {
+  const { mergeTradesAuthoritatively } = await import('./supabaseTradeSync');
+
+  const localTrades = [
+    {
+      id: 'TRD-LOCAL-WIN',
+      status: 'won',
+      direction: 'CALL',
+      strikePrice: 100,
+      closePrice: 105,
+      investment: 50,
+      pnl: 42.5,
+      endTime: Date.now() - 5000,
+    },
+  ] as any[];
+
+  // Stale remote row that hasn't written settled status yet
+  const remoteTrades = [
+    {
+      id: 'TRD-LOCAL-WIN',
+      status: 'active',
+      direction: 'CALL',
+      strikePrice: 100,
+      investment: 50,
+      endTime: Date.now() - 5000,
+    },
+  ] as any[];
+
+  const merged = mergeTradesAuthoritatively(localTrades, remoteTrades);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].status, 'won', 'Local won status must take authority over stale remote active status');
+  assert.equal(merged[0].pnl, 42.5);
 });
 
 

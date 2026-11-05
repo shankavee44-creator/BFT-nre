@@ -19,7 +19,7 @@ import {
 } from '../utils/propRules';
 import { DEFAULT_ASSETS, findAssetBySymbol } from '../utils/storage';
 import { getAssetMarketState } from '../utils/priceFeedEngine';
-import { isTradeActiveOrOpen } from '../utils/supabaseTradeSync';
+import { isTradeActiveOrOpen, resolveOptimisticTradeResult } from '../utils/supabaseTradeSync';
 import { AssetFlagIcon } from './CountryFlagIcon';
 
 interface TradingDrawerProps {
@@ -54,18 +54,32 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
     setIsCollapsed(false);
   }, [initialTab]);
 
-  const openTrades = trades.filter((t) => isTradeActiveOrOpen(t));
-  const closedTrades = trades
-    .filter((t) => !isTradeActiveOrOpen(t))
-    .sort((a, b) => (b.endTime || b.startTime) - (a.endTime || a.startTime));
+  const openTrades = React.useMemo(
+    () => trades.filter((t) => isTradeActiveOrOpen(t) && nowMs < t.endTime),
+    [trades, nowMs]
+  );
+  const closedTrades = React.useMemo(() => {
+    return trades
+      .filter((t) => !isTradeActiveOrOpen(t) || nowMs >= t.endTime)
+      .map((t) => {
+        if (isTradeActiveOrOpen(t) && nowMs >= t.endTime) {
+          const tradeMarket = getAssetMarketState(t.asset);
+          const livePrice = t.currentPrice ?? tradeMarket?.lastPrice ?? currentPrice;
+          return resolveOptimisticTradeResult(t, livePrice);
+        }
+        return t;
+      })
+      .sort((a, b) => (b.endTime || b.startTime) - (a.endTime || a.startTime));
+  }, [trades, nowMs, currentPrice]);
 
   useEffect(() => {
-    if (openTrades.length === 0) return;
+    const hasOpenTrades = trades.some((t) => isTradeActiveOrOpen(t));
+    if (!hasOpenTrades) return;
     const timer = setInterval(() => {
       setNowMs(Date.now());
-    }, 1000);
+    }, 250);
     return () => clearInterval(timer);
-  }, [openTrades.length]);
+  }, [trades]);
 
   // Risk metrics
   const isUnrestrictedSelfOrDemo = isPersonalLiveAccount(account) || isDemoAccount(account);
@@ -327,8 +341,14 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
                               <div
                                 key={t.id}
                                 data-testid={`history-trade-row-${t.id}`}
+                                className={`p-2 rounded-xl border flex items-center justify-between gap-2 text-xs cursor-pointer transition-colors ${
+                                  isWin
+                                    ? 'bg-[#081a14]/70 hover:bg-[#081a14]/90 border-emerald-500/30'
+                                    : isTie
+                                    ? 'bg-[#18150a]/70 hover:bg-[#18150a]/90 border-amber-500/30'
+                                    : 'bg-[#1a0a0e]/70 hover:bg-[#1a0a0e]/90 border-rose-500/30'
+                                }`}
                                 onClick={() => onInspectClosedTrade?.(t)}
-                                className="p-2 rounded-xl bg-[#141720] hover:bg-[#191d28] border border-white/10 flex items-center justify-between gap-2 text-xs cursor-pointer transition-colors"
                               >
                                 <div className="min-w-0">
                                   <div className="flex items-center gap-1.5 font-bold text-white text-[10.5px]">
@@ -344,9 +364,13 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
                                     </span>
                                   </div>
 
-                                  <div className="flex items-center gap-1.5 text-[9.5px] text-slate-400 mt-0.5 tabular-nums">
+                                  <div className="flex items-center gap-1.5 text-[9px] text-slate-400 mt-0.5 tabular-nums">
                                     <span className={isCall ? 'text-[#00e676] font-bold' : 'text-rose-400 font-bold'}>
                                       {isCall ? '▲ Buy' : '▼ Sell'} ${t.investment}
+                                    </span>
+                                    <span>·</span>
+                                    <span>
+                                      {t.strikePrice ? t.strikePrice.toFixed(assetObj?.pipDecimals ?? 2) : '—'} → {(t.closePrice ?? t.currentPrice ?? t.strikePrice).toFixed(assetObj?.pipDecimals ?? 2)}
                                     </span>
                                     <span>·</span>
                                     <span>
@@ -360,16 +384,27 @@ export const TradingDrawer: React.FC<TradingDrawerProps> = ({
                                 </div>
 
                                 <div className="text-right shrink-0 tabular-nums">
-                                  <div
-                                    className={`font-black text-[11px] ${
-                                      isWin ? 'text-[#00e676]' : isTie ? 'text-amber-400' : 'text-rose-400'
-                                    }`}
-                                  >
-                                    {isWin
-                                      ? `+$${Math.abs(netPnl).toFixed(2)}`
-                                      : isTie
-                                      ? '±$0.00'
-                                      : `-$${Math.abs(t.investment).toFixed(2)}`}
+                                  <div className="flex items-center justify-end gap-1 mb-0.5">
+                                    <span className={`px-1 py-0.2 rounded text-[7.5px] font-black uppercase tracking-wider ${
+                                      isWin
+                                        ? 'bg-emerald-500/20 text-[#00e676] border border-emerald-500/30'
+                                        : isTie
+                                        ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                                        : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                                    }`}>
+                                      {isWin ? 'WIN' : isTie ? 'TIE' : 'LOSS'}
+                                    </span>
+                                    <span
+                                      className={`font-black text-[11px] ${
+                                        isWin ? 'text-[#00e676]' : isTie ? 'text-amber-400' : 'text-rose-400'
+                                      }`}
+                                    >
+                                      {isWin
+                                        ? `+$${Math.abs(netPnl).toFixed(2)}`
+                                        : isTie
+                                        ? '±$0.00'
+                                        : `-$${Math.abs(t.investment).toFixed(2)}`}
+                                    </span>
                                   </div>
                                   <div className="text-[9px] text-slate-500">
                                     {isWin

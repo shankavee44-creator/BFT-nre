@@ -30,6 +30,7 @@ import {
   mergeRealtimePurchase,
 } from '../config/directDeposit.ts';
 import { isTwoFactorEnabledOnProfile } from './authOtpLogic.ts';
+import { ensureTradeUuid } from './supabaseTradeSync.ts';
 
 
 export {
@@ -288,7 +289,8 @@ export function hasActiveTradesForColumn(
  * Checks whether a trade has already been settled to prevent duplicate settlement credits.
  */
 export function isTradeAlreadySettled(tradeId: string): boolean {
-  return settledTradeIdsSet.has(tradeId);
+  if (!tradeId) return false;
+  return settledTradeIdsSet.has(tradeId) || settledTradeIdsSet.has(ensureTradeUuid(tradeId));
 }
 
 /**
@@ -317,7 +319,7 @@ export function recordAtomicTradePlacement(params: {
   const endTime =
     params.endTime ?? (params.durationSeconds ? nowMs + params.durationSeconds * 1000 : nowMs + 60000);
 
-  activeTradesLedger.set(params.tradeId, {
+  const entry = {
     tradeId: params.tradeId,
     accountId: params.accountId,
     column: params.column,
@@ -326,7 +328,11 @@ export function recordAtomicTradePlacement(params: {
     deductedBalance,
     placedAt: nowMs,
     endTime,
-  });
+  };
+
+  activeTradesLedger.set(params.tradeId, entry);
+  activeTradesLedger.set(ensureTradeUuid(params.tradeId), entry);
+
 
   if (params.column) {
     const existingMutation = localBalanceMutations[params.column];
@@ -429,9 +435,15 @@ export function recordAtomicTradeSettlement(params: {
   nowMs?: number;
 }): void {
   const nowMs = params.nowMs ?? Date.now();
-  const placementEntry = activeTradesLedger.get(params.tradeId);
+  const placementEntry =
+    activeTradesLedger.get(params.tradeId) ||
+    activeTradesLedger.get(ensureTradeUuid(params.tradeId));
+
   activeTradesLedger.delete(params.tradeId);
+  activeTradesLedger.delete(ensureTradeUuid(params.tradeId));
   settledTradeIdsSet.add(params.tradeId);
+  settledTradeIdsSet.add(ensureTradeUuid(params.tradeId));
+
 
   const column = params.column ?? placementEntry?.column ?? null;
   if (column) {

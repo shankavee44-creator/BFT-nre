@@ -2533,6 +2533,11 @@ import {
   evaluateProviderEligibility,
   type CopyTraderProfileData,
 } from './copyTradingRules';
+import {
+  saveCopyTradingSubscriptionToSupabase,
+  cancelCopyTradingSubscriptionInSupabase,
+  fetchUserCopySubscriptionsFromSupabase,
+} from './copyTradingSync';
 
 export async function apiGetCopyTraders(
   category: 'instant_funded' | 'self_capital' | 'all' = 'instant_funded',
@@ -2663,72 +2668,89 @@ export async function apiRegisterCopyProvider(params: {
 
 export async function apiCopyTrader(params: {
   userId?: string;
+  userEmail?: string;
   providerId: string;
-  providerNumericId?: string;
+  providerNumericId?: string | number;
   providerName?: string;
   copierAccountId?: string;
   copierAccountType?: string;
   perTradeAllocationType?: 'amount' | 'percentage';
   perTradeAllocationValue?: number;
   allocatedCapital: number;
+  tradeAmount?: number;
   maxLossLimit?: number;
+  stopLoss?: number;
   takeProfitLimit?: number;
+  takeProfit?: number;
+  maxDrawdown?: number;
   tradeSizingType?: 'proportionate' | 'fixed';
   sizingMultiplier?: number;
 }) {
-  const effectiveUserId = params.userId || 'usr_bft_001';
-  const targetUuid = UUID_REGEX.test(effectiveUserId) ? effectiveUserId : null;
+  const tradeAmount = Number(params.tradeAmount ?? params.allocatedCapital ?? params.perTradeAllocationValue ?? 100);
+  const stopLoss = Number(params.stopLoss ?? params.maxLossLimit ?? 50);
+  const takeProfit = Number(params.takeProfit ?? params.takeProfitLimit ?? 150);
+  const maxDrawdown = Number(params.maxDrawdown ?? 5.0);
 
-  if (targetUuid) {
-    try {
-      await supabase
-        .from('copy_subscriptions')
-        .upsert(
-          {
-            user_id: targetUuid,
-            provider_id: params.providerId,
-            allocated_capital: params.allocatedCapital,
-            per_trade_allocation_type: params.perTradeAllocationType || 'amount',
-            per_trade_allocation_value: params.perTradeAllocationValue ?? params.allocatedCapital,
-            max_loss_limit: params.maxLossLimit ?? 50,
-            take_profit_limit: params.takeProfitLimit ?? 150,
-            commission_pct: 0,
-            status: 'active',
-          },
-          { onConflict: 'user_id,provider_id' }
-        )
-        .then(undefined, () => {});
-    } catch {
-      // ignore if table not present
-    }
+  // 1. Direct Supabase insert into copy_trading_subscriptions with duplicate check
+  const supaResult = await saveCopyTradingSubscriptionToSupabase({
+    userId: params.userId,
+    userEmail: params.userEmail,
+    accountId: params.copierAccountId,
+    accountType: params.copierAccountType,
+    providerId: params.providerId,
+    providerNumericId: params.providerNumericId,
+    providerName: params.providerName,
+    trade_amount: tradeAmount,
+    stop_loss: stopLoss,
+    take_profit: takeProfit,
+    max_drawdown: maxDrawdown,
+    status: 'active',
+  });
+
+  if (!supaResult.ok) {
+    return {
+      ok: false,
+      isDuplicate: supaResult.isDuplicate,
+      error: supaResult.error || 'Failed to save copy trading subscription.',
+    };
   }
 
+  // 2. Also notify server backend
   try {
-    const res = await fetch(`${API_BASE}/api/copy-trading/copy`, {
+    await fetch(`${API_BASE}/api/copy-trading/copy`, {
       method: 'POST',
       headers: getAuthHeaders(),
-      body: JSON.stringify(params),
+      body: JSON.stringify({
+        ...params,
+        tradeAmount,
+        stopLoss,
+        takeProfit,
+        maxDrawdown,
+      }),
     });
-    const data = await safeJsonResponse(res);
-    if (data.ok) return data;
   } catch {
-    // fallback to local subscription object
+    // Non-blocking fallback if server API is offline
   }
 
   return {
     ok: true,
+    message: supaResult.message || 'Successfully subscribed to copy trader.',
     subscription: {
-      id: `SUB-${effectiveUserId}-${params.providerId}`,
+      id: supaResult.subscription?.id || `SUB-${params.userId || 'usr'}-${params.providerId}`,
       provider_id: params.providerId,
       provider_numeric_id: params.providerNumericId,
       provider_name: params.providerName,
-      copier_account_id: params.copierAccountId,
+      copier_account_id: supaResult.subscription?.copier_account_id || params.copierAccountId,
       copier_account_type: params.copierAccountType,
       per_trade_allocation_type: params.perTradeAllocationType || 'amount',
-      per_trade_allocation_value: params.perTradeAllocationValue ?? params.allocatedCapital,
-      allocated_capital: params.allocatedCapital,
-      max_loss_limit: params.maxLossLimit ?? 50,
-      take_profit_limit: params.takeProfitLimit ?? 150,
+      per_trade_allocation_value: tradeAmount,
+      allocated_capital: tradeAmount,
+      trade_amount: tradeAmount,
+      max_loss_limit: stopLoss,
+      stop_loss: stopLoss,
+      take_profit_limit: takeProfit,
+      take_profit: takeProfit,
+      max_drawdown: maxDrawdown,
       trade_sizing_type: params.tradeSizingType || 'proportionate',
       sizing_multiplier: params.sizingMultiplier || 1.0,
       current_pnl: 0,
@@ -2738,31 +2760,22 @@ export async function apiCopyTrader(params: {
   };
 }
 
-export async function apiCancelCopy(providerId: string, userId?: string) {
-  const effectiveUserId = userId || 'usr_bft_001';
-  const targetUuid = UUID_REGEX.test(effectiveUserId) ? effectiveUserId : null;
+export async function apiCancelCopy(providerId: string, userId?: string, accountId?: string) {
+  // 1. Cancel in Supabase copy_trading_subscriptions
+  await cancelCopyTradingSubscriptionInSupabase({
+    providerId,
+    userId,
+    accountId,
+  });
 
-  if (targetUuid) {
-    try {
-      await supabase
-        .from('copy_subscriptions')
-        .delete()
-        .eq('user_id', targetUuid)
-        .eq('provider_id', providerId)
-        .then(undefined, () => {});
-    } catch {
-      // ignore
-    }
-  }
-
+  // 2. Cancel in backend server
   try {
-    const res = await fetch(`${API_BASE}/api/copy-trading/cancel`, {
+    const effectiveUserId = userId || 'usr_bft_001';
+    await fetch(`${API_BASE}/api/copy-trading/cancel`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify({ providerId, userId: effectiveUserId }),
     });
-    const data = await safeJsonResponse(res);
-    if (data.ok) return data;
   } catch {
     // fallback
   }
@@ -2771,14 +2784,47 @@ export async function apiCancelCopy(providerId: string, userId?: string) {
 }
 
 export async function apiGetSubscriptions(userId?: string) {
+  // 1. Fetch from Supabase copy_trading_subscriptions
+  const supaSubs = await fetchUserCopySubscriptionsFromSupabase(userId);
+  const mappedSupa: any[] = supaSubs.map((s) => ({
+    id: s.id,
+    provider_id: s.provider_id,
+    copier_account_id: s.copier_account_id,
+    per_trade_allocation_type: 'amount',
+    per_trade_allocation_value: Number(s.trade_amount || 100),
+    allocated_capital: Number(s.trade_amount || 100),
+    trade_amount: Number(s.trade_amount || 100),
+    max_loss_limit: Number(s.stop_loss || 0),
+    stop_loss: Number(s.stop_loss || 0),
+    take_profit_limit: Number(s.take_profit || 0),
+    take_profit: Number(s.take_profit || 0),
+    max_drawdown: Number(s.max_drawdown || 5.0),
+    trade_sizing_type: 'fixed',
+    sizing_multiplier: 1.0,
+    status: s.status,
+    current_pnl: 0,
+    commission_pct: 0,
+  }));
+
   try {
     const qs = userId ? `?userId=${encodeURIComponent(userId)}` : '';
     const res = await fetch(`${API_BASE}/api/copy-trading/subscriptions${qs}`, {
       headers: getAuthHeaders(),
     });
-    return await safeJsonResponse(res, { subscriptions: [] });
-  } catch (e: any) {
-    return { ok: false, subscriptions: [], error: e?.message || 'Failed to fetch subscriptions' };
+    const serverData = await safeJsonResponse(res, { subscriptions: [] });
+    if (serverData.ok && Array.isArray(serverData.subscriptions)) {
+      const existingSet = new Set(mappedSupa.map((m) => m.provider_id));
+      for (const s of serverData.subscriptions) {
+        if (!existingSet.has(s.provider_id)) {
+          mappedSupa.push(s);
+          existingSet.add(s.provider_id);
+        }
+      }
+    }
+  } catch {
+    // ignore
   }
+
+  return { ok: true, subscriptions: mappedSupa };
 }
 

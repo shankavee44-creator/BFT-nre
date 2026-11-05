@@ -377,6 +377,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
   const [perTradeAllocationValue, setPerTradeAllocationValue] = useState<number>(100);
   const [maxLossStopUsd, setMaxLossStopUsd] = useState<number>(250);
   const [targetProfitStopUsd, setTargetProfitStopUsd] = useState<number>(500);
+  const [maxDrawdownPercent, setMaxDrawdownPercent] = useState<number>(5.0);
 
   // Provider Registration State
   const [providerStrategyName, setProviderStrategyName] = useState<string>('Institutional OTC Alpha');
@@ -580,6 +581,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
       setPerTradeAllocationValue(defaultPerTrade);
       setMaxLossStopUsd(Math.max(25, Math.round(avail * 0.05)));
       setTargetProfitStopUsd(Math.max(50, Math.round(avail * 0.15)));
+      setMaxDrawdownPercent(trader.max_drawdown ? Number(trader.max_drawdown) : 5.0);
     }
 
     setViewingTrader(null);
@@ -588,7 +590,8 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
 
   const handleCancelSubscription = async (trader: CopyTraderProfileData) => {
     soundEngine.playUiClick();
-    await apiCancelCopy(trader.id, userProfile?.id);
+    const targetAccountId = selectedCopyAccountId || activeAccount?.id;
+    await apiCancelCopy(trader.id, userProfile?.id, targetAccountId);
     const next = { ...activeSubscriptions };
     delete next[trader.id];
     saveSubscriptionsMap(next);
@@ -635,8 +638,14 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
       return;
     }
 
+    const tradeAmount = validation.perTradeDollarAmount;
+    const stopLoss = validation.maxLossStopUsd;
+    const takeProfit = validation.targetProfitStopUsd;
+    const maxDrawdown = maxDrawdownPercent;
+
     const res = await apiCopyTrader({
       userId: userProfile?.id,
+      userEmail: userProfile?.email,
       providerId: showRiskConfigModal.id,
       providerNumericId: showRiskConfigModal.numeric_id,
       providerName: showRiskConfigModal.provider_name,
@@ -644,9 +653,13 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
       copierAccountType: singleAccountEval.accountCategory,
       perTradeAllocationType,
       perTradeAllocationValue,
-      allocatedCapital: validation.perTradeDollarAmount,
-      maxLossLimit: validation.maxLossStopUsd,
-      takeProfitLimit: validation.targetProfitStopUsd,
+      allocatedCapital: tradeAmount,
+      tradeAmount,
+      maxLossLimit: stopLoss,
+      stopLoss,
+      takeProfitLimit: takeProfit,
+      takeProfit,
+      maxDrawdown,
       tradeSizingType: perTradeAllocationType === 'percentage' ? 'proportionate' : 'fixed',
       sizingMultiplier: 1.0,
     });
@@ -661,9 +674,9 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
         copier_account_type: singleAccountEval.accountCategory,
         per_trade_allocation_type: perTradeAllocationType,
         per_trade_allocation_value: perTradeAllocationValue,
-        allocated_capital: validation.perTradeDollarAmount,
-        max_loss_limit: validation.maxLossStopUsd,
-        take_profit_limit: validation.targetProfitStopUsd,
+        allocated_capital: tradeAmount,
+        max_loss_limit: stopLoss,
+        take_profit_limit: takeProfit,
         trade_sizing_type: perTradeAllocationType === 'percentage' ? 'proportionate' : 'fixed',
         sizing_multiplier: 1.0,
         status: 'active',
@@ -687,12 +700,12 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
       );
 
       triggerToast(
-        `Copy Active: Now copying ${showRiskConfigModal.provider_name} (#${showRiskConfigModal.numeric_id}) at $${validation.perTradeDollarAmount}/trade • 100% Profit Keep (0% Fee).`,
+        `Copy Active: Now copying ${showRiskConfigModal.provider_name} (#${showRiskConfigModal.numeric_id}) at $${tradeAmount}/trade (SL: $${stopLoss}, TP: $${takeProfit}, Max DD: ${maxDrawdown}%) • 100% Profit Keep (0% Fee).`,
         'success'
       );
       setShowRiskConfigModal(null);
     } else {
-      const errMsg = res.error || 'Failed to activate copy subscription.';
+      const errMsg = res.error || 'Failed to save copy trading subscription to database.';
       setRiskErrorNotice(errMsg);
       triggerToast(errMsg, 'error');
     }
@@ -1451,11 +1464,11 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
               />
             </div>
 
-            {/* Max Loss Stop & Target Profit Stop */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* Max Loss Stop, Target Profit Stop & Max Drawdown Stop */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
               <div className="space-y-1.5">
                 <label className="text-[10px] font-mono font-bold uppercase text-rose-400 block">
-                  3. Max Loss Stop (Stop Copying $)
+                  3. Max Loss Stop ($)
                 </label>
                 <input
                   type="number"
@@ -1463,13 +1476,13 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                   aria-label="Max Loss Stop in USD"
                   value={maxLossStopUsd}
                   onChange={(e) => setMaxLossStopUsd(Math.max(0, Number(e.target.value)))}
-                  className="w-full bg-[#121726] border border-slate-700 focus:border-rose-500 rounded-xl px-3.5 py-2.5 text-white text-sm font-mono outline-none"
+                  className="w-full bg-[#121726] border border-slate-700 focus:border-rose-500 rounded-xl px-3 py-2 text-white text-xs sm:text-sm font-mono outline-none"
                 />
               </div>
 
               <div className="space-y-1.5">
                 <label className="text-[10px] font-mono font-bold uppercase text-[#00F5A0] block">
-                  4. Target Profit Stop (Take Profit $)
+                  4. Target Profit ($)
                 </label>
                 <input
                   type="number"
@@ -1477,7 +1490,24 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                   aria-label="Target Profit Stop in USD"
                   value={targetProfitStopUsd}
                   onChange={(e) => setTargetProfitStopUsd(Math.max(0, Number(e.target.value)))}
-                  className="w-full bg-[#121726] border border-slate-700 focus:border-[#00F5A0] rounded-xl px-3.5 py-2.5 text-white text-sm font-mono outline-none"
+                  className="w-full bg-[#121726] border border-slate-700 focus:border-[#00F5A0] rounded-xl px-3 py-2 text-white text-xs sm:text-sm font-mono outline-none"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-mono font-bold uppercase text-amber-400 block">
+                  5. Max Drawdown (%)
+                </label>
+                <input
+                  type="number"
+                  step="0.5"
+                  min="0.5"
+                  max="50"
+                  data-testid="max-drawdown-stop-input"
+                  aria-label="Max Drawdown Percentage"
+                  value={maxDrawdownPercent}
+                  onChange={(e) => setMaxDrawdownPercent(Math.max(0.5, Number(e.target.value)))}
+                  className="w-full bg-[#121726] border border-slate-700 focus:border-amber-400 rounded-xl px-3 py-2 text-white text-xs sm:text-sm font-mono outline-none"
                 />
               </div>
             </div>
