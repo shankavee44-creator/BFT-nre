@@ -1273,6 +1273,73 @@ export interface UserTradingSummaryMetrics {
   formattedNetProfitLoss: string;
   totalVolumeTraded: number;
   formattedVolumeTraded: string;
+  hasActiveTradesData?: boolean;
+}
+
+/**
+ * Strict Conditional Account Filter:
+ * Evaluates whether an account is eligible to contribute to live trading statistics.
+ * Rules:
+ * 1. Must not be a Demo account.
+ * 2. If a live account has a balance of 0 (unfunded/empty) or zero completed trades, its metrics
+ *    must NOT corrupt the overall summary.
+ * 3. Overall summary stats should only calculate data from accounts that actually have active funds
+ *    (balance > 0) AND active trade histories (completed trades > 0).
+ */
+export function isAccountEligibleForTradingSummary(
+  account: any,
+  trades: Array<BinaryTrade | Record<string, any>> = []
+): boolean {
+  if (!account || typeof account !== 'object') return false;
+  if (resolveSupabaseAccountType(account) === 'DEMO') return false;
+
+  const currentBalance = Number(account.currentBalance ?? account.equity ?? 0);
+  if (currentBalance <= 0) return false; // Strict conditional check: balance of 0 is excluded
+
+  // Count completed trades belonging to this account
+  const accountTrades = trades.filter((t: any) => {
+    if (t.accountId) return t.accountId === account.id;
+    const tTier = String(t.accountTier || t.accountType || '').toLowerCase();
+    const aTier = String(account.tier || account.accountType || '').toLowerCase();
+    return tTier.length > 0 && tTier === aTier;
+  });
+
+  const completedTradesCount = accountTrades.filter((t: any) => {
+    const s = String(t.status || '').toUpperCase();
+    return s === 'WON' || s === 'WIN' || s === 'LOST' || s === 'LOSS' || s === 'TIE';
+  }).length;
+
+  // Strict conditional check: zero completed trades excluded
+  if (completedTradesCount === 0 && (!account.tradesCount || account.tradesCount <= 0)) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Filters a raw list of trades strictly to those belonging to eligible funded live accounts
+ * with completed trade histories.
+ */
+export function filterTradesFromEligibleAccounts(
+  trades: Array<BinaryTrade | Record<string, any>> = [],
+  accounts: Array<any> = []
+): Array<BinaryTrade | Record<string, any>> {
+  if (!Array.isArray(trades) || trades.length === 0) return [];
+  if (!Array.isArray(accounts) || accounts.length === 0) return trades;
+
+  const eligibleAccountIds = new Set<string>();
+  for (const acc of accounts) {
+    if (isAccountEligibleForTradingSummary(acc, trades)) {
+      eligibleAccountIds.add(acc.id);
+    }
+  }
+
+  if (eligibleAccountIds.size === 0) {
+    return [];
+  }
+
+  return trades.filter((t: any) => t.accountId && eligibleAccountIds.has(t.accountId));
 }
 
 /**
@@ -1281,11 +1348,17 @@ export interface UserTradingSummaryMetrics {
  * - Win Rate (%) = (Winning Trades / Total Completed Trades) * 100
  * - Total Net Profit/Loss ($)
  * - Total Volume Traded ($)
- * When the user has no trade history yet, returns `$0.00` and `0%` accurately.
+ * When the user has no trade history yet, returns `$0.00` and `0%` (or `N/A`) accurately.
  */
 export function computeUserTradingSummary(
-  trades: Array<BinaryTrade | Record<string, any>> | undefined | null
+  trades: Array<BinaryTrade | Record<string, any>> | undefined | null,
+  accounts?: Array<any> | null
 ): UserTradingSummaryMetrics {
+  // If accounts list is provided, strictly filter trades to eligible funded live accounts
+  if (Array.isArray(accounts) && accounts.length > 0) {
+    trades = filterTradesFromEligibleAccounts(trades || [], accounts);
+  }
+
   if (!Array.isArray(trades) || trades.length === 0) {
     return {
       totalTradesCount: 0,
@@ -1293,11 +1366,12 @@ export function computeUserTradingSummary(
       losingTradesCount: 0,
       totalCompletedTrades: 0,
       winRatePercent: 0,
-      formattedWinRate: '0%',
+      formattedWinRate: accounts !== undefined ? 'N/A' : '0%',
       totalNetProfitLoss: 0,
       formattedNetProfitLoss: '$0.00',
       totalVolumeTraded: 0,
       formattedVolumeTraded: '$0.00',
+      hasActiveTradesData: false,
     };
   }
 
@@ -1352,7 +1426,7 @@ export function computeUserTradingSummary(
   const winRatePercent = Number(rawWinRate.toFixed(1));
   const formattedWinRate =
     totalCompletedTrades === 0
-      ? '0%'
+      ? (accounts !== undefined ? 'N/A' : '0%')
       : Number.isInteger(winRatePercent)
       ? `${winRatePercent}%`
       : `${winRatePercent.toFixed(1)}%`;
@@ -1388,6 +1462,7 @@ export function computeUserTradingSummary(
     formattedNetProfitLoss,
     totalVolumeTraded,
     formattedVolumeTraded,
+    hasActiveTradesData: totalTradesCount > 0,
   };
 }
 

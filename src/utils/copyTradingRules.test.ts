@@ -282,3 +282,69 @@ test('4. 200-Trader Pool & 45-Minute Dynamic Rotation & Numeric ID Search', () =
   assert.equal(rotInfo.intervalMinutes, 45);
   assert.equal(rotInfo.secondsUntilNextRotation, 30 * 60);
 });
+
+test('5. Top Copy Trading Leaderboard profiles feature authentic top traders from India, Pakistan, and Bangladesh with realistic metrics', () => {
+  const pool = generate200TraderPool(Date.now());
+  const instantResult = queryCopyTradersPool({
+    pool,
+    category: 'instant_funded',
+    limit: 10,
+  });
+
+  const expectedSouthAsianNames = new Set([
+    'Rajesh Sharma',
+    'Amit Patel',
+    'Priya Verma',
+    'Vikram Singh',
+    'Muhammad Ali',
+    'Ahmed Khan',
+    'Fatima Malik',
+    'Usman Tariq',
+    'Tanvir Ahmed',
+    'Rakibul Hasan',
+    'Nusrat Jahan',
+    'Shakil Mahmud',
+  ]);
+
+  const validCountries = new Set(['India', 'Pakistan', 'Bangladesh']);
+  const validFlags = new Set(['🇮🇳', '🇵🇰', '🇧🇩']);
+  const validCodes = new Set(['IN', 'PK', 'BD']);
+
+  assert.equal(instantResult.traders.length, 10);
+
+  instantResult.traders.forEach((trader, idx) => {
+    assert.equal(trader.rank, idx + 1);
+    assert.ok(
+      expectedSouthAsianNames.has(trader.provider_name),
+      `Trader ${trader.provider_name} must be from the requested authentic Indian, Pakistani, or Bangladeshi names`
+    );
+    assert.ok(validCountries.has(trader.country), `Country must be India, Pakistan, or Bangladesh (got ${trader.country})`);
+    assert.ok(validCodes.has(trader.country_code), `Country code must be IN, PK, or BD (got ${trader.country_code})`);
+    assert.ok(validFlags.has(trader.flag), `Flag must be 🇮🇳, 🇵🇰, or 🇧🇩 (got ${trader.flag})`);
+    assert.ok(trader.win_rate_3m >= 60, `Win rate must be at least 60% (was ${trader.win_rate_3m}%)`);
+    assert.ok(trader.daily_profit > 0);
+    assert.ok(trader.daily_profit_pct > 0);
+    assert.ok(trader.current_copiers > 0);
+    assert.ok(trader.current_copiers <= MAX_COPIERS_PER_TRADER);
+  });
+
+  // Verify Self-Capital top traders also feature authentic South Asian profiles
+  const selfCapitalResult = queryCopyTradersPool({
+    pool,
+    category: 'self_capital',
+    limit: 10,
+  });
+
+  assert.equal(selfCapitalResult.traders.length, 10);
+  selfCapitalResult.traders.forEach((trader, idx) => {
+    assert.equal(trader.rank, idx + 1);
+    assert.ok(
+      expectedSouthAsianNames.has(trader.provider_name),
+      `Self-capital trader ${trader.provider_name} must be from the requested authentic names`
+    );
+    assert.ok(validCountries.has(trader.country));
+    assert.ok(validCodes.has(trader.country_code));
+    assert.ok(validFlags.has(trader.flag));
+    assert.ok(trader.win_rate_3m >= 60);
+  });
+});

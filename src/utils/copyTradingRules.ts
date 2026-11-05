@@ -748,54 +748,74 @@ export function deterministicHash(input: string): number {
 }
 
 const FIRST_NAMES = [
-  'Viktor', 'Kasun', 'Arjun', 'Elena', 'Liam', 'Marco', 'Faizul', 'Tariq', 'Zulkifli', 'Alexander',
-  'Rashid', 'Nimal', 'Bilal', 'Mohamed', 'Azlan', 'Oliver', 'Sofia', 'Lucas', 'Emma', 'David',
-  'Zoe', 'Hans', 'Yuki', 'Chen', 'Svetlana', 'Mateo', 'Aiden', 'Chloe', 'Ibrahim', 'Priya',
-  'Rohan', 'Kenji', 'Fatima', 'Henrik', 'jaan', 'Diego', 'Amara', 'Nikolai', 'Zayd', 'Sora',
+  'Rajesh', 'Muhammad', 'Tanvir', 'Amit', 'Ahmed', 'Rakibul', 'Priya', 'Fatima', 'Nusrat', 'Vikram',
+  'Usman', 'Shakil', 'Arjun', 'Hamza', 'Tariq', 'Bilal', 'Ananya', 'Rohan', 'Syed', 'Farhan',
+  'Imran', 'Zubair', 'Shahid', 'Mustafa', 'Hassan', 'Mahmud', 'Sabbir', 'Tamim', 'Mushfiq', 'Shoriful',
+  'Taslim', 'Kabir', 'Deepak', 'Sanjay', 'Sunil', 'Neha', 'Pooja', 'Rahul', 'Aditya', 'Aarav',
 ];
 
 const LAST_NAMES = [
-  'Vance', 'Perera', 'Malhotra', 'Rostova', 'Davies', 'Rossi', 'Islam', 'Al-Mansoor', 'Rahman', 'Sterling',
-  'Al-Maktoum', 'Jayasinghe', 'Ahmed', 'Farhan', 'Shah', 'Mercer', 'Garcia', 'Bernard', 'Watson', 'Miller',
-  'Chen', 'Müller', 'Sato', 'Wei', 'Petrova', 'Silva', 'Kowalski', 'Novak', 'Qureshi', 'Sharma',
-  'Deshmukh', 'Takahashi', 'Al-Hashemi', 'Lindqvist', 'Vermeer', 'Mendoza', 'Okafor', 'Volkov', 'bin Zayed', 'Watanabe',
+  'Sharma', 'Ali', 'Ahmed', 'Patel', 'Khan', 'Hasan', 'Verma', 'Malik', 'Jahan', 'Singh',
+  'Tariq', 'Mahmud', 'Malhotra', 'Qureshi', 'Chowdhury', 'Hossain', 'Rahman', 'Siddiqui', 'Shah', 'Farooqi',
+  'Deshmukh', 'Gupta', 'Iqbal', 'Islam', 'Kazi', 'Miah', 'Akter', 'Bhowmick', 'Mukherjee', 'Banerjee',
+  'Chatterjee', 'Reddy', 'Nair', 'Bhat', 'Abbasi', 'Butt', 'Mirza', 'Raza', 'Bukhari', 'Sultana',
 ];
 
 const COUNTRIES: Array<{ name: string; code: string; flag: string }> = [
-  { name: 'United Arab Emirates', code: 'AE', flag: '🇦🇪' },
-  { name: 'Sri Lanka', code: 'LK', flag: '🇱🇰' },
   { name: 'India', code: 'IN', flag: '🇮🇳' },
-  { name: 'United Kingdom', code: 'GB', flag: '🇬🇧' },
+  { name: 'Pakistan', code: 'PK', flag: '🇵🇰' },
+  { name: 'Bangladesh', code: 'BD', flag: '🇧🇩' },
+  { name: 'India', code: 'IN', flag: '🇮🇳' },
+  { name: 'Pakistan', code: 'PK', flag: '🇵🇰' },
+  { name: 'Bangladesh', code: 'BD', flag: '🇧🇩' },
+  { name: 'United Arab Emirates', code: 'AE', flag: '🇦🇪' },
   { name: 'Singapore', code: 'SG', flag: '🇸🇬' },
-  { name: 'United States', code: 'US', flag: '🇺🇸' },
   { name: 'Malaysia', code: 'MY', flag: '🇲🇾' },
+  { name: 'United Kingdom', code: 'GB', flag: '🇬🇧' },
   { name: 'Qatar', code: 'QA', flag: '🇶🇦' },
   { name: 'Germany', code: 'DE', flag: '🇩🇪' },
   { name: 'Switzerland', code: 'CH', flag: '🇨🇭' },
   { name: 'Japan', code: 'JP', flag: '🇯🇵' },
-  { name: 'Italy', code: 'IT', flag: '🇮🇹' },
-  { name: 'Pakistan', code: 'PK', flag: '🇵🇰' },
-  { name: 'Bangladesh', code: 'BD', flag: '🇧🇩' },
-  { name: 'Canada', code: 'CA', flag: '🇨🇦' },
   { name: 'Australia', code: 'AU', flag: '🇦🇺' },
+  { name: 'Canada', code: 'CA', flag: '🇨🇦' },
+  { name: 'United States', code: 'US', flag: '🇺🇸' },
   { name: 'France', code: 'FR', flag: '🇫🇷' },
-  { name: 'Brazil', code: 'BR', flag: '🇧🇷' },
-  { name: 'Spain', code: 'ES', flag: '🇪🇸' },
-  { name: 'Russia', code: 'RU', flag: '🇷🇺' },
+  { name: 'Saudi Arabia', code: 'SA', flag: '🇸🇦' },
+  { name: 'Sri Lanka', code: 'LK', flag: '🇱🇰' },
 ];
 
 const STRATEGY_DESCRIPTORS = [
-  'Institutional OTC Alpha',
-  'London Session Momentum',
-  'Gold & FX Liquidity Scalper',
-  'NY Open Volatility Breakout',
-  'Algorithmic Mean Reversion',
-  'High-Frequency Binary Pulse',
-  'Asian Session Range Sniper',
-  'Macro Currency Flow Engine',
-  'Multi-Asset Price Action',
-  'Smart Money Orderblock Pro',
+  'Mumbai Institutional Nifty & FX',
+  'Lahore Liquidity Pulse',
+  'Dhaka Momentum Alpha',
+  'Gujarat High-Frequency Scalper',
+  'Karachi OTC Flow Engine',
+  'Chittagong Price Action',
+  'Delhi Smart Money Breakout',
+  'Islamabad Trend Sniper',
+  'Sylhet FX Syndicate',
+  'Punjab Volatility Surge',
+  'Rawalpindi Orderblock Pro',
+  'Padma Currency Flow',
 ];
+
+interface FeaturedTraderConfig {
+  name: string;
+  country: string;
+  countryCode: string;
+  flag: string;
+  category: 'instant_funded' | 'self_capital';
+  startingBalance: number;
+  strategy: string;
+  winRate3m: number;
+  baseDailyProfit: number;
+  copiers: number;
+  totalTrades: number;
+  profitFactor: number;
+  maxDrawdown: number;
+  sharpeRatio: number;
+  avgHoldingTime: string;
+}
 
 /**
  * Generates the authoritative pool of 200 Master Copy Traders
@@ -813,27 +833,419 @@ export function generate200TraderPool(nowMs: number = Date.now()): CopyTraderPro
 
   const pool: CopyTraderProfileData[] = [];
 
-  // Featured flagship traders at fixed indices so well-known names exist in the 200 pool
-  const featuredOverrides: Record<
-    number,
-    {
-      name: string;
-      countryIdx: number;
-      category: 'instant_funded' | 'self_capital';
-      startingBalance: number;
-      strategy: string;
-    }
-  > = {
-    0: { name: 'Viktor Vance', countryIdx: 0, category: 'instant_funded', startingBalance: 100000, strategy: 'Institutional Alpha $100K' },
-    1: { name: 'Kasun Perera', countryIdx: 1, category: 'instant_funded', startingBalance: 50000, strategy: 'Colombo Gold Scalper $50K' },
-    2: { name: 'Arjun Malhotra', countryIdx: 2, category: 'instant_funded', startingBalance: 100000, strategy: 'Mumbai Nifty Alpha $100K' },
-    3: { name: 'Liam Davies', countryIdx: 3, category: 'instant_funded', startingBalance: 50000, strategy: 'London Forex Scalp $50K' },
-    4: { name: 'Zulkifli Rahman', countryIdx: 6, category: 'instant_funded', startingBalance: 25000, strategy: 'Kuala Lumpur Breakout $25K' },
-    100: { name: 'Marco Rossi', countryIdx: 11, category: 'self_capital', startingBalance: 10000, strategy: 'Milan OTC Scalper' },
-    101: { name: 'Elena Rostova', countryIdx: 19, category: 'self_capital', startingBalance: 15000, strategy: 'Siberian Gold Rush' },
-    102: { name: 'Nimal Jayasinghe', countryIdx: 1, category: 'self_capital', startingBalance: 5000, strategy: 'Kandy Forex Syndicate' },
-    103: { name: 'Bilal Ahmed', countryIdx: 12, category: 'self_capital', startingBalance: 8000, strategy: 'Karachi Crypto Surge' },
-    104: { name: 'Alexander Sterling', countryIdx: 5, category: 'self_capital', startingBalance: 20000, strategy: 'Wall Street Index Pro' },
+  // Authentic top traders from India, Pakistan, and Bangladesh
+  const featuredOverrides: Record<number, FeaturedTraderConfig> = {
+    // Instant Funded Top Traders
+    0: {
+      name: 'Rajesh Sharma',
+      country: 'India',
+      countryCode: 'IN',
+      flag: '🇮🇳',
+      category: 'instant_funded',
+      startingBalance: 100000,
+      strategy: 'Mumbai Institutional Nifty & FX $100K',
+      winRate3m: 81.6,
+      baseDailyProfit: 26200,
+      copiers: 192,
+      totalTrades: 1480,
+      profitFactor: 2.68,
+      maxDrawdown: 2.6,
+      sharpeRatio: 2.88,
+      avgHoldingTime: '1m 15s',
+    },
+    1: {
+      name: 'Muhammad Ali',
+      country: 'Pakistan',
+      countryCode: 'PK',
+      flag: '🇵🇰',
+      category: 'instant_funded',
+      startingBalance: 100000,
+      strategy: 'Lahore Liquidity Pulse $100K',
+      winRate3m: 79.8,
+      baseDailyProfit: 24800,
+      copiers: 184,
+      totalTrades: 1360,
+      profitFactor: 2.52,
+      maxDrawdown: 2.9,
+      sharpeRatio: 2.72,
+      avgHoldingTime: '1m 20s',
+    },
+    2: {
+      name: 'Tanvir Ahmed',
+      country: 'Bangladesh',
+      countryCode: 'BD',
+      flag: '🇧🇩',
+      category: 'instant_funded',
+      startingBalance: 100000,
+      strategy: 'Dhaka Momentum Alpha $100K',
+      winRate3m: 78.4,
+      baseDailyProfit: 23500,
+      copiers: 178,
+      totalTrades: 1290,
+      profitFactor: 2.45,
+      maxDrawdown: 3.1,
+      sharpeRatio: 2.62,
+      avgHoldingTime: '1m 25s',
+    },
+    3: {
+      name: 'Amit Patel',
+      country: 'India',
+      countryCode: 'IN',
+      flag: '🇮🇳',
+      category: 'instant_funded',
+      startingBalance: 100000,
+      strategy: 'Gujarat High-Frequency Scalper $100K',
+      winRate3m: 77.2,
+      baseDailyProfit: 22400,
+      copiers: 170,
+      totalTrades: 1220,
+      profitFactor: 2.38,
+      maxDrawdown: 3.3,
+      sharpeRatio: 2.51,
+      avgHoldingTime: '1m 30s',
+    },
+    4: {
+      name: 'Ahmed Khan',
+      country: 'Pakistan',
+      countryCode: 'PK',
+      flag: '🇵🇰',
+      category: 'instant_funded',
+      startingBalance: 50000,
+      strategy: 'Karachi OTC Flow Engine $50K',
+      winRate3m: 76.1,
+      baseDailyProfit: 21200,
+      copiers: 162,
+      totalTrades: 1150,
+      profitFactor: 2.30,
+      maxDrawdown: 3.5,
+      sharpeRatio: 2.42,
+      avgHoldingTime: '1m 35s',
+    },
+    5: {
+      name: 'Rakibul Hasan',
+      country: 'Bangladesh',
+      countryCode: 'BD',
+      flag: '🇧🇩',
+      category: 'instant_funded',
+      startingBalance: 50000,
+      strategy: 'Chittagong Price Action $50K',
+      winRate3m: 75.3,
+      baseDailyProfit: 20100,
+      copiers: 156,
+      totalTrades: 1080,
+      profitFactor: 2.25,
+      maxDrawdown: 3.7,
+      sharpeRatio: 2.34,
+      avgHoldingTime: '1m 40s',
+    },
+    6: {
+      name: 'Priya Verma',
+      country: 'India',
+      countryCode: 'IN',
+      flag: '🇮🇳',
+      category: 'instant_funded',
+      startingBalance: 50000,
+      strategy: 'Delhi Smart Money Breakout $50K',
+      winRate3m: 74.5,
+      baseDailyProfit: 19200,
+      copiers: 148,
+      totalTrades: 1020,
+      profitFactor: 2.20,
+      maxDrawdown: 3.8,
+      sharpeRatio: 2.28,
+      avgHoldingTime: '1m 45s',
+    },
+    7: {
+      name: 'Fatima Malik',
+      country: 'Pakistan',
+      countryCode: 'PK',
+      flag: '🇵🇰',
+      category: 'instant_funded',
+      startingBalance: 50000,
+      strategy: 'Islamabad Trend Sniper $50K',
+      winRate3m: 73.8,
+      baseDailyProfit: 18400,
+      copiers: 142,
+      totalTrades: 960,
+      profitFactor: 2.16,
+      maxDrawdown: 4.0,
+      sharpeRatio: 2.20,
+      avgHoldingTime: '1m 50s',
+    },
+    8: {
+      name: 'Nusrat Jahan',
+      country: 'Bangladesh',
+      countryCode: 'BD',
+      flag: '🇧🇩',
+      category: 'instant_funded',
+      startingBalance: 25000,
+      strategy: 'Sylhet FX Syndicate $25K',
+      winRate3m: 73.0,
+      baseDailyProfit: 17600,
+      copiers: 136,
+      totalTrades: 910,
+      profitFactor: 2.12,
+      maxDrawdown: 4.1,
+      sharpeRatio: 2.15,
+      avgHoldingTime: '1m 52s',
+    },
+    9: {
+      name: 'Vikram Singh',
+      country: 'India',
+      countryCode: 'IN',
+      flag: '🇮🇳',
+      category: 'instant_funded',
+      startingBalance: 25000,
+      strategy: 'Punjab Volatility Surge $25K',
+      winRate3m: 72.4,
+      baseDailyProfit: 16800,
+      copiers: 130,
+      totalTrades: 870,
+      profitFactor: 2.08,
+      maxDrawdown: 4.2,
+      sharpeRatio: 2.10,
+      avgHoldingTime: '1m 55s',
+    },
+    10: {
+      name: 'Usman Tariq',
+      country: 'Pakistan',
+      countryCode: 'PK',
+      flag: '🇵🇰',
+      category: 'instant_funded',
+      startingBalance: 25000,
+      strategy: 'Rawalpindi Orderblock Pro $25K',
+      winRate3m: 71.8,
+      baseDailyProfit: 16100,
+      copiers: 125,
+      totalTrades: 820,
+      profitFactor: 2.05,
+      maxDrawdown: 4.3,
+      sharpeRatio: 2.06,
+      avgHoldingTime: '1m 58s',
+    },
+    11: {
+      name: 'Shakil Mahmud',
+      country: 'Bangladesh',
+      countryCode: 'BD',
+      flag: '🇧🇩',
+      category: 'instant_funded',
+      startingBalance: 25000,
+      strategy: 'Padma Currency Flow $25K',
+      winRate3m: 71.2,
+      baseDailyProfit: 15400,
+      copiers: 120,
+      totalTrades: 790,
+      profitFactor: 2.02,
+      maxDrawdown: 4.4,
+      sharpeRatio: 2.02,
+      avgHoldingTime: '2m 00s',
+    },
+
+    // Self Capital Top Traders
+    100: {
+      name: 'Rajesh Sharma',
+      country: 'India',
+      countryCode: 'IN',
+      flag: '🇮🇳',
+      category: 'self_capital',
+      startingBalance: 25000,
+      strategy: 'Mumbai Micro Scalper Live',
+      winRate3m: 80.5,
+      baseDailyProfit: 9500,
+      copiers: 188,
+      totalTrades: 960,
+      profitFactor: 2.62,
+      maxDrawdown: 2.8,
+      sharpeRatio: 2.80,
+      avgHoldingTime: '1m 15s',
+    },
+    101: {
+      name: 'Muhammad Ali',
+      country: 'Pakistan',
+      countryCode: 'PK',
+      flag: '🇵🇰',
+      category: 'self_capital',
+      startingBalance: 25000,
+      strategy: 'Lahore OTC Momentum Live',
+      winRate3m: 79.2,
+      baseDailyProfit: 9100,
+      copiers: 180,
+      totalTrades: 910,
+      profitFactor: 2.48,
+      maxDrawdown: 3.0,
+      sharpeRatio: 2.68,
+      avgHoldingTime: '1m 20s',
+    },
+    102: {
+      name: 'Tanvir Ahmed',
+      country: 'Bangladesh',
+      countryCode: 'BD',
+      flag: '🇧🇩',
+      category: 'self_capital',
+      startingBalance: 20000,
+      strategy: 'Dhaka Price Action Live',
+      winRate3m: 77.9,
+      baseDailyProfit: 8700,
+      copiers: 174,
+      totalTrades: 860,
+      profitFactor: 2.40,
+      maxDrawdown: 3.2,
+      sharpeRatio: 2.58,
+      avgHoldingTime: '1m 25s',
+    },
+    103: {
+      name: 'Amit Patel',
+      country: 'India',
+      countryCode: 'IN',
+      flag: '🇮🇳',
+      category: 'self_capital',
+      startingBalance: 20000,
+      strategy: 'Gujarat Trend Follower Live',
+      winRate3m: 76.5,
+      baseDailyProfit: 8400,
+      copiers: 166,
+      totalTrades: 820,
+      profitFactor: 2.34,
+      maxDrawdown: 3.4,
+      sharpeRatio: 2.48,
+      avgHoldingTime: '1m 30s',
+    },
+    104: {
+      name: 'Ahmed Khan',
+      country: 'Pakistan',
+      countryCode: 'PK',
+      flag: '🇵🇰',
+      category: 'self_capital',
+      startingBalance: 15000,
+      strategy: 'Karachi Volatility Sniper Live',
+      winRate3m: 75.4,
+      baseDailyProfit: 8100,
+      copiers: 158,
+      totalTrades: 770,
+      profitFactor: 2.26,
+      maxDrawdown: 3.6,
+      sharpeRatio: 2.38,
+      avgHoldingTime: '1m 35s',
+    },
+    105: {
+      name: 'Rakibul Hasan',
+      country: 'Bangladesh',
+      countryCode: 'BD',
+      flag: '🇧🇩',
+      category: 'self_capital',
+      startingBalance: 15000,
+      strategy: 'Chittagong Breakout Live',
+      winRate3m: 74.6,
+      baseDailyProfit: 7800,
+      copiers: 152,
+      totalTrades: 730,
+      profitFactor: 2.22,
+      maxDrawdown: 3.8,
+      sharpeRatio: 2.30,
+      avgHoldingTime: '1m 40s',
+    },
+    106: {
+      name: 'Priya Verma',
+      country: 'India',
+      countryCode: 'IN',
+      flag: '🇮🇳',
+      category: 'self_capital',
+      startingBalance: 10000,
+      strategy: 'Delhi FX Pulse Live',
+      winRate3m: 73.9,
+      baseDailyProfit: 7500,
+      copiers: 144,
+      totalTrades: 690,
+      profitFactor: 2.18,
+      maxDrawdown: 3.9,
+      sharpeRatio: 2.24,
+      avgHoldingTime: '1m 45s',
+    },
+    107: {
+      name: 'Fatima Malik',
+      country: 'Pakistan',
+      countryCode: 'PK',
+      flag: '🇵🇰',
+      category: 'self_capital',
+      startingBalance: 10000,
+      strategy: 'Islamabad Alpha Live',
+      winRate3m: 73.1,
+      baseDailyProfit: 7200,
+      copiers: 138,
+      totalTrades: 650,
+      profitFactor: 2.14,
+      maxDrawdown: 4.1,
+      sharpeRatio: 2.18,
+      avgHoldingTime: '1m 50s',
+    },
+    108: {
+      name: 'Nusrat Jahan',
+      country: 'Bangladesh',
+      countryCode: 'BD',
+      flag: '🇧🇩',
+      category: 'self_capital',
+      startingBalance: 10000,
+      strategy: 'Sylhet Orderblock Live',
+      winRate3m: 72.5,
+      baseDailyProfit: 6900,
+      copiers: 132,
+      totalTrades: 610,
+      profitFactor: 2.10,
+      maxDrawdown: 4.2,
+      sharpeRatio: 2.12,
+      avgHoldingTime: '1m 52s',
+    },
+    109: {
+      name: 'Vikram Singh',
+      country: 'India',
+      countryCode: 'IN',
+      flag: '🇮🇳',
+      category: 'self_capital',
+      startingBalance: 5000,
+      strategy: 'Punjab Mean Reversion Live',
+      winRate3m: 71.9,
+      baseDailyProfit: 6600,
+      copiers: 126,
+      totalTrades: 570,
+      profitFactor: 2.06,
+      maxDrawdown: 4.3,
+      sharpeRatio: 2.08,
+      avgHoldingTime: '1m 55s',
+    },
+    110: {
+      name: 'Usman Tariq',
+      country: 'Pakistan',
+      countryCode: 'PK',
+      flag: '🇵🇰',
+      category: 'self_capital',
+      startingBalance: 5000,
+      strategy: 'Rawalpindi Scalp Live',
+      winRate3m: 71.2,
+      baseDailyProfit: 6300,
+      copiers: 122,
+      totalTrades: 540,
+      profitFactor: 2.03,
+      maxDrawdown: 4.4,
+      sharpeRatio: 2.04,
+      avgHoldingTime: '1m 58s',
+    },
+    111: {
+      name: 'Shakil Mahmud',
+      country: 'Bangladesh',
+      countryCode: 'BD',
+      flag: '🇧🇩',
+      category: 'self_capital',
+      startingBalance: 5000,
+      strategy: 'Padma Momentum Live',
+      winRate3m: 70.6,
+      baseDailyProfit: 6000,
+      copiers: 118,
+      totalTrades: 510,
+      profitFactor: 2.00,
+      maxDrawdown: 4.5,
+      sharpeRatio: 2.00,
+      avgHoldingTime: '2m 00s',
+    },
   };
 
   for (let i = 0; i < TOTAL_TRADER_POOL_SIZE; i++) {
@@ -850,7 +1262,7 @@ export function generate200TraderPool(nowMs: number = Date.now()): CopyTraderPro
     const providerName = override ? override.name : `${firstName} ${lastName}`;
 
     const countryObj = override
-      ? COUNTRIES[override.countryIdx]
+      ? { name: override.country, code: override.countryCode, flag: override.flag }
       : COUNTRIES[(i * 3 + (seed % 7)) % COUNTRIES.length];
 
     const startingBalance = override
@@ -863,24 +1275,41 @@ export function generate200TraderPool(nowMs: number = Date.now()): CopyTraderPro
       ? override.strategy
       : `${STRATEGY_DESCRIPTORS[i % STRATEGY_DESCRIPTORS.length]} #${(i % 50) + 1}`;
 
-    // 45-minute dynamic surge factor: different traders surge into the Top 10 every 45 minutes
+    // 45-minute dynamic surge factor: different traders surge into ranks 6..10 every 45 minutes
     const surgeWave = ((slotSeed % 1000) / 1000); // 0.0 to 1.0
-    const isSurgingInThis45mSlot = (slotSeed % 12) === 0; // ~16-18 traders per category peak each 45m window
-    const dailyRoiBasePct = isInstant
-      ? (1.8 + (seed % 45) / 10) * (isSurgingInThis45mSlot ? 1.85 + surgeWave * 0.7 : 0.55 + surgeWave * 0.65)
-      : (3.2 + (seed % 85) / 10) * (isSurgingInThis45mSlot ? 1.9 + surgeWave * 0.8 : 0.5 + surgeWave * 0.65);
+    const isSurgingInThis45mSlot = (slotSeed % 12) === 0;
 
-    const dailyProfitPct = Number((dailyRoiBasePct * intradayMultiplier).toFixed(2));
-    const dailyProfit = Number(((dailyProfitPct / 100) * startingBalance).toFixed(2));
+    let dailyProfit: number;
+    let dailyProfitPct: number;
+
+    if (override) {
+      // Dynamic 45-minute rank rotation among top masters
+      const slotVariance = 0.93 + ((slotSeed % 160) / 1000); // 0.93 .. 1.09
+      dailyProfit = Number((override.baseDailyProfit * intradayMultiplier * slotVariance).toFixed(2));
+      dailyProfitPct = Number(((dailyProfit / startingBalance) * 100).toFixed(2));
+    } else {
+      const dailyRoiBasePct = isInstant
+        ? (1.2 + (seed % 35) / 10) * (isSurgingInThis45mSlot ? 1.6 + surgeWave * 0.5 : 0.45 + surgeWave * 0.55)
+        : (1.2 + (seed % 35) / 10) * (isSurgingInThis45mSlot ? 1.3 + surgeWave * 0.4 : 0.40 + surgeWave * 0.45);
+
+      dailyProfitPct = Number((dailyRoiBasePct * intradayMultiplier).toFixed(2));
+      dailyProfit = Number(((dailyProfitPct / 100) * startingBalance).toFixed(2));
+    }
 
     // Weekly, Monthly, and 3-Month ROI ($ and %)
-    const weeklyProfitPct = Number((dailyProfitPct * (3.2 + ((seed % 25) / 10))).toFixed(2));
+    const weeklyProfitPct = override
+      ? Number((dailyProfitPct * 2.8).toFixed(2))
+      : Number((dailyProfitPct * (3.2 + ((seed % 25) / 10))).toFixed(2));
     const weeklyProfit = Number(((weeklyProfitPct / 100) * startingBalance).toFixed(2));
 
-    const monthlyProfitPct = Number((weeklyProfitPct * (2.6 + ((seed % 18) / 10))).toFixed(2));
+    const monthlyProfitPct = override
+      ? Number((weeklyProfitPct * 2.5).toFixed(2))
+      : Number((weeklyProfitPct * (2.6 + ((seed % 18) / 10))).toFixed(2));
     const monthlyProfit = Number(((monthlyProfitPct / 100) * startingBalance).toFixed(2));
 
-    const threeMonthProfitPct = Number((monthlyProfitPct * (2.4 + ((seed % 16) / 10))).toFixed(2));
+    const threeMonthProfitPct = override
+      ? Number((monthlyProfitPct * 2.3).toFixed(2))
+      : Number((monthlyProfitPct * (2.4 + ((seed % 16) / 10))).toFixed(2));
     const threeMonthProfit = Number(((threeMonthProfitPct / 100) * startingBalance).toFixed(2));
 
     // Current balance & all-time withdrawals
@@ -888,15 +1317,17 @@ export function generate200TraderPool(nowMs: number = Date.now()): CopyTraderPro
     const currentBalance = Number((startingBalance + retainedGain).toFixed(2));
     const allTimeWithdrawals = Number((threeMonthProfit * 0.78).toFixed(2));
 
-    // Proven >= 60% 3-month win rate (62.4% to 89.4%)
-    const winRate3m = Number((62.4 + ((seed % 270) / 10)).toFixed(1));
-    const profitFactor = Number((1.75 + ((seed % 160) / 100)).toFixed(2));
-    const maxDrawdown = Number((1.8 + ((seed % 55) / 10)).toFixed(1));
-    const sharpeRatio = Number((1.55 + ((seed % 140) / 100)).toFixed(2));
+    // Proven >= 60% 3-month win rate
+    const winRate3m = override ? override.winRate3m : Number((62.4 + ((seed % 270) / 10)).toFixed(1));
+    const profitFactor = override ? override.profitFactor : Number((1.75 + ((seed % 160) / 100)).toFixed(2));
+    const maxDrawdown = override ? override.maxDrawdown : Number((1.8 + ((seed % 55) / 10)).toFixed(1));
+    const sharpeRatio = override ? override.sharpeRatio : Number((1.55 + ((seed % 140) / 100)).toFixed(2));
+    const avgHoldingTime = override ? override.avgHoldingTime : `${1 + (seed % 6)}m ${15 + (seed % 40)}s`;
+    const totalTrades = override ? override.totalTrades : 240 + (seed % 1650);
 
     // Copiers strictly capped at 200 max (X / 200 Copiers)
     const baseCopiers = 38 + (seed % 148) + (isSurgingInThis45mSlot ? 12 : 0);
-    const currentCopiers = Math.min(MAX_COPIERS_PER_TRADER, baseCopiers);
+    const currentCopiers = override ? override.copiers : Math.min(MAX_COPIERS_PER_TRADER, baseCopiers);
 
     const accountTypeLabel = isInstant
       ? `Instant Funded ($${(startingBalance / 1000).toFixed(0)}K)`
@@ -936,8 +1367,8 @@ export function generate200TraderPool(nowMs: number = Date.now()): CopyTraderPro
       profit_factor: profitFactor,
       max_drawdown: maxDrawdown,
       sharpe_ratio: sharpeRatio,
-      avg_holding_time: `${1 + (seed % 6)}m ${15 + (seed % 40)}s`,
-      total_trades: 240 + (seed % 1650),
+      avg_holding_time: avgHoldingTime,
+      total_trades: totalTrades,
       current_copiers: currentCopiers,
       max_copiers: MAX_COPIERS_PER_TRADER,
       commission_pct: MASTER_COMMISSION_PERCENT,

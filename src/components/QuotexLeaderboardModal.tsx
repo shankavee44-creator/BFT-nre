@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Trophy, HelpCircle, ChevronDown, ChevronUp, CalendarClock, ShieldAlert } from 'lucide-react';
+import { X, Trophy, HelpCircle, ChevronDown, ChevronUp, CalendarClock, ShieldAlert, Zap, DollarSign, CheckCircle2 } from 'lucide-react';
 import { soundEngine } from '../utils/soundEffects';
 import { CountryFlagIcon } from './CountryFlagIcon';
 import {
@@ -40,6 +40,9 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
   const [showHowItWorks, setShowHowItWorks] = useState<boolean>(false);
   const [lastUpdatedTraderId, setLastUpdatedTraderId] = useState<string | null>(null);
   const [resetInfo, setResetInfo] = useState(() => getMondayWeeklyResetInfo());
+  const [quickCopyTrader, setQuickCopyTrader] = useState<LeaderboardTrader | null>(null);
+  const [quickAllocation, setQuickAllocation] = useState<number>(100);
+  const [quickCopyToast, setQuickCopyToast] = useState<string | null>(null);
 
   // Dynamic live weekly performance updates while keeping Kasun Perera anchored at #9 ($18,995.22)
   useEffect(() => {
@@ -218,9 +221,9 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
                 return (
                   <div
                     key={`podium-${topTrader.id}`}
-                    className="bft-snap-card min-w-[160px] px-2 py-1.5 rounded-lg bg-[#141720] border border-[#ff8800]/30 flex items-center justify-between gap-1.5 shrink-0"
+                    className="bft-snap-card min-w-[170px] px-2 py-1.5 rounded-lg bg-[#141720] border border-[#ff8800]/30 flex items-center justify-between gap-1.5 shrink-0"
                   >
-                    <div className="flex items-center gap-1.5 min-w-0">
+                    <div className="flex items-center gap-1.5 min-w-0 flex-1">
                       <span
                         className={`w-4.5 h-4.5 rounded font-mono font-black text-[9.5px] flex items-center justify-center shrink-0 ${
                           topRow.rank === 1
@@ -232,13 +235,25 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
                       >
                         {topRow.rankDisplay}
                       </span>
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex-1">
                         <div className="text-[10.5px] font-bold text-white leading-tight truncate">{topRow.name}</div>
                         <div className="text-[9.5px] font-mono font-black text-[#00e676] leading-tight tabular-nums">
                           {topRow.profitFormatted}
                         </div>
                       </div>
                     </div>
+                    <button
+                      type="button"
+                      data-testid={`podium-quick-copy-${topTrader.rank}`}
+                      onClick={() => {
+                        soundEngine.playUiClick();
+                        setQuickCopyTrader(topTrader);
+                      }}
+                      className="px-1.5 py-1 rounded bg-[#00F5A0]/20 hover:bg-[#00F5A0]/30 text-[#00F5A0] font-mono text-[9px] font-black flex items-center gap-0.5 cursor-pointer shrink-0"
+                    >
+                      <Zap className="w-2.5 h-2.5 fill-current" />
+                      <span>Copy</span>
+                    </button>
                   </div>
                 );
               })}
@@ -246,7 +261,15 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
           </div>
         </div>
 
-        {/* 3. Clean Institutional Top 20 List (Strictly Rank Number, Country Flag, Trader Name, and Profit Amount) */}
+        {/* Quick Copy Success Toast */}
+        {quickCopyToast && (
+          <div className="px-3 py-1.5 bg-[#00F5A0]/15 border-b border-[#00F5A0]/30 text-[#00F5A0] font-mono text-xs flex items-center gap-2">
+            <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">{quickCopyToast}</span>
+          </div>
+        )}
+
+        {/* 3. Clean Institutional Top 20 List (Strictly Rank Number, Country Flag, Trader Name, and Profit Amount with Quick Copy) */}
         <div
           data-testid="leaderboard-traders-list"
           className="flex-1 overflow-y-auto divide-y divide-white/[0.06] px-2.5 sm:px-3 py-0.5 sm:py-1 bg-[#0a0a0a]"
@@ -264,7 +287,7 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
                 }`}
               >
                 {/* Left: Rank Number + Country Flag + Trader Name */}
-                <div className="flex items-center gap-2 sm:gap-3 min-w-0 pr-3">
+                <div className="flex items-center gap-2 sm:gap-3 min-w-0 pr-2">
                   <span
                     className={`w-5 h-5 sm:w-6 sm:h-6 rounded-md font-mono font-black text-[11px] sm:text-xs tabular-nums flex items-center justify-center shrink-0 ${
                       row.rank === 1
@@ -297,17 +320,174 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
                   </span>
                 </div>
 
-                {/* Right: Profit Amount */}
-                <div
-                  data-testid={`trader-profit-${trader.rank}`}
-                  className="text-xs sm:text-sm font-black font-mono tabular-nums text-[#00e676] shrink-0 text-right"
-                >
-                  {row.profitFormatted}
+                {/* Right: Profit Amount + Quick Copy Button */}
+                <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
+                  <div
+                    data-testid={`trader-profit-${trader.rank}`}
+                    className="text-xs sm:text-sm font-black font-mono tabular-nums text-[#00e676] text-right"
+                  >
+                    {row.profitFormatted}
+                  </div>
+
+                  <button
+                    type="button"
+                    data-testid={`quick-copy-leaderboard-btn-${trader.rank}`}
+                    onClick={() => {
+                      soundEngine.playUiClick();
+                      setQuickCopyTrader(trader);
+                    }}
+                    className="px-2 py-1 rounded-md bg-[#00F5A0]/15 hover:bg-[#00F5A0]/25 border border-[#00F5A0]/40 text-[#00F5A0] font-mono font-bold text-[10px] sm:text-[11px] flex items-center gap-1 cursor-pointer transition-colors bft-touch-scale"
+                    title={`Quick Copy ${trader.name}`}
+                  >
+                    <Zap className="w-2.5 h-2.5 sm:w-3 sm:h-3 fill-current shrink-0" />
+                    <span>Quick Copy</span>
+                  </button>
                 </div>
               </div>
             );
           })}
         </div>
+
+        {/* Quick Copy Allocation Modal */}
+        {quickCopyTrader && (
+          <div
+            data-testid="leaderboard-quick-copy-modal"
+            className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-xl animate-fade-in"
+            onClick={() => setQuickCopyTrader(null)}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-md bg-[#0e1118] border border-slate-700 rounded-2xl p-4 sm:p-5 shadow-2xl space-y-3.5"
+            >
+              <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-[#00F5A0]/15 border border-[#00F5A0]/30 flex items-center justify-center text-[#00F5A0]">
+                    <Zap className="w-4 h-4 fill-current" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-black text-white uppercase">Quick Copy Allocation</h4>
+                    <p className="text-[10px] font-mono text-slate-400">Mirror future binary trades in real-time</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setQuickCopyTrader(null)}
+                  className="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white flex items-center justify-center cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Trader Summary */}
+              <div className="p-3 rounded-xl bg-[#141720] border border-white/10 flex items-center justify-between">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span className="w-5 h-5 rounded font-mono font-black text-xs bg-[#ff8800] text-slate-950 flex items-center justify-center shrink-0">
+                    #{quickCopyTrader.rank}
+                  </span>
+                  <CountryFlagIcon
+                    country={quickCopyTrader.country}
+                    isoCode={quickCopyTrader.isoCode}
+                    flagEmoji={quickCopyTrader.flag}
+                    showIsoBadge={true}
+                    className="w-5 h-3.5 rounded-[2px] object-cover shrink-0"
+                  />
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold text-white truncate">{quickCopyTrader.name}</div>
+                    <div className="text-[10px] font-mono text-slate-400">{quickCopyTrader.country}</div>
+                  </div>
+                </div>
+                <div className="text-right shrink-0">
+                  <span className="text-[9px] font-mono text-slate-400 uppercase block">Weekly Profit</span>
+                  <span className="text-xs font-mono font-black text-[#00e676]">
+                    +${quickCopyTrader.profit.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+              </div>
+
+              {/* Active Account Information */}
+              <div className="space-y-1">
+                <label className="text-[10px] font-mono uppercase font-bold text-slate-400 block">
+                  Active Account & Available Balance
+                </label>
+                <div className="px-3 py-2 rounded-xl bg-[#141720] border border-white/10 flex items-center justify-between text-xs font-mono">
+                  <span className="text-white truncate">
+                    {activeAccount?.tierName || activeAccount?.id || 'Active Live Account'}
+                  </span>
+                  <span className="font-bold text-[#00e676] shrink-0">
+                    ${Number(activeAccount?.currentBalance ?? 50000).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+              </div>
+
+              {/* Allocation Amount */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-mono uppercase font-bold text-slate-400 block">
+                  Allocate Capital to Mirror ($)
+                </label>
+                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
+                  {[25, 50, 100, 250, 500].map((amt) => (
+                    <button
+                      key={amt}
+                      type="button"
+                      onClick={() => {
+                        soundEngine.playUiClick();
+                        setQuickAllocation(amt);
+                      }}
+                      className={`px-2.5 py-1 rounded-lg font-mono font-bold text-[11px] border cursor-pointer transition-colors shrink-0 ${
+                        quickAllocation === amt
+                          ? 'bg-[#00F5A0] text-[#07080B] border-[#00F5A0]'
+                          : 'bg-[#141720] text-slate-300 border-white/10 hover:border-white/20'
+                      }`}
+                    >
+                      ${amt}
+                    </button>
+                  ))}
+                </div>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-mono text-xs">$</span>
+                  <input
+                    type="number"
+                    min="1"
+                    value={quickAllocation}
+                    onChange={(e) => setQuickAllocation(Math.max(1, Number(e.target.value)))}
+                    className="w-full bg-[#141720] border border-white/15 focus:border-[#00F5A0] rounded-xl pl-7 pr-3 py-2 text-white font-mono text-xs outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* 0-Latency Guarantee */}
+              <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-[10.5px] font-mono text-slate-300 flex items-center justify-between">
+                <span>Mirror Execution:</span>
+                <span className="font-bold text-[#00F5A0]">0ms Latency • 100% Profit Keep</span>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setQuickCopyTrader(null)}
+                  className="flex-1 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 font-bold text-xs uppercase cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  data-testid="confirm-leaderboard-quick-copy-btn"
+                  onClick={() => {
+                    soundEngine.playTradePlacement();
+                    setQuickCopyToast(`Quick Copy Active: Now mirroring ${quickCopyTrader.name} at $${quickAllocation}/trade.`);
+                    setTimeout(() => setQuickCopyToast(null), 4000);
+                    setQuickCopyTrader(null);
+                  }}
+                  className="flex-1 py-2 rounded-xl bg-[#00F5A0] hover:brightness-110 text-[#07080B] font-black text-xs uppercase flex items-center justify-center gap-1.5 cursor-pointer shadow-md"
+                >
+                  <Zap className="w-3.5 h-3.5 fill-current shrink-0" />
+                  <span>Start Mirroring</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

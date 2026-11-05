@@ -3,11 +3,10 @@ import {
   Clock,
   ChevronDown,
   ChevronUp,
-  ArrowUp,
-  ArrowDown,
   Repeat,
   Activity,
   History as HistoryIcon,
+  Crosshair,
 } from 'lucide-react';
 import { BinaryTrade } from '../types';
 import { findAssetBySymbol } from '../utils/storage';
@@ -17,13 +16,14 @@ import { isTradeActiveOrOpen, resolveOptimisticTradeResult } from '../utils/supa
 import { AssetFlagIcon } from './CountryFlagIcon';
 import { soundEngine } from '../utils/soundEffects';
 
-interface QuotexCompactTradeHistoryProps {
+export interface QuotexCompactTradeHistoryProps {
   trades: BinaryTrade[];
   currentPrice: number;
   selectedAssetSymbol?: string;
   onDoubleUp?: (trade: BinaryTrade) => void;
   onSelectTradeForChart?: (trade: BinaryTrade) => void;
   initialTab?: 'trades' | 'history';
+  onTabChange?: (tab: 'trades' | 'history') => void;
   className?: string;
 }
 
@@ -44,7 +44,7 @@ export function formatDurationToClock(durationSeconds: number): string {
 }
 
 /**
- * Formats date into uppercase Quotex date string e.g. "5 NOVEMBER 26".
+ * Formats date into uppercase Quotex date string e.g. "5 NOVEMBER 24".
  */
 export function formatDateGroupTitle(timestampMs: number): string {
   if (!timestampMs || isNaN(timestampMs)) return 'TODAY';
@@ -62,6 +62,7 @@ export const QuotexCompactTradeHistory: React.FC<QuotexCompactTradeHistoryProps>
   onDoubleUp,
   onSelectTradeForChart,
   initialTab = 'trades',
+  onTabChange,
   className = '',
 }) => {
   const [activeTab, setActiveTab] = useState<'trades' | 'history'>(initialTab);
@@ -106,8 +107,14 @@ export const QuotexCompactTradeHistory: React.FC<QuotexCompactTradeHistoryProps>
       .sort((a, b) => (b.endTime || b.startTime) - (a.endTime || a.startTime));
   }, [trades, nowMs, currentPrice, selectedAssetSymbol]);
 
-  const toggleExpandTrade = (tradeId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleSelectTab = (tab: 'trades' | 'history') => {
+    soundEngine.playUiClick();
+    setActiveTab(tab);
+    onTabChange?.(tab);
+  };
+
+  const toggleExpandTrade = (tradeId: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
     soundEngine.playUiClick();
     setExpandedTradeIds((prev) => {
       const next = new Set(prev);
@@ -120,7 +127,7 @@ export const QuotexCompactTradeHistory: React.FC<QuotexCompactTradeHistoryProps>
     });
   };
 
-  // Group closed trades by Date Headers (e.g. "5 NOVEMBER 26")
+  // Group closed trades by Date Headers (e.g. "5 NOVEMBER 24")
   const dateGroups = React.useMemo(() => {
     const groups: Array<{ dateLabel: string; items: BinaryTrade[] }> = [];
     const map = new Map<string, BinaryTrade[]>();
@@ -144,21 +151,18 @@ export const QuotexCompactTradeHistory: React.FC<QuotexCompactTradeHistoryProps>
   return (
     <div
       data-testid="quotex-compact-trade-panel"
-      className={`flex flex-col w-full bg-[#131722] text-slate-200 select-none font-sans border border-[#2a2e39] rounded-xl overflow-hidden ${className}`}
+      className={`flex flex-col w-full h-full bg-[#181f2c] text-slate-200 select-none font-sans border border-[#242b3b] rounded-lg overflow-hidden shadow-lg ${className}`}
     >
       {/* 1. Header Tabs ("Trades (X)" vs "Clock (Y)") matching Quotex image */}
-      <div className="flex items-center bg-[#0e1118] border-b border-[#242938] text-[11px] font-mono shrink-0">
+      <div className="flex items-center bg-[#131722] border-b border-[#242b3b] text-[11px] font-mono shrink-0">
         <button
           type="button"
-          data-testid="quotex-tab-trades"
-          onClick={() => {
-            soundEngine.playUiClick();
-            setActiveTab('trades');
-          }}
+          data-testid="right-tab-trades"
+          onClick={() => handleSelectTab('trades')}
           className={`flex-1 py-2 px-3 font-bold flex items-center justify-center gap-1.5 cursor-pointer relative transition-colors ${
             activeTab === 'trades'
-              ? 'bg-[#181d2b] text-white font-black border-b-2 border-[#0088ff]'
-              : 'text-slate-400 hover:text-white hover:bg-[#141824]'
+              ? 'bg-[#1b2231] text-white font-extrabold border-b-2 border-[#0088ff]'
+              : 'text-slate-400 hover:text-white hover:bg-[#151c28]'
           }`}
         >
           <span className="tracking-tight">Trades</span>
@@ -167,7 +171,7 @@ export const QuotexCompactTradeHistory: React.FC<QuotexCompactTradeHistoryProps>
             className={`px-1.5 py-0.2 rounded-full text-[9px] font-black font-mono ${
               activeTrades.length > 0
                 ? 'bg-[#00c853] text-slate-950 animate-pulse'
-                : 'bg-[#212738] text-slate-400'
+                : 'bg-[#222938] text-slate-400'
             }`}
           >
             {activeTrades.length}
@@ -176,21 +180,18 @@ export const QuotexCompactTradeHistory: React.FC<QuotexCompactTradeHistoryProps>
 
         <button
           type="button"
-          data-testid="quotex-tab-history"
-          onClick={() => {
-            soundEngine.playUiClick();
-            setActiveTab('history');
-          }}
+          data-testid="right-tab-history"
+          onClick={() => handleSelectTab('history')}
           className={`flex-1 py-2 px-3 font-bold flex items-center justify-center gap-1.5 cursor-pointer relative transition-colors ${
             activeTab === 'history'
-              ? 'bg-[#181d2b] text-white font-black border-b-2 border-[#0088ff]'
-              : 'text-slate-400 hover:text-white hover:bg-[#141824]'
+              ? 'bg-[#1b2231] text-white font-extrabold border-b-2 border-[#0088ff]'
+              : 'text-slate-400 hover:text-white hover:bg-[#151c28]'
           }`}
         >
           <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
           <span
             data-testid="closed-trades-count-pill"
-            className="px-1.5 py-0.2 rounded-full text-[9px] bg-[#212738] text-slate-300 font-bold font-mono"
+            className="px-1.5 py-0.2 rounded-full text-[9px] bg-[#222938] text-slate-300 font-bold font-mono"
           >
             {closedTrades.length}
           </span>
@@ -198,14 +199,14 @@ export const QuotexCompactTradeHistory: React.FC<QuotexCompactTradeHistoryProps>
       </div>
 
       {/* 2. Scrollable Trades Content */}
-      <div className="flex-1 overflow-y-auto max-h-[calc(100vh-280px)] min-h-[140px] divide-y divide-[#202535] no-scrollbar">
+      <div className="flex-1 overflow-y-auto min-h-[140px] divide-y divide-[#212738] no-scrollbar">
         {/* ACTIVE TRADES LIST */}
         {activeTab === 'trades' && (
-          <div>
+          <div className="divide-y divide-[#212738]">
             {activeTrades.length === 0 ? (
               <div
                 data-testid="empty-active-trades-msg"
-                className="p-4 text-center text-xs text-slate-400 space-y-1 font-mono"
+                className="p-5 text-center text-xs text-slate-400 space-y-1 font-mono"
               >
                 <Activity className="w-5 h-5 text-slate-500 mx-auto opacity-50" />
                 <div className="text-slate-300 font-bold text-[11px]">No Active Trades</div>
@@ -229,22 +230,26 @@ export const QuotexCompactTradeHistory: React.FC<QuotexCompactTradeHistoryProps>
                 const secondsRemaining = Math.max(0, Math.ceil((t.endTime - nowMs) / 1000));
                 const potentialPayout =
                   t.potentialPayout || (t.investment * (1 + (t.payoutPercentage || 85) / 100));
+                const durationStr = t.durationSeconds
+                  ? formatDurationToClock(t.durationSeconds)
+                  : '00:00:05';
 
                 return (
                   <div
                     key={t.id}
                     data-testid={`active-trade-row-${t.id}`}
                     onClick={(e) => toggleExpandTrade(t.id, e)}
-                    className="p-2 bg-[#121622] hover:bg-[#161b2a] cursor-pointer transition-colors border-b border-[#1f2434] last:border-0"
+                    className="px-2.5 py-2 bg-transparent hover:bg-[#1e2536] cursor-pointer transition-colors"
                   >
-                    {/* Top Line: Chevron + Asset Icon + Asset Name + Duration */}
-                    <div className="flex items-center justify-between text-[11px] font-bold text-white mb-1">
+                    {/* Top Micro-Row: Chevron + Asset Flag(s) + Asset Name + Duration */}
+                    <div className="flex items-center justify-between text-[11px] font-bold text-white mb-0.5">
                       <div className="flex items-center gap-1.5 min-w-0">
                         <button
                           type="button"
                           data-testid={`toggle-expand-${t.id}`}
                           onClick={(e) => toggleExpandTrade(t.id, e)}
                           className="p-0.5 rounded text-slate-400 hover:text-white shrink-0"
+                          aria-label="Toggle active trade details"
                         >
                           {isExpanded ? (
                             <ChevronUp className="w-3.5 h-3.5" />
@@ -258,39 +263,26 @@ export const QuotexCompactTradeHistory: React.FC<QuotexCompactTradeHistoryProps>
                           flagEmoji={assetObj?.flag}
                           size="xs"
                         />
-                        <span className="truncate text-xs font-extrabold tracking-tight">
+                        <span className="truncate text-[11px] font-extrabold tracking-tight">
                           {t.asset}
                         </span>
                       </div>
-                      <span className="font-mono text-[10.5px] text-slate-400 font-semibold shrink-0">
-                        {formatDurationToClock(t.durationSeconds || 60)}
+                      <span className="font-mono text-[10px] text-slate-400 font-medium shrink-0">
+                        {durationStr}
                       </span>
                     </div>
 
-                    {/* Bottom Line: Direction Icon + Amount (Left) & Return Payout (Right) */}
+                    {/* Bottom Micro-Row: Direction Arrow + Invested Amount (Left) & Countdown + Potential Payout (Right) */}
                     <div className="flex items-center justify-between font-mono text-[11px] pl-5">
-                      <div className="flex items-center gap-1.5 font-bold">
-                        <span
-                          className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-black shrink-0 ${
-                            isCall
-                              ? 'bg-[#00c853]/20 text-[#00c853] border border-[#00c853]/50'
-                              : 'bg-[#ff334b]/20 text-[#ff334b] border border-[#ff334b]/50'
-                          }`}
-                        >
-                          {isCall ? (
-                            <ArrowUp className="w-2.5 h-2.5 stroke-[3]" />
-                          ) : (
-                            <ArrowDown className="w-2.5 h-2.5 stroke-[3]" />
-                          )}
-                        </span>
+                      <div className="flex items-center gap-1 font-bold">
                         <span className={isCall ? 'text-[#00c853]' : 'text-[#ff334b]'}>
-                          {t.investment} $
+                          {isCall ? '↑' : '↓'} {t.investment} $
                         </span>
                       </div>
 
                       <div className="flex items-center gap-2">
                         <span
-                          className={`text-[10px] font-bold font-mono px-1 rounded ${
+                          className={`text-[9.5px] font-bold font-mono px-1 rounded ${
                             isInTheMoney ? 'text-[#00c853]' : 'text-[#ff334b]'
                           }`}
                         >
@@ -311,15 +303,15 @@ export const QuotexCompactTradeHistory: React.FC<QuotexCompactTradeHistoryProps>
                     {isExpanded && (
                       <div
                         data-testid={`active-trade-details-${t.id}`}
-                        className="mt-2 pt-2 border-t border-[#232838] bg-[#0c0e17] rounded-lg p-2 text-[10px] font-mono space-y-1.5"
+                        className="mt-2 pt-2 border-t border-[#232838] bg-[#121622] rounded-lg p-2.5 text-[10px] font-mono space-y-1.5 text-slate-400"
                       >
-                        <div className="flex items-center justify-between text-slate-400">
+                        <div className="flex items-center justify-between">
                           <span>Strike (Entry):</span>
                           <span className="text-white font-bold">
                             {t.strikePrice.toFixed(assetObj?.pipDecimals ?? 2)}
                           </span>
                         </div>
-                        <div className="flex items-center justify-between text-slate-400">
+                        <div className="flex items-center justify-between">
                           <span>Live Price:</span>
                           <span
                             className={`font-bold ${
@@ -329,7 +321,7 @@ export const QuotexCompactTradeHistory: React.FC<QuotexCompactTradeHistoryProps>
                             {livePrice.toFixed(assetObj?.pipDecimals ?? 2)}
                           </span>
                         </div>
-                        <div className="flex items-center justify-between text-slate-400">
+                        <div className="flex items-center justify-between">
                           <span>Payout Rate:</span>
                           <span className="text-amber-400 font-bold">
                             {t.payoutPercentage || 85}%
@@ -343,7 +335,7 @@ export const QuotexCompactTradeHistory: React.FC<QuotexCompactTradeHistoryProps>
                               soundEngine.playUiClick();
                               onDoubleUp(t);
                             }}
-                            className="w-full mt-1 py-1 px-2 rounded bg-white/10 hover:bg-white/20 text-white font-bold text-[10px] flex items-center justify-center gap-1 cursor-pointer border border-white/15"
+                            className="w-full mt-1.5 py-1 px-2 rounded bg-white/10 hover:bg-white/20 text-white font-bold text-[10px] flex items-center justify-center gap-1 cursor-pointer border border-white/15"
                           >
                             <Repeat className="w-3 h-3 text-[#ff8800]" />
                             <span>Repeat Trade (x2)</span>
@@ -364,7 +356,7 @@ export const QuotexCompactTradeHistory: React.FC<QuotexCompactTradeHistoryProps>
             {closedTrades.length === 0 ? (
               <div
                 data-testid="empty-closed-trades-msg"
-                className="p-4 text-center text-xs text-slate-400 font-mono space-y-1"
+                className="p-5 text-center text-xs text-slate-400 font-mono space-y-1"
               >
                 <HistoryIcon className="w-5 h-5 text-slate-500 mx-auto opacity-50" />
                 <div className="text-slate-300 font-bold text-[11px]">No Trade History</div>
@@ -375,131 +367,95 @@ export const QuotexCompactTradeHistory: React.FC<QuotexCompactTradeHistoryProps>
             ) : (
               dateGroups.map(({ dateLabel, items }) => (
                 <div key={dateLabel} className="space-y-0">
-                  {/* Date Header Pill (Quotex Style e.g. "5 NOVEMBER 26") */}
-                  <div className="py-1 px-3 bg-[#0d101a] border-y border-[#1e2333] flex items-center justify-center gap-2 text-[9.5px] font-mono font-black text-slate-400 tracking-wider">
+                  {/* Date Header Pill (Quotex Style e.g. "5 NOVEMBER 24") */}
+                  <div className="py-1.5 px-3 bg-[#131824] border-y border-[#202738] flex items-center justify-center gap-2 text-[9.5px] font-mono font-black text-slate-400 tracking-wider">
                     <span className="uppercase">{dateLabel}</span>
-                    <span className="w-4 h-4 rounded-full bg-[#202638] text-white flex items-center justify-center text-[8.5px] font-bold">
+                    <span className="w-4 h-4 rounded-full bg-[#242b3d] text-white flex items-center justify-center text-[8.5px] font-bold">
                       {items.length}
                     </span>
                   </div>
 
                   {/* Compact Trade Items */}
-                  {items.map((t) => {
-                    const isWin = t.status === 'won';
-                    const isTie = t.status === 'tie';
-                    const isCall = t.direction === 'CALL';
-                    const isExpanded = expandedTradeIds.has(t.id);
-                    const assetObj = findAssetBySymbol(t.asset);
-                    const exitPrice = t.closePrice ?? t.currentPrice ?? t.strikePrice;
-                    const payoutRate = t.payoutPercentage || 85;
+                  <div className="divide-y divide-[#212738]">
+                    {items.map((t) => {
+                      const isWin = t.status === 'won';
+                      const isTie = t.status === 'tie';
+                      const isCall = t.direction === 'CALL';
+                      const isExpanded = expandedTradeIds.has(t.id);
+                      const assetObj = findAssetBySymbol(t.asset);
+                      const exitPrice = t.closePrice ?? t.currentPrice ?? t.strikePrice;
+                      const payoutRate = t.payoutPercentage || 85;
 
-                    // Calculate payout display
-                    const grossPayout = isWin
-                      ? t.potentialPayout || Number((t.investment * (1 + payoutRate / 100)).toFixed(2))
-                      : isTie
-                      ? t.investment
-                      : 0;
+                      // Calculate payout display
+                      const grossPayout = isWin
+                        ? t.potentialPayout || Number((t.investment * (1 + payoutRate / 100)).toFixed(2))
+                        : isTie
+                        ? t.investment
+                        : 0;
 
-                    const formattedPayout = isWin
-                      ? `+${grossPayout.toFixed(2)} $`
-                      : isTie
-                      ? `${grossPayout.toFixed(2)} $`
-                      : '0.00 $';
+                      const formattedPayout = isWin
+                        ? `+${grossPayout.toFixed(2)} $`
+                        : isTie
+                        ? `${grossPayout.toFixed(2)} $`
+                        : '0.00 $';
 
-                    return (
-                      <div
-                        key={t.id}
-                        data-testid={`history-trade-row-${t.id}`}
-                        onClick={(e) => {
-                          onSelectTradeForChart?.(t);
-                          toggleExpandTrade(t.id, e);
-                        }}
-                        className="p-2 bg-[#121622] hover:bg-[#161b2a] cursor-pointer transition-colors border-b border-[#1f2434] last:border-0"
-                      >
-                        {/* Top Line: Chevron Icon + Asset Flag + Asset Name + Expiration Duration */}
-                        <div className="flex items-center justify-between text-[11px] font-bold text-white mb-1">
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            <button
-                              type="button"
-                              data-testid={`toggle-expand-history-${t.id}`}
-                              onClick={(e) => toggleExpandTrade(t.id, e)}
-                              className="p-0.5 rounded text-slate-400 hover:text-white shrink-0"
-                            >
-                              {isExpanded ? (
-                                <ChevronUp className="w-3.5 h-3.5 text-slate-300" />
-                              ) : (
-                                <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
-                              )}
-                            </button>
-                            <AssetFlagIcon
-                              symbol={t.asset}
-                              category={assetObj?.category}
-                              flagEmoji={assetObj?.flag}
-                              size="xs"
-                            />
-                            <span className="truncate text-xs font-extrabold tracking-tight">
-                              {t.asset}
-                            </span>
-                          </div>
+                      const durationStr = t.durationSeconds
+                        ? formatDurationToClock(t.durationSeconds)
+                        : '00:00:05';
 
-                          <span className="font-mono text-[10.5px] text-slate-400 font-semibold shrink-0">
-                            {formatDurationToClock(t.durationSeconds || 60)}
-                          </span>
-                        </div>
-
-                        {/* Bottom Line: Direction Icon + Invested Amount (Left) & Return Payout Amount (Right) */}
-                        <div className="flex items-center justify-between font-mono text-[11px] pl-5">
-                          <div className="flex items-center gap-1.5 font-bold">
-                            <span
-                              className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-black shrink-0 ${
-                                isCall
-                                  ? 'bg-[#00c853]/20 text-[#00c853] border border-[#00c853]/50'
-                                  : 'bg-[#ff334b]/20 text-[#ff334b] border border-[#ff334b]/50'
-                              }`}
-                            >
-                              {isCall ? (
-                                <ArrowUp className="w-2.5 h-2.5 stroke-[3]" />
-                              ) : (
-                                <ArrowDown className="w-2.5 h-2.5 stroke-[3]" />
-                              )}
-                            </span>
-                            <span className={isCall ? 'text-[#00c853]' : 'text-[#ff334b]'}>
-                              {t.investment} $
-                            </span>
-                          </div>
-
-                          <div className="flex items-center gap-1.5">
-                            <span
-                              data-testid={`history-trade-payout-${t.id}`}
-                              className={`font-black text-xs tabular-nums ${
-                                isWin
-                                  ? 'text-[#00c853]'
-                                  : isTie
-                                  ? 'text-amber-400'
-                                  : 'text-[#ff334b]'
-                              }`}
-                            >
-                              {formattedPayout}
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Expanded Detail Box */}
-                        {isExpanded && (
-                          <div
-                            data-testid={`history-trade-details-${t.id}`}
-                            className="mt-2 pt-2 border-t border-[#232838] bg-[#0c0e17] rounded-lg p-2 text-[10px] font-mono space-y-1.5"
-                          >
-                            <div className="flex items-center justify-between text-slate-400">
-                              <span>Strike Price:</span>
-                              <span className="text-white font-bold">
-                                {t.strikePrice.toFixed(assetObj?.pipDecimals ?? 2)}
+                      return (
+                        <div
+                          key={t.id}
+                          data-testid={`history-trade-row-${t.id}`}
+                          onClick={(e) => {
+                            onSelectTradeForChart?.(t);
+                            toggleExpandTrade(t.id, e);
+                          }}
+                          className="px-2.5 py-2 bg-transparent hover:bg-[#1e2536] cursor-pointer transition-colors"
+                        >
+                          {/* Top Micro-Row: Chevron + Asset Flag(s) + Asset Name + Duration */}
+                          <div className="flex items-center justify-between text-[11px] font-bold text-white mb-0.5">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <button
+                                type="button"
+                                data-testid={`toggle-history-expand-${t.id}`}
+                                onClick={(e) => toggleExpandTrade(t.id, e)}
+                                className="p-0.5 rounded text-slate-400 hover:text-white shrink-0"
+                                aria-label="Toggle trade history details"
+                              >
+                                {isExpanded ? (
+                                  <ChevronUp className="w-3.5 h-3.5" />
+                                ) : (
+                                  <ChevronDown className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+                              <AssetFlagIcon
+                                symbol={t.asset}
+                                category={assetObj?.category}
+                                flagEmoji={assetObj?.flag}
+                                size="xs"
+                              />
+                              <span className="truncate text-xs font-extrabold tracking-tight">
+                                {t.asset}
                               </span>
                             </div>
-                            <div className="flex items-center justify-between text-slate-400">
-                              <span>Close Price:</span>
+                            <span className="font-mono text-[10.5px] text-slate-400 font-medium shrink-0">
+                              {durationStr}
+                            </span>
+                          </div>
+
+                          {/* Bottom Micro-Row: Direction Arrow + Invested Amount (Left) & Payout / Outcome (Right) */}
+                          <div className="flex items-center justify-between font-mono text-[11px] pl-5">
+                            <div className="flex items-center gap-1 font-bold">
+                              <span className={isCall ? 'text-[#00c853]' : 'text-[#ff334b]'}>
+                                {isCall ? '↑' : '↓'} {t.investment} $
+                              </span>
+                            </div>
+
+                            <div className="flex items-center gap-2">
                               <span
-                                className={`font-bold ${
+                                data-testid={`history-trade-payout-${t.id}`}
+                                className={`font-black text-xs tabular-nums ${
                                   isWin
                                     ? 'text-[#00c853]'
                                     : isTie
@@ -507,52 +463,111 @@ export const QuotexCompactTradeHistory: React.FC<QuotexCompactTradeHistoryProps>
                                     : 'text-[#ff334b]'
                                 }`}
                               >
-                                {exitPrice.toFixed(assetObj?.pipDecimals ?? 2)}
+                                {formattedPayout}
                               </span>
                             </div>
-                            <div className="flex items-center justify-between text-slate-400">
-                              <span>Payout Percentage:</span>
-                              <span className="text-amber-400 font-bold">{payoutRate}%</span>
-                            </div>
-                            <div className="flex items-center justify-between text-slate-400">
-                              <span>Order Time:</span>
-                              <span className="text-slate-300">
-                                {new Date(t.startTime).toLocaleTimeString([], {
-                                  hour: '2-digit',
-                                  minute: '2-digit',
-                                  second: '2-digit',
-                                })}
-                              </span>
-                            </div>
-                            <div className="flex items-center justify-between text-slate-400">
-                              <span>Expiration Time:</span>
-                              <span className="text-slate-300">
-                                {new Date(t.endTime).toLocaleTimeString([], {
-                                  hour: '2-digit',
-                                  minute: '2-digit',
-                                  second: '2-digit',
-                                })}
-                              </span>
-                            </div>
-                            {onDoubleUp && (
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  soundEngine.playUiClick();
-                                  onDoubleUp(t);
-                                }}
-                                className="w-full mt-1 py-1 px-2 rounded bg-white/10 hover:bg-white/20 text-white font-bold text-[10px] flex items-center justify-center gap-1 cursor-pointer border border-white/15"
-                              >
-                                <Repeat className="w-3 h-3 text-[#ff8800]" />
-                                <span>Re-order Trade (x2)</span>
-                              </button>
-                            )}
                           </div>
-                        )}
-                      </div>
-                    );
-                  })}
+
+                          {/* Expanded Detail Box */}
+                          {isExpanded && (
+                            <div
+                              data-testid={`history-trade-details-${t.id}`}
+                              className="mt-2 pt-2 border-t border-[#232838] bg-[#121622] rounded-lg p-2.5 text-[10px] font-mono space-y-1.5 text-slate-400"
+                            >
+                              <div className="flex items-center justify-between">
+                                <span>Strike (Entry):</span>
+                                <span className="text-white font-bold">
+                                  {t.strikePrice.toFixed(assetObj?.pipDecimals ?? 2)}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span>Exit (Close):</span>
+                                <span
+                                  className={`font-bold ${
+                                    isWin
+                                      ? 'text-[#00c853]'
+                                      : isTie
+                                      ? 'text-amber-400'
+                                      : 'text-[#ff334b]'
+                                  }`}
+                                >
+                                  {exitPrice.toFixed(assetObj?.pipDecimals ?? 2)}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span>Payout Rate:</span>
+                                <span className="text-amber-400 font-bold">{payoutRate}%</span>
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span>Outcome:</span>
+                                <span
+                                  className={`px-1.5 py-0.2 rounded text-[8.5px] font-black uppercase tracking-wider ${
+                                    isWin
+                                      ? 'bg-emerald-500/20 text-[#00c853] border border-emerald-500/40'
+                                      : isTie
+                                      ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+                                      : 'bg-rose-500/20 text-[#ff334b] border border-rose-500/40'
+                                  }`}
+                                >
+                                  {isWin ? 'WIN' : isTie ? 'TIE' : 'LOSS'}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span>Order Time:</span>
+                                <span className="text-slate-300">
+                                  {new Date(t.startTime).toLocaleTimeString([], {
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                    second: '2-digit',
+                                  })}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span>Expiration Time:</span>
+                                <span className="text-slate-300">
+                                  {new Date(t.endTime).toLocaleTimeString([], {
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                    second: '2-digit',
+                                  })}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-1.5 pt-1">
+                                {onDoubleUp && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      soundEngine.playUiClick();
+                                      onDoubleUp(t);
+                                    }}
+                                    className="flex-1 py-1 px-2 rounded bg-white/10 hover:bg-white/20 text-white font-bold text-[10px] flex items-center justify-center gap-1 cursor-pointer border border-white/15"
+                                  >
+                                    <Repeat className="w-3 h-3 text-[#ff8800]" />
+                                    <span>Repeat (x2)</span>
+                                  </button>
+                                )}
+                                {onSelectTradeForChart && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      soundEngine.playUiClick();
+                                      onSelectTradeForChart(t);
+                                    }}
+                                    className="flex-1 py-1 px-2 rounded bg-[#0088ff]/20 hover:bg-[#0088ff]/30 text-[#0088ff] font-bold text-[10px] flex items-center justify-center gap-1 cursor-pointer border border-[#0088ff]/40"
+                                  >
+                                    <Crosshair className="w-3 h-3" />
+                                    <span>On Chart</span>
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               ))
             )}

@@ -38,6 +38,42 @@ export function generate30DayPerformance(
   const currentBal = Number(account.currentBalance ?? account.equity ?? initialBal);
   const netProfit = Number((currentBal - initialBal).toFixed(2));
 
+  // Strict conditional check: If an account has a balance of 0 or zero completed trades (and no actual recorded trade history),
+  // return flat zero points and zero stats instead of hallucinating trading days or win rates.
+  const hasNoBalance = currentBal <= 0;
+  const hasNoTrades = completedTrades.length === 0 && (!account.tradesCount || Number(account.tradesCount) <= 0);
+  if (hasNoBalance || hasNoTrades) {
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      const dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      points.push({
+        date: dateStr,
+        dayNumber: 30 - i,
+        dailyPnL: 0,
+        cumulativeProfit: 0,
+        winRate: 0,
+        tradesCount: 0,
+        wins: 0,
+        losses: 0,
+        drawdownPercent: 0,
+      });
+    }
+    return {
+      points,
+      stats: {
+        totalProfit: 0,
+        averageDailyProfit: 0,
+        overallWinRate: 0,
+        profitFactor: 0,
+        bestDayProfit: 0,
+        worstDayProfit: 0,
+        maxWinStreak: 0,
+        totalTrades30Days: 0,
+      },
+    };
+  }
+
   if (completedTrades.length === 0) {
     const totalDaysActive = Math.min(30, Math.max(1, Number(account.tradingDaysCompleted || 24)));
     const targetNetProfit = netProfit;

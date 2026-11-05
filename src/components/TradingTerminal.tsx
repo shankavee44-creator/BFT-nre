@@ -182,6 +182,7 @@ import { QuotexMobileNav } from './QuotexMobileNav';
 import { PriceAlertModal, PriceAlert } from './PriceAlertModal';
 import { LightweightTradingChart } from './LightweightTradingChart';
 import { AssetFlagIcon } from './CountryFlagIcon';
+import { QuotexCompactTradeHistory } from './QuotexCompactTradeHistory';
 import { soundEngine } from '../utils/soundEffects';
 import { supabaseMarketSync } from '../utils/supabaseMarketSync';
 import { supabase } from '../utils/supabase';
@@ -267,138 +268,7 @@ function getClockExpiry(seconds: number): string {
   return d.toTimeString().split(' ')[0];
 }
 
-interface ActiveTradeItemProps {
-  trade: BinaryTrade;
-  currentPrice: number;
-  selectedSymbol: string;
-  onDoubleUp: (trade: BinaryTrade) => void;
-}
 
-const ActiveTradeItem: React.FC<ActiveTradeItemProps> = React.memo(({
-  trade,
-  currentPrice,
-  selectedSymbol,
-  onDoubleUp,
-}) => {
-  const [secondsLeft, setSecondsLeft] = useState(() =>
-    Math.max(0, Math.ceil((trade.endTime - Date.now()) / 1000))
-  );
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      const remaining = Math.max(0, Math.ceil((trade.endTime - Date.now()) / 1000));
-      setSecondsLeft(remaining);
-      if (remaining <= 0) {
-        clearInterval(timer);
-      }
-    }, 250);
-    return () => clearInterval(timer);
-  }, [trade.endTime]);
-
-  const isCall = trade.direction === 'CALL';
-  const tradeMarket = getAssetMarketState(trade.asset);
-  const livePrice = trade.asset === selectedSymbol ? currentPrice : (tradeMarket?.lastPrice ?? trade.strikePrice);
-  const isInTheMoney = isCall ? livePrice > trade.strikePrice : livePrice < trade.strikePrice;
-  const percentRemaining = Math.max(0, Math.min(100, (secondsLeft / (trade.durationSeconds || 60)) * 100));
-  const assetObj = findAssetBySymbol(trade.asset);
-  const potentialPayout = trade.potentialPayout || (trade.investment * (trade.payoutPercentage || 85)) / 100;
-
-  return (
-    <div
-      key={trade.id}
-      data-testid={`active-trade-card-${trade.id}`}
-      className={`p-1.5 px-2 rounded-lg border text-xs transition-all ${
-        isInTheMoney
-          ? 'bg-[#081a14] border-[#00e676]/40'
-          : 'bg-[#1a0a0e] border-[#ff334b]/40'
-      }`}
-    >
-      <div className="flex items-center justify-between mb-0.5">
-        <div className="flex items-center gap-1 font-bold text-white text-[10.5px] truncate">
-          <AssetFlagIcon symbol={trade.asset} category={assetObj?.category} flagEmoji={assetObj?.flag} size="xs" />
-          <span className="truncate">{trade.asset}</span>
-        </div>
-        <span className={`text-[9.5px] font-bold font-mono ${secondsLeft <= 0 ? (isInTheMoney ? 'text-[#00e676]' : 'text-rose-400') : 'text-cyan-300'}`}>
-          {secondsLeft <= 0 ? '00:00 (EXP)' : formatTimerDisplay(secondsLeft)}
-        </span>
-      </div>
-
-      {/* Live Countdown Progress Line */}
-      <div className="w-full h-0.5 bg-[#131722] rounded-full overflow-hidden my-0.5 border border-[#2a2e39]">
-        <div
-          className={`h-full transition-all duration-500 ${
-            isInTheMoney ? 'bg-[#00e676]' : 'bg-[#ff334b]'
-          }`}
-          style={{ width: `${percentRemaining}%` }}
-        />
-      </div>
-
-      {/* Entry Strike & Live Price Row */}
-      <div className="flex items-center justify-between text-[8.5px] font-mono text-slate-400 my-0.5">
-        <span title="Entry strike price">
-          Entry: <span className="text-slate-200 font-bold">{trade.strikePrice.toFixed(assetObj?.pipDecimals ?? 2)}</span>
-        </span>
-        <span title="Current market price">
-          Now: <span className={`font-bold ${isInTheMoney ? 'text-[#00e676]' : 'text-rose-400'}`}>{livePrice.toFixed(assetObj?.pipDecimals ?? 2)}</span>
-        </span>
-        <span
-          className={`px-1.5 py-0.2 rounded text-[7.5px] font-black uppercase tracking-wider ${
-            secondsLeft <= 0
-              ? isInTheMoney
-                ? 'bg-emerald-500/20 text-[#00e676] border border-emerald-500/30'
-                : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
-              : 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
-          }`}
-        >
-          {secondsLeft <= 0 ? (isInTheMoney ? 'WIN' : 'LOSS') : 'OPEN'}
-        </span>
-      </div>
-
-      <div className="flex items-center justify-between text-[9.5px] font-mono">
-        <span className={`font-bold ${isCall ? 'text-[#00e676]' : 'text-[#ff334b]'}`}>
-          {isCall ? '↑ BUY' : '↓ SELL'} ${trade.investment}
-        </span>
-
-        <div className="flex items-center gap-1">
-          {secondsLeft > 0 ? (
-            <span
-              data-testid={`right-panel-trade-locked-${trade.id}`}
-              className="px-1.5 py-0.2 rounded bg-slate-800/90 text-slate-300 border border-white/10 text-[8px] font-bold uppercase tracking-wider flex items-center gap-0.5"
-              title="Trade is strictly locked until full expiration duration is met"
-            >
-              <Lock className="w-2.5 h-2.5 text-[#ff8800]" />
-              <span>LOCKED</span>
-            </span>
-          ) : (
-            <span
-              className={`px-1.5 py-0.2 rounded text-[8px] font-black uppercase tracking-wider flex items-center gap-0.5 ${
-                isInTheMoney
-                  ? 'bg-emerald-500/20 text-[#00e676] border border-emerald-500/30'
-                  : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
-              }`}
-            >
-              <span>{isInTheMoney ? 'WIN' : 'LOSS'}</span>
-            </span>
-          )}
-          {onDoubleUp && (
-            <button
-              type="button"
-              onClick={() => onDoubleUp(trade)}
-              className="px-1 py-0.2 rounded bg-cyan-500/25 hover:bg-cyan-500/40 text-cyan-300 border border-cyan-500/40 text-[8.5px] font-bold cursor-pointer"
-              title="Double up position (x2)"
-            >
-              x2
-            </button>
-          )}
-          <span className={`font-black tabular-nums ${isInTheMoney ? 'text-[#00e676]' : 'text-rose-400'}`}>
-            {isInTheMoney ? `+$${potentialPayout.toFixed(2)}` : `-$${trade.investment.toFixed(2)}`}
-          </span>
-        </div>
-      </div>
-
-    </div>
-  );
-});
 
 
 function drawRoundedRect(
@@ -5696,214 +5566,29 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             )}
           </div>
 
-          {/* BOTTOM SECTION OF RIGHT PANEL: ACTIVE TRADES & HISTORY TAB (Quotex Condensed List) */}
-          <div className="mt-1.5 pt-1.5 border-t border-[#2a2e39] flex-1 flex flex-col min-h-[140px] font-mono">
-            {/* Quotex Trades / History Tab Header */}
-            <div className="flex items-center bg-[#141722] p-0.5 rounded-lg border border-[#2a2e39] mb-1 text-[10px]">
-              <button
-                type="button"
-                data-testid="right-tab-trades"
-                onClick={() => {
-                  soundEngine.playUiClick();
-                  setRightPanelTab('trades');
-                }}
-                className={`flex-1 py-1 px-1.5 rounded font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors ${
-                  rightPanelTab === 'trades'
-                    ? 'bg-[#252b3d] text-white font-black'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <span>Trades</span>
-                <span
-                  className={`px-1.5 py-0.2 rounded-full text-[8.5px] font-black ${
-                    activeTrades.length > 0 ? 'bg-[#00c853] text-slate-950' : 'bg-[#1c202e] text-slate-400'
-                  }`}
-                >
-                  {activeTrades.length}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                data-testid="right-tab-history"
-                onClick={() => {
-                  soundEngine.playUiClick();
-                  setRightPanelTab('history');
-                }}
-                className={`flex-1 py-1 px-1.5 rounded font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors ${
-                  rightPanelTab === 'history'
-                    ? 'bg-[#252b3d] text-white font-black'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <Clock className="w-3 h-3" />
-                <span>History</span>
-                <span className="px-1.5 py-0.2 rounded-full text-[8.5px] bg-[#1c202e] text-slate-400 font-bold">
-                  {closedTrades.length}
-                </span>
-              </button>
-            </div>
-
-            {/* Tab Content: Active Trades vs Closed Trade History (Condensed Scrollable List) */}
-            <div className="flex-1 overflow-y-auto space-y-1 pr-0.5 max-h-[calc(100vh-420px)] min-h-[120px] no-scrollbar">
-              {rightPanelTab === 'trades' ? (
-                activeTrades.length === 0 ? (
-                  <div className="p-2.5 rounded-lg bg-[#141722] border border-[#2a2e39] text-center text-[9.5px] text-slate-400 space-y-0.5">
-                    <div className="text-slate-300 font-bold">No Active Trades</div>
-                    <div>Click Buy or Sell above to open an order.</div>
-                  </div>
-                ) : (
-                  activeTrades.map((t) => (
-                    <ActiveTradeItem
-                      key={t.id}
-                      trade={t}
-                      currentPrice={currentPrice}
-                      selectedSymbol={selectedAsset.symbol}
-                      onDoubleUp={handleDoubleUp}
-                    />
-                  ))
-                )
-              ) : closedTrades.length === 0 ? (
-                <div className="p-2.5 rounded-lg bg-[#141722] border border-[#2a2e39] text-center text-[9.5px] text-slate-400">
-                  No settled trades yet.
-                </div>
-              ) : (
-                (() => {
-                  // Group history by date (Quotex Style Date Badges)
-                  const groups = closedTrades.slice(0, 25).reduce((acc, t) => {
-                    const dateStr = new Date(t.endTime)
-                      .toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
-                      .toUpperCase();
-                    if (!acc[dateStr]) acc[dateStr] = [];
-                    acc[dateStr].push(t);
-                    return acc;
-                  }, {} as Record<string, typeof closedTrades>);
-
-                  return Object.entries(groups).map(([dateLabel, items]) => (
-                    <div key={dateLabel} className="space-y-0.5">
-                      {/* Quotex Date Section Header Pill */}
-                      <div className="flex items-center justify-center my-0.5">
-                        <div className="px-2 py-0.2 rounded-full bg-[#1c202e] border border-[#2a2e39] text-[8.5px] font-black text-slate-400 font-mono tracking-wider flex items-center gap-1">
-                          <span>{dateLabel}</span>
-                          <span className="w-3 h-3 rounded-full bg-[#262b3d] text-white flex items-center justify-center text-[7.5px] font-bold">
-                            {items.length}
-                          </span>
-                        </div>
-                      </div>
-
-                      {items.map((t) => {
-                        const isWin = t.status === 'won';
-                        const isTie = t.status === 'tie';
-                        const isCall = t.direction === 'CALL';
-                        const assetObj = findAssetBySymbol(t.asset);
-                        const isHighlightedOnChart = activeInspectedMarker?.tradeId === t.id;
-                        const exitPrice = t.closePrice ?? t.currentPrice ?? t.strikePrice;
-                        const payoutAmount = isWin
-                          ? (t.potentialPayout || (t.investment * (1 + (t.payoutPercentage || 85) / 100)))
-                          : isTie
-                          ? t.investment
-                          : 0;
-
-                        return (
-                          <div
-                            key={t.id}
-                            onClick={() => {
-                              soundEngine.playUiClick();
-                              setShowHistoryOverlay(true);
-                              const marker =
-                                tradeMarkersRef.current.find(
-                                  (m) => m.tradeId === t.id && m.pointType === 'settlement'
-                                ) ||
-                                tradeMarkersRef.current.find((m) => m.tradeId === t.id) ||
-                                null;
-                              if (marker) {
-                                setSelectedTradeMarker(marker);
-                              }
-                            }}
-                            className={`p-1.5 px-2 rounded-md border text-[11px] cursor-pointer transition-colors ${
-                              isHighlightedOnChart
-                                ? isWin
-                                  ? 'bg-[#081a14] border-[#00e676]'
-                                  : isTie
-                                  ? 'bg-[#18150a] border-amber-400'
-                                  : 'bg-[#1a0a0e] border-[#ff334b]'
-                                : isWin
-                                ? 'bg-[#081a14]/70 border-emerald-500/40 hover:border-emerald-500/60'
-                                : isTie
-                                ? 'bg-[#18150a]/70 border-amber-500/30 hover:border-amber-500/50'
-                                : 'bg-[#1a0a0e]/70 border-rose-500/40 hover:border-rose-500/60'
-                            }`}
-                            title="Click to highlight trade execution & settlement on chart"
-                          >
-                            <div className="flex items-center justify-between text-[10px] mb-1">
-                              <div className="flex items-center gap-1 font-bold text-white truncate">
-                                <AssetFlagIcon symbol={t.asset} category={assetObj?.category} flagEmoji={assetObj?.flag} size="xs" />
-                                <span className="truncate text-[10px]">{t.asset}</span>
-                                <span className="text-[8.5px] text-[#ff8800] font-black">{t.payoutPercentage || 85}%</span>
-                              </div>
-                              <div className="flex items-center gap-1">
-                                <span className={`px-1.5 py-0.2 rounded text-[8px] font-black uppercase tracking-wider ${
-                                  isWin
-                                    ? 'bg-emerald-500/20 text-[#00e676] border border-emerald-500/30'
-                                    : isTie
-                                    ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
-                                    : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
-                                }`}>
-                                  {isWin ? 'WIN' : isTie ? 'TIE' : 'LOSS'}
-                                </span>
-                                <span className="text-[8.5px] text-slate-400 font-mono">
-                                  {new Date(t.endTime || t.startTime).toLocaleTimeString([], {
-                                    hour: '2-digit',
-                                    minute: '2-digit',
-                                    second: '2-digit',
-                                  })}
-                                </span>
-                              </div>
-                            </div>
-
-                            <div className="flex items-center justify-between text-[8.5px] font-mono text-slate-400 mb-1">
-                              <span>Entry: <span className="text-slate-200 font-bold">{t.strikePrice ? t.strikePrice.toFixed(assetObj?.pipDecimals ?? 2) : '—'}</span></span>
-                              <span>→</span>
-                              <span>Exit: <span className="text-slate-200 font-bold">{exitPrice ? exitPrice.toFixed(assetObj?.pipDecimals ?? 2) : '—'}</span></span>
-                            </div>
-
-                            <div className="flex items-center justify-between text-[9.5px] font-mono pt-1 border-t border-[#1e2330]">
-                              <span className={`font-bold ${isCall ? 'text-[#00e676]' : 'text-[#ff334b]'}`}>
-                                {isCall ? '↑ BUY' : '↓ SELL'} ${t.investment}
-                              </span>
-                              <div className="text-right">
-                                <span
-                                  className={`font-black ${
-                                    isWin ? 'text-[#00e676]' : isTie ? 'text-amber-400' : 'text-rose-400'
-                                  }`}
-                                >
-                                  {isWin
-                                    ? `+${(t.pnl ?? t.potentialPayout ?? 0).toFixed(2)} $`
-                                    : isTie
-                                    ? '±0.00 $'
-                                    : `-${Math.abs(t.pnl !== undefined && t.pnl !== null && t.pnl < 0 ? t.pnl : t.investment).toFixed(2)} $`}
-                                </span>
-                                {isWin && payoutAmount > 0 && (
-                                  <span className="text-[8px] text-emerald-400/80 block">
-                                    Payout: ${payoutAmount.toFixed(2)}
-                                  </span>
-                                )}
-                                {!isWin && !isTie && (
-                                  <span className="text-[8px] text-rose-400/70 block">
-                                    Loss: -${Math.abs(t.investment).toFixed(2)}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-
-                    </div>
-                  ));
-                })()
-              )}
-            </div>
+          {/* BOTTOM SECTION OF RIGHT PANEL: ACTIVE TRADES & HISTORY TAB (Quotex Compact Layout) */}
+          <div className="mt-1.5 pt-1.5 border-t border-[#242b3b] flex-1 flex flex-col min-h-[140px] font-mono overflow-hidden">
+            <QuotexCompactTradeHistory
+              trades={trades}
+              currentPrice={currentPrice}
+              selectedAssetSymbol={selectedAsset.symbol}
+              onDoubleUp={handleDoubleUp}
+              onSelectTradeForChart={(t) => {
+                soundEngine.playUiClick();
+                setShowHistoryOverlay(true);
+                const marker =
+                  tradeMarkersRef.current.find(
+                    (m) => m.tradeId === t.id && m.pointType === 'settlement'
+                  ) ||
+                  tradeMarkersRef.current.find((m) => m.tradeId === t.id) ||
+                  null;
+                if (marker) {
+                  setSelectedTradeMarker(marker);
+                }
+              }}
+              initialTab={rightPanelTab}
+              onTabChange={(tab) => setRightPanelTab(tab)}
+            />
           </div>
         </div>
       </div>

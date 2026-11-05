@@ -30,6 +30,7 @@ import {
   Smartphone,
   Sparkles,
   ChevronDown,
+  Info,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import {
@@ -116,6 +117,7 @@ import {
   mapFromSupabaseRow,
   mergeTradesAuthoritatively,
   computeUserTradingSummary,
+  isAccountEligibleForTradingSummary,
 } from '../utils/supabaseTradeSync';
 
 interface UserDashboardProps {
@@ -1197,15 +1199,34 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   const currentActiveAccount = accounts.find((a) => a.id === activeAccountId) || accounts[0];
   const isSelectedAccountDemo = isDemoAccount(currentActiveAccount);
 
-  const tradingSummary = React.useMemo(
-    () => computeUserTradingSummary(authoritativeUserTrades),
-    [authoritativeUserTrades]
+  // Strict check: an account must have balance > 0 AND active trade history (completed trades > 0)
+  const isCurrentActiveAccountEligible = currentActiveAccount
+    ? isAccountEligibleForTradingSummary(currentActiveAccount, authoritativeUserTrades)
+    : false;
+
+  // Filter accounts strictly: accounts with balance of 0 or zero completed trades must not corrupt overall summary
+  const eligibleLiveAccounts = React.useMemo(
+    () => accounts.filter((acc) => isAccountEligibleForTradingSummary(acc, authoritativeUserTrades)),
+    [accounts, authoritativeUserTrades]
   );
 
-  // Filter trades based on the currently selected account for history and analytics consistency
-  const effectiveTrades = activeAccountId
-    ? authoritativeUserTrades.filter((t) => t.accountId === activeAccountId)
-    : authoritativeUserTrades;
+  // Calculate overall summary stats strictly using eligible funded accounts with active trade histories
+  const tradingSummary = React.useMemo(
+    () => computeUserTradingSummary(authoritativeUserTrades, accounts),
+    [authoritativeUserTrades, accounts]
+  );
+
+  // Filter trades based on the currently selected account for history and analytics consistency.
+  // If the selected live account is unfunded ($0 balance) or has 0 trades, isolate it to prevent other account trades from corrupting it.
+  const effectiveTrades = React.useMemo(() => {
+    if (!currentActiveAccount) return [];
+    if (!isSelectedAccountDemo && !isCurrentActiveAccountEligible) {
+      return authoritativeUserTrades.filter((t) => t.accountId === currentActiveAccount.id);
+    }
+    return activeAccountId
+      ? authoritativeUserTrades.filter((t) => t.accountId === activeAccountId)
+      : authoritativeUserTrades;
+  }, [authoritativeUserTrades, currentActiveAccount, isSelectedAccountDemo, isCurrentActiveAccountEligible, activeAccountId]);
   const wonTradesCount = effectiveTrades.filter((t) => t.status === 'won').length;
   const lostTradesCount = effectiveTrades.filter((t) => t.status === 'lost').length;
   const totalSettled = wonTradesCount + lostTradesCount;
@@ -1687,9 +1708,22 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                   <div>
                     <h3 className="text-sm sm:text-lg font-black text-white flex flex-wrap items-center gap-2">
                       <span>Overall Trading Summary</span>
-                      <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30">
-                        {tradingSummary.totalTradesCount} Total Trades
-                      </span>
+                      {tradingSummary.totalTradesCount > 0 ? (
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30">
+                          {tradingSummary.totalTradesCount} Total Trades
+                        </span>
+                      ) : (
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-slate-500/20 text-slate-400 font-bold border border-slate-500/30">
+                          0 Trades
+                        </span>
+                      )}
+                      {!isCurrentActiveAccountEligible && (
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 font-medium border border-amber-500/30">
+                          {Number(currentActiveAccount?.currentBalance ?? currentActiveAccount?.equity ?? 0) <= 0
+                            ? 'Unfunded Live Account ($0 Balance)'
+                            : '0 Executed Trades'}
+                        </span>
+                      )}
                     </h3>
                   </div>
                 </div>
@@ -1705,18 +1739,27 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                     <span
                       data-testid="summary-net-pnl"
                       className={`text-sm sm:text-lg font-black ${
-                        tradingSummary.totalNetProfitLoss > 0
+                        tradingSummary.totalTradesCount > 0 && tradingSummary.totalNetProfitLoss > 0
                           ? 'text-emerald-400'
-                          : tradingSummary.totalNetProfitLoss < 0
+                          : tradingSummary.totalTradesCount > 0 && tradingSummary.totalNetProfitLoss < 0
                           ? 'text-rose-400'
                           : 'text-slate-200'
                       }`}
                     >
-                      {tradingSummary.formattedNetProfitLoss}
+                      {tradingSummary.totalTradesCount > 0 ? tradingSummary.formattedNetProfitLoss : '$0.00'}
                     </span>
                   </div>
                 </div>
               </div>
+
+              {tradingSummary.totalTradesCount === 0 && (
+                <div className="mt-3 py-2 px-3 rounded-lg bg-white/[0.03] border border-white/5 flex items-center gap-2 text-xs text-slate-400">
+                  <Info className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                  <span>
+                    No active accounts with completed trades. Default zero / empty states displayed.
+                  </span>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3 mt-3 sm:mt-4">
                 <div className="p-3 sm:p-3.5 rounded-xl bg-[#14141a] border border-white/10">
@@ -1727,10 +1770,12 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                     data-testid="summary-total-trades"
                     className="text-sm sm:text-base font-black text-white mt-1 block"
                   >
-                    {tradingSummary.totalTradesCount}
+                    {tradingSummary.totalTradesCount > 0 ? tradingSummary.totalTradesCount : '0'}
                   </span>
                   <span className="text-[10px] text-slate-500 block mt-0.5">
-                    {tradingSummary.winningTradesCount}W / {tradingSummary.losingTradesCount}L ({tradingSummary.totalCompletedTrades} Settled)
+                    {tradingSummary.totalCompletedTrades > 0
+                      ? `${tradingSummary.winningTradesCount}W / ${tradingSummary.losingTradesCount}L (${tradingSummary.totalCompletedTrades} Settled)`
+                      : '0 Settled'}
                   </span>
                 </div>
 
@@ -1742,7 +1787,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                     data-testid="summary-win-rate"
                     className="text-sm sm:text-base font-black text-cyan-400 mt-1 block"
                   >
-                    {tradingSummary.formattedWinRate}
+                    {tradingSummary.totalCompletedTrades > 0 ? tradingSummary.formattedWinRate : 'N/A'}
                   </span>
                   <span className="text-[10px] text-slate-500 block mt-0.5">
                     Wins / Completed Trades
@@ -1755,14 +1800,14 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                   </span>
                   <span
                     className={`text-sm sm:text-base font-black mt-1 block ${
-                      tradingSummary.totalNetProfitLoss > 0
+                      tradingSummary.totalTradesCount > 0 && tradingSummary.totalNetProfitLoss > 0
                         ? 'text-emerald-400'
-                        : tradingSummary.totalNetProfitLoss < 0
+                        : tradingSummary.totalTradesCount > 0 && tradingSummary.totalNetProfitLoss < 0
                         ? 'text-rose-400'
                         : 'text-slate-200'
                     }`}
                   >
-                    {tradingSummary.formattedNetProfitLoss}
+                    {tradingSummary.totalTradesCount > 0 ? tradingSummary.formattedNetProfitLoss : '$0.00'}
                   </span>
                   <span className="text-[10px] text-slate-500 block mt-0.5">
                     Realized Net P&amp;L
@@ -1777,7 +1822,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                     data-testid="summary-total-volume"
                     className="text-sm sm:text-base font-black text-[#ff8800] mt-1 block"
                   >
-                    {tradingSummary.formattedVolumeTraded}
+                    {tradingSummary.totalTradesCount > 0 ? tradingSummary.formattedVolumeTraded : '$0.00'}
                   </span>
                   <span className="text-[10px] text-slate-500 block mt-0.5">
                     Cumulative Stake Volume
@@ -3335,7 +3380,9 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 font-mono text-xs">
             <div className="p-4 rounded-2xl bg-[#0a0a0a] border border-white/10">
               <span className="text-slate-400 text-[11px] block uppercase">30D Win Rate</span>
-              <span className="text-2xl font-black text-emerald-400 block mt-1">{winRatePercent}%</span>
+              <span className="text-2xl font-black text-emerald-400 block mt-1">
+                {totalSettled > 0 ? `${winRatePercent}%` : 'N/A'}
+              </span>
               <span className="text-[10px] text-slate-500">
                 {wonTradesCount} Wins / {lostTradesCount} Losses
               </span>
@@ -3347,7 +3394,9 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             </div>
             <div className="p-4 rounded-2xl bg-[#0a0a0a] border border-white/10">
               <span className="text-slate-400 text-[11px] block uppercase">Profit Factor</span>
-              <span className="text-2xl font-black text-[#ff8800] block mt-1">{profitFactorDisplay}</span>
+              <span className="text-2xl font-black text-[#ff8800] block mt-1">
+                {totalSettled > 0 ? profitFactorDisplay : 'N/A'}
+              </span>
               <span className="text-[10px] text-slate-500">Gross Win / Gross Loss</span>
             </div>
             <div className="p-4 rounded-2xl bg-[#0a0a0a] border border-white/10">
@@ -3400,7 +3449,9 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                   </PieChart>
                 </ResponsiveContainer>
                 <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none font-mono">
-                  <span className="text-2xl font-black text-emerald-400">{winRatePercent}%</span>
+                  <span className="text-2xl font-black text-emerald-400">
+                    {totalSettled > 0 ? `${winRatePercent}%` : 'N/A'}
+                  </span>
                   <span className="text-[10px] text-slate-400 uppercase">Win Rate</span>
                 </div>
               </div>

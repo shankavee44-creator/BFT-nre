@@ -2205,64 +2205,58 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                   No binary options trades recorded in this account yet. Launch the OTC Trading Terminal to execute CALL/PUT contracts.
                 </div>
               ) : (
-                <>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse text-xs font-mono tabular-nums">
-                      <thead>
-                        <tr className="border-b border-[#1e2330] text-[#8c96a6]">
-                          <th className="py-2.5 px-3">Asset</th>
-                          <th className="py-2.5 px-3">Direction</th>
-                          <th className="py-2.5 px-3">Entry Price</th>
-                          <th className="py-2.5 px-3">Exit Price</th>
-                          <th className="py-2.5 px-3">Investment</th>
-                          <th className="py-2.5 px-3">Payout</th>
-                          <th className="py-2.5 px-3">Status</th>
-                          <th className="py-2.5 px-3">Timestamp</th>
-                          <th className="py-2.5 px-3 text-right">Net P&L</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-[#1e2330]">
-                        {paginateItems(accountTrades, tradesPage, tradesPageSize)
-                          .map((t) => {
-                            const isWin = t.status === 'won';
-                            const isLoss = t.status === 'lost';
-                            const isTie = t.status === 'tie';
-                            const isOpen = t.status === 'active';
-                            const exitPrice = isOpen
-                              ? (t.currentPrice || t.strikePrice)
-                              : (t.closePrice ?? t.currentPrice ?? t.strikePrice);
-                            const payoutAmount = isWin
-                              ? (t.potentialPayout || (t.investment * (1 + (t.payoutPercentage || 85) / 100)))
-                              : isTie
-                              ? t.investment
-                              : 0;
-                            const netPnl = t.pnl ?? (isWin ? (t.potentialPayout || (t.investment * (t.payoutPercentage || 85)) / 100) : isTie ? 0 : -t.investment);
-                            const dateObj = new Date(t.endTime || t.startTime);
-                            const formattedTime = dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-                            const formattedDate = dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+                <div className="space-y-2">
+                  <div className="space-y-1.5 max-h-[500px] overflow-y-auto pr-1">
+                    {paginateItems(accountTrades, tradesPage, tradesPageSize)
+                      .map((t) => {
+                        const isWin = t.status === 'won';
+                        const isTie = t.status === 'tie';
+                        const isOpen = t.status === 'active';
+                        const isCall = t.direction === 'CALL';
+                        const payoutAmount = isWin
+                          ? (t.potentialPayout || (t.investment * (1 + (t.payoutPercentage || 85) / 100)))
+                          : isTie
+                          ? t.investment
+                          : 0;
+                        const dateObj = new Date(t.endTime || t.startTime);
+                        const formattedTime = dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                        const formattedDate = dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }).toUpperCase();
 
-                            return (
-                              <tr key={t.id} className="hover:bg-[#151922] transition-colors">
-                                <td className="py-2.5 px-3 font-bold text-white whitespace-nowrap">{t.asset}</td>
-                                <td
-                                  className={`py-2.5 px-3 font-bold ${
-                                    t.direction === 'CALL' ? 'text-[#00c853]' : 'text-rose-400'
+                        return (
+                          <div
+                            key={t.id}
+                            className="p-2.5 bg-[#121622] hover:bg-[#161b2a] rounded-xl border border-[#1f2434] transition-all flex flex-col gap-1"
+                          >
+                            {/* Top Line: Date/Time + Asset Name + Duration */}
+                            <div className="flex items-center justify-between text-[11px] font-bold text-white">
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] font-mono text-slate-400">{formattedDate} {formattedTime}</span>
+                                <span className="text-slate-600">•</span>
+                                <span className="text-xs font-black text-white">{t.asset}</span>
+                              </div>
+                              <span className="font-mono text-[10px] text-slate-400">
+                                {t.durationSeconds ? `${t.durationSeconds}s` : '00:00:05'}
+                              </span>
+                            </div>
+
+                            {/* Bottom Line: Direction + Investment (Left) & Return Payout (Right) */}
+                            <div className="flex items-center justify-between font-mono text-xs">
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className={`px-2 py-0.5 rounded text-[10px] font-black uppercase flex items-center gap-1 ${
+                                    isCall
+                                      ? 'bg-[#00c853]/20 text-[#00c853] border border-[#00c853]/40'
+                                      : 'bg-[#ff334b]/20 text-[#ff334b] border border-[#ff334b]/40'
                                   }`}
                                 >
-                                  {t.direction === 'CALL' ? '↑ CALL' : '↓ PUT'}
-                                </td>
-                                <td className="py-2.5 px-3 text-slate-300 font-mono">
-                                  {t.strikePrice ? t.strikePrice.toFixed(4) : '—'}
-                                </td>
-                                <td className="py-2.5 px-3 text-slate-300 font-mono">
-                                  {exitPrice ? exitPrice.toFixed(4) : '—'}
-                                </td>
-                                <td className="py-2.5 px-3 text-white">${t.investment.toFixed(2)}</td>
-                                <td className="py-2.5 px-3 text-slate-300 font-mono">
-                                  {payoutAmount > 0 ? `$${payoutAmount.toFixed(2)}` : '$0.00'}
-                                </td>
-                                <td className="py-2.5 px-3">
-                                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                                  {isCall ? '↑ CALL' : '↓ PUT'}
+                                </span>
+                                <span className="text-white font-bold">{t.investment} $</span>
+                              </div>
+
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
                                     isOpen
                                       ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
                                       : isWin
@@ -2270,33 +2264,34 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                                       : isTie
                                       ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
                                       : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
-                                  }`}>
-                                    {isOpen ? 'OPEN' : isWin ? 'WIN' : isTie ? 'TIE' : 'LOSS'}
-                                  </span>
-                                </td>
-                                <td className="py-2.5 px-3 text-slate-400 whitespace-nowrap text-[11px]">
-                                  {formattedDate} {formattedTime}
-                                </td>
-                                <td
-                                  className={`py-2.5 px-3 text-right font-bold ${
+                                  }`}
+                                >
+                                  {isOpen ? 'OPEN' : isWin ? 'WIN' : isTie ? 'TIE' : 'LOSS'}
+                                </span>
+                                <span
+                                  className={`font-black text-xs tabular-nums ${
                                     isOpen
                                       ? 'text-cyan-400'
-                                      : netPnl >= 0
+                                      : isWin
                                       ? 'text-[#00c853]'
-                                      : 'text-rose-400'
+                                      : isTie
+                                      ? 'text-amber-400'
+                                      : 'text-[#ff334b]'
                                   }`}
                                 >
                                   {isOpen
                                     ? 'RUNNING'
-                                    : netPnl >= 0
-                                    ? `+$${netPnl.toFixed(2)}`
-                                    : `-$${Math.abs(netPnl).toFixed(2)}`}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                      </tbody>
-                    </table>
+                                    : isWin
+                                    ? `+${payoutAmount.toFixed(2)} $`
+                                    : isTie
+                                    ? `${payoutAmount.toFixed(2)} $`
+                                    : '0.00 $'}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
                   </div>
 
                   <TablePagination
@@ -2309,7 +2304,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                     itemLabel="trades"
                     testIdPrefix="trades-history-pagination"
                   />
-                </>
+                </div>
               )}
             </div>
           </div>

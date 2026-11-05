@@ -312,7 +312,7 @@ const MasterTraderCardItem: React.FC<MasterTraderCardItemProps> = React.memo(({
             <button
               type="button"
               disabled={isFull}
-              data-testid={`copy-trader-btn-${trader.numeric_id}`}
+              data-testid={`quick-copy-btn-${trader.numeric_id}`}
               onClick={() => onOpenCopyConfig(trader)}
               className={`flex-1 py-1.5 sm:py-2 px-3 rounded-lg sm:rounded-xl font-black text-[10.5px] sm:text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 bft-touch-scale min-h-[34px] sm:min-h-[42px] ${
                 isFull
@@ -320,7 +320,8 @@ const MasterTraderCardItem: React.FC<MasterTraderCardItemProps> = React.memo(({
                   : 'bg-[#00F5A0] hover:brightness-110 text-[#07080B] cursor-pointer shadow-md'
               }`}
             >
-              <span>{isFull ? '200/200 Full' : 'Copy Trader'}</span>
+              <Zap className="w-3.5 h-3.5 fill-current shrink-0" />
+              <span>{isFull ? '200/200 Full' : 'Quick Copy'}</span>
               {!isFull && <ChevronRight className="w-3.5 h-3.5 stroke-[3]" />}
             </button>
           )}
@@ -1441,12 +1442,13 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                             <button
                               type="button"
                               disabled={topIsFull}
+                              data-testid={`mobile-quick-copy-${topTrader.numeric_id}`}
                               onClick={() =>
                                 topIsCopying
                                   ? handleCancelSubscription(topTrader)
                                   : handleOpenCopyConfig(topTrader)
                               }
-                              className={`flex-1 py-1 px-2 rounded-lg font-black text-[10px] uppercase tracking-wider bft-touch-scale cursor-pointer ${
+                              className={`flex-1 py-1 px-2 rounded-lg font-black text-[10px] uppercase tracking-wider flex items-center justify-center gap-1 bft-touch-scale cursor-pointer ${
                                 topIsCopying
                                   ? 'bg-rose-500/20 border border-rose-500/40 text-rose-300'
                                   : topIsFull
@@ -1454,7 +1456,8 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                                   : 'bg-[#00F5A0] text-[#07080B]'
                               }`}
                             >
-                              {topIsCopying ? 'Stop' : topIsFull ? 'Full' : 'Copy'}
+                              <Zap className="w-2.5 h-2.5 fill-current shrink-0" />
+                              <span>{topIsCopying ? 'Stop' : topIsFull ? 'Full' : 'Quick Copy'}</span>
                             </button>
                           </div>
                         </div>
@@ -1679,30 +1682,32 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
         </div>
       )}
 
-      {/* Custom Copy Risk Management Configuration Modal */}
+      {/* Quick Copy Allocation Modal */}
       {showRiskConfigModal && (
         <div
-          data-testid="copy-risk-config-modal"
-          className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/85 backdrop-blur-xl animate-fade-in"
+          data-testid="quick-copy-allocation-modal"
+          className="fixed inset-0 z-[70] flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-xl animate-fade-in"
           onClick={() => setShowRiskConfigModal(null)}
         >
           <div
+            data-testid="copy-risk-config-modal"
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-lg bg-[#0B0E17] border border-slate-700 rounded-3xl p-6 sm:p-7 shadow-2xl space-y-5 max-h-[92vh] overflow-y-auto"
+            className="w-full max-w-lg bg-[#0B0E17] border border-slate-700 rounded-3xl p-5 sm:p-7 shadow-2xl space-y-4 sm:space-y-5 max-h-[92vh] overflow-y-auto"
           >
-            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3 sm:pb-4">
               <div>
                 <h3 className="text-base sm:text-lg font-black text-white flex items-center gap-2 uppercase">
-                  <Settings2 className="w-5 h-5 text-[#00F5A0]" />
-                  <span>Copy Risk Configuration</span>
+                  <Zap className="w-5 h-5 text-[#00F5A0] fill-current" />
+                  <span>Quick Copy Allocation</span>
                 </h3>
                 <p className="text-xs font-mono text-slate-400 mt-0.5">
-                  Master Trader: <strong className="text-white">{showRiskConfigModal.provider_name}</strong> (ID #{showRiskConfigModal.numeric_id})
+                  Allocate capital to mirror future binary trades with zero execution latency
                 </p>
               </div>
               <button
                 type="button"
-                aria-label="Close Risk Configuration"
+                aria-label="Close Quick Copy Allocation"
                 onClick={() => setShowRiskConfigModal(null)}
                 className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer"
               >
@@ -1710,11 +1715,53 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
               </button>
             </div>
 
+            {/* Selected Master Trader Preview Card */}
+            <div className="p-3 sm:p-3.5 rounded-2xl bg-[#121726] border border-slate-700/80 flex items-center justify-between gap-2.5">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-10 h-10 rounded-xl bg-[#161C2B] border border-slate-600 flex items-center justify-center shrink-0 overflow-hidden">
+                  <CountryFlagIcon
+                    isoCode={showRiskConfigModal.country_code}
+                    country={showRiskConfigModal.country}
+                    flagEmoji={showRiskConfigModal.flag}
+                    className="w-7 h-5 object-cover rounded-xs"
+                  />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="font-black text-sm text-white truncate">
+                      {showRiskConfigModal.provider_name}
+                    </span>
+                    <span className="text-[10px] font-mono text-cyan-300 font-bold bg-cyan-500/15 border border-cyan-500/30 px-1.5 py-0.2 rounded">
+                      ID #{showRiskConfigModal.numeric_id}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[10px] font-mono text-slate-400 mt-0.5 flex-wrap">
+                    <span>{showRiskConfigModal.country}</span>
+                    <span>•</span>
+                    <span className="text-[#00F5A0] font-bold">3M Win: {showRiskConfigModal.win_rate_3m}%</span>
+                    <span>•</span>
+                    <span className="text-amber-400 font-bold">24H: +{showRiskConfigModal.daily_profit_pct}%</span>
+                  </div>
+                </div>
+              </div>
+              <div className="text-right shrink-0">
+                <span className="text-[9px] font-mono text-slate-400 uppercase block">Copiers</span>
+                <span className="text-xs font-mono font-bold text-white">
+                  {showRiskConfigModal.current_copiers} / {MAX_COPIERS_PER_TRADER}
+                </span>
+              </div>
+            </div>
+
             {/* Account Selector inside Risk Modal */}
             <div className="space-y-1.5">
-              <label className="text-[10px] font-mono font-bold uppercase text-slate-400 block">
-                1. Follower Account (Instant Funded $25K/$50K/$100K or Self-Capital $100+)
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="text-[10px] font-mono font-bold uppercase text-slate-400 block">
+                  1. Follower Account (Active Live Account)
+                </label>
+                <span className="text-[10px] font-mono text-[#00F5A0] font-bold">
+                  Available: ${copierEligibility.selectedResult.availableBalance.toLocaleString()}
+                </span>
+              </div>
               <select
                 aria-label="Follower Account for Copy Trading"
                 data-testid="risk-modal-account-select"
@@ -1732,13 +1779,15 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
             </div>
 
             {/* Per-Trade Allocation Mode ($ vs % of Balance) */}
-            <div className="space-y-2.5">
+            <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-[10px] font-mono font-bold uppercase text-slate-400">
-                  2. Per-Trade Allocation ($ or % of Balance)
+                  2. Allocate Trade Amount to Mirror
                 </label>
-                <span className="text-[10px] font-mono text-[#00F5A0]">
-                  Available: ${copierEligibility.selectedResult.availableBalance.toLocaleString()}
+                <span className="text-[10px] font-mono text-slate-400">
+                  {perTradeAllocationType === 'amount'
+                    ? `$${perTradeAllocationValue} per binary trade`
+                    : `${perTradeAllocationValue}% of balance per trade`}
                 </span>
               </div>
 
@@ -1751,7 +1800,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                     setPerTradeAllocationType('amount');
                     setPerTradeAllocationValue(100);
                   }}
-                  className={`py-2.5 px-3 rounded-xl font-mono font-bold text-xs border flex items-center justify-center gap-1.5 cursor-pointer ${
+                  className={`py-2 px-3 rounded-xl font-mono font-bold text-xs border flex items-center justify-center gap-1.5 cursor-pointer ${
                     perTradeAllocationType === 'amount'
                       ? 'bg-[#00F5A0]/20 border-[#00F5A0] text-[#00F5A0]'
                       : 'bg-[#121726] border-slate-800 text-slate-400'
@@ -1768,7 +1817,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                     setPerTradeAllocationType('percentage');
                     setPerTradeAllocationValue(2);
                   }}
-                  className={`py-2.5 px-3 rounded-xl font-mono font-bold text-xs border flex items-center justify-center gap-1.5 cursor-pointer ${
+                  className={`py-2 px-3 rounded-xl font-mono font-bold text-xs border flex items-center justify-center gap-1.5 cursor-pointer ${
                     perTradeAllocationType === 'percentage'
                       ? 'bg-[#00F5A0]/20 border-[#00F5A0] text-[#00F5A0]'
                       : 'bg-[#121726] border-slate-800 text-slate-400'
@@ -1778,6 +1827,31 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                   <span>Balance Percent (%)</span>
                 </button>
               </div>
+
+              {/* Quick Amount Allocation Chips ($25, $50, $100, $250, $500) */}
+              {perTradeAllocationType === 'amount' && (
+                <div className="flex items-center gap-1.5 pt-0.5 overflow-x-auto no-scrollbar">
+                  <span className="text-[10px] font-mono text-slate-400 shrink-0">Quick:</span>
+                  {[25, 50, 100, 250, 500].map((amt) => (
+                    <button
+                      key={amt}
+                      type="button"
+                      data-testid={`quick-chip-${amt}`}
+                      onClick={() => {
+                        soundEngine.playUiClick();
+                        setPerTradeAllocationValue(amt);
+                      }}
+                      className={`px-2.5 py-1 rounded-lg font-mono font-bold text-[11px] border cursor-pointer transition-colors shrink-0 ${
+                        perTradeAllocationValue === amt
+                          ? 'bg-[#00F5A0] text-[#07080B] border-[#00F5A0]'
+                          : 'bg-[#161C2B] text-slate-300 border-slate-700 hover:border-slate-500'
+                      }`}
+                    >
+                      ${amt}
+                    </button>
+                  ))}
+                </div>
+              )}
 
               <input
                 type="number"
@@ -1791,8 +1865,8 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
 
             {/* Max Loss Stop, Target Profit Stop & Max Drawdown Stop */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-mono font-bold uppercase text-rose-400 block">
+              <div className="space-y-1">
+                <label className="text-[9.5px] font-mono font-bold uppercase text-rose-400 block">
                   3. Max Loss Stop ($)
                 </label>
                 <input
@@ -1805,8 +1879,8 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                 />
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-mono font-bold uppercase text-[#00F5A0] block">
+              <div className="space-y-1">
+                <label className="text-[9.5px] font-mono font-bold uppercase text-[#00F5A0] block">
                   4. Target Profit ($)
                 </label>
                 <input
@@ -1819,8 +1893,8 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                 />
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-mono font-bold uppercase text-amber-400 block">
+              <div className="space-y-1">
+                <label className="text-[9.5px] font-mono font-bold uppercase text-amber-400 block">
                   5. Max Drawdown (%)
                 </label>
                 <input
@@ -1838,7 +1912,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
             </div>
 
             {/* 100% Profit Share Guarantee Box */}
-            <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-xs font-mono flex items-center justify-between">
+            <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-xs font-mono flex items-center justify-between">
               <span className="text-slate-200">Follower Profit Share:</span>
               <strong className="text-[#00F5A0]">100% Profit Keep (0% Commission)</strong>
             </div>
@@ -1862,11 +1936,12 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
               </button>
               <button
                 type="button"
-                data-testid="confirm-copy-allocation-btn"
+                data-testid="confirm-quick-copy-btn"
                 onClick={handleConfirmCopySubscription}
-                className="flex-1 py-3 rounded-xl bg-[#00F5A0] hover:brightness-110 text-[#07080B] font-black text-xs uppercase tracking-wider cursor-pointer shadow-lg touch-manipulation"
+                className="flex-1 py-3 rounded-xl bg-[#00F5A0] hover:brightness-110 text-[#07080B] font-black text-xs uppercase tracking-wider cursor-pointer shadow-lg touch-manipulation flex items-center justify-center gap-1.5"
               >
-                Confirm & Start Copying
+                <Zap className="w-4 h-4 fill-current shrink-0" />
+                <span>Confirm & Start Mirroring</span>
               </button>
             </div>
           </div>

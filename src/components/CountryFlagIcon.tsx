@@ -32,6 +32,7 @@ const CURRENCY_TO_ISO: Record<string, string> = {
   CNH: 'cn',
   INR: 'in',
   PKR: 'pk',
+  BDT: 'bd',
   LKR: 'lk',
   MYR: 'my',
   AED: 'ae',
@@ -105,6 +106,7 @@ export function getIsoCountryCode(countryOrEmoji: string = ''): string {
   if (lower === 'in' || lower.includes('india')) return 'in';
   if (lower === 'my' || lower.includes('malaysia')) return 'my';
   if (lower === 'pk' || lower.includes('pakistan')) return 'pk';
+  if (lower === 'bd' || lower.includes('bangladesh')) return 'bd';
   if (lower === 'us' || lower.includes('united states') || lower.includes('usa')) return 'us';
   if (lower === 'gb' || lower === 'uk' || lower.includes('united kingdom') || lower.includes('britain')) return 'gb';
   if (lower === 'eu' || lower.includes('europe')) return 'eu';
