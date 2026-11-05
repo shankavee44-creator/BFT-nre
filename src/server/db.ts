@@ -225,6 +225,23 @@ db.exec(`
     current_pnl REAL DEFAULT 0,
     created_at INTEGER NOT NULL
   );
+
+  -- 10. Copy Executed Trades Table
+  CREATE TABLE IF NOT EXISTS copy_executed_trades (
+    id TEXT PRIMARY KEY,
+    subscription_id TEXT NOT NULL,
+    copier_user_id TEXT NOT NULL,
+    copier_account_id TEXT NOT NULL,
+    provider_id TEXT NOT NULL,
+    asset_symbol TEXT NOT NULL,
+    trade_type TEXT NOT NULL,
+    amount REAL NOT NULL,
+    entry_price REAL NOT NULL,
+    exit_price REAL,
+    status TEXT DEFAULT 'OPEN',
+    pnl REAL DEFAULT 0,
+    created_at INTEGER NOT NULL
+  );
 `);
 
 const copyTradingAlterColumns = [

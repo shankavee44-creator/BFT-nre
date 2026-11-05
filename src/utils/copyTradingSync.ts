@@ -500,3 +500,73 @@ export async function fetchUserCopySubscriptionsFromSupabase(
     return [];
   }
 }
+
+export interface CopyExecutedTradeRow {
+  id?: string;
+  subscription_id: string;
+  copier_user_id: string;
+  copier_account_id: string;
+  provider_id: string;
+  asset_symbol: string;
+  trade_type: string;
+  amount: number;
+  entry_price: number;
+  exit_price?: number;
+  status: string;
+  pnl: number;
+  created_at?: string;
+}
+
+/**
+ * Logs a simulated background trade execution associated with a copy trading subscription into `copy_executed_trades`.
+ */
+export async function logCopyExecutedTradeToSupabase(trade: CopyExecutedTradeRow): Promise<boolean> {
+  try {
+    const payload = {
+      id: trade.id || ensureTradeUuid(`copy-exec-${Date.now()}-${Math.random()}`),
+      subscription_id: trade.subscription_id,
+      copier_user_id: trade.copier_user_id,
+      copier_account_id: trade.copier_account_id,
+      provider_id: trade.provider_id,
+      asset_symbol: trade.asset_symbol,
+      trade_type: trade.trade_type,
+      amount: Number(trade.amount),
+      entry_price: Number(trade.entry_price),
+      exit_price: trade.exit_price !== undefined ? Number(trade.exit_price) : undefined,
+      status: trade.status || 'OPEN',
+      pnl: Number(trade.pnl || 0),
+      created_at: trade.created_at || new Date().toISOString(),
+    };
+
+    const { error } = await supabase.from('copy_executed_trades').insert([payload]);
+    if (error) {
+      console.warn('[Supabase copy_executed_trades insert warning]:', error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn('[Supabase copy_executed_trades exception]:', err);
+    return false;
+  }
+}
+
+/**
+ * Fetches executed copy trades for the user from `copy_executed_trades`.
+ */
+export async function fetchCopyExecutedTradesFromSupabase(userId?: string | null): Promise<CopyExecutedTradeRow[]> {
+  try {
+    const copierUserId = await resolveAuthUserId(userId);
+    if (!copierUserId) return [];
+
+    const { data, error } = await supabase
+      .from('copy_executed_trades')
+      .select('*')
+      .eq('copier_user_id', copierUserId)
+      .order('created_at', { ascending: false });
+
+    if (error || !Array.isArray(data)) return [];
+    return data as CopyExecutedTradeRow[];
+  } catch {
+    return [];
+  }
+}
