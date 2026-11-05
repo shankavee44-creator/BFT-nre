@@ -6,6 +6,7 @@ export interface CopySubscriptionParams {
   userId?: string | null;
   userEmail?: string | null;
   accountId?: string | null;
+  supabaseAccountId?: string | null;
   accountType?: string | null;
   accountCategory?: string | null;
   providerId: string;
@@ -103,11 +104,27 @@ export async function resolveAuthUserId(fallbackUserId?: string | null): Promise
 export async function resolveCopierAccountId(params: {
   userId: string;
   accountId?: string | null;
+  supabaseAccountId?: string | null;
   accountType?: string | null;
 }): Promise<string | null> {
-  const { userId, accountId, accountType } = params;
+  const { userId, accountId, supabaseAccountId, accountType } = params;
 
-  // 1. If accountId is already a valid UUID, verify or return it
+  // 1. If supabaseAccountId is already a valid UUID, verify it exists in trading_accounts
+  if (supabaseAccountId && isValidUuid(supabaseAccountId)) {
+    try {
+      const { data: exists } = await supabase
+        .from('trading_accounts')
+        .select('id')
+        .eq('id', supabaseAccountId)
+        .maybeSingle();
+
+      if (exists?.id) return exists.id;
+    } catch {
+      // ignore
+    }
+  }
+
+  // 2. If accountId is already a valid UUID, verify or return it
   if (accountId && isValidUuid(accountId)) {
     try {
       const { data: exists } = await supabase
@@ -122,7 +139,7 @@ export async function resolveCopierAccountId(params: {
     }
   }
 
-  // 2. Query user's existing trading accounts in Supabase
+  // 3. Query user's existing trading accounts in Supabase
   try {
     const { data: accounts } = await supabase
       .from('trading_accounts')
@@ -142,9 +159,8 @@ export async function resolveCopierAccountId(params: {
     // ignore
   }
 
-  // 3. If no trading account exists, create default funded or live account row in trading_accounts
+  // 4. If no trading account exists, create default funded or live account row in trading_accounts
   try {
-    const newAccountUuid = accountId && isValidUuid(accountId) ? accountId : undefined;
     const insertPayload: Record<string, any> = {
       user_id: userId,
       account_type: accountType || 'instant',
@@ -157,8 +173,8 @@ export async function resolveCopierAccountId(params: {
       challenge_phase: 'funded',
       status: 'active',
     };
-    if (newAccountUuid) {
-      insertPayload.id = newAccountUuid;
+    if (accountId && isValidUuid(accountId)) {
+      insertPayload.id = accountId;
     }
 
     const { data: created, error } = await supabase
@@ -174,8 +190,29 @@ export async function resolveCopierAccountId(params: {
     // ignore
   }
 
-  // Fallback to deterministic UUID if needed
-  return accountId ? ensureTradeUuid(accountId) : null;
+  // 5. Emergency fallback: create a guaranteed valid account row in trading_accounts without custom ID
+  try {
+    const { data: createdEmergency, error: errEmergency } = await supabase
+      .from('trading_accounts')
+      .insert([{
+        user_id: userId,
+        account_type: accountType || 'instant',
+        starting_balance: 50000.0,
+        current_balance: 50000.0,
+        equity: 50000.0,
+        status: 'active',
+      }])
+      .select('id')
+      .maybeSingle();
+
+    if (!errEmergency && createdEmergency?.id) {
+      return createdEmergency.id;
+    }
+  } catch {
+    // ignore
+  }
+
+  return null;
 }
 
 /**
@@ -273,6 +310,7 @@ export async function saveCopyTradingSubscriptionToSupabase(
   const copierAccountId = await resolveCopierAccountId({
     userId: copierUserId,
     accountId: params.accountId,
+    supabaseAccountId: params.supabaseAccountId,
     accountType: params.accountType || params.accountCategory,
   });
 
