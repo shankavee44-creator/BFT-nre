@@ -380,7 +380,7 @@ export async function apiCancelWithdrawal(params: {
   refundInSupabase?: boolean;
 }) {
   try {
-    // 1. Direct Supabase client-side table update to cancel withdrawal (bypasses unstable Edge Function CORS errors)
+    // Direct Supabase client-side table update to cancel withdrawal
     const cancelRes = await cancelSupabaseWithdrawal({
       withdrawalId: params.withdrawalId,
       userId: params.userId,
@@ -391,42 +391,14 @@ export async function apiCancelWithdrawal(params: {
       return {
         ok: false,
         error: cancelRes.error || 'Cannot cancel withdrawal: request is no longer pending.',
+        alreadyCancelled: cancelRes.alreadyCancelled ?? true,
       };
     }
 
     const row = cancelRes.row;
     const refundAmount = Number(row?.amount ?? row?.gross_amount ?? params.amount ?? 0);
-    const rawAccountType = String(row?.account_type || params.accountType || 'self').toLowerCase();
-    const isSelf = rawAccountType === 'self' || rawAccountType === 'personal_live' || rawAccountType === 'personal';
 
-    if (params.refundInSupabase !== false && refundAmount > 0 && (row?.user_id || params.userId)) {
-      const targetUid = String(row?.user_id || params.userId || '');
-      if (UUID_REGEX.test(targetUid)) {
-        try {
-          const { data: prof } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', targetUid)
-            .maybeSingle();
-          if (prof) {
-            const currentBal = isSelf
-              ? Number(prof.self_capital_balance ?? prof.self_balance ?? 0)
-              : Number(prof.funded_balance ?? 0);
-            const newBal = Number((currentBal + refundAmount).toFixed(2));
-            await commitProfileBalanceToSupabase({
-              userId: prof.id,
-              userEmail: prof.email || params.userEmail,
-              column: isSelf ? 'self_balance' : 'funded_balance',
-              newBalance: newBal,
-            });
-          }
-        } catch {
-          // ignore if caller handles refund
-        }
-      }
-    }
-
-    // 2. Non-blocking sync with local Express backend if running (never calls external Edge Functions)
+    // Non-blocking sync with local Express backend if running
     if (!IS_SUPABASE_EDGE_BASE) {
       const headers = getAuthHeaders() as Record<string, string>;
       if (params.token) {
@@ -444,6 +416,7 @@ export async function apiCancelWithdrawal(params: {
       status: cancelRes.currentStatus || 'cancelled',
       withdrawal: row || { id: params.withdrawalId, status: 'cancelled' },
       refundedAmount: refundAmount,
+      alreadyCancelled: false,
       message: 'Withdrawal request cancelled and balance refunded.',
     };
   } catch (e: any) {

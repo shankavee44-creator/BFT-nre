@@ -42,6 +42,7 @@ import {
   clearAuthSession,
   loadOrCreateUserProfileByEmail,
 } from './utils/storage';
+import { resolveUserNumericId } from './utils/p2pTransfer';
 import {
   isRouteProtected,
   resolveTargetRoute,
@@ -142,9 +143,15 @@ export default function App() {
   const [activeAccountId, setActiveAccountId] = useState<string>('');
   const [userProfile, setUserProfile] = useState<UserProfile>(() => {
     const p = loadProfile();
+    const resolvedNum = resolveUserNumericId(p);
+    const hydratedProfile: UserProfile = {
+      ...p,
+      numericId: p.numericId || resolvedNum,
+      numeric_id: p.numeric_id || resolvedNum,
+    };
     if (isAutostart && !p.isLoggedIn) {
       const autoProfile: UserProfile = {
-        ...p,
+        ...hydratedProfile,
         id: p.id || 'usr_bft_001',
         email: p.email || 'trader@binaryfunded.com',
         fullName: p.fullName || 'Pro Funded Trader',
@@ -154,7 +161,7 @@ export default function App() {
       saveProfile(autoProfile);
       return autoProfile;
     }
-    return p;
+    return hydratedProfile;
   });
   const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>([]);
   const [purchases, setPurchases] = useState<any[]>([]);

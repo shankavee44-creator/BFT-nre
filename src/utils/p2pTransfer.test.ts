@@ -8,9 +8,11 @@ import {
   buildTransferBalanceRpcPayload,
   validateP2PTransferInput,
   executeP2PBalanceTransfer,
+  lookupRecipientByNumericId,
   createP2PTransferRecord,
   deduplicateP2PTransferRecords,
 } from './p2pTransfer.ts';
+import { getNumericTraderId } from './demoBalanceManager.ts';
 import {
   formatP2PReceivedToastMessage,
   normalizeUserNotificationRow,

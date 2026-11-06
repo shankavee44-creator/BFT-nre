@@ -216,6 +216,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [successBanner, setSuccessBanner] = useState<string | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const cancellingIdRef = useRef<Set<string>>(new Set());
   const [nowTick, setNowTick] = useState<number>(() => Date.now());
 
   // 2FA Mandatory Check & Verification States
@@ -299,24 +300,30 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
   };
 
   const handleCancelWithdrawalRequest = async (withdrawalId: string) => {
-    if (!withdrawalId || cancellingId) return;
-    setCancellingId(withdrawalId);
+    const wdIdStr = String(withdrawalId || '').trim();
+    if (!wdIdStr || cancellingId || cancellingIdRef.current.has(wdIdStr)) return;
+
+    cancellingIdRef.current.add(wdIdStr);
+    setCancellingId(wdIdStr);
     setError(null);
     soundEngine.playUiClick();
 
     try {
-      const targetReq = withdrawals.find((w) => String(w.id) === String(withdrawalId));
+      const targetReq = withdrawals.find((w) => String(w.id) === wdIdStr);
+      if (targetReq && (String(targetReq.status).toLowerCase() === 'cancelled' || targetReq.status === 'paid' || targetReq.status === 'rejected')) {
+        setError(`Withdrawal request #${wdIdStr.slice(0, 8)} has already been ${String(targetReq.status).toLowerCase()}.`);
+        return;
+      }
 
       // Direct Supabase client cancellation (bypasses unstable Edge Function CORS errors)
       const { data: { session } } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
       const res = await apiCancelWithdrawal({
-        withdrawalId,
+        withdrawalId: wdIdStr,
         token: session?.access_token,
         userId: userProfile?.id || account?.ownerId,
         userEmail: userProfile?.email,
         amount: targetReq?.amount,
         accountType: targetReq?.accountType,
-        refundInSupabase: !userProfile,
       });
 
       if (!res.ok) {
@@ -372,11 +379,11 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
           status: 'cancelled',
         });
         setSuccessBanner(
-          `Withdrawal request #${String(withdrawalId).slice(0, 8)} cancelled! Successfully refunded $${refundAmount.toFixed(2)} USD back to your active balance.`
+          `Withdrawal request #${wdIdStr.slice(0, 8)} cancelled! Successfully refunded $${refundAmount.toFixed(2)} USD back to your active balance.`
         );
       } else {
         setSuccessBanner(
-          `Withdrawal #${String(withdrawalId).slice(0, 8)} cancellation processed. Balance refunded.`
+          `Withdrawal #${wdIdStr.slice(0, 8)} cancellation processed. Balance refunded.`
         );
       }
       setForceCleared(true);
@@ -384,6 +391,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
       setError(err?.message || 'Failed to cancel withdrawal request.');
       setForceCleared(true);
     } finally {
+      cancellingIdRef.current.delete(wdIdStr);
       setCancellingId(null);
     }
   };

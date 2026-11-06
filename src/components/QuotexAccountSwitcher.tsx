@@ -14,6 +14,7 @@ import {
   User,
   ShieldAlert,
   Check,
+  Copy,
   X,
   Sparkles,
 } from 'lucide-react';
@@ -27,6 +28,7 @@ import {
   DEMO_BALANCE_LIMITS,
 } from '../utils/demoBalanceManager';
 import { isPersonalLiveAccount, isDemoAccount } from '../utils/propRules';
+import { resolveUserNumericId } from '../utils/p2pTransfer';
 
 interface QuotexAccountSwitcherProps {
   userProfile: UserProfile;
@@ -61,6 +63,7 @@ export const QuotexAccountSwitcher: React.FC<QuotexAccountSwitcherProps> = ({
   const [isSavingDemo, setIsSavingDemo] = useState(false);
   const [showLimitNotice, setShowLimitNotice] = useState(false);
   const [currency, setCurrency] = useState('USD');
+  const [copiedId, setCopiedId] = useState(false);
 
   const dropdownRef = useRef<HTMLDivElement | null>(null);
 
@@ -96,7 +99,7 @@ export const QuotexAccountSwitcher: React.FC<QuotexAccountSwitcherProps> = ({
       ? Number(userProfile.demoBalance)
       : Number(demoAccount?.currentBalance ?? 10000);
 
-  const traderId = getNumericTraderId(userProfile.id || userProfile.email);
+  const traderId = resolveUserNumericId(userProfile);
 
   // Handle switching to Live
   const handleSwitchToLive = () => {
@@ -284,7 +287,33 @@ export const QuotexAccountSwitcher: React.FC<QuotexAccountSwitcherProps> = ({
               <div className="text-white font-bold truncate max-w-[260px]">
                 {userProfile.email || 'trader@bft.io'}
               </div>
-              <div className="text-slate-400 text-[11px]">ID: {traderId}</div>
+              <div className="flex items-center gap-2 text-slate-400 text-[11px]">
+                <span data-testid="profile-dropdown-numeric-id">ID: {traderId}</span>
+                <button
+                  type="button"
+                  data-testid="copy-profile-dropdown-numeric-id-btn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    soundEngine.playUiClick();
+                    if (navigator?.clipboard?.writeText) {
+                      navigator.clipboard.writeText(traderId).catch(() => {});
+                    }
+                    setCopiedId(true);
+                    setTimeout(() => setCopiedId(false), 2000);
+                  }}
+                  title="Click to copy your Trader Numeric ID (numeric_id) for P2P transfers"
+                  className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-emerald-400 cursor-pointer transition-colors"
+                >
+                  {copiedId ? (
+                    <Check className="w-3 h-3 text-emerald-400" />
+                  ) : (
+                    <Copy className="w-3 h-3" />
+                  )}
+                </button>
+                {copiedId && (
+                  <span className="text-[10px] text-emerald-400 font-bold">Copied!</span>
+                )}
+              </div>
               <div className="flex items-center gap-2 text-slate-300 text-[11px] pt-1">
                 <span>Currency: <strong className="text-white">{currency}</strong></span>
                 <button

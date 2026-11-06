@@ -1326,26 +1326,44 @@ export function isWithdrawalStrictlyPending(status: string | undefined | null): 
   return status.trim().toLowerCase() === 'pending';
 }
 
+const activeCancellationLockSet = new Set<string>();
+
 /**
  * Cancels a user's pending withdrawal request in Supabase (`status = 'cancelled'` or `'rejected'`).
  * Strictly validates that the withdrawal status is 'pending' before permitting cancellation.
- * If already 'success', 'completed', or 'rejected', blocks cancellation and prevents refund.
+ * If already 'cancelled', 'rejected', 'success', or 'completed', blocks cancellation and returns ok: false.
  */
 export async function cancelSupabaseWithdrawal(params: {
   withdrawalId: string;
   userId?: string;
   userEmail?: string;
-}): Promise<{ ok: boolean; currentStatus?: string; row?: Record<string, any>; error?: string }> {
+}): Promise<{
+  ok: boolean;
+  currentStatus?: string;
+  row?: Record<string, any>;
+  error?: string;
+  alreadyCancelled?: boolean;
+}> {
   if (!params.withdrawalId) {
-    return { ok: false, error: 'Missing withdrawal ID' };
+    return { ok: false, error: 'Missing withdrawal ID', alreadyCancelled: false };
   }
 
-  const resolvedUuid = await resolveSupabaseWithdrawalUserUuid({
-    userId: params.userId,
-    userEmail: params.userEmail,
-  });
+  const cancellationKey = String(params.withdrawalId).trim();
+  if (activeCancellationLockSet.has(cancellationKey)) {
+    return {
+      ok: false,
+      error: `Cancellation request for #${cancellationKey.slice(0, 8)} is already being processed.`,
+      alreadyCancelled: false,
+    };
+  }
+  activeCancellationLockSet.add(cancellationKey);
 
   try {
+    const resolvedUuid = await resolveSupabaseWithdrawalUserUuid({
+      userId: params.userId,
+      userEmail: params.userEmail,
+    });
+
     let targetSupaId: string | null = UUID_REGEX.test(params.withdrawalId) ? params.withdrawalId : null;
 
     if (!targetSupaId) {
@@ -1355,12 +1373,15 @@ export async function cancelSupabaseWithdrawal(params: {
         .order('created_at', { ascending: false });
 
       if (allRows && allRows.length > 0) {
-        const match = allRows.find((r: any) =>
-          String(r.id) === String(params.withdrawalId) ||
-          String(params.withdrawalId).includes(String(r.id).slice(0, 8)) ||
-          (resolvedUuid && r.user_id === resolvedUuid && r.status === 'pending') ||
-          r.status === 'pending'
-        );
+        const cleanId = String(params.withdrawalId).replace(/^WD-/, '').toLowerCase();
+        const match = allRows.find((r: any) => {
+          const rIdStr = String(r.id || '').toLowerCase();
+          return (
+            rIdStr === cleanId ||
+            cleanId.includes(rIdStr.slice(0, 8)) ||
+            rIdStr.includes(cleanId)
+          );
+        });
         if (match?.id) {
           targetSupaId = String(match.id);
         }
@@ -1368,11 +1389,14 @@ export async function cancelSupabaseWithdrawal(params: {
     }
 
     if (!targetSupaId) {
-      // Allow cancellation to proceed locally even if no Supabase row UUID matched
-      return { ok: true, currentStatus: 'cancelled' };
+      return {
+        ok: false,
+        error: `Withdrawal request #${cancellationKey.slice(0, 8)} not found in database or already cancelled.`,
+        alreadyCancelled: true,
+      };
     }
 
-    // 1. Strict status check: query current status in Supabase before attempting cancellation
+    // 1. Query current status in Supabase before attempting cancellation
     const { data: existingRow } = await supabase
       .from('withdrawals')
       .select('id, status, user_id, amount, gross_amount, account_type')
@@ -1381,13 +1405,13 @@ export async function cancelSupabaseWithdrawal(params: {
 
     if (existingRow) {
       const currentStatus = String(existingRow.status || '').toLowerCase();
-      // If the withdrawal has been marked as success, completed, or rejected, prevent cancellation!
       if (currentStatus !== 'pending') {
         return {
           ok: false,
           currentStatus,
-          error: `Cannot cancel withdrawal #${String(params.withdrawalId).slice(0, 8)}: request has already been marked as '${currentStatus}'.`,
+          error: `Cannot cancel withdrawal #${cancellationKey.slice(0, 8)}: request has already been marked as '${currentStatus}'.`,
           row: existingRow,
+          alreadyCancelled: true,
         };
       }
     }
@@ -1402,7 +1426,7 @@ export async function cancelSupabaseWithdrawal(params: {
       .maybeSingle();
 
     if (!error && data) {
-      return { ok: true, currentStatus: 'cancelled', row: data };
+      return { ok: true, currentStatus: 'cancelled', row: data, alreadyCancelled: false };
     }
 
     const { data: data2, error: err2 } = await supabase
@@ -1414,10 +1438,10 @@ export async function cancelSupabaseWithdrawal(params: {
       .maybeSingle();
 
     if (!err2 && data2) {
-      return { ok: true, currentStatus: 'cancelled', row: data2 };
+      return { ok: true, currentStatus: 'cancelled', row: data2, alreadyCancelled: false };
     }
 
-    // Fallback to 'rejected' if database check constraint only allows ('pending', 'completed', 'rejected')
+    // Fallback to 'rejected' status if DB constraint requires 'rejected'
     const { data: fbData, error: fbError } = await supabase
       .from('withdrawals')
       .update({ status: 'rejected' })
@@ -1427,12 +1451,22 @@ export async function cancelSupabaseWithdrawal(params: {
       .maybeSingle();
 
     if (!fbError && fbData) {
-      return { ok: true, currentStatus: 'rejected', row: fbData };
+      return { ok: true, currentStatus: 'rejected', row: fbData, alreadyCancelled: false };
     }
 
-    return { ok: true, currentStatus: 'cancelled' };
+    return {
+      ok: false,
+      error: `Withdrawal #${cancellationKey.slice(0, 8)} is no longer pending or has already been cancelled/refunded.`,
+      alreadyCancelled: true,
+    };
   } catch (err: any) {
-    return { ok: true, currentStatus: 'cancelled' };
+    return {
+      ok: false,
+      error: err?.message || 'Withdrawal cancellation failed.',
+      alreadyCancelled: false,
+    };
+  } finally {
+    activeCancellationLockSet.delete(cancellationKey);
   }
 }
 

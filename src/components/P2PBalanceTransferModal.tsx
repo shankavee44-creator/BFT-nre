@@ -19,6 +19,7 @@ import type { TradingAccount, UserProfile } from '../types/index.ts';
 import {
   P2P_SELF_CAPITAL_ONLY_ERROR,
   resolveUserNumericId,
+  lookupRecipientByNumericId,
   resolveTransferableLiveBalance,
   validateP2PTransferInput,
   executeP2PBalanceTransfer,
@@ -90,6 +91,56 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
       window.removeEventListener('bft-p2p-history-updated', syncHistory);
     };
   }, [userProfile.id, ownNumericId, isOpen]);
+
+  const [recipientLookup, setRecipientLookup] = useState<{
+    checking: boolean;
+    verified: boolean;
+    name?: string;
+    error?: string;
+  }>({ checking: false, verified: false });
+
+  useEffect(() => {
+    let active = true;
+    const cleanId = receiverNumericId.trim().replace(/^#/, '');
+    if (cleanId.length < 3) {
+      setRecipientLookup({ checking: false, verified: false });
+      return;
+    }
+
+    setRecipientLookup({ checking: true, verified: false });
+    const timer = setTimeout(async () => {
+      try {
+        const res = await lookupRecipientByNumericId({
+          receiverNumericId: cleanId,
+          currentUserId: userProfile.id,
+          currentUserNumericId: ownNumericId,
+        });
+        if (!active) return;
+        if (res.found && res.profile) {
+          setRecipientLookup({
+            checking: false,
+            verified: true,
+            name: res.profile.fullName || res.profile.email,
+          });
+        } else {
+          setRecipientLookup({
+            checking: false,
+            verified: false,
+            error: res.error || 'Recipient not found',
+          });
+        }
+      } catch {
+        if (active) {
+          setRecipientLookup({ checking: false, verified: false });
+        }
+      }
+    }, 250);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [receiverNumericId, userProfile.id, ownNumericId]);
 
   if (!isOpen) return null;
 
@@ -451,6 +502,33 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
                   className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#14141c] border border-white/15 focus:border-[#ff8800] text-white font-mono text-sm tabular-nums focus:outline-none transition-colors"
                 />
               </div>
+              {receiverNumericId.trim().length >= 3 && (
+                <div
+                  className="mt-1.5 text-[11px] font-mono flex items-center gap-1.5"
+                  data-testid="p2p-recipient-lookup-status"
+                >
+                  {recipientLookup.checking ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin text-slate-400" />
+                      <span className="text-slate-400">Verifying Trader ID #{receiverNumericId}...</span>
+                    </>
+                  ) : recipientLookup.verified ? (
+                    <>
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                      <span className="text-emerald-400 font-bold">
+                        Verified Recipient: {recipientLookup.name}
+                      </span>
+                    </>
+                  ) : recipientLookup.error ? (
+                    <>
+                      <AlertCircle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                      <span className="text-amber-400 font-bold">
+                        {recipientLookup.error}
+                      </span>
+                    </>
+                  ) : null}
+                </div>
+              )}
             </div>
 
             {/* Transfer Amount Input */}

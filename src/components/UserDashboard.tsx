@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   ShieldCheck,
   ShieldAlert,
@@ -277,6 +277,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   const [adminUsersList, setAdminUsersList] = useState<any[]>([]);
   const [nowTick, setNowTick] = useState<number>(() => Date.now());
   const [cancellingWdId, setCancellingWdId] = useState<string | null>(null);
+  const cancellingWdRef = useRef<Set<string>>(new Set());
   const [isP2PModalOpen, setIsP2PModalOpen] = useState(false);
   const [copiedNumericId, setCopiedNumericId] = useState(false);
   const [p2pDashboardToast, setP2pDashboardToast] = useState<{
@@ -499,23 +500,35 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   };
 
   const handleCancelUserWithdrawal = async (wd: any) => {
-    if (!wd?.id || cancellingWdId) return;
-    setCancellingWdId(String(wd.id));
+    const wdIdStr = String(wd?.id || '').trim();
+    if (!wdIdStr || cancellingWdId || cancellingWdRef.current.has(wdIdStr)) return;
+
+    cancellingWdRef.current.add(wdIdStr);
+    setCancellingWdId(wdIdStr);
     soundEngine.playUiClick();
 
     try {
-      await cancelSupabaseWithdrawal({
-        withdrawalId: String(wd.id),
+      const res = await cancelSupabaseWithdrawal({
+        withdrawalId: wdIdStr,
         userId: userProfile.id,
         userEmail: userProfile.email,
       });
+
+      if (!res.ok) {
+        setP2pDashboardToast({
+          type: 'error',
+          title: 'Cancellation Blocked',
+          message: res.error || 'Withdrawal request is no longer pending or has already been cancelled.',
+        });
+        return;
+      }
 
       setSupabaseWithdrawals((prev) =>
         prev.map((item) => (item.id === wd.id ? { ...item, status: 'cancelled' } : item))
       );
 
-      // Automatic refund of withdrawn amount back to user's account balance
-      const refundAmount = Number(wd.amount || 0);
+      // Automatic single refund of withdrawn amount back to user's account balance
+      const refundAmount = Number(wd.amount || wd.gross_amount || 0);
       const isSelfWd = wd.account_type === 'self' || wd.account_type === 'personal_live' || String(wd.account_id || '').includes('PERS');
       const targetAcc = accounts.find((a) =>
         isSelfWd ? isPersonalLiveAccount(a) || String(a.id).includes('PERS') : a.phase === 'funded'
@@ -541,10 +554,17 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           column: refundRes.column,
           newBalance: refundRes.newBalance,
         }).catch((e) => console.warn('Supabase balance refund error:', e));
+
+        setP2pDashboardToast({
+          type: 'success',
+          title: 'Withdrawal Cancelled',
+          message: `Withdrawal request #${wdIdStr.slice(0, 8)} cancelled! $${refundAmount.toFixed(2)} USD refunded to your balance.`,
+        });
       }
     } catch (err) {
       console.warn('Cancel withdrawal error:', err);
     } finally {
+      cancellingWdRef.current.delete(wdIdStr);
       setCancellingWdId(null);
     }
   };

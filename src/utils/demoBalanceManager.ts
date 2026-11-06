@@ -68,21 +68,33 @@ export function validateDemoBalance(rawInput: number | string): ValidationResult
   };
 }
 
+import { resolveUserNumericId } from './p2pTransfer';
+
 /**
- * Computes a stable, 8-digit numeric trader ID from user id or email (e.g., 90259973).
+ * Computes a stable, 8-digit numeric trader ID from user profile, user id, or email.
+ * Synchronizes with resolveUserNumericId to guarantee the ID displayed in the profile menu
+ * matches the numeric_id used in P2P transfers and the user dashboard.
  */
-export function getNumericTraderId(userIdentifier: string | undefined | null): string {
+export function getNumericTraderId(
+  userIdentifier: string | Partial<UserProfile> | undefined | null
+): string {
   if (!userIdentifier) return '90259973';
-  
-  let hash = 0;
-  for (let i = 0; i < userIdentifier.length; i++) {
-    hash = (hash << 5) - hash + userIdentifier.charCodeAt(i);
-    hash |= 0; // Convert to 32bit integer
+
+  if (typeof userIdentifier === 'object') {
+    return resolveUserNumericId(userIdentifier);
   }
-  
-  const positive = Math.abs(hash);
-  const eightDigits = (positive % 90000000) + 10000000;
-  return String(eightDigits);
+
+  // If already a clean numeric string, return it directly
+  const digits = String(userIdentifier).trim().replace(/^#/, '');
+  if (/^\d{5,10}$/.test(digits)) {
+    return digits;
+  }
+
+  return resolveUserNumericId(null, {
+    numeric_id: userIdentifier,
+    email: userIdentifier,
+    id: userIdentifier,
+  });
 }
 
 /**
