@@ -1648,11 +1648,20 @@ export async function fetchCopyExecutedTradesFromSupabase(
       userId && isValidUuid(userId) ? userId.trim() : await resolveAuthUserId(userId);
     if (!copierUserId || !isValidUuid(copierUserId)) return [];
 
-    const { data, error } = await client
+    let { data, error } = await client
       .from('copy_executed_trades')
       .select('*')
       .eq('user_id', copierUserId)
       .order('created_at', { ascending: false });
+
+    if (error) {
+      const fallbackRes = await client
+        .from('copy_executed_trades')
+        .select('*')
+        .eq('copier_user_id', copierUserId);
+      data = fallbackRes.data;
+      error = fallbackRes.error;
+    }
 
     if (error || !Array.isArray(data)) return [];
     return (data as any[]).map((row) => ({

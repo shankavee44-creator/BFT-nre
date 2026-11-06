@@ -137,7 +137,7 @@ test('validateP2PTransferInput enforces Self-Capital balance limit with exact re
   assert.equal(overSelfCapital.exceedsSelfCapitalBalance, true);
   assert.equal(
     overSelfCapital.error,
-    'Transfers are only allowed from your Self-Capital balance.'
+    'P2P Transfer Failed: Insufficient self-capital balance.'
   );
   assert.equal(overSelfCapital.error, P2P_SELF_CAPITAL_ONLY_ERROR);
 
@@ -250,7 +250,7 @@ test('Sent and Received P2P transfers format accurately for Payment History / Tr
 
 test('Instant Notification: formatP2PReceivedToastMessage and processIncomingP2PTransfer update Self-Capital balance and create user_notifications entry', async () => {
   const toastMsg = formatP2PReceivedToastMessage(75.5, '100201');
-  assert.equal(toastMsg, 'P2P Funds Received: +$75.50 from User #100201');
+  assert.equal(toastMsg, 'You received $75.50 into your Self-Capital balance from User #100201.');
 
   const normalizedNotif = normalizeUserNotificationRow({
     id: 'notif-99',
@@ -279,7 +279,10 @@ test('Instant Notification: formatP2PReceivedToastMessage and processIncomingP2P
     supabaseClient: fakeClient,
   });
 
-  assert.equal(incomingRes.toastMessage, 'P2P Funds Received: +$75.50 from User #100201');
+  assert.equal(
+    incomingRes.toastMessage,
+    'You received $75.50 into your Self-Capital balance from User #100201.'
+  );
   assert.equal(incomingRes.updatedProfile.selfBalance, 326.0);
   assert.equal(incomingRes.updatedAccount?.currentBalance, 326.0);
   assert.equal(incomingRes.transferRecord.type, 'P2P Deposit Received');

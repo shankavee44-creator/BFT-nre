@@ -9,7 +9,7 @@ import {
 import { isPersonalLiveAccount } from './propRules.ts';
 
 export const P2P_SELF_CAPITAL_ONLY_ERROR =
-  'Transfers are only allowed from your Self-Capital balance.';
+  'P2P Transfer Failed: Insufficient self-capital balance.';
 
 export const P2P_HISTORY_STORAGE_KEY = 'bft_p2p_transfer_history_v1';
 
@@ -385,14 +385,18 @@ export function validateP2PTransferInput(params: {
 }): P2PTransferValidationResult {
   const rawReceiver = String(params.receiverNumericId ?? '').trim();
   const cleanReceiver = rawReceiver.replace(/^#/, '').trim();
-  const available = Math.max(0, Number(parseNumericAmount(params.availableLiveBalance).toFixed(2)));
+  
+  const liveBalanceNum = Number(parseNumericAmount(params.availableLiveBalance));
+  const transferAmountNum = Number(parseNumericAmount(params.transferAmount));
+  const parsedAmount = transferAmountNum;
 
-  const parsedAmount = parseNumericAmount(params.transferAmount);
+  console.log('Validating P2P:', { transferAmount: params.transferAmount, liveBalance: params.availableLiveBalance });
+
   const normalizedAmount =
-    Number.isFinite(parsedAmount) && parsedAmount > 0 ? Number(parsedAmount.toFixed(2)) : 0;
+    Number.isFinite(transferAmountNum) && transferAmountNum > 0 ? Number(transferAmountNum.toFixed(2)) : 0;
 
   // Check if input amount exceeds the user's current Self-Capital balance using strict numeric comparison
-  if (normalizedAmount > available) {
+  if (Number(transferAmountNum) > Number(liveBalanceNum)) {
     return {
       valid: false,
       error: P2P_SELF_CAPITAL_ONLY_ERROR,
@@ -524,6 +528,9 @@ function isMissingRpcFunctionError(error: any): boolean {
   );
 }
 
+let lastP2PExecutionTime = 0;
+let lastP2PSignature = '';
+
 /**
  * Executes a P2P Self-Capital balance transfer by calling the updated Supabase RPC function:
  * `transfer_balance_p2p(p_receiver_numeric_id, p_transfer_amount)`
@@ -533,6 +540,22 @@ function isMissingRpcFunctionError(error: any): boolean {
 export async function executeP2PBalanceTransfer(
   params: ExecuteP2PTransferParams
 ): Promise<ExecuteP2PTransferResult> {
+  const now = Date.now();
+  const signature = `${params.userProfile?.id}_${params.receiverNumericId}_${params.transferAmount}`;
+  if (now - lastP2PExecutionTime < 4000 && lastP2PSignature === signature) {
+    return {
+      ok: false,
+      error: 'Transfer request is already being processed. Please do not double-submit.',
+      transferAmount: Number(params.transferAmount || 0),
+      receiverNumericId: String(params.receiverNumericId || ''),
+      previousBalance: 0,
+      newBalance: 0,
+      balanceColumn: 'self_balance',
+    };
+  }
+  lastP2PExecutionTime = now;
+  lastP2PSignature = signature;
+
   const client = params.supabaseClient || supabase;
   const isDefaultSupabaseClient = !params.supabaseClient;
   const senderNumericId = resolveUserNumericId(params.userProfile);
@@ -686,8 +709,8 @@ export async function executeP2PBalanceTransfer(
           await (client.from('user_notifications') as any).insert([
             {
               user_id: receiverRow.id,
-              title: 'P2P Funds Received',
-              message: `P2P Funds Received: +$${validation.normalizedAmount.toFixed(2)} from User #${senderNumericId}`,
+              title: 'P2P Deposit Received! 💰',
+              message: `You received $${validation.normalizedAmount.toFixed(2)} into your Self-Capital balance from User #${senderNumericId}.`,
               type: 'p2p_received',
               amount: validation.normalizedAmount,
               sender_numeric_id: senderNumericId,

@@ -546,8 +546,18 @@ export function loadWithdrawals(): WithdrawalRequest[] {
 export function saveWithdrawals(withdrawals: WithdrawalRequest[]): void {
   try {
     localStorage.setItem(STORAGE_KEYS.WITHDRAWALS, JSON.stringify(withdrawals));
-  } catch (e) {
-    console.error('Failed to save withdrawals', e);
+  } catch (e: any) {
+    if (e instanceof DOMException && (e.name === 'QuotaExceededError' || e.code === 22)) {
+      try {
+        clearNonEssentialLocalStorageCache();
+        const truncated = withdrawals.slice(0, 50);
+        localStorage.setItem(STORAGE_KEYS.WITHDRAWALS, JSON.stringify(truncated));
+      } catch {
+        localStorage.removeItem(STORAGE_KEYS.WITHDRAWALS);
+      }
+    } else {
+      console.error('Failed to save withdrawals', e);
+    }
   }
 }
 

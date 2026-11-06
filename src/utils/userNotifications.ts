@@ -48,7 +48,7 @@ export function formatP2PReceivedToastMessage(
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
-  return `P2P Funds Received: +$${formattedAmt} from User #${cleanSender}`;
+  return `You received $${formattedAmt} into your Self-Capital balance from User #${cleanSender}.`;
 }
 
 /**
@@ -59,8 +59,8 @@ export function normalizeUserNotificationRow(
   raw: Record<string, any>,
   fallbackUserId: string = 'default'
 ): UserNotificationItem {
-  const title = String(raw.title || raw.subject || 'Notification').trim();
-  const message = String(raw.message || raw.body || raw.content || '').trim();
+  let title = String(raw.title || raw.subject || 'Notification').trim();
+  let message = String(raw.message || raw.body || raw.content || '').trim();
   const rawType = String(raw.type || raw.category || '').toLowerCase();
 
   let type: UserNotificationType = 'system';
@@ -68,7 +68,10 @@ export function normalizeUserNotificationRow(
     rawType.includes('p2p_received') ||
     rawType.includes('p2p_deposit') ||
     message.toLowerCase().includes('p2p funds received') ||
-    title.toLowerCase().includes('p2p funds received')
+    message.toLowerCase().includes('you received') ||
+    title.toLowerCase().includes('p2p funds received') ||
+    title.toLowerCase().includes('p2p deposit received') ||
+    /[\u0D80-\u0DFF]/.test(title + message)
   ) {
     type = 'p2p_received';
   } else if (rawType.includes('p2p_sent') || message.toLowerCase().includes('p2p transfer sent')) {
@@ -106,15 +109,16 @@ export function normalizeUserNotificationRow(
     ? String(raw.receiver_numeric_id).replace(/^#/, '').trim()
     : undefined;
 
+  if (type === 'p2p_received') {
+    title = 'P2P Deposit Received! 💰';
+    message = formatP2PReceivedToastMessage(amount ?? 0, senderNumericId || '100201');
+  }
+
   return {
     id: String(raw.id || `notif-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`),
     user_id: String(raw.user_id || fallbackUserId),
     title,
-    message:
-      message ||
-      (type === 'p2p_received' && amount !== undefined
-        ? formatP2PReceivedToastMessage(amount, senderNumericId || '100201')
-        : title),
+    message,
     type,
     amount,
     sender_numeric_id: senderNumericId,
@@ -133,6 +137,7 @@ export function loadLocalUserNotifications(userId?: string | null): UserNotifica
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     return parsed
+      .filter((item) => !/[\u0D80-\u0DFF]/.test(String(item.title || '') + String(item.message || '')))
       .map((item) => normalizeUserNotificationRow(item, userId || 'default'))
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   } catch {

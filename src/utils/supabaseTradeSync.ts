@@ -774,11 +774,19 @@ export async function fetchUserTrades(
     try {
       const currentAccountType = accountOrType ? resolveSupabaseAccountType(accountOrType) : null;
       if (!currentAccountType || currentAccountType !== 'DEMO') {
-        const { data: copyRows } = await supabase
+        let { data: copyRows, error: copyErr } = await supabase
           .from('copy_executed_trades')
           .select('*')
           .eq('user_id', effectiveUserId)
           .order('created_at', { ascending: false });
+
+        if (copyErr) {
+          const fallbackRes = await supabase
+            .from('copy_executed_trades')
+            .select('*')
+            .eq('copier_user_id', effectiveUserId);
+          copyRows = fallbackRes.data;
+        }
 
         if (Array.isArray(copyRows) && copyRows.length > 0) {
           const seenIds = new Set(mapped.map((m) => ensureTradeUuid(m.id)));
@@ -857,12 +865,21 @@ export async function fetchActiveOpenTradesFromSupabase(
     try {
       const currentAccountType = activeAccount ? resolveSupabaseAccountType(activeAccount) : 'FUNDED';
       if (currentAccountType !== 'DEMO') {
-        const { data: openCopyRows } = await supabase
+        let { data: openCopyRows, error: openCopyErr } = await supabase
           .from('copy_executed_trades')
           .select('*')
           .eq('user_id', effectiveUserId)
           .in('status', ['OPEN', 'ACTIVE'])
           .order('created_at', { ascending: false });
+
+        if (openCopyErr) {
+          const fallbackRes = await supabase
+            .from('copy_executed_trades')
+            .select('*')
+            .eq('copier_user_id', effectiveUserId)
+            .in('status', ['OPEN', 'ACTIVE']);
+          openCopyRows = fallbackRes.data;
+        }
 
         if (Array.isArray(openCopyRows) && openCopyRows.length > 0) {
           const seenIds = new Set(activeList.map((t) => ensureTradeUuid(t.id)));

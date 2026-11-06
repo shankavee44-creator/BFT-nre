@@ -311,9 +311,68 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     };
     syncP2PHistory();
     window.addEventListener('bft-p2p-history-updated', syncP2PHistory);
+
+    const handleNotifReceived = () => {
+      handleRefreshBalanceAfterP2P();
+      syncP2PHistory();
+    };
+    window.addEventListener('bft-user-notification-received', handleNotifReceived);
+
+    let profileChannel: any = null;
+    let notifChannel: any = null;
+    if (userProfile.id && typeof supabase?.channel === 'function') {
+      try {
+        profileChannel = supabase
+          .channel(`user-dashboard-profile-${userProfile.id}-${Date.now()}`)
+          .on(
+            'postgres_changes',
+            {
+              event: 'UPDATE',
+              schema: 'public',
+              table: 'profiles',
+              filter: `id=eq.${userProfile.id}`,
+            },
+            () => {
+              if (isMounted) {
+                handleRefreshBalanceAfterP2P();
+              }
+            }
+          )
+          .subscribe();
+
+        notifChannel = supabase
+          .channel(`user-dashboard-notifs-${userProfile.id}-${Date.now()}`)
+          .on(
+            'postgres_changes',
+            {
+              event: 'INSERT',
+              schema: 'public',
+              table: 'user_notifications',
+              filter: `user_id=eq.${userProfile.id}`,
+            },
+            () => {
+              if (isMounted) {
+                handleRefreshBalanceAfterP2P();
+                syncP2PHistory();
+              }
+            }
+          )
+          .subscribe();
+      } catch {
+        // ignore
+      }
+    }
+
     return () => {
       isMounted = false;
       window.removeEventListener('bft-p2p-history-updated', syncP2PHistory);
+      window.removeEventListener('bft-user-notification-received', handleNotifReceived);
+      if (profileChannel && typeof profileChannel.unsubscribe === 'function') {
+        profileChannel.unsubscribe();
+      }
+      if (notifChannel && typeof notifChannel.unsubscribe === 'function') {
+        notifChannel.unsubscribe();
+      }
     };
   }, [userProfile.id, userNumericId]);
 

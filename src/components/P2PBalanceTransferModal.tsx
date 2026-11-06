@@ -75,12 +75,13 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
 
   if (!isOpen) return null;
 
-  const availableNum = parseNumericAmount(availableLiveBalance);
-  const rawParsedAmount = parseNumericAmount(transferAmount);
+  const availableNum = Number(parseNumericAmount(availableLiveBalance));
+  const rawParsedAmount = Number(parseNumericAmount(transferAmount));
+  console.log('Validating P2P:', { transferAmount, liveBalance: availableLiveBalance });
   const hasEnteredAmount = transferAmount.trim() !== '' && Number.isFinite(rawParsedAmount);
   const validAmountNumber = hasEnteredAmount && rawParsedAmount > 0 ? Number(rawParsedAmount.toFixed(2)) : 0;
   const exceedsSelfCapitalBalance =
-    hasEnteredAmount && rawParsedAmount > 0 && validAmountNumber > availableNum;
+    hasEnteredAmount && rawParsedAmount > 0 && Number(rawParsedAmount) > Number(availableNum);
 
   const projectedRemainingBalance = Math.max(
     0,
