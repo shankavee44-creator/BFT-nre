@@ -287,3 +287,22 @@ test('Instant Notification: formatP2PReceivedToastMessage and processIncomingP2P
   assert.equal(incomingRes.transferRecord.counterpartyLabel, 'Sender ID: #100201');
   assert.equal(incomingRes.notification.is_read, false);
 });
+
+test('validateP2PTransferInput and buildTransferBalanceRpcPayload handle formatted string balances with commas (e.g. $762 with $29,762.30 balance)', () => {
+  const result = validateP2PTransferInput({
+    senderNumericId: '88412095',
+    receiverNumericId: '100201',
+    transferAmount: '762',
+    availableLiveBalance: '29,762.30',
+  });
+  assert.equal(result.valid, true);
+  assert.equal(result.exceedsSelfCapitalBalance, false);
+  assert.equal(result.normalizedAmount, 762);
+
+  const payload = buildTransferBalanceRpcPayload('#100201', '762.50');
+  assert.deepEqual(payload, {
+    p_receiver_numeric_id: 100201,
+    p_transfer_amount: 762.50,
+  });
+});
+

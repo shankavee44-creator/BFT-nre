@@ -347,6 +347,17 @@ export function resolveTransferableLiveBalance(
 }
 
 /**
+ * Robustly parses any numeric amount from strings, numbers, or formatted currency (removing commas).
+ */
+export function parseNumericAmount(val: unknown): number {
+  if (typeof val === 'number') return Number.isFinite(val) ? val : 0;
+  if (!val) return 0;
+  const cleaned = String(val).replace(/[^0-9.-]+/g, '');
+  const parsed = parseFloat(cleaned);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+/**
  * Pure helper: constructs the exact Supabase RPC payload for `transfer_balance_p2p`.
  */
 export function buildTransferBalanceRpcPayload(
@@ -354,10 +365,10 @@ export function buildTransferBalanceRpcPayload(
   transferAmount: string | number
 ): P2PTransferRpcPayload {
   const cleanId = String(receiverNumericId ?? '').trim().replace(/\D/g, '');
-  const amountNum = Number(Number(transferAmount ?? 0).toFixed(2));
+  const amountNum = parseNumericAmount(transferAmount);
   return {
-    p_receiver_numeric_id: Number(cleanId),
-    p_transfer_amount: amountNum,
+    p_receiver_numeric_id: Number(cleanId) || 0,
+    p_transfer_amount: Number(amountNum.toFixed(2)),
   };
 }
 
@@ -370,17 +381,17 @@ export function validateP2PTransferInput(params: {
   senderNumericId?: string | number | null;
   receiverNumericId: string | number;
   transferAmount: string | number;
-  availableLiveBalance: number;
+  availableLiveBalance: string | number;
 }): P2PTransferValidationResult {
   const rawReceiver = String(params.receiverNumericId ?? '').trim();
   const cleanReceiver = rawReceiver.replace(/^#/, '').trim();
-  const available = Math.max(0, Number((params.availableLiveBalance || 0).toFixed(2)));
+  const available = Math.max(0, Number(parseNumericAmount(params.availableLiveBalance).toFixed(2)));
 
-  const parsedAmount = Number(params.transferAmount);
+  const parsedAmount = parseNumericAmount(params.transferAmount);
   const normalizedAmount =
     Number.isFinite(parsedAmount) && parsedAmount > 0 ? Number(parsedAmount.toFixed(2)) : 0;
 
-  // Check if input amount exceeds the user's current Self-Capital balance
+  // Check if input amount exceeds the user's current Self-Capital balance using strict numeric comparison
   if (normalizedAmount > available) {
     return {
       valid: false,

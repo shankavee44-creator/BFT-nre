@@ -23,6 +23,7 @@ import {
   validateP2PTransferInput,
   executeP2PBalanceTransfer,
   loadLocalP2PTransferHistory,
+  parseNumericAmount,
   type P2PTransferRecord,
 } from '../utils/p2pTransfer.ts';
 import { soundEngine } from '../utils/soundEffects.ts';
@@ -74,15 +75,16 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
 
   if (!isOpen) return null;
 
-  const parsedAmount = Number(transferAmount);
-  const hasEnteredAmount = transferAmount.trim() !== '' && Number.isFinite(parsedAmount);
-  const validAmountNumber = hasEnteredAmount && parsedAmount > 0 ? parsedAmount : 0;
+  const availableNum = parseNumericAmount(availableLiveBalance);
+  const rawParsedAmount = parseNumericAmount(transferAmount);
+  const hasEnteredAmount = transferAmount.trim() !== '' && Number.isFinite(rawParsedAmount);
+  const validAmountNumber = hasEnteredAmount && rawParsedAmount > 0 ? Number(rawParsedAmount.toFixed(2)) : 0;
   const exceedsSelfCapitalBalance =
-    hasEnteredAmount && parsedAmount > 0 && Number(parsedAmount.toFixed(2)) > availableLiveBalance;
+    hasEnteredAmount && rawParsedAmount > 0 && validAmountNumber > availableNum;
 
   const projectedRemainingBalance = Math.max(
     0,
-    Number((availableLiveBalance - validAmountNumber).toFixed(2))
+    Number((availableNum - validAmountNumber).toFixed(2))
   );
 
   const handleCopyOwnNumericId = () => {
