@@ -120,9 +120,12 @@ import {
   isAccountEligibleForTradingSummary,
 } from '../utils/supabaseTradeSync';
 import { P2PBalanceTransferModal } from './P2PBalanceTransferModal';
+import { NotificationBellDropdown } from './NotificationBellDropdown';
 import {
   resolveUserNumericId,
   resolveTransferableLiveBalance,
+  loadLocalP2PTransferHistory,
+  type P2PTransferRecord,
 } from '../utils/p2pTransfer';
 
 interface UserDashboardProps {
@@ -289,6 +292,19 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     () => resolveTransferableLiveBalance(userProfile, accounts),
     [userProfile, accounts]
   );
+
+  const [dashboardP2PTransfers, setDashboardP2PTransfers] = useState<P2PTransferRecord[]>(() =>
+    loadLocalP2PTransferHistory(userProfile.id, userNumericId)
+  );
+
+  useEffect(() => {
+    const syncP2PHistory = () => {
+      setDashboardP2PTransfers(loadLocalP2PTransferHistory(userProfile.id, userNumericId));
+    };
+    syncP2PHistory();
+    window.addEventListener('bft-p2p-history-updated', syncP2PHistory);
+    return () => window.removeEventListener('bft-p2p-history-updated', syncP2PHistory);
+  }, [userProfile.id, userNumericId]);
 
   const handleCopyUserNumericId = () => {
     soundEngine.playUiClick();
@@ -1487,6 +1503,14 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             data-testid="profile-header-actions-grid"
             className="grid grid-cols-2 sm:flex sm:flex-wrap items-center justify-center gap-1.5 sm:gap-2 w-full lg:w-auto pt-2.5 lg:pt-0 border-t border-white/10 lg:border-t-0"
           >
+            <NotificationBellDropdown
+              userProfile={userProfile}
+              accounts={accounts}
+              onUpdateProfile={onUpdateProfile}
+              onUpdateAccount={onUpdateAccount}
+              onTriggerInstantToast={(toast) => setP2pDashboardToast(toast)}
+            />
+
             <button
               type="button"
               data-testid="dashboard-open-p2p-transfer-btn"
@@ -1820,7 +1844,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                   </span>
                 </div>
                 <p className="text-xs text-slate-400 mt-0.5 font-sans">
-                  Available Live Balance:{' '}
+                  Self-Capital Balance:{' '}
                   <strong
                     data-testid="dashboard-p2p-live-balance"
                     className="text-emerald-400 font-mono tabular-nums"
@@ -1831,7 +1855,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                     })}{' '}
                     USD
                   </strong>{' '}
-                  • Share your Numeric ID to receive instant P2P transfers with 0% fee.
+                  • Transfers are only allowed from your Self-Capital (Live Balance) with 0% fee.
                 </p>
               </div>
             </div>
@@ -2680,6 +2704,77 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                   </div>
                 )}
               </div>
+            </div>
+
+            {/* P2P Transfers Payment History Section (Sent & Received) */}
+            <div
+              data-testid="dashboard-p2p-payment-history-section"
+              className="mt-6 p-4 rounded-2xl bg-[#111115] border border-white/10 space-y-3"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h4 className="text-xs font-bold uppercase text-white flex items-center gap-1.5">
+                  <Send className="w-4 h-4 text-[#ff8800]" /> P2P Transfers Payment History ({dashboardP2PTransfers.length})
+                </h4>
+                <span className="text-[10px] text-slate-400">
+                  Self-Capital Ledger (<code className="text-[#ff8800]">transfer_balance_p2p</code>)
+                </span>
+              </div>
+
+              {dashboardP2PTransfers.length === 0 ? (
+                <div className="p-4 rounded-xl bg-[#16161b] text-center text-xs text-slate-500">
+                  No P2P Self-Capital transfers recorded yet.
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                  {dashboardP2PTransfers.map((p2p) => {
+                    const isSent = p2p.direction === 'sent' || p2p.type === 'P2P Transfer Sent';
+                    return (
+                      <div
+                        key={p2p.id}
+                        data-testid={`dashboard-p2p-payment-row-${p2p.id}`}
+                        className="p-3 rounded-xl bg-[#16161c] border border-white/10 flex items-center justify-between gap-3 text-xs"
+                      >
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span
+                              className={`font-black tabular-nums ${
+                                isSent ? 'text-rose-400' : 'text-[#00e676]'
+                              }`}
+                            >
+                              {isSent ? `-$${p2p.amount.toFixed(2)}` : `+$${p2p.amount.toFixed(2)}`}
+                            </span>
+                            <span className="font-bold text-white">
+                              {isSent ? 'P2P Transfer Sent' : 'P2P Deposit Received'}
+                            </span>
+                            <span
+                              className={`px-2 py-0.5 rounded text-[9px] font-black uppercase border ${
+                                isSent
+                                  ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                                  : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                              }`}
+                            >
+                              {isSent
+                                ? `Receiver ID: #${p2p.receiverNumericId}`
+                                : `Sender ID: #${p2p.senderNumericId}`}
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-slate-400 mt-1">
+                            ID: {p2p.id} • Self-Capital Balance
+                          </div>
+                        </div>
+                        <div className="text-[10px] text-slate-500 shrink-0">
+                          {new Date(p2p.createdAt).toLocaleString([], {
+                            month: 'short',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
         </div>

@@ -12,13 +12,17 @@ import {
   ShieldCheck,
   RefreshCw,
   Clock,
+  ArrowUpRight,
+  ArrowDownLeft,
 } from 'lucide-react';
 import type { TradingAccount, UserProfile } from '../types/index.ts';
 import {
+  P2P_SELF_CAPITAL_ONLY_ERROR,
   resolveUserNumericId,
   resolveTransferableLiveBalance,
   validateP2PTransferInput,
   executeP2PBalanceTransfer,
+  loadLocalP2PTransferHistory,
   type P2PTransferRecord,
 } from '../utils/p2pTransfer.ts';
 import { soundEngine } from '../utils/soundEffects.ts';
@@ -33,8 +37,6 @@ export interface P2PBalanceTransferModalProps {
   onRefreshBalance?: () => Promise<void> | void;
   onNotifyToast?: (toast: { type: 'success' | 'error'; title: string; message: string }) => void;
 }
-
-const P2P_HISTORY_STORAGE_KEY = 'bft_p2p_transfer_history_v1';
 
 export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = ({
   isOpen,
@@ -58,29 +60,26 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
   const [recentTransfers, setRecentTransfers] = useState<P2PTransferRecord[]>([]);
 
   const ownNumericId = resolveUserNumericId(userProfile);
-  const { availableLiveBalance, balanceColumn, targetAccount } = resolveTransferableLiveBalance(
-    userProfile,
-    accounts
-  );
+  const { availableLiveBalance } = resolveTransferableLiveBalance(userProfile, accounts);
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(`${P2P_HISTORY_STORAGE_KEY}_${userProfile.id || 'default'}`);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
-          setRecentTransfers(parsed.slice(0, 5));
-        }
-      }
-    } catch {
-      // ignore storage errors
-    }
-  }, [userProfile.id, isOpen]);
+    const syncHistory = () => {
+      const list = loadLocalP2PTransferHistory(userProfile.id, ownNumericId);
+      setRecentTransfers(list.slice(0, 10));
+    };
+    syncHistory();
+    window.addEventListener('bft-p2p-history-updated', syncHistory);
+    return () => window.removeEventListener('bft-p2p-history-updated', syncHistory);
+  }, [userProfile.id, ownNumericId, isOpen]);
 
   if (!isOpen) return null;
 
   const parsedAmount = Number(transferAmount);
-  const validAmountNumber = Number.isFinite(parsedAmount) && parsedAmount > 0 ? parsedAmount : 0;
+  const hasEnteredAmount = transferAmount.trim() !== '' && Number.isFinite(parsedAmount);
+  const validAmountNumber = hasEnteredAmount && parsedAmount > 0 ? parsedAmount : 0;
+  const exceedsSelfCapitalBalance =
+    hasEnteredAmount && parsedAmount > 0 && Number(parsedAmount.toFixed(2)) > availableLiveBalance;
+
   const projectedRemainingBalance = Math.max(
     0,
     Number((availableLiveBalance - validAmountNumber).toFixed(2))
@@ -113,8 +112,7 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
 
   const handleQuickAmount = (amt: number) => {
     soundEngine.playUiClick();
-    const clamped = Math.min(availableLiveBalance, amt);
-    setTransferAmount(clamped > 0 ? clamped.toFixed(2) : String(amt));
+    setTransferAmount(amt > 0 ? amt.toFixed(2) : String(amt));
     setModalToast(null);
   };
 
@@ -135,8 +133,10 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
       soundEngine.playErrorAlert();
       const errToast = {
         type: 'error' as const,
-        title: 'Transfer Validation Error',
-        message: preCheck.error || 'Please check the recipient numeric ID and transfer amount.',
+        title: preCheck.exceedsSelfCapitalBalance
+          ? 'Self-Capital Balance Limit'
+          : 'Transfer Validation Error',
+        message: preCheck.error || P2P_SELF_CAPITAL_ONLY_ERROR,
       };
       setModalToast(errToast);
       if (onNotifyToast) onNotifyToast(errToast);
@@ -176,25 +176,15 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
         await Promise.resolve(onRefreshBalance()).catch(() => {});
       }
 
-      if (result.record) {
-        const nextHistory = [result.record, ...recentTransfers].slice(0, 5);
-        setRecentTransfers(nextHistory);
-        try {
-          localStorage.setItem(
-            `${P2P_HISTORY_STORAGE_KEY}_${userProfile.id || 'default'}`,
-            JSON.stringify(nextHistory)
-          );
-        } catch {
-          // ignore
-        }
-      }
+      const refreshedList = loadLocalP2PTransferHistory(userProfile.id, ownNumericId);
+      setRecentTransfers(refreshedList.slice(0, 10));
 
       const successToast = {
         type: 'success' as const,
-        title: 'P2P Transfer Completed',
+        title: 'P2P Transfer Sent',
         message:
           result.message ||
-          `Transferred $${result.transferAmount.toFixed(2)} USD to Trader ID #${result.receiverNumericId}.`,
+          `Transferred -$${result.transferAmount.toFixed(2)} USD from Self-Capital Balance to Receiver ID #${result.receiverNumericId}.`,
       };
       setModalToast(successToast);
       if (onNotifyToast) onNotifyToast(successToast);
@@ -238,14 +228,14 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-base sm:text-lg font-black text-white tracking-tight">
-                  P2P Balance Transfer
+                  P2P Self-Capital Transfer
                 </h2>
                 <span className="px-2 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/35 text-emerald-400 text-[10px] font-mono font-bold uppercase">
                   Instant • 0% Fee
                 </span>
               </div>
               <p className="text-xs text-slate-400">
-                Send live trading funds directly to another trader’s numeric ID
+                Funds can only be transferred using your Self-Capital (Live Balance)
               </p>
             </div>
           </div>
@@ -263,7 +253,21 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
 
         {/* Body */}
         <div className="p-5 space-y-4">
-          {/* Sender Numeric ID + Live Balance Summary Row */}
+          {/* Explicit Self-Capital Policy Banner */}
+          <div
+            data-testid="p2p-self-capital-policy-notice"
+            className="p-3 rounded-xl bg-[#ff8800]/10 border border-[#ff8800]/35 flex items-start gap-2.5 text-xs font-mono text-amber-200"
+          >
+            <ShieldCheck className="w-4 h-4 text-[#ff8800] shrink-0 mt-0.5" />
+            <div>
+              <span className="font-black text-white">Self-Capital (Live Balance) Only:</span>{' '}
+              P2P transfers strictly deduct from your personal{' '}
+              <strong className="text-emerald-300">Self-Capital Balance</strong>. Challenge, Funded,
+              and Demo balances cannot be transferred.
+            </div>
+          </div>
+
+          {/* Sender Numeric ID + Self-Capital Balance Summary Row */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="p-3.5 rounded-xl bg-[#121218] border border-white/10 flex items-center justify-between gap-2">
               <div className="min-w-0">
@@ -298,29 +302,47 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
               </button>
             </div>
 
-            <div className="p-3.5 rounded-xl bg-[#121218] border border-white/10 flex flex-col justify-center">
+            <div className="p-3.5 rounded-xl bg-[#121218] border border-emerald-500/35 flex flex-col justify-center">
               <div className="flex items-center justify-between">
-                <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400">
-                  Available Live Balance
+                <span className="text-[10px] font-mono uppercase tracking-wider text-slate-300 font-bold">
+                  Self-Capital Balance
                 </span>
                 <span className="text-[10px] font-mono text-emerald-400 uppercase font-bold">
-                  {balanceColumn === 'self_balance' ? 'Personal Live' : targetAccount?.id || 'Live'}
+                  Live Self-Capital
                 </span>
               </div>
               <div
                 data-testid="p2p-modal-available-balance"
                 className="text-sm sm:text-base font-mono font-black text-emerald-400 tabular-nums mt-0.5"
               >
-                ${availableLiveBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+                ${availableLiveBalance.toLocaleString('en-US', {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })}{' '}
+                USD
               </div>
             </div>
           </div>
+
+          {/* Inline Error Banner when Input Amount Exceeds Self-Capital Balance */}
+          {exceedsSelfCapitalBalance && (
+            <div
+              data-testid="p2p-self-capital-limit-error"
+              role="alert"
+              className="p-3 rounded-xl bg-rose-950/90 border border-rose-500/60 text-rose-200 text-xs font-mono flex items-center gap-2.5"
+            >
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+              <span className="font-bold">{P2P_SELF_CAPITAL_ONLY_ERROR}</span>
+            </div>
+          )}
 
           {/* Toast Alert Banner inside Modal */}
           {modalToast && (
             <div
               data-testid={
-                modalToast.type === 'success' ? 'p2p-transfer-success-toast' : 'p2p-transfer-error-toast'
+                modalToast.type === 'success'
+                  ? 'p2p-transfer-success-toast'
+                  : 'p2p-transfer-error-toast'
               }
               role="status"
               className={`p-3.5 rounded-xl border text-xs font-mono flex items-start justify-between gap-3 ${
@@ -351,7 +373,7 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
           )}
 
           {/* Transfer Form */}
-          <form onSubmit={handleSubmitTransfer} className="space-y-4">
+          <form onSubmit={handleSubmitTransfer} className="space-y-4" noValidate>
             {/* Recipient Numeric ID Input */}
             <div>
               <label
@@ -376,7 +398,7 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
                     setReceiverNumericId(digitsOnly);
                     if (modalToast?.type === 'error') setModalToast(null);
                   }}
-                  placeholder="Enter recipient numeric ID (e.g. 48291034)"
+                  placeholder="Enter recipient numeric ID (e.g. 100201)"
                   className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#14141c] border border-white/15 focus:border-[#ff8800] text-white font-mono text-sm tabular-nums focus:outline-none transition-colors"
                 />
               </div>
@@ -385,7 +407,9 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
             {/* Transfer Amount Input */}
             <div>
               <div className="flex items-center justify-between text-xs font-mono font-bold text-slate-300 mb-1.5">
-                <label htmlFor="p2p-transfer-amount-input">Transfer Amount (USD) *</label>
+                <label htmlFor="p2p-transfer-amount-input">
+                  Transfer Amount from Self-Capital (USD) *
+                </label>
                 <button
                   type="button"
                   data-testid="p2p-max-amount-btn"
@@ -404,7 +428,6 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
                   type="number"
                   step="0.01"
                   min="1"
-                  max={availableLiveBalance > 0 ? availableLiveBalance : undefined}
                   required
                   disabled={isSubmitting}
                   value={transferAmount}
@@ -413,7 +436,11 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
                     if (modalToast?.type === 'error') setModalToast(null);
                   }}
                   placeholder="0.00"
-                  className="w-full pl-10 pr-16 py-2.5 rounded-xl bg-[#14141c] border border-white/15 focus:border-[#ff8800] text-white font-mono text-sm tabular-nums focus:outline-none transition-colors"
+                  className={`w-full pl-10 pr-16 py-2.5 rounded-xl bg-[#14141c] border text-white font-mono text-sm tabular-nums focus:outline-none transition-colors ${
+                    exceedsSelfCapitalBalance
+                      ? 'border-rose-500 focus:border-rose-500'
+                      : 'border-white/15 focus:border-[#ff8800]'
+                  }`}
                 />
                 <span className="absolute right-3.5 top-2.5 text-xs font-mono font-bold text-slate-400">
                   USD
@@ -444,8 +471,12 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
               </div>
             </div>
 
-            {/* Live Transfer Calculation Preview */}
+            {/* Live Self-Capital Transfer Calculation Preview */}
             <div className="p-3.5 rounded-xl bg-[#111116] border border-white/10 space-y-2 font-mono text-xs">
+              <div className="flex items-center justify-between text-slate-400">
+                <span>Source Wallet</span>
+                <span className="text-emerald-400 font-bold">Self-Capital Balance (Live)</span>
+              </div>
               <div className="flex items-center justify-between text-slate-400">
                 <span>Recipient Numeric ID</span>
                 <span className="text-white font-bold tabular-nums">
@@ -454,8 +485,13 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
               </div>
               <div className="flex items-center justify-between text-slate-400">
                 <span>Transfer Amount</span>
-                <span className="text-emerald-400 font-bold tabular-nums">
-                  ${validAmountNumber.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+                <span className="text-rose-400 font-bold tabular-nums">
+                  -$
+                  {validAmountNumber.toLocaleString('en-US', {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}{' '}
+                  USD
                 </span>
               </div>
               <div className="flex items-center justify-between text-slate-400">
@@ -463,12 +499,17 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
                 <span className="text-emerald-400 font-bold">$0.00 (Free)</span>
               </div>
               <div className="pt-2 border-t border-white/10 flex items-center justify-between">
-                <span className="text-slate-300 font-bold">Remaining Live Balance</span>
+                <span className="text-slate-300 font-bold">Remaining Self-Capital Balance</span>
                 <span
                   data-testid="p2p-projected-remaining-balance"
                   className="text-white font-black tabular-nums"
                 >
-                  ${projectedRemainingBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+                  $
+                  {projectedRemainingBalance.toLocaleString('en-US', {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}{' '}
+                  USD
                 </span>
               </div>
             </div>
@@ -478,8 +519,13 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
               <button
                 type="submit"
                 data-testid="p2p-confirm-transfer-btn"
-                disabled={isSubmitting || !receiverNumericId.trim() || validAmountNumber <= 0}
-                className="w-full sm:flex-1 py-3 px-5 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] disabled:opacity-50 text-slate-950 font-mono font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer transition-all"
+                disabled={
+                  isSubmitting ||
+                  !receiverNumericId.trim() ||
+                  validAmountNumber <= 0 ||
+                  exceedsSelfCapitalBalance
+                }
+                className="w-full sm:flex-1 py-3 px-5 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] disabled:opacity-45 disabled:cursor-not-allowed text-slate-950 font-mono font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer transition-all"
               >
                 {isSubmitting ? (
                   <>
@@ -489,7 +535,7 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
                 ) : (
                   <>
                     <Send className="w-4 h-4" />
-                    <span>Confirm &amp; Send Balance</span>
+                    <span>Confirm &amp; Send Self-Capital</span>
                     <ArrowRight className="w-4 h-4 stroke-[2.5]" />
                   </>
                 )}
@@ -505,51 +551,89 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
             </div>
           </form>
 
-          {/* Recent P2P Transfers List */}
-          {recentTransfers.length > 0 && (
-            <div className="pt-3 border-t border-white/10 space-y-2">
-              <div className="flex items-center justify-between text-[11px] font-mono text-slate-400">
-                <span className="uppercase font-bold flex items-center gap-1.5">
-                  <Clock className="w-3.5 h-3.5 text-[#ff8800]" /> Recent P2P Transfers
-                </span>
-                <span>Instant Settlement</span>
-              </div>
-              <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
-                {recentTransfers.map((item) => (
-                  <div
-                    key={item.id}
-                    data-testid={`p2p-history-row-${item.id}`}
-                    className="px-3 py-2 rounded-lg bg-[#13131a] border border-white/10 flex items-center justify-between text-xs font-mono"
-                  >
-                    <div>
-                      <div className="text-white font-bold tabular-nums">
-                        To Trader ID #{item.receiverNumericId}
-                      </div>
-                      <div className="text-[10px] text-slate-500">
-                        {new Date(item.createdAt).toLocaleTimeString([], {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}{' '}
-                        • Bal: ${item.newBalance.toFixed(2)}
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-emerald-400 font-black tabular-nums">
-                        -${item.amount.toFixed(2)} USD
-                      </span>
-                      <span className="block text-[9px] text-emerald-400 uppercase">Completed</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
+          {/* P2P Payment History (Sent & Received Transfers) */}
+          <div className="pt-3 border-t border-white/10 space-y-2">
+            <div className="flex items-center justify-between text-[11px] font-mono text-slate-400">
+              <span className="uppercase font-bold flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-[#ff8800]" /> P2P Payment History
+              </span>
+              <span>Sent &amp; Received Ledger</span>
             </div>
-          )}
+            {recentTransfers.length === 0 ? (
+              <div
+                data-testid="p2p-history-empty"
+                className="px-3 py-3 rounded-lg bg-[#13131a] border border-white/10 text-center text-xs font-mono text-slate-500"
+              >
+                No P2P transfers recorded yet.
+              </div>
+            ) : (
+              <div className="space-y-1.5 max-h-44 overflow-y-auto pr-1">
+                {recentTransfers.map((item) => {
+                  const isSent = item.direction === 'sent' || item.type === 'P2P Transfer Sent';
+                  return (
+                    <div
+                      key={item.id}
+                      data-testid={`p2p-history-row-${item.id}`}
+                      className="px-3 py-2.5 rounded-lg bg-[#13131a] border border-white/10 flex items-center justify-between text-xs font-mono gap-2"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div
+                          className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 border ${
+                            isSent
+                              ? 'bg-rose-500/15 border-rose-500/35 text-rose-400'
+                              : 'bg-emerald-500/15 border-emerald-500/35 text-emerald-400'
+                          }`}
+                        >
+                          {isSent ? (
+                            <ArrowUpRight className="w-3.5 h-3.5" />
+                          ) : (
+                            <ArrowDownLeft className="w-3.5 h-3.5" />
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-white font-bold truncate">
+                            {isSent ? 'P2P Transfer Sent' : 'P2P Deposit Received'}
+                          </div>
+                          <div className="text-[10px] text-slate-400 tabular-nums truncate">
+                            {isSent
+                              ? `Receiver ID: #${item.receiverNumericId}`
+                              : `Sender ID: #${item.senderNumericId}`}{' '}
+                            •{' '}
+                            {new Date(item.createdAt).toLocaleTimeString([], {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span
+                          className={`font-black tabular-nums ${
+                            isSent ? 'text-rose-400' : 'text-emerald-400'
+                          }`}
+                        >
+                          {isSent
+                            ? `-$${item.amount.toFixed(2)}`
+                            : `+$${item.amount.toFixed(2)}`}
+                        </span>
+                        <span className="block text-[9px] text-slate-400 uppercase">
+                          Self-Capital
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
 
           {/* Security Footer Note */}
           <div className="pt-2 flex items-center gap-2 text-[11px] text-slate-400 font-mono">
             <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
             <span>
-              Protected by atomic Supabase RPC (<code className="text-slate-300">transfer_balance_to_user</code>) ledger verification.
+              Protected by atomic Supabase RPC (
+              <code className="text-slate-300">transfer_balance_p2p</code>) Self-Capital ledger
+              verification.
             </span>
           </div>
         </div>

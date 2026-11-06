@@ -11,6 +11,18 @@ import {
   evaluateProviderEligibility,
   type CopyTraderProfileData,
 } from '../utils/copyTradingRules.ts';
+import {
+  createInitialMasterBotState,
+  evaluateActiveTradingWindow,
+  evaluateMasterSignalEligibility,
+  groupActiveSubscriptionsByProvider,
+  recordMasterSignalExecution,
+  recordMasterSignalOutcome,
+  syncMasterBotHourWindow,
+  type MasterTraderBotState,
+  type MasterBotStatus,
+  type MasterBotPauseReason,
+} from '../utils/masterTraderBotScheduler.ts';
 
 export class CopyTradingEngine {
   private static instance: CopyTradingEngine;
@@ -133,11 +145,74 @@ export class CopyTradingEngine {
     }
   }
 
-  private lastBackendTradeAtBySub: Map<string, number> = new Map();
-
   private static readonly HOUSE_PAYOUT_MULTIPLIER = 0.78;
   private static readonly HOUSE_SPREAD_RETAINED_MULTIPLIER = 0.22;
   private static readonly FOLLOWER_WIN_PROBABILITY = 0.46;
+
+  private loadBackendMasterBotState(providerId: string, now: number): MasterTraderBotState {
+    try {
+      const row = db
+        .prepare(`SELECT * FROM master_trader_bot_state WHERE provider_id = ?`)
+        .get(providerId) as any;
+
+      if (row) {
+        const mapped: MasterTraderBotState = {
+          providerId: String(row.provider_id),
+          status: (row.status as MasterBotStatus) || 'active',
+          pauseReason: (row.pause_reason as MasterBotPauseReason) || 'NONE',
+          lastTradeExecutedAt: Number(row.last_trade_executed_at || 0),
+          lastCooldownDurationMs: Number(row.last_cooldown_duration_ms || 0),
+          nextEligibleTradeAt: Number(row.next_eligible_trade_at || 0),
+          pausedUntilMs: Number(row.paused_until_ms || 0),
+          hourWindowStartMs: Number(row.hour_window_start_ms || 0),
+          maxTradesThisHour: Number(row.max_trades_this_hour || 4),
+          tradesExecutedThisHour: Number(row.trades_executed_this_hour || 0),
+          consecutiveWins: Number(row.consecutive_wins || 0),
+          consecutiveLosses: Number(row.consecutive_losses || 0),
+          totalSignalsGenerated: Number(row.total_signals_generated || 0),
+          lastSignalId: row.last_signal_id ? String(row.last_signal_id) : undefined,
+          updatedAt: Number(row.updated_at || now),
+        };
+        return syncMasterBotHourWindow(mapped, now);
+      }
+    } catch {
+      // ignore if table not ready
+    }
+    const fresh = createInitialMasterBotState(providerId, now);
+    this.persistBackendMasterBotState(fresh);
+    return fresh;
+  }
+
+  private persistBackendMasterBotState(state: MasterTraderBotState): void {
+    try {
+      db.prepare(`
+        INSERT OR REPLACE INTO master_trader_bot_state (
+          provider_id, status, pause_reason, last_trade_executed_at, last_cooldown_duration_ms,
+          next_eligible_trade_at, paused_until_ms, hour_window_start_ms, max_trades_this_hour,
+          trades_executed_this_hour, consecutive_wins, consecutive_losses, total_signals_generated,
+          last_signal_id, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        state.providerId,
+        state.status,
+        state.pauseReason,
+        state.lastTradeExecutedAt,
+        state.lastCooldownDurationMs,
+        state.nextEligibleTradeAt,
+        state.pausedUntilMs,
+        state.hourWindowStartMs,
+        state.maxTradesThisHour,
+        state.tradesExecutedThisHour,
+        state.consecutiveWins,
+        state.consecutiveLosses,
+        state.totalSignalsGenerated,
+        state.lastSignalId || null,
+        state.updatedAt
+      );
+    } catch {
+      // ignore
+    }
+  }
 
   private recordBackendPlatformRevenue(params: {
     tradeId: string;
@@ -335,18 +410,39 @@ export class CopyTradingEngine {
     }
   }
 
-  private settleAndExecuteBackendMirroredTrades(now: number, pool: CopyTraderProfileData[]) {
+  private settleAndExecuteBackendMirroredTrades(now: number, _pool: CopyTraderProfileData[]) {
     try {
       const openRows = db
         .prepare(`SELECT * FROM copy_executed_trades WHERE status = 'OPEN'`)
         .all() as any[];
 
+      // 1. Settle matured OPEN trades in batches per Master Trader (`provider_id`) so all copiers
+      //    of a Master Trader receive the same signal outcome and the Master Trader's consecutive
+      //    win/loss streak updates once per signal batch.
+      const maturedByProvider = new Map<string, any[]>();
+      const stillOpenProviders = new Set<string>();
+
       for (const row of openRows) {
+        const providerKey = String(row.provider_id || 'default_provider');
         const createdMs = Number(row.created_at || now);
         if (now - createdMs >= 60000) {
+          const list = maturedByProvider.get(providerKey) || [];
+          list.push(row);
+          maturedByProvider.set(providerKey, list);
+        } else {
+          stillOpenProviders.add(providerKey);
+        }
+      }
+
+      for (const [providerId, batchRows] of maturedByProvider.entries()) {
+        if (batchRows.length === 0) continue;
+
+        // Shared outcome for this Master Trader's batch signal
+        const isWin = Math.random() < CopyTradingEngine.FOLLOWER_WIN_PROBABILITY;
+        const finalStatus: 'WIN' | 'LOSS' = isWin ? 'WIN' : 'LOSS';
+
+        for (const row of batchRows) {
           const entry = Number(row.entry_price || 1.085);
-          // House-favorable settlement: 46% follower win rate and 78% binary payout on wins
-          const isWin = Math.random() < CopyTradingEngine.FOLLOWER_WIN_PROBABILITY;
           const isCall = String(row.trade_type || 'CALL').toUpperCase() !== 'PUT';
           const delta = entry * 0.00045 * (isWin ? 1 : -1);
           const exitPrice = Number((entry + (isCall ? delta : -delta)).toFixed(5));
@@ -354,7 +450,6 @@ export class CopyTradingEngine {
           const pnl = isWin
             ? Number((amt * CopyTradingEngine.HOUSE_PAYOUT_MULTIPLIER).toFixed(2))
             : -amt;
-          const finalStatus = isWin ? 'WIN' : 'LOSS';
 
           db.prepare(
             `UPDATE copy_executed_trades SET exit_price = ?, status = ?, pnl = ? WHERE id = ?`
@@ -375,11 +470,32 @@ export class CopyTradingEngine {
             now,
           });
         }
+
+        // Rule 3: Update Master Trader consecutive win/loss streak & enforce 1-2h loss cool-off / 2-3h win take-profit pause
+        const currentBotState = this.loadBackendMasterBotState(providerId, now);
+        const outcomeResult = recordMasterSignalOutcome({
+          state: currentBotState,
+          outcome: finalStatus,
+          nowMs: now,
+        });
+        this.persistBackendMasterBotState(outcomeResult.updatedState);
       }
 
+      // Rule 5: Active Trading Windows / Schedule
+      // Disable new trade execution completely during overnight hours (12:00 AM - 06:00 AM local time)
+      const windowCheck = evaluateActiveTradingWindow(now);
+      if (!windowCheck.allowed) {
+        return;
+      }
+
+      // Rule 4: Volume-Based Batch Execution (Copier Scalability)
+      // Group active subscriptions by Master Trader (`provider_id`) so signal frequency is independent of copier count.
       const activeSubs = db
         .prepare(`SELECT * FROM copy_trading_subscriptions WHERE status = 'active'`)
         .all() as any[];
+
+      const subsByProvider = groupActiveSubscriptionsByProvider(activeSubs);
+      if (subsByProvider.size === 0) return;
 
       const assets = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'BTC/USDT', 'ETH/USDT', 'XAU/USD'];
       const basePrices: Record<string, number> = {
@@ -391,46 +507,64 @@ export class CopyTradingEngine {
         'XAU/USD': 2685.3,
       };
 
-      for (const sub of activeSubs) {
-        const subId = String(sub.id);
-        const lastAt = this.lastBackendTradeAtBySub.get(subId) || 0;
-        if (now - lastAt < 45000) continue;
+      const insertStmt = db.prepare(`
+        INSERT INTO copy_executed_trades (
+          id, subscription_id, copier_user_id, copier_account_id, provider_id,
+          asset_symbol, trade_type, amount, entry_price, status, pnl, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', 0, ?)
+      `);
 
-        const hasOpen = db
-          .prepare(
-            `SELECT COUNT(*) as c FROM copy_executed_trades WHERE subscription_id = ? AND status = 'OPEN'`
-          )
-          .get(subId) as { c: number };
-        if (Number(hasOpen?.c || 0) > 0) continue;
+      for (const [providerId, providerSubs] of subsByProvider.entries()) {
+        if (providerSubs.length === 0) continue;
 
-        const tradeAmount = Math.max(
-          1,
-          Number(sub.trade_amount ?? sub.allocated_capital ?? 100)
-        );
+        const botState = this.loadBackendMasterBotState(providerId, now);
+        const eligibility = evaluateMasterSignalEligibility({
+          state: botState,
+          nowMs: now,
+          hasOpenBatchTrade: stillOpenProviders.has(providerId),
+        });
+
+        this.persistBackendMasterBotState(eligibility.state);
+
+        if (!eligibility.canExecute) {
+          continue;
+        }
+
+        // Generate a single Master Trader signal and execute it across all copiers in a single batch
         const assetSymbol = assets[Math.floor(Math.random() * assets.length)];
-        const tradeType = Math.random() >= 0.45 ? 'CALL' : 'PUT';
+        const tradeType: 'CALL' | 'PUT' = Math.random() >= 0.45 ? 'CALL' : 'PUT';
         const entryPrice = basePrices[assetSymbol] || 1.08542;
-        const execId = `CET-${subId.slice(0, 8)}-${now.toString(36)}`;
+        const signalId = `SIG-${providerId.slice(0, 8)}-${now.toString(36)}`;
 
-        db.prepare(`
-          INSERT INTO copy_executed_trades (
-            id, subscription_id, copier_user_id, copier_account_id, provider_id,
-            asset_symbol, trade_type, amount, entry_price, status, pnl, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', 0, ?)
-        `).run(
-          execId,
-          subId,
-          String(sub.copier_user_id || sub.user_id || 'usr_bft_001'),
-          String(sub.copier_account_id || 'BFT-LIVE'),
-          String(sub.provider_id),
-          assetSymbol,
-          tradeType,
-          tradeAmount,
-          entryPrice,
-          now
-        );
+        for (const sub of providerSubs) {
+          const subId = String(sub.id);
+          const tradeAmount = Math.max(
+            1,
+            Number(sub.trade_amount ?? sub.allocated_capital ?? 100)
+          );
+          const execId = `CET-${subId.slice(0, 8)}-${now.toString(36)}`;
 
-        this.lastBackendTradeAtBySub.set(subId, now);
+          insertStmt.run(
+            execId,
+            subId,
+            String(sub.copier_user_id || sub.user_id || 'usr_bft_001'),
+            String(sub.copier_account_id || 'BFT-LIVE'),
+            String(providerId),
+            assetSymbol,
+            tradeType,
+            tradeAmount,
+            entryPrice,
+            now
+          );
+        }
+
+        // Rule 1 & Rule 2: Record signal execution once for the Master Trader (assigns 30s-180s random cooldown and increments hourly counter)
+        const postExecState = recordMasterSignalExecution({
+          state: eligibility.state,
+          signalId,
+          nowMs: now,
+        });
+        this.persistBackendMasterBotState(postExecState);
       }
     } catch {
       // ignore

@@ -1,134 +1,170 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import type { TradingAccount, UserProfile } from '../types/index.ts';
 import {
+  P2P_SELF_CAPITAL_ONLY_ERROR,
   resolveUserNumericId,
   resolveTransferableLiveBalance,
   buildTransferBalanceRpcPayload,
   validateP2PTransferInput,
   executeP2PBalanceTransfer,
+  createP2PTransferRecord,
 } from './p2pTransfer.ts';
-import type { UserProfile, TradingAccount } from '../types/index.ts';
+import {
+  formatP2PReceivedToastMessage,
+  normalizeUserNotificationRow,
+  processIncomingP2PTransfer,
+} from './userNotifications.ts';
+import {
+  mapP2PTransferToQuotexTransaction,
+  buildMergedTransactionLedger,
+} from './quotexWithdrawalPortal.ts';
 
 const mockUserProfile: UserProfile = {
-  id: '9f8e7d6c-5b4a-4321-8765-1234567890ab',
-  email: 'trader@bft.io',
-  fullName: 'Alex Mercer',
-  avatarUrl: 'https://example.com/avatar.png',
+  id: '38291048-1111-4222-8333-444455556666',
+  fullName: 'Alex Vance',
+  email: 'alex.vance@example.com',
   country: 'United States',
-  telegramHandle: '@alexmercer',
-  referralCode: 'BFT-ALEX',
   kycStatus: 'verified',
-  twoFactorEnabled: true,
-  activeAccountId: 'BFT-PERS-01',
+  referralCode: 'BFT-ALEX',
+  numericId: '88412095',
+  numeric_id: '88412095',
   selfBalance: 250.5,
+  fundedBalance: 5000,
   demoBalance: 10000,
-  fundedBalance: 0,
-  numeric_id: 48291034,
+  avatarUrl: '',
+  telegramHandle: '@alexvance',
+  activeAccountId: 'BFT-PERS-1',
+  createdDate: '2026-01-01',
 };
 
 const mockPersonalAccount: TradingAccount = {
-  id: 'BFT-PERS-01',
-  loginId: 'BFT-PERS-01',
-  tierName: 'Personal Live',
+  id: 'BFT-PERS-1',
+  loginId: '99001122',
+  tier: 'personal',
+  tierName: 'Personal Live Account',
+  accountType: 'personal',
+  accountCategory: 'personal_live',
   size: 250.5,
   initialBalance: 250.5,
   currentBalance: 250.5,
   equity: 250.5,
-  startingDayEquity: 250.5,
-  dailyLossLimitPercent: 0,
-  maxOverallLossPercent: 0,
-  profitTargetPercent: 0,
+  highWaterMark: 250.5,
+  dailyStartBalance: 250.5,
+  lastActiveDate: '2026-11-05',
   status: 'active',
-  phase: 'funded',
-  accountType: 'personal',
-  tier: 'personal',
-  passwordHash: 'pass123',
-  createdDate: new Date().toISOString(),
-  lastActiveDate: new Date().toISOString(),
-  tradingDaysCompleted: 1,
-  tradesCount: 0,
-  winRate: 0,
+  phase: 'personal_live',
+  profitTarget: 0,
+  maxDailyLoss: 0,
+  maxTotalLoss: 0,
+  profitSplit: 100,
+  tradingDaysCompleted: 5,
+  minTradingDays: 0,
+  createdAt: Date.now() - 86400000,
 };
 
-test('resolveUserNumericId returns explicit numeric_id from profile or supabase row', () => {
-  assert.equal(resolveUserNumericId(mockUserProfile), '48291034');
+const mockFundedAccount: TradingAccount = {
+  ...mockPersonalAccount,
+  id: 'BFT-FUND-1',
+  tier: 'instant',
+  accountType: 'instant',
+  accountCategory: 'funded',
+  phase: 'funded',
+  size: 5000,
+  initialBalance: 5000,
+  currentBalance: 5000,
+  equity: 5000,
+};
+
+test('resolveUserNumericId extracts explicit numeric_id or derives deterministic 8-digit ID', () => {
+  assert.equal(resolveUserNumericId(mockUserProfile), '88412095');
+
+  const derived = resolveUserNumericId({
+    id: 'user-uuid-123',
+    email: 'trader@bft.com',
+  });
+  assert.match(derived, /^\d{8}$/);
   assert.equal(
-    resolveUserNumericId({ ...mockUserProfile, numeric_id: undefined }, { numeric_id: '99123456' }),
-    '99123456'
+    derived,
+    resolveUserNumericId({ id: 'user-uuid-123', email: 'trader@bft.com' })
   );
 });
 
-test('resolveUserNumericId generates deterministic 8-digit numeric ID fallback when unset', () => {
-  const profileWithoutNumId: UserProfile = {
-    ...mockUserProfile,
-    numeric_id: undefined,
-    numericId: undefined,
-  };
-  const id1 = resolveUserNumericId(profileWithoutNumId);
-  const id2 = resolveUserNumericId(profileWithoutNumId);
-  assert.match(id1, /^\d{8}$/);
-  assert.equal(id1, id2);
-});
-
-test('resolveTransferableLiveBalance prioritizes self_balance and maps personal live account', () => {
-  const res = resolveTransferableLiveBalance(mockUserProfile, [mockPersonalAccount]);
-  assert.equal(res.availableLiveBalance, 250.5);
+test('resolveTransferableLiveBalance strictly uses Self-Capital (self_balance) and never falls back to funded_balance', () => {
+  const res = resolveTransferableLiveBalance(mockUserProfile, [
+    mockPersonalAccount,
+    mockFundedAccount,
+  ]);
   assert.equal(res.balanceColumn, 'self_balance');
-  assert.equal(res.targetAccount?.id, 'BFT-PERS-01');
+  assert.equal(res.availableLiveBalance, 250.5);
+  assert.equal(res.selfCapitalBalance, 250.5);
+  assert.equal(res.targetAccount?.id, 'BFT-PERS-1');
+
+  // Even if selfBalance is 0 and fundedBalance is $5,000, P2P transfers strictly read Self-Capital (0)
+  const zeroSelfProfile: UserProfile = {
+    ...mockUserProfile,
+    selfBalance: 0,
+    fundedBalance: 5000,
+  };
+  const zeroSelfAcc: TradingAccount = {
+    ...mockPersonalAccount,
+    currentBalance: 0,
+    equity: 0,
+  };
+  const resZero = resolveTransferableLiveBalance(zeroSelfProfile, [
+    zeroSelfAcc,
+    mockFundedAccount,
+  ]);
+  assert.equal(resZero.balanceColumn, 'self_balance');
+  assert.equal(resZero.availableLiveBalance, 0);
+  assert.equal(resZero.selfCapitalBalance, 0);
 });
 
-test('buildTransferBalanceRpcPayload constructs exact p_receiver_numeric_id and p_transfer_amount parameters', () => {
-  const payload = buildTransferBalanceRpcPayload('88392011', '75.259');
+test('buildTransferBalanceRpcPayload constructs p_receiver_numeric_id and p_transfer_amount', () => {
+  const payload = buildTransferBalanceRpcPayload('#49201844', '75.259');
   assert.deepEqual(payload, {
-    p_receiver_numeric_id: 88392011,
+    p_receiver_numeric_id: 49201844,
     p_transfer_amount: 75.26,
   });
 });
 
-test('validateP2PTransferInput enforces numeric ID, self-transfer prevention, and live balance limits', () => {
-  // Missing recipient ID
-  const emptyRes = validateP2PTransferInput({
-    senderNumericId: '48291034',
-    receiverNumericId: '',
-    transferAmount: 50,
+test('validateP2PTransferInput enforces Self-Capital balance limit with exact required error message', () => {
+  const overSelfCapital = validateP2PTransferInput({
+    senderNumericId: '88412095',
+    receiverNumericId: '100201',
+    transferAmount: 500,
     availableLiveBalance: 250.5,
   });
-  assert.equal(emptyRes.valid, false);
+  assert.equal(overSelfCapital.valid, false);
+  assert.equal(overSelfCapital.exceedsSelfCapitalBalance, true);
+  assert.equal(
+    overSelfCapital.error,
+    'Transfers are only allowed from your Self-Capital balance.'
+  );
+  assert.equal(overSelfCapital.error, P2P_SELF_CAPITAL_ONLY_ERROR);
 
-  // Self-transfer blocked
-  const selfRes = validateP2PTransferInput({
-    senderNumericId: '48291034',
-    receiverNumericId: '48291034',
-    transferAmount: 50,
+  const selfTransfer = validateP2PTransferInput({
+    senderNumericId: '88412095',
+    receiverNumericId: '88412095',
+    transferAmount: 25,
     availableLiveBalance: 250.5,
   });
-  assert.equal(selfRes.valid, false);
-  assert.match(selfRes.error || '', /own numeric ID/i);
+  assert.equal(selfTransfer.valid, false);
+  assert.match(selfTransfer.error || '', /own numeric ID/i);
 
-  // Exceeds available balance
-  const exceedRes = validateP2PTransferInput({
-    senderNumericId: '48291034',
-    receiverNumericId: '88392011',
-    transferAmount: 300,
+  const validCheck = validateP2PTransferInput({
+    senderNumericId: '88412095',
+    receiverNumericId: '#100201',
+    transferAmount: '50.50',
     availableLiveBalance: 250.5,
   });
-  assert.equal(exceedRes.valid, false);
-  assert.match(exceedRes.error || '', /Insufficient live balance/i);
-
-  // Valid transfer
-  const validRes = validateP2PTransferInput({
-    senderNumericId: '48291034',
-    receiverNumericId: '#88392011',
-    transferAmount: '50.5',
-    availableLiveBalance: 250.5,
-  });
-  assert.equal(validRes.valid, true);
-  assert.equal(validRes.normalizedReceiverNumericId, '88392011');
-  assert.equal(validRes.receiverNumericIdAsNumber, 88392011);
-  assert.equal(validRes.normalizedAmount, 50.5);
+  assert.equal(validCheck.valid, true);
+  assert.equal(validCheck.normalizedReceiverNumericId, '100201');
+  assert.equal(validCheck.receiverNumericIdAsNumber, 100201);
+  assert.equal(validCheck.normalizedAmount, 50.5);
 });
 
-test('executeP2PBalanceTransfer calls supabase.rpc("transfer_balance_to_user") and updates live balance', async () => {
+test('executeP2PBalanceTransfer calls transfer_balance_p2p RPC, deducts strictly from selfBalance, and records P2P Transfer Sent', async () => {
   const rpcCalls: Array<{ fn: string; args: any }> = [];
   const fakeSupabaseClient: any = {
     rpc: async (fn: string, args: any) => {
@@ -137,7 +173,7 @@ test('executeP2PBalanceTransfer calls supabase.rpc("transfer_balance_to_user") a
         data: {
           success: true,
           new_balance: 200.0,
-          receiver_name: 'Recipient Trader',
+          receiver_name: 'Marcus Sterling',
         },
         error: null,
       };
@@ -146,45 +182,110 @@ test('executeP2PBalanceTransfer calls supabase.rpc("transfer_balance_to_user") a
 
   const result = await executeP2PBalanceTransfer({
     userProfile: mockUserProfile,
-    accounts: [mockPersonalAccount],
-    receiverNumericId: '88392011',
+    accounts: [mockPersonalAccount, mockFundedAccount],
+    receiverNumericId: '100201',
     transferAmount: 50.5,
     supabaseClient: fakeSupabaseClient,
   });
 
   assert.equal(result.ok, true);
   assert.equal(rpcCalls.length, 1);
-  assert.equal(rpcCalls[0].fn, 'transfer_balance_to_user');
+  assert.equal(rpcCalls[0].fn, 'transfer_balance_p2p');
   assert.deepEqual(rpcCalls[0].args, {
-    p_receiver_numeric_id: 88392011,
+    p_receiver_numeric_id: 100201,
     p_transfer_amount: 50.5,
   });
   assert.equal(result.previousBalance, 250.5);
   assert.equal(result.newBalance, 200.0);
+  assert.equal(result.balanceColumn, 'self_balance');
   assert.equal(result.updatedProfile?.selfBalance, 200.0);
   assert.equal(result.updatedAccount?.currentBalance, 200.0);
+  assert.equal(result.record?.type, 'P2P Transfer Sent');
+  assert.equal(result.record?.signedAmountFormatted, '-$50.50');
+  assert.equal(result.record?.counterpartyLabel, 'Receiver ID: #100201');
 });
 
-test('executeP2PBalanceTransfer surfaces RPC error cleanly without deducting balance', async () => {
-  const fakeSupabaseClient: any = {
-    rpc: async () => ({
-      data: null,
-      error: {
-        code: 'P0001',
-        message: 'Recipient numeric_id 99999999 does not exist',
-      },
+test('Sent and Received P2P transfers format accurately for Payment History / Transactions ledger', () => {
+  const sentRecord = createP2PTransferRecord({
+    id: 'P2P-SENT-1',
+    direction: 'sent',
+    senderNumericId: '88412095',
+    receiverNumericId: '100201',
+    amount: 45.0,
+    previousBalance: 250.5,
+    newBalance: 205.5,
+  });
+
+  assert.equal(sentRecord.type, 'P2P Transfer Sent');
+  assert.equal(sentRecord.signedAmount, -45.0);
+  assert.equal(sentRecord.signedAmountFormatted, '-$45.00');
+  assert.equal(sentRecord.counterpartyLabel, 'Receiver ID: #100201');
+
+  const receivedRecord = createP2PTransferRecord({
+    id: 'P2P-RCV-1',
+    direction: 'received',
+    senderNumericId: '100201',
+    receiverNumericId: '88412095',
+    amount: 120.75,
+    previousBalance: 205.5,
+    newBalance: 326.25,
+  });
+
+  assert.equal(receivedRecord.type, 'P2P Deposit Received');
+  assert.equal(receivedRecord.signedAmount, 120.75);
+  assert.equal(receivedRecord.signedAmountFormatted, '+$120.75');
+  assert.equal(receivedRecord.counterpartyLabel, 'Sender ID: #100201');
+
+  const ledger = buildMergedTransactionLedger([], [], false, [sentRecord, receivedRecord]);
+  assert.equal(ledger.length, 2);
+
+  const mappedSent = mapP2PTransferToQuotexTransaction(sentRecord);
+  assert.equal(mappedSent.type, 'P2P Transfer Sent');
+  assert.equal(mappedSent.signedAmountFormatted, '-$45.00');
+  assert.equal(mappedSent.counterpartyLabel, 'Receiver ID: #100201');
+
+  const mappedRcv = mapP2PTransferToQuotexTransaction(receivedRecord);
+  assert.equal(mappedRcv.type, 'P2P Deposit Received');
+  assert.equal(mappedRcv.signedAmountFormatted, '+$120.75');
+  assert.equal(mappedRcv.counterpartyLabel, 'Sender ID: #100201');
+});
+
+test('Instant Notification: formatP2PReceivedToastMessage and processIncomingP2PTransfer update Self-Capital balance and create user_notifications entry', async () => {
+  const toastMsg = formatP2PReceivedToastMessage(75.5, '100201');
+  assert.equal(toastMsg, 'P2P Funds Received: +$75.50 from User #100201');
+
+  const normalizedNotif = normalizeUserNotificationRow({
+    id: 'notif-99',
+    user_id: mockUserProfile.id,
+    title: 'P2P Funds Received',
+    message: 'P2P Funds Received: +$75.50 from User #100201',
+    is_read: false,
+    created_at: '2026-11-05T20:00:00.000Z',
+  });
+  assert.equal(normalizedNotif.type, 'p2p_received');
+  assert.equal(normalizedNotif.amount, 75.5);
+  assert.equal(normalizedNotif.sender_numeric_id, '100201');
+
+  const fakeClient: any = {
+    from: () => ({
+      insert: async () => ({ data: null, error: null }),
     }),
   };
 
-  const result = await executeP2PBalanceTransfer({
+  const incomingRes = await processIncomingP2PTransfer({
     userProfile: mockUserProfile,
     accounts: [mockPersonalAccount],
-    receiverNumericId: '99999999',
-    transferAmount: 25,
-    supabaseClient: fakeSupabaseClient,
+    amount: 75.5,
+    senderNumericId: '100201',
+    notificationId: 'notif-incoming-1',
+    supabaseClient: fakeClient,
   });
 
-  assert.equal(result.ok, false);
-  assert.match(result.error || '', /Recipient numeric_id 99999999 does not exist/);
-  assert.equal(result.newBalance, 250.5);
+  assert.equal(incomingRes.toastMessage, 'P2P Funds Received: +$75.50 from User #100201');
+  assert.equal(incomingRes.updatedProfile.selfBalance, 326.0);
+  assert.equal(incomingRes.updatedAccount?.currentBalance, 326.0);
+  assert.equal(incomingRes.transferRecord.type, 'P2P Deposit Received');
+  assert.equal(incomingRes.transferRecord.signedAmountFormatted, '+$75.50');
+  assert.equal(incomingRes.transferRecord.counterpartyLabel, 'Sender ID: #100201');
+  assert.equal(incomingRes.notification.is_read, false);
 });

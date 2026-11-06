@@ -267,6 +267,25 @@ db.exec(`
     settlement_reason TEXT NOT NULL,
     created_at INTEGER NOT NULL
   );
+
+  -- 12. Master Trader Bot Execution & Cool-Off State Table
+  CREATE TABLE IF NOT EXISTS master_trader_bot_state (
+    provider_id TEXT PRIMARY KEY,
+    status TEXT DEFAULT 'active',
+    pause_reason TEXT DEFAULT 'NONE',
+    last_trade_executed_at INTEGER DEFAULT 0,
+    last_cooldown_duration_ms INTEGER DEFAULT 0,
+    next_eligible_trade_at INTEGER DEFAULT 0,
+    paused_until_ms INTEGER DEFAULT 0,
+    hour_window_start_ms INTEGER DEFAULT 0,
+    max_trades_this_hour INTEGER DEFAULT 4,
+    trades_executed_this_hour INTEGER DEFAULT 0,
+    consecutive_wins INTEGER DEFAULT 0,
+    consecutive_losses INTEGER DEFAULT 0,
+    total_signals_generated INTEGER DEFAULT 0,
+    last_signal_id TEXT,
+    updated_at INTEGER NOT NULL
+  );
 `);
 
 try {

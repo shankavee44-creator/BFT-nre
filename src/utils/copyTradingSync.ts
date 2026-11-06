@@ -4,6 +4,15 @@ import {
   resolveCanonicalCopyAccountType,
   getCanonicalAccountDatabaseUuid,
 } from './copyTradingRules';
+import {
+  evaluateMasterSignalEligibility,
+  recordMasterSignalExecution,
+  recordMasterSignalOutcome,
+  groupActiveSubscriptionsByProvider,
+  getMasterTraderBotState,
+  saveMasterTraderBotState,
+  type MasterTraderBotState,
+} from './masterTraderBotScheduler';
 import type { TradingAccount, UserProfile } from '../types';
 
 export interface CopySubscriptionParams {
@@ -2103,14 +2112,135 @@ export async function triggerCheckCopyTradeLimits(params: {
 }
 
 const MIRROR_ASSETS = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'BTC/USDT', 'ETH/USDT', 'XAU/USD'];
-const lastMirroredAtBySubId = new Map<string, number>();
 
 /**
- * Executes a single background cycle of the Copy Trading Bot:
- * 1. Settles any matured `'OPEN'` trades in `copy_executed_trades` with the standardized 78% house-edge
- *    payout and transfers all lost/closed-out investment amounts to the platform revenue pool.
- * 2. Triggers `check_copy_trade_limits` to enforce automated Max Loss / Max Drawdown cutoffs in favor of the platform.
- * 3. Periodically executes mirrored trades in `copy_executed_trades` using the user's per-trade allocation (`trade_amount`).
+ * Logs a batch of executed copy trades to `copy_executed_trades` in a single batch insert
+ * when a Master Trader signal triggers across one or more copiers.
+ */
+export async function batchLogCopyExecutedTradesToSupabase(
+  rows: CopyExecutedTradeRow[]
+): Promise<CopyExecutedTradeRow[]> {
+  if (!rows || rows.length === 0) return [];
+
+  const normalizedRows: CopyExecutedTradeRow[] = rows.map((tradeRow, idx) => {
+    const resolvedId =
+      tradeRow.id && isValidUuid(tradeRow.id)
+        ? tradeRow.id.trim()
+        : ensureTradeUuid(
+            tradeRow.id || `copy-exec-${tradeRow.subscription_id}-${Date.now()}-${idx}`
+          );
+    const effectiveUserId = tradeRow.user_id || tradeRow.copier_user_id || '';
+    const resolvedProviderId = isValidUuid(tradeRow.provider_id)
+      ? tradeRow.provider_id.trim()
+      : ensureTradeUuid(`provider-${tradeRow.provider_id}`);
+
+    const normalizedRow: CopyExecutedTradeRow = {
+      ...tradeRow,
+      id: resolvedId,
+      user_id: effectiveUserId,
+      copier_user_id: effectiveUserId,
+      provider_id: resolvedProviderId,
+      amount: Number(tradeRow.amount || 0),
+      entry_price: Number(tradeRow.entry_price || 0),
+      exit_price: tradeRow.exit_price !== undefined ? Number(tradeRow.exit_price) : undefined,
+      pnl: Number(tradeRow.pnl || 0),
+      created_at: tradeRow.created_at || new Date().toISOString(),
+    };
+    return normalizedRow;
+  });
+
+  const buildBatchPayloads = () =>
+    normalizedRows.map((normalizedRow) => {
+      const rawPayload: Record<string, any> = {
+        id: normalizedRow.id,
+        subscription_id: normalizedRow.subscription_id,
+        user_id: normalizedRow.user_id,
+        copier_account_id: normalizedRow.copier_account_id,
+        provider_id: normalizedRow.provider_id,
+        asset_symbol: normalizedRow.asset_symbol,
+        trade_type: normalizedRow.trade_type,
+        amount: normalizedRow.amount,
+        entry_price: normalizedRow.entry_price,
+        status: normalizedRow.status,
+        pnl: normalizedRow.pnl,
+        created_at: normalizedRow.created_at,
+      };
+      if (normalizedRow.exit_price !== undefined) {
+        rawPayload.exit_price = normalizedRow.exit_price;
+      }
+      const filtered: Record<string, any> = {};
+      for (const [k, v] of Object.entries(rawPayload)) {
+        if (!unsupportedCopyExecutedTradeColumns.has(k) && v !== undefined) {
+          filtered[k] = v;
+        }
+      }
+      return filtered;
+    });
+
+  try {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const dbPayloads = buildBatchPayloads();
+      const { data, error } = await (supabase.from('copy_executed_trades') as any)
+        .insert(dbPayloads)
+        .select('*');
+
+      if (!error && Array.isArray(data)) {
+        const byId = new Map<string, any>();
+        for (const d of data) {
+          if (d && d.id) byId.set(String(d.id), d);
+        }
+        return normalizedRows.map((row) => {
+          const match = row.id ? byId.get(row.id) : undefined;
+          if (!match) return row;
+          return {
+            ...row,
+            ...match,
+            user_id: match.user_id || row.user_id,
+            copier_user_id: match.copier_user_id || match.user_id || row.copier_user_id,
+            copier_account_id:
+              match.copier_account_id || match.account_id || row.copier_account_id,
+          };
+        });
+      }
+
+      if (error) {
+        const missingCol = extractMissingCopyExecutedTradeColumn(error);
+        if (missingCol && !unsupportedCopyExecutedTradeColumns.has(missingCol)) {
+          unsupportedCopyExecutedTradeColumns.add(missingCol);
+          continue;
+        }
+      }
+
+      const { error: plainErr } = await (supabase.from('copy_executed_trades') as any).insert(
+        dbPayloads
+      );
+      if (plainErr) {
+        const plainMissing = extractMissingCopyExecutedTradeColumn(plainErr);
+        if (plainMissing && !unsupportedCopyExecutedTradeColumns.has(plainMissing)) {
+          unsupportedCopyExecutedTradeColumns.add(plainMissing);
+          continue;
+        }
+      }
+      return normalizedRows;
+    }
+    return normalizedRows;
+  } catch {
+    return normalizedRows;
+  }
+}
+
+/**
+ * Executes a single background cycle of the Copy Trading Bot with realistic,
+ * human-like Master Trader risk & scheduling rules:
+ * 1. Dynamic Cooldown Delay: Random 30s - 180s interval after every executed master trade.
+ * 2. Max Trades per Hour: Caps each master trader to 3 - 5 trades/hour, pausing for the rest of the hour once reached.
+ * 3. Consecutive Win/Loss Cool-offs:
+ *    - 2 consecutive losses -> automatic 1 to 2 hour cool-off pause.
+ *    - 3 consecutive wins -> closes current trading session and pauses for 2 to 3 hours.
+ * 4. Volume-Based Batch Execution: Trade frequency is driven strictly by master signal generation per provider,
+ *    executing across all subscribed copiers in a single batch without increasing trade frequency as copiers scale.
+ * 5. Active Trading Windows: Restricts bot trading to active market hours (06:00 AM - 11:59 PM local time)
+ *    and disables execution completely during overnight hours (12:00 AM - 06:00 AM local time).
  */
 export async function executeMirroredMasterTradesCycle(params: {
   userId?: string | null;
@@ -2118,6 +2248,9 @@ export async function executeMirroredMasterTradesCycle(params: {
   activeAccount?: TradingAccount | null;
   getLivePrice?: (assetSymbol: string) => number | undefined;
   tradeCooldownMs?: number;
+  nowMs?: number;
+  localHourOverride?: number;
+  bypassOvernightCheck?: boolean;
 }): Promise<{
   newlyExecutedTrades: import('../types').BinaryTrade[];
   settledTrades: import('../types').BinaryTrade[];
@@ -2128,8 +2261,7 @@ export async function executeMirroredMasterTradesCycle(params: {
   const settledTrades: import('../types').BinaryTrade[] = [];
   let netFollowerBalanceDelta = 0;
   let totalPlatformCredited = 0;
-  const now = Date.now();
-  const cooldownMs = params.tradeCooldownMs ?? 45000;
+  const now = params.nowMs ?? Date.now();
 
   const copierUserId = await resolveAuthUserId(params.userId, params.userEmail);
   if (!copierUserId) {
@@ -2149,6 +2281,10 @@ export async function executeMirroredMasterTradesCycle(params: {
       : params.activeAccount?.tier === 'two-step'
       ? 'two-step'
       : 'instant';
+
+  const getOrInitBotState = (providerId: string): MasterTraderBotState => {
+    return getMasterTraderBotState(providerId, now);
+  };
 
   // 1. Fetch active subscriptions from Supabase + merge with local active subscriptions
   const dbSubs = await fetchUserCopySubscriptionsFromSupabase(copierUserId);
@@ -2217,6 +2353,9 @@ export async function executeMirroredMasterTradesCycle(params: {
   // 2. Fetch existing executed copy trades and settle any matured 'OPEN' trades with house-favorable edge
   const existingExecTrades = await fetchCopyExecutedTradesFromSupabase(copierUserId);
   const openBySubId = new Set<string>();
+  // Track settled signal outcomes per provider so a batch of copiers settling from the same master signal
+  // counts as 1 master signal outcome for streak tracking.
+  const settledOutcomeByProvider = new Map<string, 'WIN' | 'LOSS'>();
 
   for (const tr of existingExecTrades) {
     const rawSt = String(tr.status || '').toUpperCase().trim();
@@ -2227,8 +2366,14 @@ export async function executeMirroredMasterTradesCycle(params: {
         const dir = String(tr.trade_type || 'CALL').toUpperCase().trim();
         const isCall = dir !== 'PUT' && dir !== 'SELL';
 
-        // House-favorable settlement: 46% follower win rate + 78% binary payout on wins
-        const isWin = Math.random() < COPY_TRADE_FOLLOWER_WIN_PROBABILITY;
+        const providerKey = ensureTradeUuid(String(tr.provider_id || tr.subscription_id));
+        // Ensure all copiers of the same master signal receive a consistent master signal outcome
+        const isWin = settledOutcomeByProvider.has(providerKey)
+          ? settledOutcomeByProvider.get(providerKey) === 'WIN'
+          : Math.random() < COPY_TRADE_FOLLOWER_WIN_PROBABILITY;
+        const finalStatus: 'WIN' | 'LOSS' = isWin ? 'WIN' : 'LOSS';
+        settledOutcomeByProvider.set(providerKey, finalStatus);
+
         const delta = entry * 0.00045 * (isWin ? 1 : -1);
         const exitPrice = Number((entry + (isCall ? delta : -delta)).toFixed(5));
 
@@ -2236,7 +2381,6 @@ export async function executeMirroredMasterTradesCycle(params: {
         const pnl = isWin
           ? Number((amt * COPY_TRADE_HOUSE_PAYOUT_MULTIPLIER).toFixed(2))
           : -amt;
-        const finalStatus: 'WIN' | 'LOSS' = isWin ? 'WIN' : 'LOSS';
 
         if (tr.id) {
           await updateCopyExecutedTradeInSupabase(tr.id, {
@@ -2279,6 +2423,17 @@ export async function executeMirroredMasterTradesCycle(params: {
     }
   }
 
+  // Record Master Trader signal outcomes (Rule 3: 2 consecutive losses -> 1-2h cool-off; 3 consecutive wins -> 2-3h session pause)
+  for (const [providerKey, outcome] of settledOutcomeByProvider.entries()) {
+    const currentBotState = getOrInitBotState(providerKey);
+    const { updatedState } = recordMasterSignalOutcome({
+      state: currentBotState,
+      outcome,
+      nowMs: now,
+    });
+    saveMasterTraderBotState(updatedState);
+  }
+
   // 3. Trigger `check_copy_trade_limits` if any trade settled or before opening new mirrored trades
   const limitEval = await triggerCheckCopyTradeLimits({
     userId: copierUserId,
@@ -2301,56 +2456,98 @@ export async function executeMirroredMasterTradesCycle(params: {
 
   const stoppedSet = new Set(limitEval.stoppedSubscriptionIds);
 
-  // 4. Periodically execute mirrored trades for active subscriptions using the user's per-trade allocation
+  // 4. Volume-Based Batch Execution grouped by Master Trader (`provider_id`)
+  // Filter eligible active subscriptions (not stopped out and not holding an open trade)
+  const eligibleSubscriptions: Array<CopyTradingSubscriptionRow & { resolvedSubId: string }> = [];
   for (const [subKey, sub] of activeSubsMap.entries()) {
     const subId = ensureTradeUuid(sub.id || subKey);
     if (stoppedSet.has(subId) || (sub.id && stoppedSet.has(sub.id))) continue;
     if (openBySubId.has(subId) || (sub.id && openBySubId.has(sub.id))) continue;
+    eligibleSubscriptions.push({
+      ...sub,
+      resolvedSubId: subId,
+      provider_id: ensureTradeUuid(sub.provider_id || subKey),
+    });
+  }
 
-    const lastTime = lastMirroredAtBySubId.get(subId) || 0;
-    if (now - lastTime < cooldownMs) continue;
+  const groupedByProvider = groupActiveSubscriptionsByProvider(eligibleSubscriptions);
 
-    const tradeAmount = Math.max(1, Number(sub.trade_amount || 100));
-    const assetIndex = Math.abs(subId.charCodeAt(0) + Math.floor(now / 15000)) % MIRROR_ASSETS.length;
+  const fallbackPrices: Record<string, number> = {
+    'EUR/USD': 1.08542,
+    'GBP/USD': 1.26815,
+    'USD/JPY': 154.62,
+    'BTC/USDT': 89420.5,
+    'ETH/USDT': 3125.4,
+    'XAU/USD': 2685.3,
+  };
+
+  for (const [providerId, providerCopierSubs] of groupedByProvider.entries()) {
+    if (providerCopierSubs.length === 0) continue;
+
+    let botState = getOrInitBotState(providerId);
+    const eligibility = evaluateMasterSignalEligibility({
+      state: botState,
+      nowMs: now,
+      localHourOverride: params.localHourOverride,
+      bypassOvernightCheck: params.bypassOvernightCheck,
+    });
+    botState = eligibility.state;
+    saveMasterTraderBotState(botState);
+
+    if (!eligibility.canExecute) {
+      continue;
+    }
+
+    // Generate ONE Master Trader signal for this provider and batch-execute across all its copiers
+    const assetIndex =
+      Math.abs(providerId.charCodeAt(0) + Math.floor(now / 15000)) % MIRROR_ASSETS.length;
     const assetSymbol = MIRROR_ASSETS[assetIndex];
     const tradeType: 'CALL' | 'PUT' = Math.random() >= 0.45 ? 'CALL' : 'PUT';
-
-    const fallbackPrices: Record<string, number> = {
-      'EUR/USD': 1.08542,
-      'GBP/USD': 1.26815,
-      'USD/JPY': 154.62,
-      'BTC/USDT': 89420.5,
-      'ETH/USDT': 3125.4,
-      'XAU/USD': 2685.3,
-    };
 
     const rawPrice =
       (params.getLivePrice ? params.getLivePrice(assetSymbol) : undefined) ||
       fallbackPrices[assetSymbol] ||
       1.08542;
-    const entryPrice = Number(rawPrice.toFixed(assetSymbol.includes('JPY') ? 3 : assetSymbol.includes('USDT') ? 2 : 5));
+    const entryPrice = Number(
+      rawPrice.toFixed(
+        assetSymbol.includes('JPY') ? 3 : assetSymbol.includes('USDT') ? 2 : 5
+      )
+    );
 
-    const newTradeId = ensureTradeUuid(`copy-mirror-${subId}-${now}`);
-    const execRow: CopyExecutedTradeRow = {
-      id: newTradeId,
-      subscription_id: subId,
-      user_id: copierUserId,
-      copier_user_id: copierUserId,
-      copier_account_id: sub.copier_account_id,
-      provider_id: ensureTradeUuid(sub.provider_id),
-      asset_symbol: assetSymbol,
-      trade_type: tradeType,
-      amount: tradeAmount,
-      entry_price: entryPrice,
-      status: 'OPEN',
-      pnl: 0,
-      created_at: new Date(now).toISOString(),
-    };
+    const postExecState = recordMasterSignalExecution({
+      state: botState,
+      nowMs: now,
+      cooldownOverrideMs: params.tradeCooldownMs,
+    });
+    saveMasterTraderBotState(postExecState);
 
-    lastMirroredAtBySubId.set(subId, now);
-    const savedRow = await logCopyExecutedTradeToSupabase(execRow);
-    const binaryTrade = mapCopyExecutedTradeRowToBinaryTrade(savedRow || execRow, accountTier);
-    newlyExecutedTrades.push(binaryTrade);
+    // Build the batch of copier trades for all active copiers of this Master Trader
+    const batchRows: CopyExecutedTradeRow[] = providerCopierSubs.map((sub, idx) => {
+      const subId = sub.resolvedSubId;
+      const tradeAmount = Math.max(1, Number(sub.trade_amount || 100));
+      const newTradeId = ensureTradeUuid(`copy-mirror-${providerId}-${subId}-${now}-${idx}`);
+      return {
+        id: newTradeId,
+        subscription_id: subId,
+        user_id: sub.copier_user_id || copierUserId,
+        copier_user_id: sub.copier_user_id || copierUserId,
+        copier_account_id: sub.copier_account_id,
+        provider_id: providerId,
+        asset_symbol: assetSymbol,
+        trade_type: tradeType,
+        amount: tradeAmount,
+        entry_price: entryPrice,
+        status: 'OPEN',
+        pnl: 0,
+        created_at: new Date(now).toISOString(),
+      };
+    });
+
+    const savedRows = await batchLogCopyExecutedTradesToSupabase(batchRows);
+    for (const savedRow of savedRows) {
+      const binaryTrade = mapCopyExecutedTradeRowToBinaryTrade(savedRow, accountTier);
+      newlyExecutedTrades.push(binaryTrade);
+    }
   }
 
   return {
@@ -2360,4 +2557,5 @@ export async function executeMirroredMasterTradesCycle(params: {
     totalPlatformCredited,
   };
 }
+
 

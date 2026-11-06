@@ -70,6 +70,11 @@ import {
 } from '../utils/supabaseRealtimeSync';
 import { computeUserTradingSummary, filterTradesForActiveAccount } from '../utils/supabaseTradeSync';
 import type { NormalizedPurchaseRecord } from '../config/directDeposit';
+import {
+  loadLocalP2PTransferHistory,
+  resolveUserNumericId,
+  type P2PTransferRecord,
+} from '../utils/p2pTransfer';
 
 
 interface WithdrawalModalProps {
@@ -180,8 +185,22 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
 
   // Payments / History Pagination & Filter State
   const [currentPage, setCurrentPage] = useState<number>(1);
-  const [typeFilter, setTypeFilter] = useState<'ALL' | 'Payout' | 'Deposit'>('ALL');
+  const [typeFilter, setTypeFilter] = useState<'ALL' | 'Payout' | 'Deposit' | 'P2P'>('ALL');
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
+  const [userP2PTransfers, setUserP2PTransfers] = useState<P2PTransferRecord[]>(() =>
+    loadLocalP2PTransferHistory(userProfile?.id, resolveUserNumericId(userProfile))
+  );
+
+  useEffect(() => {
+    const syncP2P = () => {
+      setUserP2PTransfers(
+        loadLocalP2PTransferHistory(userProfile?.id, resolveUserNumericId(userProfile))
+      );
+    };
+    syncP2P();
+    window.addEventListener('bft-p2p-history-updated', syncP2P);
+    return () => window.removeEventListener('bft-p2p-history-updated', syncP2P);
+  }, [userProfile?.id, userProfile?.numericId]);
 
   const [error, setError] = useState<string | null>(null);
   const [successBanner, setSuccessBanner] = useState<string | null>(null);
@@ -424,13 +443,18 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
     return Array.from(map.values());
   }, [purchasesProp, userPurchases]);
 
-  // Merged Transaction Ledger & Pagination (payouts + deposits from Supabase)
+  // Merged Transaction Ledger & Pagination (payouts + deposits + P2P transfers)
   const allTransactions = useMemo(
-    () => buildMergedTransactionLedger(withdrawals, combinedPurchases, false),
-    [withdrawals, combinedPurchases]
+    () => buildMergedTransactionLedger(withdrawals, combinedPurchases, false, userP2PTransfers),
+    [withdrawals, combinedPurchases, userP2PTransfers]
   );
   const filteredTransactions = useMemo(() => {
     if (typeFilter === 'ALL') return allTransactions;
+    if (typeFilter === 'P2P') {
+      return allTransactions.filter(
+        (t) => t.type === 'P2P Transfer Sent' || t.type === 'P2P Deposit Received'
+      );
+    }
     return allTransactions.filter((t) => t.type === typeFilter);
   }, [allTransactions, typeFilter]);
 
@@ -1918,8 +1942,8 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
           <div data-testid="payments-history-view" className="p-3 sm:p-6 space-y-4">
             {/* Top Bar: Filter Controls + Pagination ("1/2 Next") */}
             <div className="flex flex-wrap items-center justify-between gap-3 bg-[#141720] border border-[#1e2330] rounded-xl px-4 py-3">
-              <div className="flex items-center gap-1.5">
-                {(['ALL', 'Payout', 'Deposit'] as const).map((filterOpt) => (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {(['ALL', 'Payout', 'Deposit', 'P2P'] as const).map((filterOpt) => (
                   <button
                     key={filterOpt}
                     type="button"
@@ -1934,7 +1958,11 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                         : 'bg-[#0e1017] text-[#8c96a6] hover:text-white border border-[#1e2330]'
                     }`}
                   >
-                    {filterOpt === 'ALL' ? 'All Transactions' : `${filterOpt}s`}
+                    {filterOpt === 'ALL'
+                      ? 'All Transactions'
+                      : filterOpt === 'P2P'
+                      ? 'P2P Transfers'
+                      : `${filterOpt}s`}
                   </button>
                 ))}
               </div>
@@ -2005,7 +2033,8 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                 </thead>
                 <tbody className="divide-y divide-[#1e2330]">
                   {pagination.pageItems.map((tx) => {
-                    const isPayout = tx.type === 'Payout';
+                    const isOutflow =
+                      tx.type === 'Payout' || tx.type === 'P2P Transfer Sent';
                     return (
                       <tr key={tx.id} className="hover:bg-[#181c27] transition-colors">
                         {/* Transaction ID */}
@@ -2049,7 +2078,14 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                         </td>
 
                         {/* Transaction type */}
-                        <td className="py-4 px-5 text-white font-semibold align-top">{tx.type}</td>
+                        <td className="py-4 px-5 text-white font-semibold align-top">
+                          <div>{tx.type}</div>
+                          {tx.counterpartyLabel && (
+                            <div className="text-[11px] font-mono text-[#ff8800] mt-0.5">
+                              {tx.counterpartyLabel}
+                            </div>
+                          )}
+                        </td>
 
                         {/* Payment system */}
                         <td className="py-4 px-5 align-top">
@@ -2061,7 +2097,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                         <td className="py-4 px-5 text-right font-mono tabular-nums align-top">
                           <div
                             className={`text-sm font-bold ${
-                              isPayout ? 'text-rose-400' : 'text-[#00c853]'
+                              isOutflow ? 'text-rose-400' : 'text-[#00c853]'
                             }`}
                           >
                             {tx.signedAmountFormatted}
@@ -2107,7 +2143,8 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
             {/* MOBILE PAYMENTS / HISTORY VERTICAL CARD FEED (md:hidden) */}
             <div data-testid="mobile-payments-feed" className="md:hidden space-y-3">
               {pagination.pageItems.map((tx) => {
-                const isPayout = tx.type === 'Payout';
+                const isOutflow =
+                  tx.type === 'Payout' || tx.type === 'P2P Transfer Sent';
                 return (
                   <div
                     key={tx.id}
@@ -2155,7 +2192,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                     <div className="flex items-start justify-between pt-2 border-t border-[#1e2330]">
                       <span className="text-[#8c96a6]">Amount:</span>
                       <div className="text-right font-mono tabular-nums">
-                        <div className={`text-sm font-bold ${isPayout ? 'text-rose-400' : 'text-[#00c853]'}`}>
+                        <div className={`text-sm font-bold ${isOutflow ? 'text-rose-400' : 'text-[#00c853]'}`}>
                           {tx.signedAmountFormatted}
                         </div>
                         {tx.feeFormatted && <div className="text-[11px] text-[#8c96a6]">{tx.feeFormatted}</div>}

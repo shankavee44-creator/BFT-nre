@@ -19,6 +19,8 @@ export type QuotexPaymentMethodOption =
   | 'Ethereum (ETH)'
   | 'Bank Transfer';
 
+import type { P2PTransferRecord } from './p2pTransfer';
+
 export interface QuotexTransactionItem {
   id: string;
   orderNumber: string;
@@ -27,16 +29,18 @@ export interface QuotexTransactionItem {
   timeFormatted: string;
   status: 'Succeeded' | 'Waiting confirmation' | 'Pending' | 'Canceled';
   rawStatus: WithdrawalRequest['status'];
-  type: 'Payout' | 'Deposit';
+  type: 'Payout' | 'Deposit' | 'P2P Transfer Sent' | 'P2P Deposit Received';
   paymentSystem: string;
   network?: string;
   purse?: string;
   txHash?: string;
   amount: number; // positive number
-  signedAmountFormatted: string; // "-180.00 $" or "+150.00 $"
+  signedAmountFormatted: string; // "-$180.00" or "+$150.00"
   feeAmount?: number;
   feeFormatted?: string; // "$0.64 fee"
   accountId: string;
+  counterpartyNumericId?: string;
+  counterpartyLabel?: string;
 }
 
 export interface QuotexFaqItem {
@@ -359,15 +363,59 @@ export function mapPurchaseRecordToQuotexTransaction(
   };
 }
 
+export function mapP2PTransferToQuotexTransaction(
+  record: P2PTransferRecord
+): QuotexTransactionItem {
+  const ts = record.createdAt ? new Date(record.createdAt).getTime() : Date.now();
+  const dt = formatQuotexDateAndTime(ts);
+  const isSent = record.direction === 'sent' || record.type === 'P2P Transfer Sent';
+  const amountVal = Math.max(0, Number(record.amount || 0));
+  const formattedAmt = amountVal.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  const counterpartyId = isSent ? record.receiverNumericId : record.senderNumericId;
+  const counterpartyLabel = isSent
+    ? `Receiver ID: #${counterpartyId}`
+    : `Sender ID: #${counterpartyId}`;
+
+  return {
+    id: record.id,
+    orderNumber: String(record.id).replace(/^P2P-/i, 'P2P-').slice(0, 14),
+    timestamp: ts,
+    dateFormatted: dt.dateFormatted,
+    timeFormatted: dt.timeFormatted,
+    status: record.status === 'failed' ? 'Canceled' : 'Succeeded',
+    rawStatus: record.status === 'failed' ? 'rejected' : 'completed',
+    type: isSent ? 'P2P Transfer Sent' : 'P2P Deposit Received',
+    paymentSystem: 'P2P Self-Capital',
+    network: counterpartyLabel,
+    purse: counterpartyLabel,
+    amount: amountVal,
+    signedAmountFormatted: isSent ? `-$${formattedAmt}` : `+$${formattedAmt}`,
+    feeAmount: 0,
+    feeFormatted: '$0.00 fee (0% P2P)',
+    accountId: 'SELF-CAPITAL',
+    counterpartyNumericId: counterpartyId,
+    counterpartyLabel,
+  };
+}
+
 export function buildMergedTransactionLedger(
   withdrawals: WithdrawalRequest[] = [],
   purchases: NormalizedPurchaseRecord[] = [],
-  includeDemoHistory: boolean = true
+  includeDemoHistory: boolean = true,
+  p2pTransfers: P2PTransferRecord[] = []
 ): QuotexTransactionItem[] {
   const mappedUserWithdrawals = withdrawals.map(mapWithdrawalRequestToQuotexTransaction);
   const mappedUserPurchases = (purchases || []).map(mapPurchaseRecordToQuotexTransaction);
+  const mappedP2PTransfers = (p2pTransfers || []).map(mapP2PTransferToQuotexTransaction);
 
-  const combinedUserLedger = [...mappedUserWithdrawals, ...mappedUserPurchases];
+  const combinedUserLedger = [
+    ...mappedP2PTransfers,
+    ...mappedUserWithdrawals,
+    ...mappedUserPurchases,
+  ];
 
   if (!includeDemoHistory) {
     return combinedUserLedger.sort((a, b) => b.timestamp - a.timestamp);

@@ -128,11 +128,16 @@ import { broadcastSyncEvent, subscribeToSyncEvents } from './utils/crossTabSync'
 import { Gift, X, UserPlus, ShieldAlert, LogIn } from 'lucide-react';
 
 export default function App() {
-  const isAutostart =
-    typeof window !== 'undefined' &&
-    new URLSearchParams(window.location.search).get('autostart') === '1';
+  const searchParams =
+    typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search)
+      : new URLSearchParams();
+  const isAutostart = searchParams.get('autostart') === '1';
+  const requestedInitialTab = searchParams.get('tab');
 
-  const [currentTab, setCurrentTab] = useState<string>(isAutostart ? 'terminal' : 'home');
+  const [currentTab, setCurrentTab] = useState<string>(
+    requestedInitialTab || (isAutostart ? 'terminal' : 'home')
+  );
   const [accounts, setAccounts] = useState<TradingAccount[]>([]);
   const [activeAccountId, setActiveAccountId] = useState<string>('');
   const [userProfile, setUserProfile] = useState<UserProfile>(() => {
@@ -143,6 +148,7 @@ export default function App() {
         id: p.id || 'usr_bft_001',
         email: p.email || 'trader@binaryfunded.com',
         fullName: p.fullName || 'Pro Funded Trader',
+        selfBalance: p.selfBalance ?? 350.0,
         isLoggedIn: true,
       };
       saveProfile(autoProfile);
@@ -259,7 +265,9 @@ export default function App() {
     if (urlParams.get('admin') === '1' || window.location.pathname === '/admin') {
       setIsAdminDashboardOpen(true);
     }
-    if (urlParams.get('autostart') === '1') {
+    if (urlParams.get('tab')) {
+      setCurrentTab(urlParams.get('tab')!);
+    } else if (urlParams.get('autostart') === '1') {
       setCurrentTab('terminal');
     }
 
@@ -1468,7 +1476,9 @@ export default function App() {
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const rawPath = window.location.pathname.replace(/^\//, '');
-    const path = urlParams.get('autostart') === '1' ? 'terminal' : (rawPath || 'home');
+    const path =
+      urlParams.get('tab') ||
+      (urlParams.get('autostart') === '1' ? 'terminal' : rawPath || 'home');
     const validTabs = ['home', 'terminal', 'rules', 'affiliate', 'withdrawals', 'dashboard', 'certificates', 'faq'];
     if (validTabs.includes(path) && path !== currentTab) {
       handleNavigateTab(path);
