@@ -53,6 +53,7 @@ ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN 
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_2fa_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS totp_secret TEXT;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS numeric_id TEXT;
 
 -- KYC SUBMISSIONS TABLE (Full Personal Details + Dual-Sided Document Storage Record)
 CREATE TABLE IF NOT EXISTS public.kyc_submissions (
@@ -479,6 +480,7 @@ BEGIN
       id,
       email,
       full_name,
+      numeric_id,
       balance,
       self_balance,
       self_capital_balance,
@@ -497,6 +499,10 @@ BEGIN
         NEW.raw_user_meta_data->>'name',
         split_part(COALESCE(NEW.email, 'trader@bft.io'), '@', 1)
       ),
+      COALESCE(
+        NEW.raw_user_meta_data->>'numeric_id',
+        FLOOR(10000000 + RANDOM() * 90000000)::TEXT
+      ),
       0.00,
       0.00,
       0.00,
@@ -511,6 +517,7 @@ BEGIN
     ON CONFLICT (id) DO UPDATE SET
       email = COALESCE(NULLIF(EXCLUDED.email, ''), public.profiles.email),
       full_name = COALESCE(public.profiles.full_name, EXCLUDED.full_name),
+      numeric_id = COALESCE(public.profiles.numeric_id, EXCLUDED.numeric_id),
       referred_by = COALESCE(public.profiles.referred_by, EXCLUDED.referred_by);
   EXCEPTION WHEN OTHERS THEN
     RAISE LOG 'Profile creation in trigger failed for user %: %', NEW.id, SQLERRM;

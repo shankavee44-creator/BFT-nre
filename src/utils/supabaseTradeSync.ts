@@ -2,7 +2,7 @@ import { supabase } from './supabase.ts';
 import type { BinaryTrade, BinaryOptionDirection } from '../types/index.ts';
 import { liveMarketFeed } from './liveMarketFeed.ts';
 import { getAssetMarketState } from './priceFeedEngine.ts';
-import { getIsCopyExecutedTradesTableAvailable } from './copyTradingSync.ts';
+import { getIsCopyExecutedTradesTableAvailable, setIsCopyExecutedTradesTableAvailable } from './copyTradingSync.ts';
 
 /**
  * UUID validator utility (RFC 4122 standard).
@@ -783,14 +783,20 @@ export async function fetchUserTrades(
 
         if (copyErr) {
           const text = `${copyErr.message || ''} ${copyErr.code || ''}`;
-          if (copyErr.code === '42P01' || copyErr.code === 'PGRST204' || text.includes('does not exist')) {
-            // Table unavailable, skip future queries
+          if (copyErr.code === '42P01' || copyErr.code === 'PGRST204' || text.includes('does not exist') || text.includes('Could not find')) {
+            setIsCopyExecutedTradesTableAvailable(false);
           } else {
             const fallbackRes = await supabase
               .from('copy_executed_trades')
               .select('*')
               .eq('copier_user_id', effectiveUserId);
             copyRows = fallbackRes.data;
+            if (fallbackRes.error) {
+              const fbText = `${fallbackRes.error.message || ''} ${fallbackRes.error.code || ''}`;
+              if (fallbackRes.error.code === '42P01' || fallbackRes.error.code === 'PGRST204' || fbText.includes('does not exist')) {
+                setIsCopyExecutedTradesTableAvailable(false);
+              }
+            }
           }
         }
 
@@ -880,8 +886,8 @@ export async function fetchActiveOpenTradesFromSupabase(
 
         if (openCopyErr) {
           const text = `${openCopyErr.message || ''} ${openCopyErr.code || ''}`;
-          if (openCopyErr.code === '42P01' || openCopyErr.code === 'PGRST204' || text.includes('does not exist')) {
-            // Table unavailable
+          if (openCopyErr.code === '42P01' || openCopyErr.code === 'PGRST204' || text.includes('does not exist') || text.includes('Could not find')) {
+            setIsCopyExecutedTradesTableAvailable(false);
           } else {
             const fallbackRes = await supabase
               .from('copy_executed_trades')
@@ -889,6 +895,12 @@ export async function fetchActiveOpenTradesFromSupabase(
               .eq('copier_user_id', effectiveUserId)
               .in('status', ['OPEN', 'ACTIVE']);
             openCopyRows = fallbackRes.data;
+            if (fallbackRes.error) {
+              const fbText = `${fallbackRes.error.message || ''} ${fallbackRes.error.code || ''}`;
+              if (fallbackRes.error.code === '42P01' || fallbackRes.error.code === 'PGRST204' || fbText.includes('does not exist')) {
+                setIsCopyExecutedTradesTableAvailable(false);
+              }
+            }
           }
         }
 

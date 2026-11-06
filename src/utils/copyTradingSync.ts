@@ -1507,6 +1507,9 @@ let isCopyExecutedTradesTableAvailable = true;
 export function getIsCopyExecutedTradesTableAvailable(): boolean {
   return isCopyExecutedTradesTableAvailable;
 }
+export function setIsCopyExecutedTradesTableAvailable(available: boolean) {
+  isCopyExecutedTradesTableAvailable = available;
+}
 
 const unsupportedCopyExecutedTradeColumns = new Set<string>(['copier_user_id']);
 
