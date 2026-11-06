@@ -122,32 +122,32 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
   const handleSubmitTransfer = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting) return;
+    setIsSubmitting(true);
     setModalToast(null);
     soundEngine.playUiClick();
 
-    const preCheck = validateP2PTransferInput({
-      senderNumericId: ownNumericId,
-      receiverNumericId,
-      transferAmount,
-      availableLiveBalance,
-    });
-
-    if (!preCheck.valid) {
-      soundEngine.playErrorAlert();
-      const errToast = {
-        type: 'error' as const,
-        title: preCheck.exceedsSelfCapitalBalance
-          ? 'Self-Capital Balance Limit'
-          : 'Transfer Validation Error',
-        message: preCheck.error || P2P_SELF_CAPITAL_ONLY_ERROR,
-      };
-      setModalToast(errToast);
-      if (onNotifyToast) onNotifyToast(errToast);
-      return;
-    }
-
-    setIsSubmitting(true);
     try {
+      const preCheck = validateP2PTransferInput({
+        senderNumericId: ownNumericId,
+        receiverNumericId,
+        transferAmount,
+        availableLiveBalance,
+      });
+
+      if (!preCheck.valid) {
+        soundEngine.playErrorAlert();
+        const errToast = {
+          type: 'error' as const,
+          title: preCheck.exceedsSelfCapitalBalance
+            ? 'Self-Capital Balance Limit'
+            : 'Transfer Validation Error',
+          message: preCheck.error || P2P_SELF_CAPITAL_ONLY_ERROR,
+        };
+        setModalToast(errToast);
+        if (onNotifyToast) onNotifyToast(errToast);
+        return;
+      }
+
       const result = await executeP2PBalanceTransfer({
         userProfile,
         accounts,
