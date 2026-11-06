@@ -254,18 +254,103 @@ export function loadProfile(): UserProfile {
   };
 }
 
+function sanitizeProfileForStorage(profile: UserProfile): UserProfile {
+  if (!profile) return profile;
+  const copy = { ...profile };
+  if (copy.kycFrontDocumentUrl && copy.kycFrontDocumentUrl.length > 50000) {
+    copy.kycFrontDocumentUrl = '[SAVED_DOC_TOO_LARGE]';
+  }
+  if (copy.kycBackDocumentUrl && copy.kycBackDocumentUrl.length > 50000) {
+    copy.kycBackDocumentUrl = '[SAVED_DOC_TOO_LARGE]';
+  }
+  if (copy.avatarUrl && copy.avatarUrl.length > 50000) {
+    copy.avatarUrl = '';
+  }
+  return copy;
+}
+
+function clearNonEssentialLocalStorageCache(): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (
+        key &&
+        (key.includes('p2p_history') ||
+          key.includes('withdrawals') ||
+          key.includes('trades') ||
+          key.includes('notifications') ||
+          key.includes('cache'))
+      ) {
+        keysToRemove.push(key);
+      }
+    }
+    keysToRemove.forEach((k) => localStorage.removeItem(k));
+  } catch {
+    // ignore
+  }
+}
+
 export function saveProfile(profile: UserProfile): void {
   try {
-    localStorage.setItem(STORAGE_KEYS.PROFILE, JSON.stringify(profile));
-    if (profile.email) {
-      const emailKey = profile.email.toLowerCase().trim();
+    const sanitized = sanitizeProfileForStorage(profile);
+    try {
+      localStorage.setItem(STORAGE_KEYS.PROFILE, JSON.stringify(sanitized));
+    } catch (err: any) {
+      if (err instanceof DOMException && (err.name === 'QuotaExceededError' || err.code === 22)) {
+        clearNonEssentialLocalStorageCache();
+        localStorage.setItem(STORAGE_KEYS.PROFILE, JSON.stringify(sanitized));
+      } else {
+        throw err;
+      }
+    }
+
+    if (sanitized.email) {
+      const emailKey = sanitized.email.toLowerCase().trim();
       const mapRaw = localStorage.getItem(STORAGE_KEYS.PROFILES_BY_EMAIL);
       const map: Record<string, UserProfile> = mapRaw ? JSON.parse(mapRaw) : {};
-      map[emailKey] = profile;
-      localStorage.setItem(STORAGE_KEYS.PROFILES_BY_EMAIL, JSON.stringify(map));
+      
+      const keys = Object.keys(map);
+      if (keys.length >= 3 && !map[emailKey]) {
+        delete map[keys[0]];
+      }
+      map[emailKey] = sanitized;
+
+      try {
+        localStorage.setItem(STORAGE_KEYS.PROFILES_BY_EMAIL, JSON.stringify(map));
+      } catch (mapErr: any) {
+        if (mapErr instanceof DOMException && (mapErr.name === 'QuotaExceededError' || mapErr.code === 22)) {
+          clearNonEssentialLocalStorageCache();
+          localStorage.setItem(STORAGE_KEYS.PROFILES_BY_EMAIL, JSON.stringify({ [emailKey]: sanitized }));
+        } else {
+          throw mapErr;
+        }
+      }
     }
-  } catch (e) {
-    console.error('Failed to save profile', e);
+  } catch (e: any) {
+    if (e instanceof DOMException && (e.name === 'QuotaExceededError' || e.code === 22)) {
+      try {
+        clearNonEssentialLocalStorageCache();
+        localStorage.removeItem(STORAGE_KEYS.PROFILES_BY_EMAIL);
+        const minimal = {
+          id: profile.id,
+          email: profile.email,
+          fullName: profile.fullName,
+          numericId: profile.numericId,
+          numeric_id: profile.numeric_id,
+          isLoggedIn: profile.isLoggedIn,
+          selfBalance: profile.selfBalance,
+          demoBalance: profile.demoBalance,
+          fundedBalance: profile.fundedBalance,
+        } as UserProfile;
+        localStorage.setItem(STORAGE_KEYS.PROFILE, JSON.stringify(minimal));
+      } catch (innerErr) {
+        console.error('LocalStorage quota permanently exceeded', innerErr);
+      }
+    } else {
+      console.error('Failed to save profile', e);
+    }
   }
 }
 
