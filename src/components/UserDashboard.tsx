@@ -125,6 +125,7 @@ import {
   resolveUserNumericId,
   resolveTransferableLiveBalance,
   loadLocalP2PTransferHistory,
+  fetchP2PTransfersFromSupabase,
   type P2PTransferRecord,
 } from '../utils/p2pTransfer';
 
@@ -298,12 +299,22 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   );
 
   useEffect(() => {
-    const syncP2PHistory = () => {
-      setDashboardP2PTransfers(loadLocalP2PTransferHistory(userProfile.id, userNumericId));
+    let isMounted = true;
+    const syncP2PHistory = async () => {
+      const records = await fetchP2PTransfersFromSupabase({
+        userId: userProfile.id,
+        userNumericId,
+      });
+      if (isMounted) {
+        setDashboardP2PTransfers(records);
+      }
     };
     syncP2PHistory();
     window.addEventListener('bft-p2p-history-updated', syncP2PHistory);
-    return () => window.removeEventListener('bft-p2p-history-updated', syncP2PHistory);
+    return () => {
+      isMounted = false;
+      window.removeEventListener('bft-p2p-history-updated', syncP2PHistory);
+    };
   }, [userProfile.id, userNumericId]);
 
   const handleCopyUserNumericId = () => {

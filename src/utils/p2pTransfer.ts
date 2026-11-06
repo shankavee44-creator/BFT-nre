@@ -210,6 +210,66 @@ export function saveLocalP2PTransferRecord(
 }
 
 /**
+ * Fetches P2P transfer history from the `balance_transfers` table in Supabase,
+ * merging with locally persisted P2P records.
+ */
+export async function fetchP2PTransfersFromSupabase(params: {
+  userId?: string | null;
+  userNumericId?: string | null;
+  supabaseClient?: typeof supabase;
+}): Promise<P2PTransferRecord[]> {
+  const client = params.supabaseClient || supabase;
+  const userId = String(params.userId || '').trim();
+  const localList = loadLocalP2PTransferHistory(userId, params.userNumericId);
+  const byId = new Map<string, P2PTransferRecord>();
+
+  for (const item of localList) {
+    byId.set(item.id, item);
+  }
+
+  const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (userId && UUID_REGEX.test(userId) && typeof client?.from === 'function') {
+    try {
+      const { data, error } = await (client.from('balance_transfers') as any)
+        .select('*')
+        .or(`sender_user_id.eq.${userId},receiver_user_id.eq.${userId}`)
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      if (!error && Array.isArray(data)) {
+        for (const row of data) {
+          const isSent = String(row.sender_user_id || '') === userId;
+          const direction = isSent ? 'sent' : 'received';
+          const amount = Number(row.amount || 0);
+          const record = createP2PTransferRecord({
+            id: String(row.id),
+            direction,
+            senderNumericId: row.sender_numeric_id || (isSent ? params.userNumericId || '58021601' : '100201'),
+            receiverNumericId: row.receiver_numeric_id || (!isSent ? params.userNumericId || '58021601' : '100202'),
+            amount,
+            createdAt: row.created_at || new Date().toISOString(),
+            status: 'completed',
+          });
+          byId.set(record.id, record);
+        }
+      }
+    } catch {
+      // ignore table / offline errors
+    }
+  }
+
+  const merged = Array.from(byId.values()).sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
+  if (userId) {
+    if (merged.length > 0) {
+      saveLocalP2PTransferRecord(userId, merged[0], params.userNumericId);
+    }
+  }
+  return merged;
+}
+
+/**
  * Resolves the user's unique numeric_id from their Supabase profile row or UserProfile state.
  * If the database row does not yet have a numeric_id populated, derives a deterministic
  * 8-digit numeric ID from the user's UUID/email so it remains stable across sessions.
