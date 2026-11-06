@@ -386,17 +386,15 @@ export function validateP2PTransferInput(params: {
   const rawReceiver = String(params.receiverNumericId ?? '').trim();
   const cleanReceiver = rawReceiver.replace(/^#/, '').trim();
   
-  const liveBalanceNum = Number(parseNumericAmount(params.availableLiveBalance));
-  const transferAmountNum = Number(parseNumericAmount(params.transferAmount));
+  const liveBalanceNum = parseNumericAmount(params.availableLiveBalance);
+  const transferAmountNum = parseNumericAmount(params.transferAmount);
   const parsedAmount = transferAmountNum;
 
-  console.log('Validating P2P:', { transferAmount: params.transferAmount, liveBalance: params.availableLiveBalance });
-
   const normalizedAmount =
-    Number.isFinite(transferAmountNum) && transferAmountNum > 0 ? Number(transferAmountNum.toFixed(2)) : 0;
+    Number.isFinite(transferAmountNum) && transferAmountNum > 0 ? parseFloat(transferAmountNum.toFixed(2)) : 0;
 
-  // Check if input amount exceeds the user's current Self-Capital balance using strict numeric comparison
-  if (Number(transferAmountNum) > Number(liveBalanceNum)) {
+  // Check if input amount exceeds the user's current Self-Capital balance using strict float numeric comparison
+  if (parseFloat(String(transferAmountNum)) > parseFloat(String(liveBalanceNum))) {
     return {
       valid: false,
       error: P2P_SELF_CAPITAL_ONLY_ERROR,

@@ -205,6 +205,7 @@ import {
   executeMirroredMasterTradesCycle,
   triggerCheckCopyTradeLimits,
   mapCopyExecutedTradeRowToBinaryTrade,
+  getIsCopyExecutedTradesTableAvailable,
 } from '../utils/copyTradingSync';
 
 import {
@@ -757,7 +758,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     window.addEventListener('bft-copy-subscription-updated', handleSubUpdated);
 
     // Supabase Realtime subscription listener for copy_trading_subscriptions and copy_executed_trades
-    const channel = supabase
+    let builder = supabase
       .channel(`bft-copy-bot-${userProfile.id}`)
       .on(
         'postgres_changes',
@@ -769,8 +770,10 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         () => {
           runBotCycle(10000);
         }
-      )
-      .on(
+      );
+
+    if (getIsCopyExecutedTradesTableAvailable()) {
+      builder = builder.on(
         'postgres_changes',
         {
           event: '*',
@@ -791,8 +794,10 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             onSyncTrades([mapped]);
           }
         }
-      )
-      .subscribe();
+      );
+    }
+
+    const channel = builder.subscribe();
 
     return () => {
       isCancelled = true;

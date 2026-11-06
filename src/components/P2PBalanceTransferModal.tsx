@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   X,
   Send,
@@ -27,6 +27,7 @@ import {
   type P2PTransferRecord,
 } from '../utils/p2pTransfer.ts';
 import { soundEngine } from '../utils/soundEffects.ts';
+import { fetchSupabaseProfileRow } from '../utils/supabaseRealtimeSync.ts';
 
 export interface P2PBalanceTransferModalProps {
   isOpen: boolean;
@@ -52,6 +53,7 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
   const [receiverNumericId, setReceiverNumericId] = useState('');
   const [transferAmount, setTransferAmount] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const isSubmittingRef = useRef(false);
   const [copiedOwnId, setCopiedOwnId] = useState(false);
   const [modalToast, setModalToast] = useState<{
     type: 'success' | 'error';
@@ -75,13 +77,12 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
 
   if (!isOpen) return null;
 
-  const availableNum = Number(parseNumericAmount(availableLiveBalance));
-  const rawParsedAmount = Number(parseNumericAmount(transferAmount));
-  console.log('Validating P2P:', { transferAmount, liveBalance: availableLiveBalance });
-  const hasEnteredAmount = transferAmount.trim() !== '' && Number.isFinite(rawParsedAmount);
-  const validAmountNumber = hasEnteredAmount && rawParsedAmount > 0 ? Number(rawParsedAmount.toFixed(2)) : 0;
+  const availableNum = parseFloat(parseNumericAmount(availableLiveBalance).toFixed(2));
+  const rawParsedAmount = parseFloat(parseNumericAmount(transferAmount).toFixed(2));
+  const hasEnteredAmount = transferAmount.trim() !== '' && !Number.isNaN(rawParsedAmount) && Number.isFinite(rawParsedAmount);
+  const validAmountNumber = hasEnteredAmount && rawParsedAmount > 0 ? parseFloat(rawParsedAmount.toFixed(2)) : 0;
   const exceedsSelfCapitalBalance =
-    hasEnteredAmount && rawParsedAmount > 0 && Number(rawParsedAmount) > Number(availableNum);
+    hasEnteredAmount && rawParsedAmount > 0 && parseFloat(String(rawParsedAmount)) > parseFloat(String(availableNum));
 
   const projectedRemainingBalance = Math.max(
     0,
@@ -121,8 +122,9 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
 
   const handleSubmitTransfer = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isSubmitting) return;
+    if (isSubmitting || isSubmittingRef.current) return;
     setIsSubmitting(true);
+    isSubmittingRef.current = true;
     setModalToast(null);
     soundEngine.playUiClick();
 
@@ -135,6 +137,7 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
       });
 
       if (!preCheck.valid) {
+        setIsSubmitting(false);
         soundEngine.playErrorAlert();
         const errToast = {
           type: 'error' as const,
@@ -156,6 +159,7 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
       });
 
       if (!result.ok) {
+        setIsSubmitting(false);
         soundEngine.playErrorAlert();
         const errToast = {
           type: 'error' as const,
@@ -172,6 +176,22 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
       if (result.updatedProfile) {
         onUpdateProfile(result.updatedProfile);
       }
+      try {
+        const freshRow = await fetchSupabaseProfileRow({
+          userId: userProfile.id,
+          userEmail: userProfile.email,
+        });
+        if (freshRow) {
+          const freshProfile = {
+            ...userProfile,
+            selfBalance: Number(freshRow.self_capital_balance ?? freshRow.self_balance ?? freshRow.balance ?? result.updatedProfile?.selfBalance ?? availableLiveBalance),
+            numericId: freshRow.numeric_id || ownNumericId,
+            numeric_id: freshRow.numeric_id || ownNumericId,
+          };
+          onUpdateProfile(freshProfile);
+        }
+      } catch {}
+
       if (result.updatedAccount && onUpdateAccount) {
         onUpdateAccount(result.updatedAccount);
       }
@@ -205,13 +225,14 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
       if (onNotifyToast) onNotifyToast(errToast);
     } finally {
       setIsSubmitting(false);
+      isSubmittingRef.current = false;
     }
   };
 
   return (
     <div
       data-testid="p2p-transfer-modal-backdrop"
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm overflow-y-auto"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/85 backdrop-blur-md overflow-y-auto"
       onClick={(e) => {
         if (e.target === e.currentTarget && !isSubmitting) {
           onClose();
@@ -220,7 +241,7 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
     >
       <div
         data-testid="p2p-transfer-modal"
-        className="w-full max-w-lg rounded-2xl bg-[#0b0b0f] border border-[#ff8800]/45 shadow-[0_24px_60px_rgba(0,0,0,0.85)] overflow-hidden font-sans my-auto"
+        className="w-full max-w-md sm:max-w-lg rounded-2xl bg-[#0b0b0f] border border-[#ff8800]/40 shadow-[0_24px_60px_rgba(0,0,0,0.85)] overflow-hidden font-sans my-auto mx-auto"
       >
         {/* Modal Header */}
         <div className="px-5 py-4 bg-[#111116] border-b border-white/10 flex items-center justify-between gap-3">
@@ -533,7 +554,7 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
                 {isSubmitting ? (
                   <>
                     <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>Processing Transfer...</span>
+                    <span>PROCESSING TRANSFER...</span>
                   </>
                 ) : (
                   <>

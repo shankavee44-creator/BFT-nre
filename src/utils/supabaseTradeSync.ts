@@ -2,6 +2,7 @@ import { supabase } from './supabase.ts';
 import type { BinaryTrade, BinaryOptionDirection } from '../types/index.ts';
 import { liveMarketFeed } from './liveMarketFeed.ts';
 import { getAssetMarketState } from './priceFeedEngine.ts';
+import { getIsCopyExecutedTradesTableAvailable } from './copyTradingSync.ts';
 
 /**
  * UUID validator utility (RFC 4122 standard).
@@ -773,7 +774,7 @@ export async function fetchUserTrades(
     // Also include mirrored copy trades from `copy_executed_trades` so they appear seamlessly in terminal & chart
     try {
       const currentAccountType = accountOrType ? resolveSupabaseAccountType(accountOrType) : null;
-      if (!currentAccountType || currentAccountType !== 'DEMO') {
+      if ((!currentAccountType || currentAccountType !== 'DEMO') && getIsCopyExecutedTradesTableAvailable()) {
         let { data: copyRows, error: copyErr } = await supabase
           .from('copy_executed_trades')
           .select('*')
@@ -781,11 +782,16 @@ export async function fetchUserTrades(
           .order('created_at', { ascending: false });
 
         if (copyErr) {
-          const fallbackRes = await supabase
-            .from('copy_executed_trades')
-            .select('*')
-            .eq('copier_user_id', effectiveUserId);
-          copyRows = fallbackRes.data;
+          const text = `${copyErr.message || ''} ${copyErr.code || ''}`;
+          if (copyErr.code === '42P01' || copyErr.code === 'PGRST204' || text.includes('does not exist')) {
+            // Table unavailable, skip future queries
+          } else {
+            const fallbackRes = await supabase
+              .from('copy_executed_trades')
+              .select('*')
+              .eq('copier_user_id', effectiveUserId);
+            copyRows = fallbackRes.data;
+          }
         }
 
         if (Array.isArray(copyRows) && copyRows.length > 0) {
@@ -864,7 +870,7 @@ export async function fetchActiveOpenTradesFromSupabase(
     // Also include active 'OPEN' trades from `copy_executed_trades`
     try {
       const currentAccountType = activeAccount ? resolveSupabaseAccountType(activeAccount) : 'FUNDED';
-      if (currentAccountType !== 'DEMO') {
+      if (currentAccountType !== 'DEMO' && getIsCopyExecutedTradesTableAvailable()) {
         let { data: openCopyRows, error: openCopyErr } = await supabase
           .from('copy_executed_trades')
           .select('*')
@@ -873,12 +879,17 @@ export async function fetchActiveOpenTradesFromSupabase(
           .order('created_at', { ascending: false });
 
         if (openCopyErr) {
-          const fallbackRes = await supabase
-            .from('copy_executed_trades')
-            .select('*')
-            .eq('copier_user_id', effectiveUserId)
-            .in('status', ['OPEN', 'ACTIVE']);
-          openCopyRows = fallbackRes.data;
+          const text = `${openCopyErr.message || ''} ${openCopyErr.code || ''}`;
+          if (openCopyErr.code === '42P01' || openCopyErr.code === 'PGRST204' || text.includes('does not exist')) {
+            // Table unavailable
+          } else {
+            const fallbackRes = await supabase
+              .from('copy_executed_trades')
+              .select('*')
+              .eq('copier_user_id', effectiveUserId)
+              .in('status', ['OPEN', 'ACTIVE']);
+            openCopyRows = fallbackRes.data;
+          }
         }
 
         if (Array.isArray(openCopyRows) && openCopyRows.length > 0) {

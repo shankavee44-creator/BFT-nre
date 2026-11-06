@@ -20,6 +20,7 @@ import {
 } from '../utils/userNotifications.ts';
 import { resolveUserNumericId } from '../utils/p2pTransfer.ts';
 import { soundEngine } from '../utils/soundEffects.ts';
+import { fetchSupabaseProfileRow } from '../utils/supabaseRealtimeSync.ts';
 
 export interface NotificationBellDropdownProps {
   userProfile: UserProfile;
@@ -127,6 +128,19 @@ export const NotificationBellDropdown: React.FC<NotificationBellDropdownProps> =
                   skipBalanceIncrementIfAlreadySynced: false,
                 });
                 onUpdateProfile(res.updatedProfile);
+                try {
+                  const freshRow = await fetchSupabaseProfileRow({
+                    userId: userProfile.id,
+                    userEmail: userProfile.email,
+                  });
+                  if (freshRow) {
+                    const freshProfile = {
+                      ...res.updatedProfile,
+                      selfBalance: Number(freshRow.self_capital_balance ?? freshRow.self_balance ?? freshRow.balance ?? res.updatedProfile.selfBalance),
+                    };
+                    onUpdateProfile(freshProfile);
+                  }
+                } catch {}
                 if (res.updatedAccount && onUpdateAccount) {
                   onUpdateAccount(res.updatedAccount);
                 }

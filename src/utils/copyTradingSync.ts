@@ -1503,10 +1503,20 @@ export function mapCopyExecutedTradeRowToBinaryTrade(
   };
 }
 
+let isCopyExecutedTradesTableAvailable = true;
+export function getIsCopyExecutedTradesTableAvailable(): boolean {
+  return isCopyExecutedTradesTableAvailable;
+}
+
 const unsupportedCopyExecutedTradeColumns = new Set<string>(['copier_user_id']);
 
 function extractMissingCopyExecutedTradeColumn(err: any): string | null {
-  const text = `${err?.message || ''} ${err?.details || ''} ${err?.hint || ''}`;
+  const text = `${err?.message || ''} ${err?.details || ''} ${err?.hint || ''} ${err?.code || ''}`;
+  if (err?.code === '42P01' || err?.code === 'PGRST204' || text.includes('does not exist') || text.includes('Could not find')) {
+    if (text.includes('copy_executed_trades') || text.includes('relation') || err?.code === '42P01') {
+      isCopyExecutedTradesTableAvailable = false;
+    }
+  }
   const pgrstMatch = text.match(/Could not find the '([^']+)' column of 'copy_executed_trades'/i);
   if (pgrstMatch && pgrstMatch[1]) return pgrstMatch[1];
   const pgMatch = text.match(/column "?([a-zA-Z0-9_]+)"? of relation "?copy_executed_trades"? does not exist/i);
@@ -1523,6 +1533,7 @@ function extractMissingCopyExecutedTradeColumn(err: any): string | null {
 export async function logCopyExecutedTradeToSupabase(
   trade: CopyExecutedTradeRow
 ): Promise<CopyExecutedTradeRow | null> {
+  if (!isCopyExecutedTradesTableAvailable) return trade;
   const effectiveUserId = trade.user_id || trade.copier_user_id;
   const normalizedRow: CopyExecutedTradeRow = {
     id: trade.id || ensureTradeUuid(`copy-exec-${Date.now()}-${Math.random()}`),
@@ -1570,6 +1581,7 @@ export async function logCopyExecutedTradeToSupabase(
 
   try {
     for (let attempt = 0; attempt < 5; attempt++) {
+      if (!isCopyExecutedTradesTableAvailable) return normalizedRow;
       const dbPayload = buildInsertPayload();
       const { data, error } = await (supabase.from('copy_executed_trades') as any)
         .insert([dbPayload])
@@ -1588,6 +1600,7 @@ export async function logCopyExecutedTradeToSupabase(
       }
 
       const missingCol = extractMissingCopyExecutedTradeColumn(error);
+      if (!isCopyExecutedTradesTableAvailable) return normalizedRow;
       if (missingCol && !unsupportedCopyExecutedTradeColumns.has(missingCol)) {
         unsupportedCopyExecutedTradeColumns.add(missingCol);
         continue;
@@ -1599,6 +1612,7 @@ export async function logCopyExecutedTradeToSupabase(
       ]);
       if (plainErr) {
         const plainMissing = extractMissingCopyExecutedTradeColumn(plainErr);
+        if (!isCopyExecutedTradesTableAvailable) return normalizedRow;
         if (plainMissing && !unsupportedCopyExecutedTradeColumns.has(plainMissing)) {
           unsupportedCopyExecutedTradeColumns.add(plainMissing);
           continue;
@@ -1608,6 +1622,7 @@ export async function logCopyExecutedTradeToSupabase(
     }
     return normalizedRow;
   } catch {
+    isCopyExecutedTradesTableAvailable = false;
     return normalizedRow;
   }
 }
@@ -1619,6 +1634,7 @@ export async function updateCopyExecutedTradeInSupabase(
   tradeId: string,
   updates: { exit_price: number; status: 'WIN' | 'LOSS' | 'TIE'; pnl: number }
 ): Promise<boolean> {
+  if (!isCopyExecutedTradesTableAvailable) return false;
   try {
     const { error } = await supabase
       .from('copy_executed_trades')
@@ -1628,6 +1644,13 @@ export async function updateCopyExecutedTradeInSupabase(
         pnl: Number(updates.pnl),
       })
       .eq('id', tradeId);
+
+    if (error) {
+      const text = `${error.message || ''} ${error.code || ''}`;
+      if (error.code === '42P01' || error.code === 'PGRST204' || text.includes('does not exist')) {
+        isCopyExecutedTradesTableAvailable = false;
+      }
+    }
 
     return !error;
   } catch {
@@ -1642,6 +1665,7 @@ export async function fetchCopyExecutedTradesFromSupabase(
   userId?: string | null,
   supabaseClient?: typeof supabase
 ): Promise<CopyExecutedTradeRow[]> {
+  if (!isCopyExecutedTradesTableAvailable) return [];
   try {
     const client = supabaseClient || supabase;
     const copierUserId =
@@ -1655,12 +1679,23 @@ export async function fetchCopyExecutedTradesFromSupabase(
       .order('created_at', { ascending: false });
 
     if (error) {
+      const text = `${error.message || ''} ${error.code || ''} ${error.details || ''}`;
+      if (error.code === '42P01' || error.code === 'PGRST204' || text.includes('does not exist') || text.includes('Could not find')) {
+        isCopyExecutedTradesTableAvailable = false;
+        return [];
+      }
       const fallbackRes = await client
         .from('copy_executed_trades')
         .select('*')
         .eq('copier_user_id', copierUserId);
       data = fallbackRes.data;
       error = fallbackRes.error;
+      if (error) {
+        const fbText = `${error.message || ''} ${error.code || ''}`;
+        if (error.code === '42P01' || error.code === 'PGRST204' || fbText.includes('does not exist')) {
+          isCopyExecutedTradesTableAvailable = false;
+        }
+      }
     }
 
     if (error || !Array.isArray(data)) return [];
@@ -1671,6 +1706,7 @@ export async function fetchCopyExecutedTradesFromSupabase(
       copier_account_id: row.copier_account_id || row.account_id || '',
     })) as CopyExecutedTradeRow[];
   } catch {
+    isCopyExecutedTradesTableAvailable = false;
     return [];
   }
 }

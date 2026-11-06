@@ -10,6 +10,7 @@ import {
 import {
   recordDirectBalanceCommit,
   commitProfileBalanceToSupabase,
+  fetchSupabaseProfileRow,
 } from './supabaseRealtimeSync.ts';
 
 export const USER_NOTIFICATIONS_STORAGE_KEY = 'bft_user_notifications_v1';
@@ -314,7 +315,7 @@ export async function processIncomingP2PTransfer(params: {
     params.accounts || []
   );
 
-  const nextSelfBalance = params.skipBalanceIncrementIfAlreadySynced
+  let nextSelfBalance = params.skipBalanceIncrementIfAlreadySynced
     ? availableLiveBalance
     : Number((availableLiveBalance + safeAmount).toFixed(2));
 
@@ -328,6 +329,17 @@ export async function processIncomingP2PTransfer(params: {
         column: 'self_balance',
         newBalance: nextSelfBalance,
       });
+      const freshRow = await fetchSupabaseProfileRow({
+        userId: params.userProfile.id,
+        userEmail: params.userProfile.email,
+      });
+      if (freshRow) {
+        const remoteBal = Number(freshRow.self_capital_balance ?? freshRow.self_balance ?? freshRow.balance ?? nextSelfBalance);
+        if (Number.isFinite(remoteBal) && remoteBal >= 0) {
+          nextSelfBalance = Number(remoteBal.toFixed(2));
+          recordDirectBalanceCommit('self_balance', nextSelfBalance);
+        }
+      }
     } catch {
       // ignore
     }

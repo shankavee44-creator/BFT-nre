@@ -787,7 +787,12 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
       .channel(`realtime:user_dashboard:${userProfileRef.current.id || 'session'}`)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'profiles' },
+        {
+          event: '*',
+          schema: 'public',
+          table: 'profiles',
+          ...(userProfileRef.current.id ? { filter: `id=eq.${userProfileRef.current.id}` } : {}),
+        },
         () => {
           if (isMounted) syncLiveSupabaseData();
         }
