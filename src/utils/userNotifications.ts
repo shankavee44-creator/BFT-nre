@@ -190,6 +190,11 @@ export async function fetchUserNotificationsFromSupabase(params: {
       if (!error && Array.isArray(data)) {
         for (const row of data) {
           const normalized = normalizeUserNotificationRow(row, userId);
+          const existingLocal = byId.get(normalized.id);
+          // Preserve local is_read status if already marked read locally so it never reverts to unread on reload
+          if (existingLocal?.is_read) {
+            normalized.is_read = true;
+          }
           byId.set(normalized.id, normalized);
 
           // Ensure any P2P received notification in `user_notifications` is also reflected in P2P Payment History
@@ -244,13 +249,21 @@ export async function markUserNotificationsRead(params: {
 
   saveLocalUserNotifications(userId, updated);
 
-  if (userId && (isCustomClient || UUID_REGEX.test(userId)) && typeof client?.from === 'function') {
+  if (typeof client?.from === 'function') {
     try {
-      const query = (client.from('user_notifications') as any).update({ is_read: true });
       if (params.notificationId) {
-        await query.eq('id', params.notificationId).eq('user_id', userId);
-      } else {
-        await query.eq('user_id', userId);
+        // Send immediate update request to Supabase: .from('user_notifications').update({ is_read: true }).eq('id', notificationId)
+        let query = (client.from('user_notifications') as any)
+          .update({ is_read: true })
+          .eq('id', params.notificationId);
+        if (userId && (isCustomClient || UUID_REGEX.test(userId))) {
+          query = query.eq('user_id', userId);
+        }
+        await query;
+      } else if (userId && (isCustomClient || UUID_REGEX.test(userId))) {
+        await (client.from('user_notifications') as any)
+          .update({ is_read: true })
+          .eq('user_id', userId);
       }
     } catch {
       // ignore offline/schema error

@@ -184,6 +184,7 @@ export const NotificationBellDropdown: React.FC<NotificationBellDropdownProps> =
 
   const handleMarkAllRead = async () => {
     soundEngine.playUiClick();
+    setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
     const updated = await markUserNotificationsRead({
       userId: userProfile.id,
     });
@@ -191,6 +192,9 @@ export const NotificationBellDropdown: React.FC<NotificationBellDropdownProps> =
   };
 
   const handleMarkItemRead = async (notifId: string) => {
+    setNotifications((prev) =>
+      prev.map((n) => (n.id === notifId ? { ...n, is_read: true } : n))
+    );
     const updated = await markUserNotificationsRead({
       userId: userProfile.id,
       notificationId: notifId,
