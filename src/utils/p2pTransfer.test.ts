@@ -35,8 +35,7 @@ const mockUserProfile: UserProfile = {
   avatarUrl: '',
   telegramHandle: '@alexvance',
   activeAccountId: 'BFT-PERS-1',
-  createdDate: '2026-01-01',
-};
+} as any;
 
 const mockPersonalAccount: TradingAccount = {
   id: 'BFT-PERS-1',
@@ -49,7 +48,6 @@ const mockPersonalAccount: TradingAccount = {
   initialBalance: 250.5,
   currentBalance: 250.5,
   equity: 250.5,
-  highWaterMark: 250.5,
   dailyStartBalance: 250.5,
   lastActiveDate: '2026-11-05',
   status: 'active',
@@ -60,8 +58,8 @@ const mockPersonalAccount: TradingAccount = {
   profitSplit: 100,
   tradingDaysCompleted: 5,
   minTradingDays: 0,
-  createdAt: Date.now() - 86400000,
-};
+  createdAt: '2026-01-01',
+} as any;
 
 const mockFundedAccount: TradingAccount = {
   ...mockPersonalAccount,
@@ -69,12 +67,12 @@ const mockFundedAccount: TradingAccount = {
   tier: 'instant',
   accountType: 'instant',
   accountCategory: 'funded',
-  phase: 'funded',
+  phase: 'live' as any,
   size: 5000,
   initialBalance: 5000,
   currentBalance: 5000,
   equity: 5000,
-};
+} as any;
 
 test('resolveUserNumericId extracts explicit numeric_id or derives deterministic 8-digit ID', () => {
   assert.equal(resolveUserNumericId(mockUserProfile), '88412095');

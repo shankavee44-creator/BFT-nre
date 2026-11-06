@@ -118,7 +118,7 @@ export function getDevicePerformanceProfile(preference?: PerformancePreference):
     tier: activeTier,
     isLowEnd,
     isHighEnd: !isLowEnd,
-    isMobile,
+    isMobile: Boolean(isMobile),
     hardwareConcurrency: cores,
     deviceMemoryGb: memoryGb,
     saveDataEnabled: saveData,
