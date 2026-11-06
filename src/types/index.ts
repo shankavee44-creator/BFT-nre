@@ -246,6 +246,8 @@ export interface UserProfile {
   selfBalance?: number;
   demoBalance?: number;
   fundedBalance?: number;
+  numericId?: string | number;
+  numeric_id?: string | number;
 }
 
 export interface UserAccount {

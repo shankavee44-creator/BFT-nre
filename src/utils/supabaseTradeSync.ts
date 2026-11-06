@@ -777,16 +777,16 @@ export async function fetchUserTrades(
         const { data: copyRows } = await supabase
           .from('copy_executed_trades')
           .select('*')
-          .eq('copier_user_id', effectiveUserId)
+          .eq('user_id', effectiveUserId)
           .order('created_at', { ascending: false });
 
         if (Array.isArray(copyRows) && copyRows.length > 0) {
           const seenIds = new Set(mapped.map((m) => ensureTradeUuid(m.id)));
-          for (const cr of copyRows) {
+          for (const cr of copyRows as any[]) {
             const mappedCopy = mapFromSupabaseRow({
               ...cr,
-              user_id: cr.copier_user_id,
-              account_id: cr.copier_account_id,
+              user_id: cr.user_id || cr.copier_user_id || effectiveUserId,
+              account_id: cr.account_id || cr.copier_account_id,
               account_type: currentAccountType || 'FUNDED',
             });
             const canonId = ensureTradeUuid(mappedCopy.id);
@@ -860,17 +860,17 @@ export async function fetchActiveOpenTradesFromSupabase(
         const { data: openCopyRows } = await supabase
           .from('copy_executed_trades')
           .select('*')
-          .eq('copier_user_id', effectiveUserId)
+          .eq('user_id', effectiveUserId)
           .in('status', ['OPEN', 'ACTIVE'])
           .order('created_at', { ascending: false });
 
         if (Array.isArray(openCopyRows) && openCopyRows.length > 0) {
           const seenIds = new Set(activeList.map((t) => ensureTradeUuid(t.id)));
-          for (const cr of openCopyRows) {
+          for (const cr of openCopyRows as any[]) {
             const trade = mapFromSupabaseRow({
               ...cr,
-              user_id: cr.copier_user_id,
-              account_id: cr.copier_account_id,
+              user_id: cr.user_id || cr.copier_user_id || effectiveUserId,
+              account_id: cr.account_id || cr.copier_account_id,
               account_type: currentAccountType,
             });
             const canonId = ensureTradeUuid(trade.id);

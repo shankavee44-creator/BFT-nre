@@ -119,6 +119,11 @@ import {
   computeUserTradingSummary,
   isAccountEligibleForTradingSummary,
 } from '../utils/supabaseTradeSync';
+import { P2PBalanceTransferModal } from './P2PBalanceTransferModal';
+import {
+  resolveUserNumericId,
+  resolveTransferableLiveBalance,
+} from '../utils/p2pTransfer';
 
 interface UserDashboardProps {
   userProfile: UserProfile;
@@ -267,6 +272,71 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   const [adminUsersList, setAdminUsersList] = useState<any[]>([]);
   const [nowTick, setNowTick] = useState<number>(() => Date.now());
   const [cancellingWdId, setCancellingWdId] = useState<string | null>(null);
+  const [isP2PModalOpen, setIsP2PModalOpen] = useState(false);
+  const [copiedNumericId, setCopiedNumericId] = useState(false);
+  const [p2pDashboardToast, setP2pDashboardToast] = useState<{
+    type: 'success' | 'error';
+    title: string;
+    message: string;
+  } | null>(null);
+
+  const userNumericId = React.useMemo(
+    () => resolveUserNumericId(userProfile),
+    [userProfile]
+  );
+
+  const transferableLiveBalanceInfo = React.useMemo(
+    () => resolveTransferableLiveBalance(userProfile, accounts),
+    [userProfile, accounts]
+  );
+
+  const handleCopyUserNumericId = () => {
+    soundEngine.playUiClick();
+    try {
+      if (navigator?.clipboard?.writeText) {
+        navigator.clipboard.writeText(userNumericId).catch(() => {});
+      }
+    } catch {
+      // ignore
+    }
+    setCopiedNumericId(true);
+    setP2pDashboardToast({
+      type: 'success',
+      title: 'Numeric ID Copied',
+      message: `Your unique Trader Numeric ID (#${userNumericId}) has been copied to clipboard.`,
+    });
+    setTimeout(() => setCopiedNumericId(false), 2500);
+  };
+
+  const handleRefreshBalanceAfterP2P = async () => {
+    try {
+      const currentProfile = userProfileRef.current;
+      const supaProfile = await fetchSupabaseProfileRow({
+        userId: currentProfile.id,
+        userEmail: currentProfile.email,
+      });
+      if (supaProfile) {
+        const synced = applyRealtimeProfileUpdate(currentProfile, accounts, supaProfile, {
+          source: 'direct',
+          userId: currentProfile.id,
+          userEmail: currentProfile.email,
+        });
+        if (synced.changed) {
+          onUpdateProfile(synced.updatedProfile);
+          if (onUpdateAccount) {
+            for (const acc of synced.updatedAccounts) {
+              const prev = accounts.find((a) => a.id === acc.id);
+              if (prev && (prev.currentBalance !== acc.currentBalance || prev.equity !== acc.equity)) {
+                onUpdateAccount(acc);
+              }
+            }
+          }
+        }
+      }
+    } catch {
+      // ignore offline error
+    }
+  };
 
   const displayPurchases = React.useMemo(() => {
     let combined: NormalizedPurchaseRecord[] = [];
@@ -482,6 +552,10 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           const nextSelfBalance = guardedSync.updatedProfile.selfBalance;
           const nextDemoBalance = guardedSync.updatedProfile.demoBalance;
           const nextFundedBalance = guardedSync.updatedProfile.fundedBalance;
+          const nextNumericId =
+            supaProfile?.numeric_id !== undefined && supaProfile?.numeric_id !== null
+              ? String(supaProfile.numeric_id).trim()
+              : guardedSync.updatedProfile.numericId ?? latest.numericId ?? latest.numeric_id;
 
           const hasChanges =
             resolvedKycStatus !== latest.kycStatus ||
@@ -494,7 +568,8 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             (resolvedBackUrl && resolvedBackUrl !== latest.kycBackDocumentUrl) ||
             nextSelfBalance !== latest.selfBalance ||
             nextDemoBalance !== latest.demoBalance ||
-            nextFundedBalance !== latest.fundedBalance;
+            nextFundedBalance !== latest.fundedBalance ||
+            String(nextNumericId ?? '') !== String(latest.numericId ?? latest.numeric_id ?? '');
 
           if (hasChanges) {
             onUpdateProfile({
@@ -518,6 +593,8 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               selfBalance: nextSelfBalance,
               demoBalance: nextDemoBalance,
               fundedBalance: nextFundedBalance,
+              numericId: nextNumericId,
+              numeric_id: nextNumericId,
             });
           }
         }
@@ -1346,13 +1423,27 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                 <h1 className="text-sm sm:text-2xl font-black text-white truncate">
                   {userProfile.fullName || 'New BFT Trader'}
                 </h1>
-                <span className="text-[10px] sm:text-xs font-mono text-[#ff8800] bg-[#ff8800]/15 border border-[#ff8800]/40 px-2 sm:px-2.5 py-0.5 rounded-full font-bold shrink-0">
+                <button
+                  type="button"
+                  data-testid="dashboard-header-numeric-id-badge"
+                  onClick={handleCopyUserNumericId}
+                  title="Click to copy your unique Trader Numeric ID (numeric_id) for P2P transfers"
+                  className="inline-flex items-center gap-1.5 text-[10px] sm:text-xs font-mono tabular-nums text-emerald-300 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 px-2.5 py-0.5 rounded-lg font-black shrink-0 cursor-pointer transition-colors"
+                >
+                  <span>Numeric ID: #{userNumericId}</span>
+                  {copiedNumericId ? (
+                    <Check className="w-3 h-3 text-emerald-400 shrink-0" />
+                  ) : (
+                    <Copy className="w-3 h-3 text-emerald-400 shrink-0" />
+                  )}
+                </button>
+                <span className="text-[10px] sm:text-xs font-mono text-[#ff8800] bg-[#ff8800]/15 border border-[#ff8800]/40 px-2 sm:px-2.5 py-0.5 rounded-lg font-bold shrink-0">
                   Ref Code: {userProfile.referralCode || (userProfile.id ? `BFT-${String(userProfile.id).replace(/[^a-zA-Z0-9]/g, '').slice(0, 6).toUpperCase()}` : 'BFT-TRADER')}
                 </span>
                 {isProfileLocked && (
                   <span
                     data-testid="header-profile-locked-pill"
-                    className="inline-flex items-center gap-1 text-[9.5px] sm:text-[10px] font-mono bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 px-2 py-0.5 rounded-full font-bold shrink-0"
+                    className="inline-flex items-center gap-1 text-[9.5px] sm:text-[10px] font-mono bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 px-2 py-0.5 rounded-lg font-bold shrink-0"
                   >
                     <Lock className="w-2.5 h-2.5 sm:w-3 sm:h-3" /> Identity Locked
                   </span>
@@ -1396,6 +1487,19 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             data-testid="profile-header-actions-grid"
             className="grid grid-cols-2 sm:flex sm:flex-wrap items-center justify-center gap-1.5 sm:gap-2 w-full lg:w-auto pt-2.5 lg:pt-0 border-t border-white/10 lg:border-t-0"
           >
+            <button
+              type="button"
+              data-testid="dashboard-open-p2p-transfer-btn"
+              onClick={() => {
+                soundEngine.playUiClick();
+                setIsP2PModalOpen(true);
+              }}
+              className="min-h-[38px] sm:min-h-[42px] px-2.5 py-2 sm:px-4 sm:py-2.5 rounded-xl bg-[#ff8800]/15 hover:bg-[#ff8800]/25 border border-[#ff8800]/50 text-[#ff8800] hover:text-white font-mono text-[11px] sm:text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer bft-touch-scale"
+            >
+              <Send className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">P2P Transfer</span>
+            </button>
+
             <button
               type="button"
               data-testid="dashboard-request-withdrawal-btn"
@@ -1694,6 +1798,108 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
       {/* Tab 1: My Trading Accounts */}
       {activeTab === 'accounts' && (
         <div className="space-y-4">
+          {/* P2P Balance Transfer & Trader Numeric ID Quick Bar */}
+          <div
+            data-testid="dashboard-p2p-transfer-card"
+            className="p-4 sm:p-5 rounded-2xl bg-[#0e0e14] border border-white/15 flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 font-mono"
+          >
+            <div className="flex items-start sm:items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-[#ff8800]/15 border border-[#ff8800]/40 flex items-center justify-center text-[#ff8800] shrink-0">
+                <Send className="w-4 h-4 sm:w-5 sm:h-5" />
+              </div>
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-sm sm:text-base font-black text-white">
+                    P2P Instant Balance Transfer
+                  </h3>
+                  <span
+                    data-testid="dashboard-card-numeric-id"
+                    className="px-2 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/35 text-emerald-300 text-[11px] font-bold tabular-nums"
+                  >
+                    Your Numeric ID: #{userNumericId}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 mt-0.5 font-sans">
+                  Available Live Balance:{' '}
+                  <strong
+                    data-testid="dashboard-p2p-live-balance"
+                    className="text-emerald-400 font-mono tabular-nums"
+                  >
+                    ${transferableLiveBalanceInfo.availableLiveBalance.toLocaleString('en-US', {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}{' '}
+                    USD
+                  </strong>{' '}
+                  • Share your Numeric ID to receive instant P2P transfers with 0% fee.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                data-testid="dashboard-copy-numeric-id-btn"
+                onClick={handleCopyUserNumericId}
+                className="px-3 py-2.5 rounded-xl bg-[#16161e] hover:bg-white/10 border border-white/15 text-slate-200 hover:text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
+              >
+                {copiedNumericId ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-emerald-400" />
+                    <span className="text-emerald-400">Copied #{userNumericId}</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5 text-[#ff8800]" />
+                    <span>Copy ID</span>
+                  </>
+                )}
+              </button>
+              <button
+                type="button"
+                data-testid="dashboard-send-p2p-balance-btn"
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  setIsP2PModalOpen(true);
+                }}
+                className="px-4 py-2.5 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] text-slate-950 text-xs font-black uppercase tracking-wider flex items-center gap-1.5 cursor-pointer transition-colors"
+              >
+                <Send className="w-3.5 h-3.5" />
+                <span>Send P2P Balance</span>
+              </button>
+            </div>
+          </div>
+
+          {p2pDashboardToast && (
+            <div
+              data-testid="dashboard-p2p-toast-banner"
+              className={`p-3.5 rounded-xl border text-xs font-mono flex items-center justify-between gap-3 ${
+                p2pDashboardToast.type === 'success'
+                  ? 'bg-emerald-950/85 border-emerald-500/50 text-emerald-200'
+                  : 'bg-rose-950/85 border-rose-500/50 text-rose-200'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                {p2pDashboardToast.type === 'success' ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                )}
+                <span>
+                  <strong className="text-white">{p2pDashboardToast.title}:</strong>{' '}
+                  {p2pDashboardToast.message}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setP2pDashboardToast(null)}
+                className="text-slate-400 hover:text-white text-xs font-bold cursor-pointer"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+
           {/* Overall Trading Summary Card: Displayed ONLY on Real, Instant, or Challenge Accounts */}
           {!isSelectedAccountDemo && (
             <div
@@ -3958,6 +4164,20 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         </div>
         )
       )}
+
+      {/* P2P Balance Transfer Modal */}
+      <P2PBalanceTransferModal
+        isOpen={isP2PModalOpen}
+        onClose={() => setIsP2PModalOpen(false)}
+        userProfile={userProfile}
+        accounts={accounts}
+        onUpdateProfile={onUpdateProfile}
+        onUpdateAccount={onUpdateAccount}
+        onRefreshBalance={handleRefreshBalanceAfterP2P}
+        onNotifyToast={(toast) => {
+          setP2pDashboardToast(toast);
+        }}
+      />
     </div>
   );
 };

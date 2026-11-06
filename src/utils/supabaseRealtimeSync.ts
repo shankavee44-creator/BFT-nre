@@ -983,6 +983,11 @@ export function applyRealtimeProfileUpdate(
     row.two_factor_enabled !== undefined || row.is_2fa_enabled !== undefined
       ? isTwoFactorEnabledOnProfile(row)
       : prevProfile.twoFactorEnabled;
+  const rawNumericId = row.numeric_id ?? row.numericId;
+  const nextNumericId =
+    rawNumericId !== undefined && rawNumericId !== null && String(rawNumericId).trim() !== ''
+      ? String(rawNumericId).trim()
+      : prevProfile.numericId ?? prevProfile.numeric_id;
 
   const profileChanged =
     nextSelf !== prevProfile.selfBalance ||
@@ -993,7 +998,8 @@ export function applyRealtimeProfileUpdate(
     nextReferralCode !== prevProfile.referralCode ||
     nextReferredBy !== prevProfile.referredBy ||
     nextLocked !== prevProfile.profileLocked ||
-    nextTwoFactor !== prevProfile.twoFactorEnabled;
+    nextTwoFactor !== prevProfile.twoFactorEnabled ||
+    String(nextNumericId ?? '') !== String(prevProfile.numericId ?? prevProfile.numeric_id ?? '');
 
   const updatedProfile: UserProfile = profileChanged
     ? {
@@ -1009,6 +1015,8 @@ export function applyRealtimeProfileUpdate(
         selfBalance: nextSelf,
         demoBalance: nextDemo,
         fundedBalance: nextFunded,
+        numericId: nextNumericId,
+        numeric_id: nextNumericId,
       }
     : prevProfile;
 

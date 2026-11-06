@@ -16,6 +16,8 @@ import {
   cancelCopyTradingSubscriptionInSupabase,
   isSubscriptionStoppedLocally,
   clearStoppedSubscriptionLocally,
+  buildCheckCopyTradeLimitsRpcPayload,
+  fetchCopyExecutedTradesFromSupabase,
 } from './copyTradingSync';
 import { getCanonicalAccountDatabaseUuid, resolveCopierEligibilityForUser } from './copyTradingRules';
 import type { TradingAccount, UserProfile } from '../types';
@@ -396,6 +398,104 @@ describe('Copy Trading Follower Account Resolution & Active Live Account UUID Fa
 
     clearStoppedSubscriptionLocally([subId, providerId]);
     assert.equal(isSubscriptionStoppedLocally(subId, providerId), false);
+  });
+
+  it('passes exact p_trade_id and p_current_price parameters to check_copy_trade_limits RPC and handles 404 fallback cleanly', async () => {
+    const sampleTradeUuid = '12121212-3434-4567-89ab-cdef01234567';
+    const payload = buildCheckCopyTradeLimitsRpcPayload(sampleTradeUuid, 1.08612);
+    assert.deepEqual(payload, {
+      p_trade_id: sampleTradeUuid,
+      p_current_price: 1.08612,
+    });
+
+    const rpcCalls: Array<{ fn: string; args: any }> = [];
+    const fakeClient404: any = {
+      rpc: async (fn: string, args: any) => {
+        rpcCalls.push({ fn, args });
+        return {
+          data: null,
+          error: {
+            code: 'PGRST202',
+            status: 404,
+            message: 'Could not find the function public.check_copy_trade_limits in the schema cache',
+          },
+        };
+      },
+      from: () => ({
+        select: () => ({
+          eq: () => ({
+            order: async () => ({ data: [], error: null }),
+          }),
+        }),
+      }),
+    };
+
+    const res = await triggerCheckCopyTradeLimits({
+      userId: SAMPLE_PROFILE_UUID,
+      accountId: SAMPLE_LIVE_UUID,
+      tradeId: sampleTradeUuid,
+      assetSymbol: 'EUR/USD',
+      currentPrice: 1.08612,
+      accountStartingBalance: 50000,
+      forceRpc: true,
+      supabaseClient: fakeClient404,
+    });
+
+    assert.equal(res.triggered, true);
+    assert.equal(res.rpcInvoked, true);
+    assert.equal(res.fallbackUsed, true);
+    assert.equal(rpcCalls.length, 1);
+    assert.equal(rpcCalls[0].fn, 'check_copy_trade_limits');
+    assert.deepEqual(rpcCalls[0].args, {
+      p_trade_id: sampleTradeUuid,
+      p_current_price: 1.08612,
+    });
+  });
+
+  it('fetches copy_executed_trades using .eq("user_id", user.id) matching the database column', async () => {
+    const eqCalls: Array<{ column: string; value: string }> = [];
+    const fakeClient: any = {
+      from: (table: string) => {
+        assert.equal(table, 'copy_executed_trades');
+        return {
+          select: () => ({
+            eq: (column: string, value: string) => {
+              eqCalls.push({ column, value });
+              return {
+                order: async () => ({
+                  data: [
+                    {
+                      id: '77777777-8888-4999-8aaa-bbbbbbbbbbbb',
+                      subscription_id: '66666666-7777-4888-8999-aaaaaaaaaaaa',
+                      user_id: SAMPLE_PROFILE_UUID,
+                      copier_account_id: SAMPLE_LIVE_UUID,
+                      provider_id: '55555555-6666-4777-8888-999999999999',
+                      asset_symbol: 'EUR/USD',
+                      trade_type: 'CALL',
+                      amount: 100,
+                      entry_price: 1.085,
+                      status: 'OPEN',
+                      pnl: 0,
+                    },
+                  ],
+                  error: null,
+                }),
+              };
+            },
+          }),
+        };
+      },
+    };
+
+    const rows = await fetchCopyExecutedTradesFromSupabase(SAMPLE_PROFILE_UUID, fakeClient);
+    assert.equal(eqCalls.length, 1);
+    assert.deepEqual(eqCalls[0], {
+      column: 'user_id',
+      value: SAMPLE_PROFILE_UUID,
+    });
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].user_id, SAMPLE_PROFILE_UUID);
+    assert.equal(rows[0].copier_user_id, SAMPLE_PROFILE_UUID);
   });
 });
 

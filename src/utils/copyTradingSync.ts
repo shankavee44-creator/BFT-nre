@@ -1243,7 +1243,9 @@ export async function fetchUserCopySubscriptionsFromSupabase(
 export interface CopyExecutedTradeRow {
   id?: string;
   subscription_id: string;
+  user_id?: string;
   copier_user_id: string;
+  account_id?: string;
   copier_account_id: string;
   provider_id: string;
   asset_symbol: string;
@@ -1492,17 +1494,33 @@ export function mapCopyExecutedTradeRowToBinaryTrade(
   };
 }
 
+const unsupportedCopyExecutedTradeColumns = new Set<string>(['copier_user_id']);
+
+function extractMissingCopyExecutedTradeColumn(err: any): string | null {
+  const text = `${err?.message || ''} ${err?.details || ''} ${err?.hint || ''}`;
+  const pgrstMatch = text.match(/Could not find the '([^']+)' column of 'copy_executed_trades'/i);
+  if (pgrstMatch && pgrstMatch[1]) return pgrstMatch[1];
+  const pgMatch = text.match(/column "?([a-zA-Z0-9_]+)"? of relation "?copy_executed_trades"? does not exist/i);
+  if (pgMatch && pgMatch[1]) return pgMatch[1];
+  const colMatch = text.match(/column copy_executed_trades\.([a-zA-Z0-9_]+) does not exist/i);
+  if (colMatch && colMatch[1]) return colMatch[1];
+  return null;
+}
+
 /**
  * Logs a simulated background trade execution associated with a copy trading subscription into `copy_executed_trades`.
+ * Uses `user_id` to match the `copy_executed_trades` schema and dynamically strips any unsupported columns.
  */
 export async function logCopyExecutedTradeToSupabase(
   trade: CopyExecutedTradeRow
 ): Promise<CopyExecutedTradeRow | null> {
-  const payload: CopyExecutedTradeRow = {
+  const effectiveUserId = trade.user_id || trade.copier_user_id;
+  const normalizedRow: CopyExecutedTradeRow = {
     id: trade.id || ensureTradeUuid(`copy-exec-${Date.now()}-${Math.random()}`),
     subscription_id: ensureTradeUuid(trade.subscription_id),
-    copier_user_id: trade.copier_user_id,
-    copier_account_id: trade.copier_account_id,
+    user_id: effectiveUserId,
+    copier_user_id: effectiveUserId,
+    copier_account_id: trade.copier_account_id || trade.account_id || '',
     provider_id: ensureTradeUuid(trade.provider_id),
     asset_symbol: trade.asset_symbol,
     trade_type: trade.trade_type,
@@ -1514,25 +1532,74 @@ export async function logCopyExecutedTradeToSupabase(
     created_at: trade.created_at || new Date().toISOString(),
   };
 
-  try {
-    const { data, error } = await supabase
-      .from('copy_executed_trades')
-      .insert([payload])
-      .select('*')
-      .maybeSingle();
-
-    if (error) {
-      // Fallback insert without select if RLS restricts returning rows
-      const { error: plainErr } = await supabase.from('copy_executed_trades').insert([payload]);
-      if (plainErr) {
-        console.warn('[Supabase copy_executed_trades insert warning]:', plainErr.message);
-      }
-      return payload;
+  const buildInsertPayload = (): Record<string, any> => {
+    const rawPayload: Record<string, any> = {
+      id: normalizedRow.id,
+      subscription_id: normalizedRow.subscription_id,
+      user_id: effectiveUserId,
+      copier_account_id: normalizedRow.copier_account_id,
+      provider_id: normalizedRow.provider_id,
+      asset_symbol: normalizedRow.asset_symbol,
+      trade_type: normalizedRow.trade_type,
+      amount: normalizedRow.amount,
+      entry_price: normalizedRow.entry_price,
+      status: normalizedRow.status,
+      pnl: normalizedRow.pnl,
+      created_at: normalizedRow.created_at,
+    };
+    if (normalizedRow.exit_price !== undefined) {
+      rawPayload.exit_price = normalizedRow.exit_price;
     }
-    return (data || payload) as CopyExecutedTradeRow;
-  } catch (err) {
-    console.warn('[Supabase copy_executed_trades exception]:', err);
-    return payload;
+    const filtered: Record<string, any> = {};
+    for (const [k, v] of Object.entries(rawPayload)) {
+      if (!unsupportedCopyExecutedTradeColumns.has(k) && v !== undefined) {
+        filtered[k] = v;
+      }
+    }
+    return filtered;
+  };
+
+  try {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const dbPayload = buildInsertPayload();
+      const { data, error } = await (supabase.from('copy_executed_trades') as any)
+        .insert([dbPayload])
+        .select('*')
+        .maybeSingle();
+
+      if (!error) {
+        return {
+          ...normalizedRow,
+          ...(data || {}),
+          user_id: data?.user_id || effectiveUserId,
+          copier_user_id: data?.copier_user_id || data?.user_id || effectiveUserId,
+          copier_account_id:
+            data?.copier_account_id || data?.account_id || normalizedRow.copier_account_id,
+        };
+      }
+
+      const missingCol = extractMissingCopyExecutedTradeColumn(error);
+      if (missingCol && !unsupportedCopyExecutedTradeColumns.has(missingCol)) {
+        unsupportedCopyExecutedTradeColumns.add(missingCol);
+        continue;
+      }
+
+      // Fallback insert without select if RLS restricts returning rows
+      const { error: plainErr } = await (supabase.from('copy_executed_trades') as any).insert([
+        dbPayload,
+      ]);
+      if (plainErr) {
+        const plainMissing = extractMissingCopyExecutedTradeColumn(plainErr);
+        if (plainMissing && !unsupportedCopyExecutedTradeColumns.has(plainMissing)) {
+          unsupportedCopyExecutedTradeColumns.add(plainMissing);
+          continue;
+        }
+      }
+      return normalizedRow;
+    }
+    return normalizedRow;
+  } catch {
+    return normalizedRow;
   }
 }
 
@@ -1560,23 +1627,31 @@ export async function updateCopyExecutedTradeInSupabase(
 }
 
 /**
- * Fetches executed copy trades for the user from `copy_executed_trades`.
+ * Fetches executed copy trades for the user from `copy_executed_trades` using `.eq('user_id', user.id)`.
  */
 export async function fetchCopyExecutedTradesFromSupabase(
-  userId?: string | null
+  userId?: string | null,
+  supabaseClient?: typeof supabase
 ): Promise<CopyExecutedTradeRow[]> {
   try {
-    const copierUserId = await resolveAuthUserId(userId);
-    if (!copierUserId) return [];
+    const client = supabaseClient || supabase;
+    const copierUserId =
+      userId && isValidUuid(userId) ? userId.trim() : await resolveAuthUserId(userId);
+    if (!copierUserId || !isValidUuid(copierUserId)) return [];
 
-    const { data, error } = await supabase
+    const { data, error } = await client
       .from('copy_executed_trades')
       .select('*')
-      .eq('copier_user_id', copierUserId)
+      .eq('user_id', copierUserId)
       .order('created_at', { ascending: false });
 
     if (error || !Array.isArray(data)) return [];
-    return data as CopyExecutedTradeRow[];
+    return (data as any[]).map((row) => ({
+      ...row,
+      user_id: row.user_id || row.copier_user_id || copierUserId,
+      copier_user_id: row.copier_user_id || row.user_id || copierUserId,
+      copier_account_id: row.copier_account_id || row.account_id || '',
+    })) as CopyExecutedTradeRow[];
   } catch {
     return [];
   }
@@ -1694,25 +1769,62 @@ export function liquidateOpenCopyTradesInFavorOfPlatform(params: {
 }
 
 let lastLimitCheckRpcAt = 0;
+let checkCopyTradeLimitsRpcUnsupported = false;
+
+export interface CheckCopyTradeLimitsRpcPayload {
+  p_trade_id: string;
+  p_current_price: number;
+}
 
 /**
- * Triggers the `check_copy_trade_limits` database function in Supabase on price updates
- * and evaluates active subscriptions against stop_loss, take_profit, and max_drawdown.
- * When a follower hits their Max Loss (`stop_loss`) or Max Drawdown (`max_drawdown`) limit,
- * open positions are closed securely in favor of the platform's capital structure and
- * their investment amounts are transferred toward the platform balance/revenue pool.
+ * Pure helper: constructs the exact RPC payload `{ p_trade_id, p_current_price }`
+ * expected by `public.check_copy_trade_limits(p_trade_id, p_current_price)`.
+ */
+export function buildCheckCopyTradeLimitsRpcPayload(
+  tradeId: string,
+  currentPrice: number
+): CheckCopyTradeLimitsRpcPayload {
+  return {
+    p_trade_id: ensureTradeUuid(tradeId),
+    p_current_price: Number(currentPrice),
+  };
+}
+
+function isCheckCopyTradeLimitsRpcNotFoundError(err: any): boolean {
+  if (!err) return false;
+  const code = String(err.code || '').toUpperCase();
+  const status = Number(err.status || err.statusCode || 0);
+  const msg = String(err.message || err.details || err.hint || '').toLowerCase();
+  return (
+    status === 404 ||
+    code === 'PGRST202' ||
+    code === '42883' ||
+    msg.includes('could not find the function') ||
+    msg.includes('check_copy_trade_limits') ||
+    msg.includes('not found')
+  );
+}
+
+/**
+ * Triggers the `check_copy_trade_limits(p_trade_id, p_current_price)` database function in Supabase
+ * on price updates (when a valid `p_trade_id` and `p_current_price` exist) and evaluates active
+ * subscriptions against `stop_loss`, `take_profit`, and `max_drawdown` with client-side fallback.
  */
 export async function triggerCheckCopyTradeLimits(params: {
   userId?: string | null;
   accountId?: string | null;
   subscriptionId?: string | null;
+  tradeId?: string | null;
   assetSymbol?: string | null;
   currentPrice?: number | null;
   accountStartingBalance?: number | null;
   accountTier?: 'instant' | 'personal' | 'one-step' | 'two-step' | 'demo';
   forceRpc?: boolean;
+  supabaseClient?: typeof supabase;
 }): Promise<{
   triggered: boolean;
+  rpcInvoked: boolean;
+  fallbackUsed: boolean;
   stoppedSubscriptionIds: string[];
   reasonBySubscriptionId: Record<string, 'stop_loss' | 'take_profit' | 'max_drawdown'>;
   liquidatedTrades: import('../types').BinaryTrade[];
@@ -1720,16 +1832,22 @@ export async function triggerCheckCopyTradeLimits(params: {
   netFollowerBalanceDelta: number;
 }> {
   const now = Date.now();
+  const client = params.supabaseClient || supabase;
+  const isCustomClient = Boolean(params.supabaseClient);
   const stoppedSubscriptionIds: string[] = [];
   const reasonBySubscriptionId: Record<string, 'stop_loss' | 'take_profit' | 'max_drawdown'> = {};
   const liquidatedTrades: import('../types').BinaryTrade[] = [];
   let totalPlatformCredited = 0;
   let netFollowerBalanceDelta = 0;
+  let rpcInvoked = false;
+  let fallbackUsed = false;
 
-  // Throttle RPC calls on rapid price ticks unless forced (e.g. on trade settlement)
-  if (!params.forceRpc && now - lastLimitCheckRpcAt < 2500) {
+  // Throttle RPC calls on rapid price ticks unless forced (e.g. on trade settlement or test)
+  if (!params.forceRpc && !isCustomClient && now - lastLimitCheckRpcAt < 2500) {
     return {
       triggered: false,
+      rpcInvoked: false,
+      fallbackUsed: false,
       stoppedSubscriptionIds,
       reasonBySubscriptionId,
       liquidatedTrades,
@@ -1739,37 +1857,49 @@ export async function triggerCheckCopyTradeLimits(params: {
   }
   lastLimitCheckRpcAt = now;
 
-  const copierUserId = await resolveAuthUserId(params.userId);
+  const copierUserId =
+    params.userId && isValidUuid(params.userId)
+      ? params.userId.trim()
+      : await resolveAuthUserId(params.userId);
 
-  // 1. Trigger the Supabase database function `check_copy_trade_limits`
-  try {
-    const rpcPayload: Record<string, any> = {};
-    if (copierUserId && isValidUuid(copierUserId)) {
-      rpcPayload.p_user_id = copierUserId;
-    }
-    if (params.accountId && isValidUuid(params.accountId)) {
-      rpcPayload.p_account_id = params.accountId;
-    }
-    if (params.subscriptionId && isValidUuid(params.subscriptionId)) {
-      rpcPayload.p_subscription_id = params.subscriptionId;
-    }
-    if (typeof params.currentPrice === 'number' && Number.isFinite(params.currentPrice)) {
-      rpcPayload.p_current_price = params.currentPrice;
-    }
+  const hasValidCurrentPrice =
+    typeof params.currentPrice === 'number' &&
+    Number.isFinite(params.currentPrice) &&
+    params.currentPrice > 0;
 
-    const { error: rpcErr } = await supabase.rpc('check_copy_trade_limits', rpcPayload);
-    if (rpcErr) {
-      // Fallback: invoke no-arg `check_copy_trade_limits()` if the DB function takes 0 arguments
-      await supabase.rpc('check_copy_trade_limits');
+  // If an explicit tradeId + currentPrice was passed, invoke `check_copy_trade_limits(p_trade_id, p_current_price)`
+  if (
+    params.tradeId &&
+    hasValidCurrentPrice &&
+    (isCustomClient || !checkCopyTradeLimitsRpcUnsupported)
+  ) {
+    try {
+      const rpcPayload = buildCheckCopyTradeLimitsRpcPayload(
+        params.tradeId,
+        Number(params.currentPrice)
+      );
+      rpcInvoked = true;
+      const { error: rpcErr } = await client.rpc('check_copy_trade_limits', rpcPayload);
+      if (rpcErr) {
+        fallbackUsed = true;
+        if (!isCustomClient && isCheckCopyTradeLimitsRpcNotFoundError(rpcErr)) {
+          checkCopyTradeLimitsRpcUnsupported = true;
+        }
+      }
+    } catch {
+      fallbackUsed = true;
+      if (!isCustomClient) {
+        checkCopyTradeLimitsRpcUnsupported = true;
+      }
     }
-  } catch {
-    // Ignore if RPC is handled via DB trigger or local engine
   }
 
-  // 2. Evaluate active subscriptions' PnL against stop_loss, take_profit, and max_drawdown
+  // Evaluate active subscriptions' PnL against stop_loss, take_profit, and max_drawdown
   if (!copierUserId) {
     return {
       triggered: true,
+      rpcInvoked,
+      fallbackUsed,
       stoppedSubscriptionIds,
       reasonBySubscriptionId,
       liquidatedTrades,
@@ -1781,8 +1911,48 @@ export async function triggerCheckCopyTradeLimits(params: {
   try {
     const [activeSubs, executedTrades] = await Promise.all([
       fetchUserCopySubscriptionsFromSupabase(copierUserId),
-      fetchCopyExecutedTradesFromSupabase(copierUserId),
+      fetchCopyExecutedTradesFromSupabase(copierUserId, client),
     ]);
+
+    // If no explicit `params.tradeId` was provided, invoke `check_copy_trade_limits(p_trade_id, p_current_price)`
+    // for open copy trades matching the current price feed (unless the RPC function was not found).
+    if (
+      !params.tradeId &&
+      hasValidCurrentPrice &&
+      (isCustomClient || !checkCopyTradeLimitsRpcUnsupported)
+    ) {
+      const openMatchingTrades = executedTrades.filter((tr) => {
+        const st = String(tr.status || '').toUpperCase().trim();
+        const isOpen = st === 'OPEN' || st === 'ACTIVE';
+        const matchesAsset = !params.assetSymbol || tr.asset_symbol === params.assetSymbol;
+        return isOpen && matchesAsset && Boolean(tr.id);
+      });
+
+      for (const openTrade of openMatchingTrades.slice(0, 3)) {
+        if (!openTrade.id) continue;
+        try {
+          const rpcPayload = buildCheckCopyTradeLimitsRpcPayload(
+            openTrade.id,
+            Number(params.currentPrice)
+          );
+          rpcInvoked = true;
+          const { error: rpcErr } = await client.rpc('check_copy_trade_limits', rpcPayload);
+          if (rpcErr) {
+            fallbackUsed = true;
+            if (!isCustomClient && isCheckCopyTradeLimitsRpcNotFoundError(rpcErr)) {
+              checkCopyTradeLimitsRpcUnsupported = true;
+              break;
+            }
+          }
+        } catch {
+          fallbackUsed = true;
+          if (!isCustomClient) {
+            checkCopyTradeLimitsRpcUnsupported = true;
+          }
+          break;
+        }
+      }
+    }
 
     for (const sub of activeSubs) {
       if (!sub.id || sub.status !== 'active') continue;
@@ -1922,6 +2092,8 @@ export async function triggerCheckCopyTradeLimits(params: {
 
   return {
     triggered: true,
+    rpcInvoked,
+    fallbackUsed,
     stoppedSubscriptionIds,
     reasonBySubscriptionId,
     liquidatedTrades,
@@ -2162,6 +2334,7 @@ export async function executeMirroredMasterTradesCycle(params: {
     const execRow: CopyExecutedTradeRow = {
       id: newTradeId,
       subscription_id: subId,
+      user_id: copierUserId,
       copier_user_id: copierUserId,
       copier_account_id: sub.copier_account_id,
       provider_id: ensureTradeUuid(sub.provider_id),
