@@ -117,10 +117,18 @@ export async function ensureSupabaseProfileAndDemoAccount(params: {
       }
 
       // Upsert profile with core fields and automatic fallback if optional columns are missing
+      const deterministicNumericId = String(Math.floor(10000000 + Math.random() * 90000000));
       const upsertRow: Record<string, any> = {
         id: userId,
         email: cleanEmail,
         full_name: cleanName,
+        numeric_id: deterministicNumericId,
+        balance: 0.00,
+        self_balance: 0.00,
+        self_capital_balance: 0.00,
+        demo_balance: 10000.00,
+        funded_balance: 0.00,
+        role: 'user',
         referral_code: genRefCode,
         referred_by: sponsorUuid,
         kyc_status: 'unverified',

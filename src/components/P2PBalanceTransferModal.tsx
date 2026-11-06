@@ -23,6 +23,8 @@ import {
   validateP2PTransferInput,
   executeP2PBalanceTransfer,
   loadLocalP2PTransferHistory,
+  fetchP2PTransfersFromSupabase,
+  deduplicateP2PTransferRecords,
   parseNumericAmount,
   type P2PTransferRecord,
 } from '../utils/p2pTransfer.ts';
@@ -65,14 +67,28 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
   const ownNumericId = resolveUserNumericId(userProfile);
   const { availableLiveBalance } = resolveTransferableLiveBalance(userProfile, accounts);
 
+  const dedupedRecentTransfers = React.useMemo(() => {
+    return deduplicateP2PTransferRecords(recentTransfers).slice(0, 10);
+  }, [recentTransfers]);
+
   useEffect(() => {
-    const syncHistory = () => {
-      const list = loadLocalP2PTransferHistory(userProfile.id, ownNumericId);
-      setRecentTransfers(list.slice(0, 10));
+    let isMounted = true;
+    const syncHistory = async () => {
+      const records = await fetchP2PTransfersFromSupabase({
+        userId: userProfile.id,
+        userNumericId: ownNumericId,
+      }).catch(() => loadLocalP2PTransferHistory(userProfile.id, ownNumericId));
+
+      if (isMounted) {
+        setRecentTransfers(deduplicateP2PTransferRecords(records).slice(0, 10));
+      }
     };
     syncHistory();
     window.addEventListener('bft-p2p-history-updated', syncHistory);
-    return () => window.removeEventListener('bft-p2p-history-updated', syncHistory);
+    return () => {
+      isMounted = false;
+      window.removeEventListener('bft-p2p-history-updated', syncHistory);
+    };
   }, [userProfile.id, ownNumericId, isOpen]);
 
   if (!isOpen) return null;
@@ -200,7 +216,16 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
       }
 
       const refreshedList = loadLocalP2PTransferHistory(userProfile.id, ownNumericId);
-      setRecentTransfers(refreshedList.slice(0, 10));
+      const postSubmitById = new Map<string, P2PTransferRecord>();
+      for (const item of refreshedList) {
+        if (item && item.id) {
+          postSubmitById.set(item.id, item);
+        }
+      }
+      const dedupedPostSubmit = Array.from(postSubmitById.values()).sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+      setRecentTransfers(dedupedPostSubmit.slice(0, 10));
 
       const successToast = {
         type: 'success' as const,
@@ -583,7 +608,7 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
               </span>
               <span>Sent &amp; Received Ledger</span>
             </div>
-            {recentTransfers.length === 0 ? (
+            {dedupedRecentTransfers.length === 0 ? (
               <div
                 data-testid="p2p-history-empty"
                 className="px-3 py-3 rounded-lg bg-[#13131a] border border-white/10 text-center text-xs font-mono text-slate-500"
@@ -592,11 +617,11 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
               </div>
             ) : (
               <div className="space-y-1.5 max-h-44 overflow-y-auto pr-1">
-                {recentTransfers.map((item) => {
+                {dedupedRecentTransfers.map((item) => {
                   const isSent = item.direction === 'sent' || item.type === 'P2P Transfer Sent';
                   return (
                     <div
-                      key={item.id}
+                      key={`p2p-modal-${item.id}`}
                       data-testid={`p2p-history-row-${item.id}`}
                       className="px-3 py-2.5 rounded-lg bg-[#13131a] border border-white/10 flex items-center justify-between text-xs font-mono gap-2"
                     >

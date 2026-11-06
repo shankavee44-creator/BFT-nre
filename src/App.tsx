@@ -1153,7 +1153,7 @@ export default function App() {
     broadcastSyncEvent('PROFILE_UPDATED', updated);
   };
 
-  // Periodic Supabase profile sync for Manual Admin approvals (KYC, self_balance, demo_balance, funded_balance)
+  // Immediate and periodic Supabase profile balance sync for deposits, P2P transfers, and admin approvals
   useEffect(() => {
     if (!userProfile.isLoggedIn && !userProfile.id && !userProfile.email) return;
     let isMounted = true;
@@ -1165,7 +1165,7 @@ export default function App() {
           userEmail: userProfileRef.current.email,
         });
         if (p && isMounted) {
-          applyProfileRowToState(p, 'poll');
+          applyProfileRowToState(p, 'direct');
         }
       } catch {
         // Fallback
@@ -1173,18 +1173,104 @@ export default function App() {
     }
 
     syncSupabaseProfile();
+
+    const handleImmediateSync = () => {
+      syncSupabaseProfile();
+    };
+
+    window.addEventListener('bft-deposit-processed', handleImmediateSync);
+    window.addEventListener('bft-deposit-completed', handleImmediateSync);
+    window.addEventListener('bft-realtime-profile-update', handleImmediateSync);
+    window.addEventListener('bft-user-notification-received', handleImmediateSync);
+    window.addEventListener('bft-p2p-history-updated', handleImmediateSync);
+
+    let profileChannel: any = null;
+    let depositChannel: any = null;
+    const currentId = userProfileRef.current.id;
+
+    if (currentId && typeof supabase?.channel === 'function') {
+      try {
+        profileChannel = supabase
+          .channel(`app-global-profile-${currentId}-${Date.now()}`)
+          .on(
+            'postgres_changes',
+            {
+              event: 'UPDATE',
+              schema: 'public',
+              table: 'profiles',
+              filter: `id=eq.${currentId}`,
+            },
+            (payload) => {
+              if (isMounted) {
+                if (payload.new) {
+                  applyProfileRowToState(payload.new, 'realtime');
+                }
+                syncSupabaseProfile();
+              }
+            }
+          )
+          .subscribe();
+
+        depositChannel = supabase
+          .channel(`app-global-deposits-${currentId}-${Date.now()}`)
+          .on(
+            'postgres_changes',
+            {
+              event: '*',
+              schema: 'public',
+              table: 'crypto_deposits',
+              filter: `user_id=eq.${currentId}`,
+            },
+            () => {
+              if (isMounted) {
+                syncSupabaseProfile();
+              }
+            }
+          )
+          .subscribe();
+      } catch {
+        // ignore
+      }
+    }
+
     const interval = setInterval(syncSupabaseProfile, 4000);
     return () => {
       isMounted = false;
       clearInterval(interval);
+      window.removeEventListener('bft-deposit-processed', handleImmediateSync);
+      window.removeEventListener('bft-deposit-completed', handleImmediateSync);
+      window.removeEventListener('bft-realtime-profile-update', handleImmediateSync);
+      window.removeEventListener('bft-user-notification-received', handleImmediateSync);
+      window.removeEventListener('bft-p2p-history-updated', handleImmediateSync);
+      if (profileChannel && typeof profileChannel.unsubscribe === 'function') {
+        profileChannel.unsubscribe();
+      }
+      if (depositChannel && typeof depositChannel.unsubscribe === 'function') {
+        depositChannel.unsubscribe();
+      }
     };
   }, [userProfile.isLoggedIn, userProfile.id, userProfile.email, applyProfileRowToState]);
 
   const handleAddWithdrawal = (req: WithdrawalRequest) => {
-    const updated = [req, ...withdrawals];
-    setWithdrawals(updated);
-    saveWithdrawals(updated);
-    broadcastSyncEvent('WITHDRAWALS_UPDATED', updated);
+    setWithdrawals((prev) => {
+      if (prev.some((w) => String(w.id) === String(req.id))) {
+        return prev;
+      }
+      const isDuplicateQueue = prev.some((w) => {
+        const sameAmount = Math.abs(Number(w.amount || 0) - Number(req.amount || 0)) < 0.01;
+        const sameAccount = String(w.accountId || '') === String(req.accountId || '');
+        const timeDiff = Math.abs(Number(w.requestedAt || 0) - Number(req.requestedAt || 0));
+        return sameAmount && sameAccount && timeDiff < 10000;
+      });
+      if (isDuplicateQueue) {
+        return prev;
+      }
+
+      const updated = [req, ...prev];
+      saveWithdrawals(updated);
+      broadcastSyncEvent('WITHDRAWALS_UPDATED', updated);
+      return updated;
+    });
   };
 
   const handleUpdateWithdrawal = (req: WithdrawalRequest) => {

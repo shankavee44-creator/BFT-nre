@@ -156,8 +156,52 @@ export function normalizeP2PTransferRecord(
   });
 }
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
- * Loads the user's P2P transfer history (both Sent and Received) from localStorage.
+ * Strictly deduplicates P2P transfer records by unique ID and semantic uniqueness
+ * (same direction, sender, receiver, amount, and timestamp within 30 seconds),
+ * prioritizing authoritative Supabase UUID records over temporary client IDs.
+ */
+export function deduplicateP2PTransferRecords(
+  records: P2PTransferRecord[]
+): P2PTransferRecord[] {
+  if (!Array.isArray(records) || records.length === 0) return [];
+  const byId = new Map<string, P2PTransferRecord>();
+  const seenSemantic = new Set<string>();
+
+  // Prioritize UUID database records over temporary client IDs (P2P-...)
+  const sorted = [...records].sort((a, b) => {
+    const aIsUuid = UUID_REGEX.test(String(a.id || ''));
+    const bIsUuid = UUID_REGEX.test(String(b.id || ''));
+    if (aIsUuid && !bIsUuid) return -1;
+    if (!aIsUuid && bIsUuid) return 1;
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+  });
+
+  for (const item of sorted) {
+    if (!item || !item.id) continue;
+    if (byId.has(item.id)) continue;
+
+    const timeMs = new Date(item.createdAt).getTime();
+    const timeWindow = Number.isFinite(timeMs) ? Math.floor(timeMs / 30000) : 0;
+    const semKey = `${item.direction}_${item.senderNumericId}_${item.receiverNumericId}_${Number(item.amount || 0).toFixed(2)}_${timeWindow}`;
+
+    if (seenSemantic.has(semKey)) {
+      continue;
+    }
+    seenSemantic.add(semKey);
+    byId.set(item.id, item);
+  }
+
+  return Array.from(byId.values()).sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
+}
+
+/**
+ * Loads the user's P2P transfer history (both Sent and Received) from localStorage,
+ * strictly deduplicating records by ID and semantic signature.
  */
 export function loadLocalP2PTransferHistory(
   userId?: string | null,
@@ -170,9 +214,8 @@ export function loadLocalP2PTransferHistory(
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map((item) => normalizeP2PTransferRecord(item, userNumericId || undefined))
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const normalized = parsed.map((item) => normalizeP2PTransferRecord(item, userNumericId || undefined));
+    return deduplicateP2PTransferRecords(normalized);
   } catch {
     return [];
   }
@@ -188,10 +231,7 @@ export function saveLocalP2PTransferRecord(
   userNumericId?: string | null
 ): P2PTransferRecord[] {
   const existing = loadLocalP2PTransferHistory(userId, userNumericId);
-  const deduped = [
-    record,
-    ...existing.filter((r) => r.id !== record.id),
-  ].slice(0, 50);
+  const deduped = deduplicateP2PTransferRecords([record, ...existing]).slice(0, 50);
 
   if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
     try {
@@ -211,7 +251,7 @@ export function saveLocalP2PTransferRecord(
 
 /**
  * Fetches P2P transfer history from the `balance_transfers` table in Supabase,
- * merging with locally persisted P2P records.
+ * merging with locally persisted P2P records and strictly deduplicating.
  */
 export async function fetchP2PTransfersFromSupabase(params: {
   userId?: string | null;
@@ -221,13 +261,8 @@ export async function fetchP2PTransfersFromSupabase(params: {
   const client = params.supabaseClient || supabase;
   const userId = String(params.userId || '').trim();
   const localList = loadLocalP2PTransferHistory(userId, params.userNumericId);
-  const byId = new Map<string, P2PTransferRecord>();
+  const candidateList = [...localList];
 
-  for (const item of localList) {
-    byId.set(item.id, item);
-  }
-
-  const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (userId && UUID_REGEX.test(userId) && typeof client?.from === 'function') {
     try {
       const { data, error } = await (client.from('balance_transfers') as any)
@@ -250,7 +285,7 @@ export async function fetchP2PTransfersFromSupabase(params: {
             createdAt: row.created_at || new Date().toISOString(),
             status: 'completed',
           });
-          byId.set(record.id, record);
+          candidateList.push(record);
         }
       }
     } catch {
@@ -258,12 +293,13 @@ export async function fetchP2PTransfersFromSupabase(params: {
     }
   }
 
-  const merged = Array.from(byId.values()).sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-  );
-  if (userId) {
-    if (merged.length > 0) {
-      saveLocalP2PTransferRecord(userId, merged[0], params.userNumericId);
+  const merged = deduplicateP2PTransferRecords(candidateList);
+  if (userId && typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+    try {
+      const key = `${P2P_HISTORY_STORAGE_KEY}_${userId || 'default'}`;
+      localStorage.setItem(key, JSON.stringify(merged));
+    } catch {
+      // ignore storage errors
     }
   }
   return merged;

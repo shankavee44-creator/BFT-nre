@@ -9,6 +9,7 @@ import {
   validateP2PTransferInput,
   executeP2PBalanceTransfer,
   createP2PTransferRecord,
+  deduplicateP2PTransferRecords,
 } from './p2pTransfer.ts';
 import {
   formatP2PReceivedToastMessage,
@@ -307,5 +308,50 @@ test('validateP2PTransferInput and buildTransferBalanceRpcPayload handle formatt
     p_receiver_numeric_id: 100201,
     p_transfer_amount: 762.50,
   });
+});
+
+test('deduplicateP2PTransferRecords deduplicates both identical IDs and temporary client vs authoritative DB UUID duplicates', () => {
+  const records = [
+    createP2PTransferRecord({
+      id: 'P2P-CLIENT-TEMP-01',
+      direction: 'sent',
+      senderNumericId: '88412095',
+      receiverNumericId: '100201',
+      amount: 150.00,
+      createdAt: '2026-11-06T10:00:05.000Z',
+    }),
+    createP2PTransferRecord({
+      id: 'e1234567-89ab-cdef-0123-456789abcdef', // Authoritative DB UUID for the same transaction
+      direction: 'sent',
+      senderNumericId: '88412095',
+      receiverNumericId: '100201',
+      amount: 150.00,
+      createdAt: '2026-11-06T10:00:07.000Z',
+    }),
+    createP2PTransferRecord({
+      id: 'e1234567-89ab-cdef-0123-456789abcdef', // Exact duplicate of the UUID
+      direction: 'sent',
+      senderNumericId: '88412095',
+      receiverNumericId: '100201',
+      amount: 150.00,
+      createdAt: '2026-11-06T10:00:07.000Z',
+    }),
+    createP2PTransferRecord({
+      id: 'f9999999-89ab-cdef-0123-456789abcdef',
+      direction: 'received',
+      senderNumericId: '100201',
+      receiverNumericId: '88412095',
+      amount: 50.00,
+      createdAt: '2026-11-06T09:30:00.000Z',
+    }),
+  ];
+
+  const deduped = deduplicateP2PTransferRecords(records);
+  assert.equal(deduped.length, 2);
+  // The first transfer should keep the authoritative UUID rather than the temporary client ID
+  assert.equal(deduped[0].id, 'e1234567-89ab-cdef-0123-456789abcdef');
+  assert.equal(deduped[0].amount, 150.00);
+  assert.equal(deduped[1].id, 'f9999999-89ab-cdef-0123-456789abcdef');
+  assert.equal(deduped[1].amount, 50.00);
 });
 

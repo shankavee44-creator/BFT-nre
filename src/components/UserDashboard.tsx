@@ -126,6 +126,7 @@ import {
   resolveTransferableLiveBalance,
   loadLocalP2PTransferHistory,
   fetchP2PTransfersFromSupabase,
+  deduplicateP2PTransferRecords,
   type P2PTransferRecord,
 } from '../utils/p2pTransfer';
 
@@ -298,28 +299,37 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     loadLocalP2PTransferHistory(userProfile.id, userNumericId)
   );
 
+  const dedupedP2PTransfers = React.useMemo(() => {
+    return deduplicateP2PTransferRecords(dashboardP2PTransfers);
+  }, [dashboardP2PTransfers]);
+
   useEffect(() => {
     let isMounted = true;
     const syncP2PHistory = async () => {
       const records = await fetchP2PTransfersFromSupabase({
         userId: userProfile.id,
         userNumericId,
-      });
-      if (isMounted) {
-        setDashboardP2PTransfers(records);
+      }).catch(() => loadLocalP2PTransferHistory(userProfile.id, userNumericId));
+      if (isMounted && Array.isArray(records)) {
+        setDashboardP2PTransfers(deduplicateP2PTransferRecords(records));
       }
     };
     syncP2PHistory();
-    window.addEventListener('bft-p2p-history-updated', syncP2PHistory);
 
-    const handleNotifReceived = () => {
+    const handleDepositOrProfileUpdate = () => {
       handleRefreshBalanceAfterP2P();
       syncP2PHistory();
     };
-    window.addEventListener('bft-user-notification-received', handleNotifReceived);
+
+    window.addEventListener('bft-p2p-history-updated', syncP2PHistory);
+    window.addEventListener('bft-user-notification-received', handleDepositOrProfileUpdate);
+    window.addEventListener('bft-deposit-processed', handleDepositOrProfileUpdate);
+    window.addEventListener('bft-deposit-completed', handleDepositOrProfileUpdate);
+    window.addEventListener('bft-realtime-profile-update', handleDepositOrProfileUpdate);
 
     let profileChannel: any = null;
     let notifChannel: any = null;
+    let depositChannel: any = null;
     if (userProfile.id && typeof supabase?.channel === 'function') {
       try {
         profileChannel = supabase
@@ -358,6 +368,25 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             }
           )
           .subscribe();
+
+        depositChannel = supabase
+          .channel(`user-dashboard-deposits-${userProfile.id}-${Date.now()}`)
+          .on(
+            'postgres_changes',
+            {
+              event: '*',
+              schema: 'public',
+              table: 'crypto_deposits',
+              filter: `user_id=eq.${userProfile.id}`,
+            },
+            () => {
+              if (isMounted) {
+                handleRefreshBalanceAfterP2P();
+                syncP2PHistory();
+              }
+            }
+          )
+          .subscribe();
       } catch {
         // ignore
       }
@@ -366,12 +395,18 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     return () => {
       isMounted = false;
       window.removeEventListener('bft-p2p-history-updated', syncP2PHistory);
-      window.removeEventListener('bft-user-notification-received', handleNotifReceived);
+      window.removeEventListener('bft-user-notification-received', handleDepositOrProfileUpdate);
+      window.removeEventListener('bft-deposit-processed', handleDepositOrProfileUpdate);
+      window.removeEventListener('bft-deposit-completed', handleDepositOrProfileUpdate);
+      window.removeEventListener('bft-realtime-profile-update', handleDepositOrProfileUpdate);
       if (profileChannel && typeof profileChannel.unsubscribe === 'function') {
         profileChannel.unsubscribe();
       }
       if (notifChannel && typeof notifChannel.unsubscribe === 'function') {
         notifChannel.unsubscribe();
+      }
+      if (depositChannel && typeof depositChannel.unsubscribe === 'function') {
+        depositChannel.unsubscribe();
       }
     };
   }, [userProfile.id, userNumericId]);
@@ -407,8 +442,18 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           userId: currentProfile.id,
           userEmail: currentProfile.email,
         });
-        if (synced.changed) {
-          onUpdateProfile(synced.updatedProfile);
+        const freshSelfBal = Number(supaProfile.self_capital_balance ?? supaProfile.self_balance ?? supaProfile.balance);
+        const hasBalanceChanged = Number.isFinite(freshSelfBal) && Math.abs(freshSelfBal - Number(currentProfile.selfBalance || 0)) > 0.001;
+
+        if (synced.changed || hasBalanceChanged) {
+          const finalProfile: UserProfile = {
+            ...synced.updatedProfile,
+            selfBalance: Number.isFinite(freshSelfBal) ? freshSelfBal : synced.updatedProfile.selfBalance,
+            numericId: supaProfile.numeric_id || synced.updatedProfile.numericId,
+            numeric_id: supaProfile.numeric_id || synced.updatedProfile.numericId,
+          };
+          userProfileRef.current = finalProfile;
+          onUpdateProfile(finalProfile);
           if (onUpdateAccount) {
             for (const acc of synced.updatedAccounts) {
               const prev = accounts.find((a) => a.id === acc.id);
@@ -2788,24 +2833,24 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h4 className="text-xs font-bold uppercase text-white flex items-center gap-1.5">
-                  <Send className="w-4 h-4 text-[#ff8800]" /> P2P Transfers Payment History ({dashboardP2PTransfers.length})
+                  <Send className="w-4 h-4 text-[#ff8800]" /> P2P Transfers Payment History ({dedupedP2PTransfers.length})
                 </h4>
                 <span className="text-[10px] text-slate-400">
                   Self-Capital Ledger (<code className="text-[#ff8800]">transfer_balance_p2p</code>)
                 </span>
               </div>
 
-              {dashboardP2PTransfers.length === 0 ? (
+              {dedupedP2PTransfers.length === 0 ? (
                 <div className="p-4 rounded-xl bg-[#16161b] text-center text-xs text-slate-500">
                   No P2P Self-Capital transfers recorded yet.
                 </div>
               ) : (
                 <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-                  {dashboardP2PTransfers.map((p2p) => {
+                  {dedupedP2PTransfers.map((p2p) => {
                     const isSent = p2p.direction === 'sent' || p2p.type === 'P2P Transfer Sent';
                     return (
                       <div
-                        key={p2p.id}
+                        key={`p2p-ledger-${p2p.id}`}
                         data-testid={`dashboard-p2p-payment-row-${p2p.id}`}
                         className="p-3 rounded-xl bg-[#16161c] border border-white/10 flex items-center justify-between gap-3 text-xs"
                       >

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   X,
   CheckCircle2,
@@ -54,7 +54,7 @@ import {
   validateQuotexPurseAddress,
 } from '../utils/quotexWithdrawalPortal';
 import { soundEngine } from '../utils/soundEffects';
-import { apiSubmitWithdrawal, apiCancelWithdrawal, apiValidate2fa, safeJsonResponse } from '../utils/apiClient';
+import { apiCancelWithdrawal, apiValidate2fa, safeJsonResponse } from '../utils/apiClient';
 import { supabase } from '../utils/supabase';
 import {
   insertSupabaseWithdrawal,
@@ -72,7 +72,9 @@ import { computeUserTradingSummary, filterTradesForActiveAccount } from '../util
 import type { NormalizedPurchaseRecord } from '../config/directDeposit';
 import {
   loadLocalP2PTransferHistory,
+  fetchP2PTransfersFromSupabase,
   resolveUserNumericId,
+  deduplicateP2PTransferRecords,
   type P2PTransferRecord,
 } from '../utils/p2pTransfer';
 
@@ -192,14 +194,23 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
   );
 
   useEffect(() => {
-    const syncP2P = () => {
-      setUserP2PTransfers(
-        loadLocalP2PTransferHistory(userProfile?.id, resolveUserNumericId(userProfile))
-      );
+    let isMounted = true;
+    const syncP2P = async () => {
+      const records = await fetchP2PTransfersFromSupabase({
+        userId: userProfile?.id,
+        userNumericId: resolveUserNumericId(userProfile),
+      }).catch(() => loadLocalP2PTransferHistory(userProfile?.id, resolveUserNumericId(userProfile)));
+
+      if (isMounted && Array.isArray(records)) {
+        setUserP2PTransfers(deduplicateP2PTransferRecords(records));
+      }
     };
     syncP2P();
     window.addEventListener('bft-p2p-history-updated', syncP2P);
-    return () => window.removeEventListener('bft-p2p-history-updated', syncP2P);
+    return () => {
+      isMounted = false;
+      window.removeEventListener('bft-p2p-history-updated', syncP2P);
+    };
   }, [userProfile?.id, userProfile?.numericId]);
 
   const [error, setError] = useState<string | null>(null);
@@ -216,6 +227,8 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
   const [showTwoFactorModal, setShowTwoFactorModal] = useState<boolean>(false);
   const [withdrawalTotpCode, setWithdrawalTotpCode] = useState<string>('');
   const [isVerifyingTotp, setIsVerifyingTotp] = useState<boolean>(false);
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const isSubmittingRef = useRef<boolean>(false);
   const [totpError, setTotpError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -497,6 +510,9 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
 
   const proceedWithdrawalSubmission = async () => {
     if (!account) return;
+    isSubmittingRef.current = true;
+    setIsSubmitting(true);
+
     const walletAddr =
       paymentMethod === 'crypto_trc20'
         ? purseAddress.trim()
@@ -513,7 +529,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
       const countdownEndsAtMs = nowMs + 60 * 60 * 1000;
       const countdownEndsAtIso = new Date(countdownEndsAtMs).toISOString();
 
-      // 1. Insert into Supabase `withdrawals` table using the exact column schema
+      // 1. Insert into Supabase `withdrawals` table atomically as the single authoritative source of truth
       const supaInsertRes = await insertSupabaseWithdrawal({
         userId: userProfile?.id || account.ownerId,
         userEmail: userProfile?.email,
@@ -540,20 +556,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
         return;
       }
 
-      // 2. Non-blocking sync to local backend API (never block valid Supabase withdrawal if local SQLite balance differs)
-      try {
-        await apiSubmitWithdrawal({
-          accountId: account.id,
-          amount,
-          walletAddress: walletAddr,
-          network: paymentMethod === 'crypto_trc20' ? network : 'SWIFT/SEPA',
-          paymentMethod,
-        });
-      } catch {
-        // Non-blocking fallback
-      }
-
-      // Keep status: 'pending' until admin marks it as 'completed' in Supabase.
+      // Single authoritative record created: keep status 'pending' until admin processes in Supabase
       const insertedRowId = supaInsertRes.row?.id ? String(supaInsertRes.row.id) : null;
       const reqId = insertedRowId || `WD-${Math.floor(1000000 + Math.random() * 8999999)}`;
       const refNum =
@@ -592,7 +595,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
         timeElapsedSeconds: 0,
       };
 
-      // 3. Immediately deduct requested amount from active account balance in local UI and database
+      // 2. Immediately deduct requested amount from active account balance in local UI and database
       if (userProfile) {
         const deductionRes = computeWithdrawalDeduction({
           account,
@@ -629,11 +632,17 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
     } catch (err: any) {
       setError(err?.message || 'Failed to submit withdrawal request.');
       soundEngine.playErrorAlert();
+    } finally {
+      setIsSubmitting(false);
+      isSubmittingRef.current = false;
+      setIsVerifyingTotp(false);
     }
   };
 
   const handleConfirmWithdrawalWith2fa = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting || isSubmittingRef.current || isVerifyingTotp) return;
+
     const cleanCode = withdrawalTotpCode.replace(/\D/g, '').trim();
     if (cleanCode.length !== 6) {
       setTotpError('Please enter the full 6-digit code from Google Authenticator.');
@@ -642,6 +651,8 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
     }
 
     setIsVerifyingTotp(true);
+    setIsSubmitting(true);
+    isSubmittingRef.current = true;
     setTotpError(null);
 
     try {
@@ -656,20 +667,24 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
         setTotpError(data.error || 'Invalid 6-digit verification code. Please check your Google Authenticator app and try again.');
         soundEngine.playErrorAlert();
         setIsVerifyingTotp(false);
+        setIsSubmitting(false);
+        isSubmittingRef.current = false;
         return;
       }
 
       setShowTwoFactorModal(false);
-      setIsVerifyingTotp(false);
       await proceedWithdrawalSubmission();
     } catch (err: any) {
       setTotpError(err?.message || '2FA verification failed. Please try again.');
       setIsVerifyingTotp(false);
+      setIsSubmitting(false);
+      isSubmittingRef.current = false;
     }
   };
 
   const handleRequestWithdrawal = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting || isSubmittingRef.current) return;
     setError(null);
     setSuccessBanner(null);
 
@@ -1665,33 +1680,44 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                     </div>
                   )}
 
-                  {/* Submission Button (Disabled when a pending request exists or 2FA is disabled) */}
+                  {/* Submission Button (Disabled when a pending request exists, 2FA is disabled, or submitting) */}
                   <div className="pt-2">
                     <button
                       type="submit"
                       data-testid="submit-withdrawal-btn"
-                      disabled={hasActivePending || !is2faActive}
+                      disabled={hasActivePending || !is2faActive || isSubmitting}
                       title={
-                        !is2faActive
+                        isSubmitting
+                          ? 'Processing withdrawal request...'
+                          : !is2faActive
                           ? 'Google Authenticator 2FA is required before submitting a withdrawal'
                           : hasActivePending
                           ? PENDING_WITHDRAWAL_WARNING_MESSAGE
                           : undefined
                       }
                       className={`w-full sm:w-auto min-w-[200px] px-7 py-3 rounded-lg font-bold text-sm flex items-center justify-center gap-2.5 transition-colors ${
-                        hasActivePending || !is2faActive
+                        hasActivePending || !is2faActive || isSubmitting
                           ? 'bg-slate-800 text-slate-400 border border-slate-700 cursor-not-allowed opacity-60'
                           : 'bg-[#2b70ff] hover:bg-[#3b82f6] text-white cursor-pointer'
                       }`}
                     >
-                      <span>
-                        {!is2faActive
-                          ? '2FA Setup Required'
-                          : hasActivePending
-                          ? 'Pending Withdrawal Active'
-                          : 'Confirm Payout Request'}
-                      </span>
-                      <ArrowRight className="w-4 h-4" />
+                      {isSubmitting ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin text-[#2b70ff]" />
+                          <span>Processing...</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>
+                            {!is2faActive
+                              ? '2FA Setup Required'
+                              : hasActivePending
+                              ? 'Pending Withdrawal Active'
+                              : 'Confirm Payout Request'}
+                          </span>
+                          <ArrowRight className="w-4 h-4" />
+                        </>
+                      )}
                     </button>
                   </div>
                 </form>
@@ -2526,12 +2552,21 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
               <div className="flex items-center gap-3 pt-2">
                 <button
                   type="submit"
-                  disabled={withdrawalTotpCode.length !== 6 || isVerifyingTotp}
+                  disabled={withdrawalTotpCode.length !== 6 || isVerifyingTotp || isSubmitting}
                   data-testid="confirm-withdrawal-2fa-btn"
                   className="flex-1 py-3 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] disabled:opacity-50 text-slate-950 font-black text-xs uppercase cursor-pointer transition-colors flex items-center justify-center gap-2"
                 >
-                  <ShieldCheck className="w-4 h-4 stroke-[2.5]" />
-                  <span>{isVerifyingTotp ? 'Verifying...' : 'Authorize Payout'}</span>
+                  {isSubmitting || isVerifyingTotp ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>Processing...</span>
+                    </>
+                  ) : (
+                    <>
+                      <ShieldCheck className="w-4 h-4 stroke-[2.5]" />
+                      <span>Authorize Payout</span>
+                    </>
+                  )}
                 </button>
                 <button
                   type="button"

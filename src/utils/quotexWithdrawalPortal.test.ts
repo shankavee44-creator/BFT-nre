@@ -119,3 +119,93 @@ test('validateQuotexPurseAddress validates BEP20 and TRC20 addresses and QUOTEX_
   const emptyPurse = validateQuotexPurseAddress('', 'BSC (BEP20)', 'USDT');
   assert.equal(emptyPurse.valid, false);
 });
+
+test('buildMergedTransactionLedger strictly deduplicates identical P2P transfers and transaction IDs', () => {
+  const duplicateP2P = [
+    {
+      id: 'P2P-TRANS-1001',
+      senderUserId: 'user-a',
+      senderNumericId: '10000001',
+      receiverUserId: 'user-b',
+      receiverNumericId: '10000002',
+      amount: 50,
+      fee: 0,
+      direction: 'sent' as const,
+      status: 'completed' as const,
+      createdAt: '2026-10-28T12:00:00Z',
+    },
+    {
+      id: 'P2P-TRANS-1001', // Exact duplicate from concurrent fetch or double render
+      senderUserId: 'user-a',
+      senderNumericId: '10000001',
+      receiverUserId: 'user-b',
+      receiverNumericId: '10000002',
+      amount: 50,
+      fee: 0,
+      direction: 'sent' as const,
+      status: 'completed' as const,
+      createdAt: '2026-10-28T12:00:00Z',
+    },
+  ];
+
+  const ledger = buildMergedTransactionLedger(
+    [],
+    [],
+    false,
+    duplicateP2P as unknown as any
+  );
+  // Ledger should contain exactly 1 entry for P2P-TRANS-1001
+  const matching = ledger.filter((item) => item.id === 'P2P-TRANS-1001');
+  assert.equal(matching.length, 1);
+  assert.equal(matching[0].type, 'P2P Transfer Sent');
+  assert.equal(matching[0].status, 'Succeeded');
+});
+
+test('buildMergedTransactionLedger strictly deduplicates withdrawal requests with duplicate IDs', () => {
+  const duplicateWithdrawals: WithdrawalRequest[] = [
+    {
+      id: 'WD-55555',
+      accountId: 'BFT-91823',
+      amount: 500,
+      withdrawalFee: 50,
+      netReceivedAmount: 450,
+      profitSplitApplied: 90,
+      paymentMethod: 'crypto_trc20',
+      trc20Address: '0x71C94F8B92E1048A3B99D2E54C1A82F901D3E84A',
+      requestedAt: Date.UTC(2026, 9, 28, 14, 0, 0),
+      countdownEndsAt: Date.UTC(2026, 9, 28, 15, 0, 0),
+      status: 'pending',
+      isDoublePayoutEligible: false,
+      timeElapsedSeconds: 0,
+      referenceNumber: '0xREF-55555',
+    },
+    {
+      id: 'WD-55555', // Duplicate row
+      accountId: 'BFT-91823',
+      amount: 500,
+      withdrawalFee: 50,
+      netReceivedAmount: 450,
+      profitSplitApplied: 90,
+      paymentMethod: 'crypto_trc20',
+      trc20Address: '0x71C94F8B92E1048A3B99D2E54C1A82F901D3E84A',
+      requestedAt: Date.UTC(2026, 9, 28, 14, 0, 0),
+      countdownEndsAt: Date.UTC(2026, 9, 28, 15, 0, 0),
+      status: 'pending',
+      isDoublePayoutEligible: false,
+      timeElapsedSeconds: 0,
+      referenceNumber: '0xREF-55555',
+    },
+  ];
+
+  const ledger = buildMergedTransactionLedger(
+    duplicateWithdrawals,
+    [],
+    false,
+    []
+  );
+
+  const matching = ledger.filter((item) => item.id === 'WD-55555');
+  assert.equal(matching.length, 1);
+  assert.equal(matching[0].type, 'Payout');
+  assert.equal(matching[0].amount, 450);
+});

@@ -277,6 +277,19 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
       // Prepend to deposit history
       setDepositHistory((prev) => [{ ...savedRecord, status: statusLabel }, ...prev]);
 
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('bft-deposit-processed', {
+            detail: { userId: userProfile?.id, amount: cleanAmount, record: savedRecord },
+          })
+        );
+        window.dispatchEvent(
+          new CustomEvent('bft-realtime-profile-update', {
+            detail: { userId: userProfile?.id },
+          })
+        );
+      }
+
       // Notify parent account handler ONLY when verified on-chain AND accountType === 'self_funded'
       if (targetAccount && isVerifiedPaid && accountType === 'self_funded') {
         onCreditAccountDeposit(targetAccount.id, cleanAmount, savedRecord);

@@ -411,11 +411,29 @@ export function buildMergedTransactionLedger(
   const mappedUserPurchases = (purchases || []).map(mapPurchaseRecordToQuotexTransaction);
   const mappedP2PTransfers = (p2pTransfers || []).map(mapP2PTransferToQuotexTransaction);
 
-  const combinedUserLedger = [
+  const rawUserLedger = [
     ...mappedP2PTransfers,
     ...mappedUserWithdrawals,
     ...mappedUserPurchases,
   ];
+
+  // Strictly deduplicate by ID and semantic signature so no duplicate entries appear in the UI ledger
+  const seenUserIds = new Set<string>();
+  const seenSemantic = new Set<string>();
+  const combinedUserLedger: QuotexTransactionItem[] = [];
+  for (const item of rawUserLedger) {
+    if (item && item.id) {
+      if (seenUserIds.has(item.id)) continue;
+
+      const timeWindow = Number.isFinite(item.timestamp) ? Math.floor(item.timestamp / 30000) : 0;
+      const semKey = `${item.type}_${item.signedAmountFormatted}_${timeWindow}`;
+      if (seenSemantic.has(semKey)) continue;
+
+      seenUserIds.add(item.id);
+      seenSemantic.add(semKey);
+      combinedUserLedger.push(item);
+    }
+  }
 
   if (!includeDemoHistory) {
     return combinedUserLedger.sort((a, b) => b.timestamp - a.timestamp);

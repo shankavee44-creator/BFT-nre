@@ -1198,6 +1198,15 @@ export async function resolveSupabaseWithdrawalUserUuid(params: {
   userId?: string;
   userEmail?: string;
 }): Promise<string> {
+  if (params.userId && UUID_REGEX.test(params.userId.trim())) {
+    cachedSupabaseProfileUuid = params.userId.trim();
+    return params.userId.trim();
+  }
+
+  if (cachedSupabaseProfileUuid && UUID_REGEX.test(cachedSupabaseProfileUuid)) {
+    return cachedSupabaseProfileUuid;
+  }
+
   try {
     const {
       data: { user },
@@ -1208,14 +1217,6 @@ export async function resolveSupabaseWithdrawalUserUuid(params: {
     }
   } catch {
     // ignore
-  }
-
-  if (params.userId && UUID_REGEX.test(params.userId)) {
-    return params.userId.trim();
-  }
-
-  if (cachedSupabaseProfileUuid && UUID_REGEX.test(cachedSupabaseProfileUuid)) {
-    return cachedSupabaseProfileUuid;
   }
 
   if (params.userEmail) {

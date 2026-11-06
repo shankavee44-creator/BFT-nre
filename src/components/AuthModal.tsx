@@ -445,8 +445,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
 
     try {
-      // 1. Attempt Supabase Auth Sign Up with metadata for the trigger (full_name & referral_code)
-      // Note: Do NOT manually insert into `profiles` after signUp because `handle_new_user_signup` trigger handles it automatically.
+      // 1. Attempt Supabase Auth Sign Up with metadata for the trigger (full_name, referral_code, numeric_id)
+      const generatedNumericId = String(Math.floor(10000000 + Math.random() * 90000000));
       let { data, error: signUpError } = await supabase.auth.signUp({
         email: cleanEmail,
         password,
@@ -454,6 +454,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           data: {
             full_name: cleanFullName,
             referral_code: sponsorCode,
+            numeric_id: generatedNumericId,
           },
         },
       });
