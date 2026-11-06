@@ -28,6 +28,7 @@ import {
   validateCandlesForAsset,
   getSynchronizedNowMs,
 } from '../utils/priceFeedEngine';
+import { getDevicePerformanceProfile } from '../utils/devicePerformance';
 import { TradeBadge } from './TradeBadge';
 
 export interface LightweightTradingChartProps {
@@ -91,7 +92,8 @@ export function prepareLightweightBars(
 ): FormattedBar[] {
   if (!candles || candles.length === 0) return [];
   if (asset && !validateCandlesForAsset(asset, candles)) return [];
-  const maxBars = typeof window !== 'undefined' && window.innerWidth < 768 ? 280 : 500;
+  const perf = getDevicePerformanceProfile();
+  const maxBars = perf.recommendedMaxCandles;
   const windowed = candles.length > maxBars ? candles.slice(-maxBars) : candles;
   const source = chartType === 'heikin-ashi' ? calculateHeikinAshi(windowed) : windowed;
   const bySec = new Map<number, FormattedBar>();
@@ -157,6 +159,7 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
   const firstFormattedBarRef = useRef<FormattedBar | null>(null);
   const lastFormattedBarRef = useRef<FormattedBar | null>(null);
   const lastPriceYRef = useRef<number>(0);
+  const lastCoordUpdateMsRef = useRef<number>(0);
 
   const [badgeCoords, setBadgeCoords] = useState<Record<string, { y: number; x: number }>>({});
   const [resultBadgeCoords, setResultBadgeCoords] = useState<{ y: number; x: number } | null>(null);
@@ -203,6 +206,15 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
   const updateCoordinates = useCallback(() => {
     if (!seriesRef.current || !chartRef.current) return;
     if (lastLoadedSymbolRef.current !== asset.symbol) return;
+
+    const perf = getDevicePerformanceProfile();
+    if (perf.isLowEnd && perf.chartUpdateThrottleMs > 0) {
+      const nowMs = performance.now();
+      if (nowMs - lastCoordUpdateMsRef.current < perf.chartUpdateThrottleMs) {
+        return;
+      }
+      lastCoordUpdateMsRef.current = nowMs;
+    }
 
     const series = seriesRef.current;
     const timeScale = chartRef.current.timeScale();

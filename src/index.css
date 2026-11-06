@@ -137,29 +137,76 @@ canvas,
   touch-action: manipulation;
 }
 
+/* =========================================================================
+   ADAPTIVE HARDWARE OPTIMIZATION: LOW-END VS HIGH-END MOBILE ENGINE
+   ========================================================================= */
+
+/* Zero touch latency across all mobile interactive controls */
+button,
+a,
+input,
+select,
+[role="button"],
+.bft-touch-scale {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 1. Low-End Mobile Hardware Policy: Eliminate heavy GPU filters & throttle CPU */
+html.perf-mode-low,
+.perf-mode-low {
+  --bft-backdrop-blur: none;
+}
+
+html.perf-mode-low .backdrop-blur-2xl,
+html.perf-mode-low .backdrop-blur-xl,
+html.perf-mode-low .backdrop-blur-lg,
+html.perf-mode-low .backdrop-blur-md,
+html.perf-mode-low .backdrop-blur-sm,
+html.perf-mode-low .backdrop-blur,
+html.perf-mode-low [class*="backdrop-blur-"],
+html.perf-mode-low .glass-panel {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background-color: rgba(12, 13, 18, 0.98) !important;
+}
+
+/* Eliminate expensive multi-layered box-shadows on low-end hardware */
+html.perf-mode-low .shadow-2xl,
+html.perf-mode-low .shadow-xl,
+html.perf-mode-low .shadow-lg,
+html.perf-mode-low [class*="shadow-[0_"] {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6) !important;
+}
+
+/* Pause non-essential infinite animations on low-end hardware to keep CPU & battery cool */
+html.perf-mode-low .animate-bft-float,
+html.perf-mode-low .animate-marquee,
+html.perf-mode-low .animate-pulse,
+html.perf-mode-low .animate-bounce {
+  animation: none !important;
+}
+
+/* 2. High-End Mobile Hardware Policy: Enable crisp glassmorphism & 60fps/120fps transitions */
+html.perf-mode-high,
+.perf-mode-high {
+  --bft-backdrop-blur: blur(14px);
+}
+
+html.perf-mode-high .glass-panel {
+  background: rgba(16, 16, 20, 0.90);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 136, 0, 0.25);
+}
+
 /* Mobile GPU Acceleration, Unfreeze Scroll & Render Optimization (< 1024px) */
 @media (max-width: 1023px) {
   * {
     -webkit-tap-highlight-color: transparent;
   }
 
-  /* Disable heavy GPU backdrop blurs on mobile/tablet to fix UI lag and unfreeze scroll */
-  .backdrop-blur-2xl,
-  .backdrop-blur-xl,
-  .backdrop-blur-lg,
-  .backdrop-blur-md,
-  .backdrop-blur-sm,
-  .backdrop-blur,
-  [class*="backdrop-blur-"] {
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-    background-color: rgba(10, 10, 10, 0.98) !important;
-  }
-
-  .glass-panel {
-    background-color: rgba(12, 13, 18, 0.98) !important;
-  }
-
+  /* Safe touch scrolling containers without rubber-band locks */
   .overflow-y-auto,
   .overflow-x-auto,
   .overflow-auto,
@@ -170,13 +217,6 @@ canvas,
     -webkit-overflow-scrolling: touch !important;
     overscroll-behavior-y: contain !important;
     touch-action: pan-y pan-x;
-  }
-
-  .shadow-2xl,
-  .shadow-xl,
-  .shadow-lg,
-  .shadow-md {
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important;
   }
 
   .hw-accelerate,
