@@ -100,7 +100,8 @@ export interface CopierEligibilityResult {
     | 'DEMO_ACCOUNT_BARRED'
     | 'ACCOUNT_INACTIVE'
     | 'NO_ACCOUNT'
-    | 'ACCOUNT_TYPE_MISMATCH';
+    | 'ACCOUNT_TYPE_MISMATCH'
+    | 'ACCOUNT_INSUFFICIENT_BALANCE';
   accountCategory: 'instant_funded' | 'self_capital' | 'challenge' | 'demo' | 'none';
   accountLabel: string;
   availableBalance: number;
@@ -526,12 +527,24 @@ export function evaluateSingleAccountCopyEligibility(params: {
     };
   }
 
+  const curBal = Number(account.currentBalance ?? accountSize);
+  if (curBal <= 0) {
+    return {
+      eligible: false,
+      code: 'ACCOUNT_INSUFFICIENT_BALANCE',
+      accountCategory: 'instant_funded',
+      accountLabel: `Instant Funded $${(accountSize / 1000).toFixed(0)}K`,
+      availableBalance: curBal,
+      reason: 'Insufficient Account Balance: Your account balance is $0.00. Please deposit funds or select an active account with sufficient balance to copy trades.',
+    };
+  }
+
   return {
     eligible: true,
     code: 'ELIGIBLE_INSTANT_FUNDED',
     accountCategory: 'instant_funded',
     accountLabel: `Instant Funded $${(accountSize / 1000).toFixed(0)}K`,
-    availableBalance: Number(account.currentBalance || accountSize),
+    availableBalance: curBal,
     reason: `Eligible active $${(accountSize / 1000).toFixed(0)}K Instant Funded account verified.`,
   };
 }

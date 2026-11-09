@@ -1,783 +1,1007 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   X,
+  Flame,
+  Wallet,
+  Building2,
+  Hexagon,
+  ChevronRight,
+  ChevronLeft,
   Copy,
   Check,
-  Zap,
-  RefreshCw,
-  CheckCircle2,
-  AlertCircle,
-  ShieldCheck,
-  Wallet,
-  ExternalLink,
-  History,
-  ArrowRight,
+  AlertTriangle,
   Clock,
+  Loader2,
+  Upload,
+  Ticket,
+  CheckCircle2,
+  BadgeDollarSign,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { TradingAccount, UserProfile } from '../types';
-import { isPersonalLiveAccount } from '../utils/propRules';
 import {
-  DIRECT_USDT_TRC20_CONFIG,
-  DEPOSIT_EXPIRY_MS,
   CryptoDepositAccountType,
-  buildPackageSku,
-  buildCryptoDepositPayload,
-  validateDirectDepositAmount,
-  mapPurchaseRecord,
   NormalizedPurchaseRecord,
-  evaluateDepositStatusWithExpiry,
-  formatDepositCountdown,
 } from '../config/directDeposit';
-import { apiSubmitCryptoDeposit, apiVerifyCryptoDeposits, safeJsonResponse } from '../utils/apiClient';
-import { supabase } from '../utils/supabase';
-import { expireStaleSupabaseCryptoDeposits } from '../utils/supabaseRealtimeSync';
+import { apiSubmitCryptoDeposit } from '../utils/apiClient';
+import { PaymentIcon } from './icons/PaymentLogos';
+
+export type DepositCategoryType = 'popular' | 'epay' | 'banks' | 'crypto';
+
+export interface DepositMethodItem {
+  id: string;
+  name: string;
+  categories: DepositCategoryType[];
+  minDeposit: string;
+  rawMinDeposit: number;
+  maxDeposit: number;
+  icon: string;
+  networkLabel?: string;
+  warningText?: string;
+  walletAddress?: string;
+  bankDetails?: {
+    bankName: string;
+    accountName: string;
+    accountNumber: string;
+    branch?: string;
+  };
+  isRegionalDisabled?: boolean;
+  disabledNotice?: string;
+}
+
+export const DEPOSIT_METHODS: DepositMethodItem[] = [
+  {
+    id: 'usdt_trc20',
+    name: 'USDT (TRC-20)',
+    categories: ['popular', 'crypto'],
+    minDeposit: 'Min. $10.00',
+    rawMinDeposit: 10,
+    maxDeposit: 50000,
+    icon: '₮',
+    networkLabel: 'TRC20 USDT',
+    warningText: 'Only TRC20 USDT. Do not send TRX, smart contracts or other coins — they will be lost.',
+    walletAddress: 'TWr3rLWrWGBcfwix5osJwAwMXmpcu4PNSp',
+  },
+  {
+    id: 'commercial_bank',
+    name: 'Sri Lanka Banks',
+    categories: ['popular', 'banks'],
+    minDeposit: 'Min. $10.00',
+    rawMinDeposit: 10,
+    maxDeposit: 50000,
+    icon: '🏦',
+    networkLabel: 'Commercial Bank (Sri Lanka)',
+    warningText: 'Transfer only to the official Commercial Bank account shown. Keep your deposit slip or screenshot for verification.',
+    bankDetails: {
+      bankName: 'Commercial Bank',
+      accountNumber: '8174001908',
+      accountName: 'A.D.H.W Kumari',
+    },
+  },
+  {
+    id: 'ipay',
+    name: 'Ipay',
+    categories: ['popular', 'epay'],
+    minDeposit: 'Min. $10.00',
+    rawMinDeposit: 10,
+    maxDeposit: 50000,
+    icon: 'iPay',
+    isRegionalDisabled: true,
+    disabledNotice: 'Not available in your region',
+  },
+  {
+    id: 'upay',
+    name: 'UPay',
+    categories: ['popular', 'epay'],
+    minDeposit: 'Min. $10.00',
+    rawMinDeposit: 10,
+    maxDeposit: 50000,
+    icon: 'U',
+    isRegionalDisabled: true,
+    disabledNotice: 'Not available in your region',
+  },
+  {
+    id: 'usdt_polygon',
+    name: 'USDT (Polygon)',
+    categories: ['popular', 'crypto'],
+    minDeposit: 'Min. $10.00',
+    rawMinDeposit: 10,
+    maxDeposit: 50000,
+    icon: '₮',
+    networkLabel: 'Polygon (USDT)',
+    warningText: 'Only Polygon network USDT. Do not send tokens via other chains — they will be lost.',
+    walletAddress: '0x67517c4ff6c010e4893b2234c4628f9e56ca4575',
+  },
+  {
+    id: 'ethereum',
+    name: 'Ethereum (ERC20)',
+    categories: ['popular', 'crypto'],
+    minDeposit: 'Min. $10.00',
+    rawMinDeposit: 10,
+    maxDeposit: 50000,
+    icon: 'Ξ',
+    networkLabel: 'Ethereum (ERC20)',
+    warningText: 'Only Ethereum (ERC20) USDT/ETH. Do not send unverified smart contracts — they will be lost.',
+    walletAddress: '0x67517c4ff6c010e4893b2234c4628f9e56ca4575',
+  },
+  {
+    id: 'arbitrum',
+    name: 'Arbitrum One',
+    categories: ['popular', 'crypto'],
+    minDeposit: 'Min. $10.00',
+    rawMinDeposit: 10,
+    maxDeposit: 50000,
+    icon: 'A',
+    networkLabel: 'Arbitrum One',
+    warningText: 'Only Arbitrum One network deposits. Sending via unsupported networks will result in permanent loss.',
+    walletAddress: '0x67517c4ff6c010e4893b2234c4628f9e56ca4575',
+  },
+  {
+    id: 'aptos',
+    name: 'Aptos',
+    categories: ['popular', 'crypto'],
+    minDeposit: 'Min. $10.00',
+    rawMinDeposit: 10,
+    maxDeposit: 50000,
+    icon: 'APT',
+    networkLabel: 'Aptos Network',
+    warningText: 'Ensure you only use this address for deposits on the Aptos network. Assets sent via the Sui network to this address will result in permanent loss.',
+    walletAddress: '0xbd1d3f8f90be020831202ab4cfc816d1650e29c02c1f9e175497db505696db44',
+  },
+  {
+    id: 'okt',
+    name: 'OKT Chain',
+    categories: ['crypto'],
+    minDeposit: 'Min. $10.00',
+    rawMinDeposit: 10,
+    maxDeposit: 50000,
+    icon: 'OKT',
+    networkLabel: 'OKT Chain',
+    warningText: 'Only OKT Chain network deposits. Verify the network before confirming your withdrawal.',
+    walletAddress: '0x67517c4ff6c010e4893b2234c4628f9e56ca4575',
+  },
+  {
+    id: 'litecoin',
+    name: 'Litecoin (LTC)',
+    categories: ['crypto'],
+    minDeposit: 'Min. $10.00',
+    rawMinDeposit: 10,
+    maxDeposit: 50000,
+    icon: 'Ł',
+    networkLabel: 'Litecoin Network',
+    warningText: 'Only Litecoin (LTC) network transfers. Do not send other coins to this address.',
+    walletAddress: '0x67517c4ff6c010e4893b2234c4628f9e56ca4575',
+  },
+];
+
+const CATEGORIES: Array<{
+  id: DepositCategoryType;
+  name: string;
+  sectionTitle: string;
+  icon: React.ComponentType<{ className?: string }>;
+}> = [
+  { id: 'popular', name: 'POPULAR', sectionTitle: 'Popular in your region', icon: Flame },
+  { id: 'epay', name: 'E-PAY', sectionTitle: 'E-Pay', icon: Wallet },
+  { id: 'banks', name: 'BANKS', sectionTitle: 'Banks', icon: Building2 },
+  { id: 'crypto', name: 'CRYPTO', sectionTitle: 'Crypto', icon: Hexagon },
+];
+
+const QUICK_AMOUNTS = [150, 200, 300, 500];
 
 interface DirectDepositModalProps {
   isOpen: boolean;
   onClose: () => void;
-  userProfile?: UserProfile | null;
   activeAccount: TradingAccount | null;
   accounts: TradingAccount[];
-  onSelectAccount?: (accountId: string) => void;
+  userProfile?: UserProfile | null;
+  onSelectAccount: (accountId: string) => void;
   onCreditAccountDeposit: (accountId: string, amountUsdt: number, details?: any) => void;
   onPurchaseRecorded?: (purchase: NormalizedPurchaseRecord) => void;
 }
 
-const PRESET_AMOUNTS = [50, 100, 250, 500, 1000, 2500];
-
 export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
   isOpen,
   onClose,
-  userProfile,
   activeAccount,
-  accounts,
-  onCreditAccountDeposit,
-  onPurchaseRecorded,
+  userProfile,
 }) => {
-  const [amountInput, setAmountInput] = useState<string>('250');
-  const [accountType, setAccountType] = useState<CryptoDepositAccountType>('self_funded');
+  const [selectedCategory, setSelectedCategory] = useState<DepositCategoryType>('popular');
+  const [activeMethod, setActiveMethod] = useState<DepositMethodItem | null>(null);
+  const [step, setStep] = useState<'methods' | 'amount' | 'payment'>('methods');
+  const [amountInput, setAmountInput] = useState<string>('100');
+  const [accountType] = useState<CryptoDepositAccountType>('self_funded');
+  const [showBonusInput, setShowBonusInput] = useState<boolean>(false);
+  const [bonusCode, setBonusCode] = useState<string>('');
+  const [bonusApplied, setBonusApplied] = useState<boolean>(false);
+
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [copyToastMessage, setCopyToastMessage] = useState<string | null>(null);
+  const [remainingSeconds, setRemainingSeconds] = useState<number>(24 * 3600 - 5);
+
+  const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [receiptPreviewUrl, setReceiptPreviewUrl] = useState<string | null>(null);
   const [txHashInput, setTxHashInput] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [copiedField, setCopiedField] = useState<'address' | 'amount' | null>(null);
-  const [activeTab, setActiveTab] = useState<'deposit' | 'history'>('deposit');
-  const [depositHistory, setDepositHistory] = useState<any[]>([]);
-  const [qrImgFailed, setQrImgFailed] = useState<boolean>(false);
-  const [isVerifyingTronGrid, setIsVerifyingTronGrid] = useState<boolean>(false);
-  const [nowTickMs, setNowTickMs] = useState<number>(() => Date.now());
+  const [submissionSuccess, setSubmissionSuccess] = useState<string | null>(null);
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
 
-  const personalLiveAccount = accounts.find((acc) => isPersonalLiveAccount(acc)) || null;
-  const targetAccount =
-    (activeAccount && isPersonalLiveAccount(activeAccount) ? activeAccount : null) ||
-    personalLiveAccount ||
-    activeAccount ||
-    accounts[0] ||
-    null;
+  const contentRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
+  const rightScrollContainerRef = useRef<HTMLDivElement | null>(null);
 
-  const depositoryAddress = DIRECT_USDT_TRC20_CONFIG.walletAddress;
-
-  const numericAmount = Math.max(0, parseFloat(amountInput) || 0);
-  const computedPackageName =
-    accountType === 'self_funded'
-      ? `Self-Funded Live Deposit ($${numericAmount.toFixed(2)} USDT)`
-      : targetAccount && !isPersonalLiveAccount(targetAccount)
-      ? `${targetAccount.tierName} ($${targetAccount.size.toLocaleString()})`
-      : `Funded Challenge Evaluation ($${numericAmount.toFixed(2)} USDT)`;
-
-  const computedSku = buildPackageSku({
-    accountType,
-    tier: targetAccount?.tier,
-    sizeOrAmount:
-      accountType === 'challenge' && targetAccount?.size ? targetAccount.size : numericAmount,
-  });
-
+  // Reset or tick countdown timer when in Step 2 ('payment')
   useEffect(() => {
     if (!isOpen) return;
-    const timer = setInterval(() => {
-      setNowTickMs(Date.now());
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [isOpen]);
-
-  // Load crypto_deposits history when modal is opened or tab switched
-  useEffect(() => {
-    if (!isOpen) return;
-    setErrorMessage(null);
-    setSuccessMessage(null);
-
-    const fetchHistory = async () => {
-      try {
-        const { data: sessionData } = await supabase.auth.getSession();
-        const supaUserId = sessionData?.session?.user?.id || userProfile?.id;
-        if (supaUserId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(supaUserId)) {
-          await expireStaleSupabaseCryptoDeposits(supaUserId).catch(() => {});
-          const { data: supaRows } = await supabase
-            .from('crypto_deposits')
-            .select('*')
-            .eq('user_id', supaUserId)
-            .order('created_at', { ascending: false })
-            .limit(50);
-          if (Array.isArray(supaRows) && supaRows.length > 0) {
-            setDepositHistory(
-              supaRows.map((r: any) => {
-                const evalExpiry = evaluateDepositStatusWithExpiry(r, Date.now(), DEPOSIT_EXPIRY_MS);
-                return {
-                  id: String(r.id),
-                  user_id: r.user_id,
-                  wallet_address: r.wallet_address || depositoryAddress,
-                  amount: Number(r.amount || 0),
-                  package_name: r.package_name || 'Self Funded Capital Deposit',
-                  sku: r.package_sku || r.sku || 'BFT-SELF-CAPITAL',
-                  package_sku: r.package_sku || r.sku || 'BFT-SELF-CAPITAL',
-                  account_type: r.account_type || 'self_funded',
-                  status: evalExpiry.effectiveStatus,
-                  tx_hash: r.tx_hash || null,
-                  created_at: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
-                };
-              })
-            );
-            return;
-          }
-        }
-      } catch {
-        // fallback to local API if available
-      }
-
-      try {
-        const token = localStorage.getItem('bft_jwt_session') || '';
-        const rawBase = import.meta.env.VITE_API_BASE_URL || '';
-        const apiBase = rawBase.includes('.supabase.co/functions') ? '' : rawBase;
-        const res = await fetch(`${apiBase}/api/crypto-deposits`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        });
-        if (res.ok) {
-          const data = await safeJsonResponse(res);
-          if (Array.isArray(data.deposits)) {
-            setDepositHistory(
-              data.deposits.map((d: any) => {
-                const evalExpiry = evaluateDepositStatusWithExpiry(d, Date.now(), DEPOSIT_EXPIRY_MS);
-                return {
-                  ...d,
-                  status: evalExpiry.effectiveStatus,
-                };
-              })
-            );
-          }
-        }
-      } catch {
-        // ignore offline error
-      }
-    };
-
-    fetchHistory();
-  }, [isOpen, activeTab, userProfile?.id, depositoryAddress]);
-
-  if (!isOpen) return null;
-
-  const handleCopyAddress = () => {
-    navigator.clipboard.writeText(depositoryAddress);
-    setCopiedField('address');
-    setTimeout(() => setCopiedField(null), 2000);
-  };
-
-  const handleCopyAmount = () => {
-    navigator.clipboard.writeText(numericAmount.toFixed(2));
-    setCopiedField('amount');
-    setTimeout(() => setCopiedField(null), 2000);
-  };
-
-  const handlePresetSelect = (val: number) => {
-    setAmountInput(String(val));
-    setErrorMessage(null);
-  };
-
-  const handleSubmitDeposit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setErrorMessage(null);
-    setSuccessMessage(null);
-
-    const numAmount = parseFloat(amountInput);
-    const validation = validateDirectDepositAmount(numAmount);
-    if (!validation.valid) {
-      setErrorMessage(validation.error || 'Invalid deposit amount.');
+    if (step !== 'payment') {
+      setRemainingSeconds(24 * 3600 - 5);
       return;
     }
 
+    const timer = setInterval(() => {
+      setRemainingSeconds((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [isOpen, step]);
+
+  if (!isOpen) return null;
+
+  const formatCountdown = (totalSecs: number) => {
+    const hrs = Math.floor(totalSecs / 3600);
+    const mins = Math.floor((totalSecs % 3600) / 60);
+    const secs = totalSecs % 60;
+    return [hrs, mins, secs].map((v) => String(v).padStart(2, '0')).join(':');
+  };
+
+  const handleCategoryClick = (catId: DepositCategoryType) => {
+    setSelectedCategory(catId);
+    const targetEl = contentRefs.current[catId];
+    if (targetEl && rightScrollContainerRef.current) {
+      targetEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
+  const handleSelectMethod = (method: DepositMethodItem) => {
+    if (method.isRegionalDisabled) return;
+    setActiveMethod(method);
+    setStep('amount');
+    setSubmissionSuccess(null);
+    setSubmissionError(null);
+  };
+
+  const handleBackNavigation = () => {
+    setSubmissionError(null);
+    if (step === 'payment') {
+      setStep('amount');
+    } else if (step === 'amount') {
+      setStep('methods');
+      setActiveMethod(null);
+    }
+  };
+
+  const numericAmount = Math.max(0, Number(amountInput) || 0);
+  const minRequired = activeMethod?.rawMinDeposit || 10;
+
+  const handleProceedToPay = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (numericAmount < minRequired) {
+      setSubmissionError(`Minimum deposit amount is $${minRequired.toFixed(2)}.`);
+      return;
+    }
+    setSubmissionError(null);
+    setStep('payment');
+  };
+
+  const triggerCopy = (value: string, fieldKey: string, label: string = 'Copied!') => {
+    if (!value) return;
+    navigator.clipboard.writeText(value).catch(() => {});
+    setCopiedField(fieldKey);
+    setCopyToastMessage(label);
+    setTimeout(() => {
+      setCopiedField((prev) => (prev === fieldKey ? null : prev));
+      setCopyToastMessage((prev) => (prev === label ? null : prev));
+    }, 2200);
+  };
+
+  const handleReceiptFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setReceiptFile(file);
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (typeof reader.result === 'string') {
+        setReceiptPreviewUrl(reader.result);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleConfirmDepositSubmission = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeMethod) return;
+
     setIsSubmitting(true);
+    setSubmissionError(null);
 
     try {
-      const cleanAmount = Number(numAmount.toFixed(2));
-      const cryptoPayload = buildCryptoDepositPayload({
-        userId: userProfile?.id || undefined,
-        accountId: targetAccount?.id || null,
-        walletAddress: depositoryAddress,
-        amount: cleanAmount,
-        packageName: computedPackageName,
-        sku: computedSku,
-        accountType,
-        txHash: txHashInput.trim() || undefined,
-      });
+      const targetAddress =
+        activeMethod.walletAddress ||
+        (activeMethod.bankDetails
+          ? `${activeMethod.bankDetails.bankName} - ${activeMethod.bankDetails.accountNumber} (${activeMethod.bankDetails.accountName})`
+          : '');
 
-      // Submit to crypto_deposits & transactions as 'pending', and check gateway/blockchain verification.
-      // Never credit balances on an unverified click.
-      const data = await apiSubmitCryptoDeposit({
+      await apiSubmitCryptoDeposit({
         userId: userProfile?.id,
         email: userProfile?.email,
-        amount: cleanAmount,
-        packageName: computedPackageName,
-        sku: computedSku,
+        amount: numericAmount,
+        packageName: `Self-Funded Deposit via ${activeMethod.name} ($${numericAmount.toFixed(2)})`,
+        sku: `DEPOSIT_${activeMethod.id.toUpperCase()}`,
         accountType,
-        accountId: targetAccount?.id || undefined,
-        walletAddress: depositoryAddress,
-        txHash: txHashInput.trim() || undefined,
+        accountId: activeAccount?.id,
+        walletAddress: targetAddress,
+        network: activeMethod.name,
+        receiptUrl: receiptPreviewUrl || undefined,
+        txHash: txHashInput.trim() || (receiptFile ? `SLIP:${receiptFile.name}` : undefined),
+        status: 'pending',
       });
 
-      if (!data.ok) {
-        throw new Error(data.error || 'Failed to save pending deposit record.');
-      }
-
-      const isVerifiedPaid = Boolean(
-        data.verified && (data.deposit?.status === 'completed' || data.deposit?.status === 'active')
+      setSubmissionSuccess(
+        `Deposit request for $${numericAmount.toFixed(2)} via ${activeMethod.name} submitted! Our finance team will verify and credit your account shortly.`
       );
-
-      const savedRecord = data.deposit || {
-        ...cryptoPayload,
-        id: `DEP-${Date.now().toString(36).toUpperCase()}`,
-        status: isVerifiedPaid ? 'completed' : 'pending',
-        created_at: Date.now(),
-        expires_at: Date.now() + DEPOSIT_EXPIRY_MS,
-      };
-
-      const statusLabel = isVerifiedPaid ? savedRecord.status || 'completed' : 'pending';
-      const normalizedPurchase = mapPurchaseRecord({
-        ...savedRecord,
-        package_id: computedSku,
-        package_sku: computedSku,
-        package_name: computedPackageName,
-        amount: cleanAmount,
-        package_amount: cleanAmount,
-        account_type: accountType,
-        status: statusLabel,
-      });
-      onPurchaseRecorded?.(normalizedPurchase);
-
-      setSuccessMessage(
-        isVerifiedPaid
-          ? `TronGrid TRC-20 transfer verified! Deposit ${savedRecord.id} marked completed (${savedRecord.sku} • ${savedRecord.account_type} • $${cleanAmount.toFixed(2)} USDT).${
-              accountType === 'self_funded'
-                ? ` Credited +$${cleanAmount.toFixed(2)} to your Self-Capital Balance.`
-                : ''
-            }`
-          : `Pending record saved to crypto_deposits & transactions (${savedRecord.sku} • ${savedRecord.account_type} • $${cleanAmount.toFixed(2)} USDT • Status: PENDING). Balance crediting and account provisioning only occur after Cryptomus / TRC-20 blockchain confirmation. Unpaid pending orders automatically expire to FAILED after 60 minutes.`
-      );
-      setTxHashInput('');
-
-      // Prepend to deposit history
-      setDepositHistory((prev) => [{ ...savedRecord, status: statusLabel }, ...prev]);
-
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(
-          new CustomEvent('bft-deposit-processed', {
-            detail: { userId: userProfile?.id, amount: cleanAmount, record: savedRecord },
-          })
-        );
-        window.dispatchEvent(
-          new CustomEvent('bft-realtime-profile-update', {
-            detail: { userId: userProfile?.id },
-          })
-        );
-      }
-
-      // Notify parent account handler ONLY when verified on-chain AND accountType === 'self_funded'
-      if (targetAccount && isVerifiedPaid && accountType === 'self_funded') {
-        onCreditAccountDeposit(targetAccount.id, cleanAmount, savedRecord);
-      }
     } catch (err: any) {
-      setErrorMessage(err?.message || 'Deposit submission failed. Please try again.');
+      setSubmissionError(err?.message || 'Failed to submit deposit proof. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleVerifyPendingWithTronGrid = async () => {
-    setIsVerifyingTronGrid(true);
-    setErrorMessage(null);
-    try {
-      const verifyData = await apiVerifyCryptoDeposits({
-        userId: userProfile?.id,
-        email: userProfile?.email,
-      });
-      if (verifyData?.ok && Array.isArray(verifyData.deposits)) {
-        setDepositHistory(
-          verifyData.deposits.map((d: any) => {
-            const evalExpiry = evaluateDepositStatusWithExpiry(d, Date.now(), DEPOSIT_EXPIRY_MS);
-            return {
-              ...d,
-              status: evalExpiry.effectiveStatus,
-            };
-          })
-        );
-      }
-
-      if ((verifyData?.matchedCount ?? 0) > 0 && Array.isArray(verifyData.completedDeposits)) {
-        for (const comp of verifyData.completedDeposits) {
-          if (comp.accountType === 'self_funded' && targetAccount && comp.amount > 0) {
-            onCreditAccountDeposit(targetAccount.id, Number(comp.amount), comp.deposit);
-          }
-        }
-        setSuccessMessage(
-          `Verified ${verifyData.matchedCount} USDT (TRC-20) payment(s) via TronGrid! Status updated to completed.`
-        );
-        setIsVerifyingTronGrid(false);
-        return;
-      }
-
-      const expiredNote =
-        (verifyData?.expiredCount ?? 0) > 0
-          ? ` (${verifyData.expiredCount} expired pending order(s) > 60m marked as FAILED).`
-          : '';
-
-      setSuccessMessage(
-        `Checked TronGrid TRC-20 endpoint for ${depositoryAddress}: ${
-          verifyData?.remainingPendingCount ??
-          depositHistory.filter((d) => d.status === 'pending').length
-        } pending deposit(s) awaiting matching blockchain transfer.${expiredNote}`
-      );
-    } catch (err: any) {
-      setErrorMessage(err?.message || 'TronGrid TRC-20 verification failed.');
-    } finally {
-      setIsVerifyingTronGrid(false);
-    }
-  };
+  const qrValue = activeMethod?.walletAddress
+    ? activeMethod.walletAddress
+    : activeMethod?.bankDetails
+    ? `Bank: ${activeMethod.bankDetails.bankName} | Acc: ${activeMethod.bankDetails.accountNumber} | Name: ${activeMethod.bankDetails.accountName} | Amount: $${numericAmount.toFixed(2)}`
+    : 'BFT-DEPOSIT';
 
   return (
     <div
-      role="dialog"
-      aria-modal="true"
-      aria-label="Direct USDT TRC-20 Deposit Modal"
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md overflow-y-auto"
+      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/80 backdrop-blur-sm overflow-y-auto"
+      onClick={onClose}
     >
-      <div className="relative w-full max-w-2xl rounded-3xl bg-[#0d0f14] border border-[#ff8800]/50 shadow-2xl p-6 sm:p-8 my-8 text-white">
-        {/* Close Button */}
-        <button
-          onClick={onClose}
-          aria-label="Close deposit modal"
-          data-testid="direct-deposit-close-btn"
-          className="absolute top-4 right-4 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
-        >
-          <X className="w-5 h-5" />
-        </button>
-
-        {/* Modal Header */}
-        <div className="flex items-center gap-3 mb-5">
-          <div className="w-12 h-12 rounded-xl bg-[#00e676]/15 border border-[#00e676]/40 flex items-center justify-center text-[#00e676]">
-            <Zap className="w-6 h-6 fill-[#00e676]" />
-          </div>
-          <div>
-            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400 font-mono">
-              <span className="text-[#00e676] font-bold">STATIC USDT (TRC-20)</span>
-              <span aria-hidden="true">·</span>
-              <span className="flex items-center gap-1 text-slate-300">
-                <ShieldCheck className="w-3.5 h-3.5 text-[#ff8800]" />
-                TRON Network
-              </span>
-            </div>
-            <h3 className="text-xl font-black text-white mt-0.5">
-              USDT (TRC-20) Deposit & Package Transfer
-            </h3>
-          </div>
-        </div>
-
-        {/* Tabs: Deposit vs History + TronGrid Verification Button */}
-        <div className="flex flex-wrap items-center justify-between gap-2 mb-5 border-b border-white/10 pb-2">
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setActiveTab('deposit')}
-              className={`px-4 py-2 rounded-xl text-xs font-mono font-bold transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap ${
-                activeTab === 'deposit'
-                  ? 'bg-[#ff8800] text-slate-950 shadow-md'
-                  : 'bg-white/5 text-slate-400 hover:text-white hover:bg-white/10'
-              }`}
-            >
-              <Wallet className="w-3.5 h-3.5" />
-              <span>Make Deposit</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('history')}
-              className={`px-4 py-2 rounded-xl text-xs font-mono font-bold transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap ${
-                activeTab === 'history'
-                  ? 'bg-[#ff8800] text-slate-950 shadow-md'
-                  : 'bg-white/5 text-slate-400 hover:text-white hover:bg-white/10'
-              }`}
-            >
-              <History className="w-3.5 h-3.5" />
-              <span>crypto_deposits History ({depositHistory.length})</span>
-            </button>
+      <div
+        data-testid="direct-deposit-modal"
+        onClick={(e) => e.stopPropagation()}
+        className="relative w-full max-w-[850px] rounded-xl bg-[#212634] border border-[#32394e] shadow-2xl flex flex-col text-white overflow-hidden font-sans"
+        style={{ minHeight: '540px', maxHeight: '90vh' }}
+      >
+        {/* Top Modal Header Bar */}
+        <div className="px-6 py-4 flex items-center justify-between border-b border-dashed border-[#363d52] shrink-0">
+          <div className="flex items-center gap-3">
+            {step !== 'methods' && (
+              <button
+                type="button"
+                data-testid="deposit-back-btn"
+                onClick={handleBackNavigation}
+                className="w-7 h-7 rounded-full bg-[#2c3345] hover:bg-[#374057] text-slate-300 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
+                title="Back"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+            )}
+            <h2 className="text-lg sm:text-[19px] font-bold text-white tracking-tight">
+              {step === 'payment' && activeMethod
+                ? `Deposit $${numericAmount.toFixed(2)} via ${activeMethod.name}`
+                : 'Deposit'}
+            </h2>
           </div>
 
           <button
             type="button"
-            onClick={handleVerifyPendingWithTronGrid}
-            disabled={isVerifyingTronGrid}
-            data-testid="verify-trongrid-deposits-btn"
-            className="px-3 py-2 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 text-xs font-mono font-bold flex items-center gap-1.5 cursor-pointer transition-colors whitespace-nowrap"
+            data-testid="close-deposit-modal-btn"
+            onClick={onClose}
+            className="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-white/5 transition-colors cursor-pointer"
+            aria-label="Close deposit modal"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${isVerifyingTronGrid ? 'animate-spin' : ''}`} />
-            <span>{isVerifyingTronGrid ? 'Checking TronGrid...' : 'Verify via TronGrid'}</span>
+            <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Error / Success Banners */}
-        {errorMessage && (
-          <div className="mb-4 p-3.5 rounded-xl bg-rose-950/90 border border-rose-500/60 text-xs text-rose-200 font-mono flex items-start gap-2.5">
-            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-            <span>{errorMessage}</span>
-          </div>
-        )}
-
-        {successMessage && (
+        {/* Floating Copy Notification Toast */}
+        {copyToastMessage && (
           <div
-            data-testid="crypto-deposit-success-banner"
-            className="mb-4 p-3.5 rounded-xl bg-emerald-950/90 border border-emerald-500/60 text-xs text-emerald-200 font-mono flex items-start gap-2.5"
+            data-testid="deposit-copy-toast"
+            className="fixed top-6 left-1/2 -translate-x-1/2 z-[70] px-4 py-2 rounded-lg bg-[#10b969] text-white font-bold text-xs shadow-xl flex items-center gap-2 animate-in fade-in duration-150"
           >
-            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-            <span>{successMessage}</span>
+            <Check className="w-4 h-4 stroke-[2.5]" />
+            <span>{copyToastMessage}</span>
           </div>
         )}
 
-        {activeTab === 'deposit' ? (
-          <div className="space-y-5">
-            {/* Transfer Summary Card: Exact Amount, Package Name, SKU, Account Type */}
-            <div className="p-4 rounded-2xl bg-[#141720] border border-white/10 space-y-2.5 font-mono tabular-nums">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-400">Package Name</span>
-                <span
-                  data-testid="deposit-package-name"
-                  className="text-white font-bold text-right"
-                >
-                  {computedPackageName}
-                </span>
-              </div>
+        {/* ================================================================= */}
+        {/* VIEW 0: MAIN CATEGORY & PAYMENT METHODS GRID (Screenshot 0 style) */}
+        {/* ================================================================= */}
+        {step === 'methods' && (
+          <div className="flex flex-col md:flex-row flex-1 overflow-hidden">
+            {/* Left Sidebar Categories */}
+            <div className="w-full md:w-[255px] bg-[#212634] p-4 sm:p-5 space-y-2.5 shrink-0 border-b md:border-b-0 md:border-r border-[#2e3548] overflow-x-auto md:overflow-y-auto flex md:block gap-2">
+              {CATEGORIES.map((cat) => {
+                const catMethods = DEPOSIT_METHODS.filter((m) => m.categories.includes(cat.id));
+                const isSelected = selectedCategory === cat.id;
+                const IconComponent = cat.icon;
 
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-400">SKU</span>
-                <span
-                  data-testid="deposit-package-sku"
-                  className="text-[#ff8800] font-bold"
-                >
-                  {computedSku}
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-400">Account Type</span>
-                <div className="flex items-center gap-1.5">
+                return (
                   <button
+                    key={cat.id}
                     type="button"
-                    onClick={() => setAccountType('self_funded')}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
-                      accountType === 'self_funded'
-                        ? 'bg-emerald-500 text-slate-950'
-                        : 'bg-white/5 text-slate-400 hover:text-white'
+                    data-testid={`deposit-category-${cat.id}`}
+                    onClick={() => handleCategoryClick(cat.id)}
+                    className={`w-full min-w-[165px] md:min-w-0 p-3.5 rounded-[10px] text-left transition-all cursor-pointer border ${
+                      isSelected
+                        ? 'bg-[#12b76a] border-[#26d07c] text-white shadow-lg shadow-[#12b76a]/15'
+                        : 'bg-[#262c3c] hover:bg-[#2c3346] border-[#384056] text-white'
                     }`}
                   >
-                    self_funded
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAccountType('challenge')}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
-                      accountType === 'challenge'
-                        ? 'bg-[#ff8800] text-slate-950'
-                        : 'bg-white/5 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    challenge
-                  </button>
-                </div>
-              </div>
+                    <div className="flex items-center gap-2.5">
+                      <IconComponent
+                        className={`w-4 h-4 shrink-0 ${isSelected ? 'text-white' : 'text-white'}`}
+                      />
+                      <span className="font-extrabold text-[13px] tracking-wide uppercase">
+                        {cat.name}
+                      </span>
+                    </div>
 
-              <div className="pt-2.5 border-t border-white/10 flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-200">Exact Amount to Transfer</span>
-                <div className="flex items-center gap-2">
-                  <span
-                    data-testid="deposit-exact-amount"
-                    className="text-lg font-black text-[#00e676]"
-                  >
-                    ${numericAmount.toFixed(2)} USDT
-                  </span>
-                  <button
-                    type="button"
-                    onClick={handleCopyAmount}
-                    aria-label="Copy exact deposit amount"
-                    className="p-1.5 rounded bg-white/10 hover:bg-white/20 text-slate-200 transition-colors cursor-pointer"
-                    title="Copy exact amount"
-                  >
-                    {copiedField === 'amount' ? (
-                      <Check className="w-3.5 h-3.5 text-emerald-400" />
-                    ) : (
-                      <Copy className="w-3.5 h-3.5" />
-                    )}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Static USDT TRC-20 Wallet Address & QR Code */}
-            <div className="p-5 rounded-2xl bg-[#12141c] border border-[#ff8800]/30 flex flex-col md:flex-row gap-6 items-center">
-              {/* QR Code Container */}
-              <div className="w-36 h-36 shrink-0 rounded-xl bg-white p-2 flex items-center justify-center shadow-lg border border-white/20 overflow-hidden">
-                {!qrImgFailed ? (
-                  <img
-                    src={DIRECT_USDT_TRC20_CONFIG.qrCodeImageUrl}
-                    alt={`USDT TRC-20 QR Code for ${depositoryAddress}`}
-                    referrerPolicy="no-referrer"
-                    onError={() => setQrImgFailed(true)}
-                    className="w-full h-full object-contain rounded-lg"
-                  />
-                ) : (
-                  <QRCodeSVG
-                    value={depositoryAddress}
-                    size={128}
-                    level="M"
-                    includeMargin={false}
-                  />
-                )}
-              </div>
-
-              {/* Wallet Info & Copy */}
-              <div className="flex-1 space-y-3 w-full">
-                <div>
-                  <span className="text-[11px] font-mono text-slate-400 block mb-1 flex items-center gap-1.5">
-                    <ShieldCheck className="w-3.5 h-3.5 text-[#ff8800]" />
-                    <span>Static USDT (TRC-20) Depository Wallet Address</span>
-                  </span>
-                  <div className="flex items-center gap-2 p-2.5 rounded-xl bg-[#090b0e] border border-white/15">
-                    <span
-                      data-testid="trc20-depository-address"
-                      className="font-mono text-xs sm:text-sm text-[#ffaa00] font-black break-all select-all flex-1"
-                    >
-                      {depositoryAddress}
-                    </span>
-                    <button
-                      type="button"
-                      data-testid="copy-depository-address-btn"
-                      aria-label="Copy TRC-20 depository address"
-                      onClick={handleCopyAddress}
-                      className="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-[#ff8800] transition-colors shrink-0 cursor-pointer"
-                      title="Copy TRC-20 Address"
-                    >
-                      {copiedField === 'address' ? (
-                        <Check className="w-4 h-4 text-emerald-400" />
-                      ) : (
-                        <Copy className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2 text-xs font-mono text-slate-400">
-                  <span>
-                    Network: <strong className="text-white">TRON (TRC-20)</strong>
-                  </span>
-                  <span aria-hidden="true">·</span>
-                  <span>
-                    Account Type: <strong className="text-emerald-400">{accountType}</strong>
-                  </span>
-                  <a
-                    href={`${DIRECT_USDT_TRC20_CONFIG.explorerAddressUrl}${depositoryAddress}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-[#ff8800] hover:underline flex items-center gap-1 ml-auto"
-                  >
-                    <span>TronScan Explorer</span>
-                    <ExternalLink className="w-3 h-3" />
-                  </a>
-                </div>
-              </div>
-            </div>
-
-            {/* Deposit Form */}
-            <form onSubmit={handleSubmitDeposit} className="space-y-4">
-              <div>
-                <label
-                  htmlFor="direct-deposit-amount-input"
-                  className="block text-xs font-mono font-bold text-slate-300 mb-1.5 flex items-center justify-between"
-                >
-                  <span>1. Enter Exact USDT (TRC-20) Amount to Transfer</span>
-                  <span className="text-[11px] text-slate-400 font-mono">
-                    Limits: $10 - $100,000 USDT
-                  </span>
-                </label>
-
-                {/* Preset Amounts */}
-                <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-2.5">
-                  {PRESET_AMOUNTS.map((preset) => (
-                    <button
-                      key={preset}
-                      type="button"
-                      onClick={() => handlePresetSelect(preset)}
-                      className={`py-1.5 px-3 rounded-lg font-mono text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-                        amountInput === String(preset)
-                          ? 'bg-[#ff8800] text-slate-950 font-black'
-                          : 'bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10'
+                    <div
+                      className={`text-xs mt-0.5 pl-6.5 ${
+                        isSelected ? 'text-white/90 font-medium' : 'text-slate-400'
                       }`}
                     >
-                      ${preset}
-                    </button>
-                  ))}
-                </div>
+                      {catMethods.length} methods
+                    </div>
 
-                {/* Custom Input */}
-                <div className="relative">
-                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 font-mono font-bold">
-                    $
-                  </span>
-                  <input
-                    id="direct-deposit-amount-input"
-                    type="number"
-                    min="10"
-                    max="100000"
-                    step="any"
-                    required
-                    value={amountInput}
-                    onChange={(e) => setAmountInput(e.target.value)}
-                    placeholder="250.00"
-                    className="w-full pl-8 pr-16 py-3 bg-[#0a0a0a] border border-white/20 rounded-xl text-white font-mono text-sm focus:outline-none focus:border-[#ff8800]"
-                  />
-                  <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-mono text-slate-400 font-bold">
-                    USDT
-                  </span>
-                </div>
-              </div>
-
-              <div>
-                <label
-                  htmlFor="direct-deposit-txhash-input"
-                  className="block text-xs font-mono font-bold text-slate-300 mb-1.5 flex items-center justify-between"
-                >
-                  <span>2. Transaction Hash (TxID)</span>
-                  <span className="text-[11px] text-slate-400 font-mono">
-                    Optional but recommended
-                  </span>
-                </label>
-                <input
-                  id="direct-deposit-txhash-input"
-                  type="text"
-                  value={txHashInput}
-                  onChange={(e) => setTxHashInput(e.target.value)}
-                  placeholder="Paste TRON TxHash (e.g. 8f7d6a5e4c3b...)"
-                  className="w-full px-4 py-3 bg-[#0a0a0a] border border-white/20 rounded-xl text-white font-mono text-xs focus:outline-none focus:border-[#ff8800]"
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                data-testid="submit-direct-deposit-btn"
-                className="w-full py-4 px-6 rounded-xl bg-[#00e676] hover:bg-[#00c853] disabled:opacity-60 text-slate-950 font-black text-sm flex items-center justify-center gap-2 cursor-pointer transition-colors font-mono whitespace-nowrap"
-              >
-                {isSubmitting ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>Saving Pending Deposit...</span>
-                  </>
-                ) : (
-                  <>
-                    <CheckCircle2 className="w-4 h-4" />
-                    <span>I have made the payment</span>
-                    <ArrowRight className="w-4 h-4 stroke-[2.5]" />
-                  </>
-                )}
-              </button>
-            </form>
-          </div>
-        ) : (
-          /* crypto_deposits History Tab */
-          <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
-            {depositHistory.length === 0 ? (
-              <div className="py-12 text-center text-slate-500 font-mono text-xs">
-                No crypto_deposits records found yet.
-              </div>
-            ) : (
-              depositHistory.map((item) => {
-                const evalExpiry = evaluateDepositStatusWithExpiry(
-                  item,
-                  nowTickMs,
-                  DEPOSIT_EXPIRY_MS
-                );
-                const liveStatus = evalExpiry.effectiveStatus;
-                const isSuccessStatus =
-                  liveStatus === 'completed' || liveStatus === 'active' || liveStatus === 'approved';
-                const isFailedStatus = liveStatus === 'failed' || liveStatus === 'declined';
-                return (
-                  <div
-                    key={item.id}
-                    data-testid={`crypto-deposit-history-row-${item.id}`}
-                    className="p-3.5 rounded-xl bg-[#141720] border border-white/10 flex items-center justify-between text-xs font-mono tabular-nums"
-                  >
-                    <div className="space-y-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-bold text-white">
-                          ${Number(item.amount).toFixed(2)} USDT
-                        </span>
-                        <span aria-hidden="true">·</span>
-                        <span className="text-[#ff8800] font-bold">
-                          {item.sku || item.package_sku || 'BFT-SELF'}
-                        </span>
-                        <span aria-hidden="true">·</span>
-                        <span className="text-emerald-400">
-                          {item.account_type || 'self_funded'}
-                        </span>
-                      </div>
-                      <div className="text-[11px] text-slate-300">
-                        {item.package_name || 'USDT (TRC-20) Deposit'}
-                      </div>
-                      <div className="text-[10px] text-slate-500">
-                        Wallet: {item.wallet_address || depositoryAddress}
-                      </div>
-                      {liveStatus === 'pending' && (
+                    {/* Mini Method Logo Badges */}
+                    <div className="flex items-center gap-1.5 mt-2.5 pl-6.5 flex-wrap">
+                      {catMethods.slice(0, 5).map((m) => (
                         <div
-                          data-testid={`deposit-expiry-countdown-${item.id}`}
-                          className="inline-flex items-center gap-1 text-[10px] text-[#ffaa00] bg-[#ff8800]/10 border border-[#ff8800]/30 px-2 py-0.5 rounded font-bold mt-1"
+                          key={`${cat.id}-badge-${m.id}`}
+                          className="w-5 h-5 rounded-[4px] bg-white/10 backdrop-blur-xs flex items-center justify-center overflow-hidden p-0.5"
+                          title={m.name}
                         >
-                          <Clock className="w-3 h-3 animate-pulse" />
-                          <span>
-                            1h Expiry: {formatDepositCountdown(evalExpiry.remainingMs)} remaining
-                          </span>
+                          <PaymentIcon id={m.id} compact className="w-4 h-4" />
                         </div>
-                      )}
-                      {isFailedStatus && (
-                        <div className="text-[10px] text-rose-400 font-bold mt-0.5">
-                          Expired (&gt;60m unconfirmed) — Reserved state released
+                      ))}
+                      {catMethods.length > 5 && (
+                        <div
+                          className={`px-1.5 h-5 rounded-[4px] text-[10px] font-bold flex items-center justify-center ${
+                            isSelected
+                              ? 'bg-white/25 text-white'
+                              : 'bg-[#363e54] text-slate-300'
+                          }`}
+                        >
+                          +{catMethods.length - 5}
                         </div>
                       )}
                     </div>
-                    <div className="text-right">
-                      <span
-                        data-testid={`crypto-deposit-status-${item.id}`}
-                        className={`px-2 py-0.5 rounded text-[10px] font-black uppercase border ${
-                          isSuccessStatus
-                            ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
-                            : isFailedStatus
-                            ? 'bg-rose-500/20 text-rose-400 border-rose-500/40'
-                            : 'bg-[#ff8800]/20 text-[#ff8800] border-[#ff8800]/40'
-                        }`}
-                      >
-                        {liveStatus}
-                      </span>
-                      <span className="text-[10px] text-slate-400 block mt-1">
-                        {item.network || 'TRC-20'}
-                      </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Right Categorized Methods Two-Column Grid */}
+            <div
+              ref={rightScrollContainerRef}
+              className="flex-1 p-4 sm:p-6 overflow-y-auto space-y-6 bg-[#212634]"
+            >
+              {CATEGORIES.map((cat) => {
+                const methods = DEPOSIT_METHODS.filter((m) => m.categories.includes(cat.id));
+                if (methods.length === 0) return null;
+
+                return (
+                  <div
+                    key={cat.id}
+                    ref={(el) => {
+                      contentRefs.current[cat.id] = el;
+                    }}
+                    data-testid={`deposit-section-${cat.id}`}
+                  >
+                    <h3 className="text-[15px] font-bold text-white mb-3">
+                      {cat.sectionTitle} ({methods.length})
+                    </h3>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {methods.map((m) => {
+                        const isDisabled = Boolean(m.isRegionalDisabled);
+                        return (
+                          <button
+                            key={`${cat.id}-${m.id}`}
+                            type="button"
+                            data-testid={`deposit-method-card-${m.id}`}
+                            disabled={isDisabled}
+                            onClick={() => handleSelectMethod(m)}
+                            className={`w-full bg-white rounded-[8px] px-4 py-3 flex items-center justify-between text-left transition-all border border-transparent ${
+                              isDisabled
+                                ? 'opacity-75 cursor-not-allowed'
+                                : 'hover:border-[#12b76a] hover:shadow-md cursor-pointer active:scale-[0.99]'
+                            }`}
+                          >
+                            <div className="flex items-center gap-3.5 min-w-0 pr-2">
+                              <PaymentIcon id={m.id} className="w-9 h-9 shrink-0" />
+                              <div className="min-w-0">
+                                <div className="text-[14px] font-medium text-[#222735] truncate leading-snug">
+                                  {m.name}
+                                </div>
+                                {isDisabled ? (
+                                  <div className="text-[11px] font-semibold text-rose-600 leading-tight mt-0.5">
+                                    {m.disabledNotice || 'Not available in your region'}
+                                  </div>
+                                ) : (
+                                  <div className="text-[11.5px] text-slate-400 leading-tight mt-0.5">
+                                    {m.minDeposit}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            <ChevronRight
+                              className={`w-4 h-4 shrink-0 ${
+                                isDisabled ? 'text-slate-300' : 'text-slate-400'
+                              }`}
+                            />
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 );
-              })
-            )}
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ================================================================= */}
+        {/* STEP 1: AMOUNT SELECTION VIEW (Screenshot 1 style)                */}
+        {/* ================================================================= */}
+        {step === 'amount' && activeMethod && (
+          <div className="flex-1 p-5 sm:p-7 overflow-y-auto">
+            <div className="flex flex-col md:flex-row items-start gap-6">
+              {/* Left White Selected Method Card */}
+              <div className="w-full md:w-[240px] bg-white rounded-[8px] p-5 text-[#222735] shadow-md shrink-0">
+                <div className="flex items-center gap-3">
+                  <PaymentIcon id={activeMethod.id} className="w-8 h-8 shrink-0" />
+                  <span className="font-medium text-[15px] text-[#222735] truncate">
+                    {activeMethod.name}
+                  </span>
+                </div>
+
+                <div className="border-b border-dashed border-slate-200 my-4" />
+
+                <div className="space-y-2 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">Min amount:</span>
+                    <span className="font-bold text-[#222735]">
+                      ${activeMethod.rawMinDeposit.toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">Max amount:</span>
+                    <span className="font-bold text-[#222735]">
+                      ${activeMethod.maxDeposit.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  data-testid="change-deposit-method-btn"
+                  onClick={() => {
+                    setStep('methods');
+                    setActiveMethod(null);
+                  }}
+                  className="mt-5 inline-flex items-center gap-2 text-[#0d84ff] hover:underline text-[13px] font-medium cursor-pointer"
+                >
+                  <span className="w-5 h-5 rounded-full bg-[#0d84ff] text-white flex items-center justify-center">
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                  </span>
+                  <span>Change method</span>
+                </button>
+              </div>
+
+              {/* Right Amount Selection Form */}
+              <form onSubmit={handleProceedToPay} className="flex-1 w-full space-y-5">
+                {/* Minimum Amount Warning Notice */}
+                <div className="bg-[#3a312c] border border-[#524338] rounded-[6px] px-3.5 py-2.5 flex items-center gap-2.5 text-xs text-white">
+                  <span className="w-4 h-4 rounded-full bg-[#ff8a00] text-[#212634] font-black text-[11px] flex items-center justify-center shrink-0">
+                    !
+                  </span>
+                  <div>
+                    <span className="font-bold">
+                      Minimum amount – {activeMethod.rawMinDeposit} $.
+                    </span>{' '}
+                    <span className="text-slate-200">Smaller payments won&apos;t be credited.</span>
+                  </div>
+                </div>
+
+                {/* Deposit Amount Input with Floating Label */}
+                <div>
+                  <div className="relative mt-2">
+                    <label className="absolute -top-2.5 left-3 px-1.5 bg-[#212634] text-[11px] text-slate-400">
+                      Deposit amount
+                    </label>
+                    <div className="flex items-center border border-[#454e68] focus-within:border-[#0d84ff] rounded-[6px] px-3.5 py-3 bg-[#212634]">
+                      <input
+                        type="number"
+                        step="any"
+                        min={activeMethod.rawMinDeposit}
+                        max={activeMethod.maxDeposit}
+                        data-testid="deposit-amount-input"
+                        value={amountInput}
+                        onChange={(e) => setAmountInput(e.target.value)}
+                        className="w-full bg-transparent text-white text-[15px] font-medium outline-none"
+                        placeholder="100"
+                      />
+                      <span className="text-slate-400 text-sm font-medium ml-2">$</span>
+                    </div>
+                  </div>
+
+                  {/* Quick-Select Amount Buttons */}
+                  <div className="grid grid-cols-4 gap-2.5 mt-2.5 max-w-[340px]">
+                    {QUICK_AMOUNTS.map((amt) => (
+                      <button
+                        key={amt}
+                        type="button"
+                        data-testid={`quick-amount-${amt}`}
+                        onClick={() => setAmountInput(String(amt))}
+                        className={`py-2 px-3 rounded-[5px] font-bold text-xs transition-colors cursor-pointer ${
+                          Number(amountInput) === amt
+                            ? 'bg-[#0d84ff] text-white'
+                            : 'bg-[#2b3142] hover:bg-[#353d52] text-white'
+                        }`}
+                      >
+                        {amt} $
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Bonus Code Section */}
+                <div className="border border-[#343b4f] bg-[#1d222f] rounded-[8px] px-3.5 py-2.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <Ticket className="w-4 h-4 text-rose-400 shrink-0" />
+                      <span className="text-xs font-bold text-white">Bonus Code</span>
+                      {bonusApplied && (
+                        <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-[10px] font-bold">
+                          APPLIED
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setShowBonusInput(!showBonusInput)}
+                        className="px-2.5 py-1 rounded bg-[#1b2d48] hover:bg-[#22385a] text-[#1d8cf8] font-bold text-[11px] uppercase tracking-wider cursor-pointer transition-colors"
+                      >
+                        ACTIVATE
+                      </button>
+                      <ChevronRight
+                        className={`w-4 h-4 text-[#1d8cf8] transition-transform ${
+                          showBonusInput ? 'rotate-90' : ''
+                        }`}
+                      />
+                    </div>
+                  </div>
+
+                  {showBonusInput && (
+                    <div className="mt-3 pt-2.5 border-t border-[#2e3548] flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={bonusCode}
+                        onChange={(e) => setBonusCode(e.target.value.toUpperCase())}
+                        placeholder="Enter promo code (e.g. WELCOME50)"
+                        className="flex-1 bg-[#151924] border border-[#343b4f] rounded px-3 py-1.5 text-xs text-white outline-none focus:border-[#0d84ff]"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (bonusCode.trim()) setBonusApplied(true);
+                        }}
+                        className="px-3 py-1.5 rounded bg-[#0d84ff] text-white font-bold text-xs cursor-pointer"
+                      >
+                        Apply
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* You Will Receive Summary Row */}
+                <div className="flex items-baseline justify-between pt-1">
+                  <span className="text-xs text-slate-400">You will receive</span>
+                  <div className="flex-1 border-b border-dotted border-slate-600 mx-2" />
+                  <span className="text-[15px] font-bold text-white">
+                    ${numericAmount.toFixed(2)}
+                  </span>
+                </div>
+
+                {submissionError && (
+                  <div className="p-3 rounded-md bg-rose-500/15 border border-rose-500/30 text-xs text-rose-300">
+                    {submissionError}
+                  </div>
+                )}
+
+                {/* Proceed to Pay Button */}
+                <button
+                  type="submit"
+                  data-testid="proceed-to-pay-btn"
+                  className="w-full py-3.5 rounded-[6px] bg-[#0d84ff] hover:bg-[#0070e6] text-white font-bold text-sm shadow-lg shadow-[#0d84ff]/20 transition-all cursor-pointer"
+                >
+                  Proceed to Pay
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* ================================================================= */}
+        {/* STEP 2: PAYMENT DETAILS, QR CODE & PROOF UPLOAD (Screenshot 2)    */}
+        {/* ================================================================= */}
+        {step === 'payment' && activeMethod && (
+          <div className="flex-1 p-5 sm:p-7 overflow-y-auto">
+            <div className="flex flex-col md:flex-row items-start gap-5">
+              {/* Left Warning & Info Notices Column */}
+              <div className="w-full md:w-[270px] space-y-3 shrink-0">
+                <div className="bg-[#3a312c] border border-[#524338] rounded-[6px] p-3.5 flex items-start gap-2.5 text-xs text-slate-100 leading-relaxed">
+                  <AlertTriangle className="w-4 h-4 text-[#ff8a00] shrink-0 mt-0.5" />
+                  <span>
+                    {activeMethod.warningText ||
+                      `Only ${activeMethod.name}. Do not send smart contracts or other coins — they will be lost.`}
+                  </span>
+                </div>
+
+                <div className="bg-[#3a312c] border border-[#524338] rounded-[6px] p-3.5 flex items-start gap-2.5 text-xs text-slate-100 leading-relaxed">
+                  <AlertTriangle className="w-4 h-4 text-[#ff8a00] shrink-0 mt-0.5" />
+                  <span>
+                    {activeMethod.bankDetails
+                      ? 'Please transfer the exact amount to the Commercial Bank account shown and attach your payment receipt below.'
+                      : 'A new address is generated for each transaction. Do not reuse.'}
+                  </span>
+                </div>
+
+                <div className="bg-[#212b3d] border border-[#2d3c56] rounded-[6px] p-3.5 flex items-start gap-2.5 text-xs text-slate-100 leading-relaxed">
+                  <BadgeDollarSign className="w-4 h-4 text-[#0d84ff] shrink-0 mt-0.5" />
+                  <span>Make sure your payment covers network fees.</span>
+                </div>
+              </div>
+
+              {/* Right Main QR Code, Address/Bank Details, Copy Buttons, Countdown & Upload */}
+              <div className="flex-1 w-full space-y-3.5">
+                {/* Main QR & Address / Bank Transfer Box */}
+                <div className="bg-[#282d3c] rounded-[6px] p-5 border border-[#343b4f]">
+                  <div className="flex flex-col sm:flex-row items-center sm:items-start gap-5">
+                    {/* White QR Code Container */}
+                    <div
+                      data-testid="deposit-qr-code"
+                      className="bg-white p-2.5 rounded-[4px] shrink-0 shadow-md"
+                    >
+                      <QRCodeSVG value={qrValue} size={132} level="M" />
+                    </div>
+
+                    {/* Right Instructions & Copyable Details */}
+                    <div className="flex-1 min-w-0 w-full space-y-3">
+                      <p className="text-xs sm:text-[13px] text-slate-300 leading-relaxed">
+                        To complete the payment transfer{' '}
+                        <span className="font-bold text-white">{numericAmount} USD</span> to{' '}
+                        {activeMethod.bankDetails ? 'bank account' : 'address'}
+                      </p>
+
+                      {/* Crypto Wallet Address View */}
+                      {activeMethod.walletAddress && (
+                        <div
+                          data-testid="deposit-wallet-address"
+                          className="text-sm sm:text-[16px] font-bold text-white break-all leading-snug select-all"
+                        >
+                          {activeMethod.walletAddress}
+                        </div>
+                      )}
+
+                      {/* Sri Lanka Bank Transfer Details View */}
+                      {activeMethod.bankDetails && (
+                        <div
+                          data-testid="deposit-bank-details"
+                          className="bg-[#1e222f] border border-[#363e54] rounded-md p-3 space-y-2 text-xs"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-slate-400">Bank Name:</span>
+                            <span className="font-bold text-white">
+                              {activeMethod.bankDetails.bankName}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-slate-400">Account Number:</span>
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono font-bold text-sm text-[#10b969]">
+                                {activeMethod.bankDetails.accountNumber}
+                              </span>
+                              <button
+                                type="button"
+                                data-testid="inline-copy-bank-account-btn"
+                                onClick={() =>
+                                  triggerCopy(
+                                    activeMethod.bankDetails!.accountNumber,
+                                    'bank_acc_inline',
+                                    'Account number copied!'
+                                  )
+                                }
+                                className="p-1 rounded bg-[#2b3142] hover:bg-[#384056] text-white cursor-pointer"
+                                title="Copy Account Number"
+                              >
+                                {copiedField === 'bank_acc_inline' ? (
+                                  <Check className="w-3.5 h-3.5 text-[#10b969]" />
+                                ) : (
+                                  <Copy className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-slate-400">Account Name:</span>
+                            <span className="font-bold text-white">
+                              {activeMethod.bankDetails.accountName}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Copy Amount & Copy Address Buttons Row */}
+                  <div className="flex flex-wrap items-center gap-3 mt-5">
+                    <button
+                      type="button"
+                      data-testid="copy-deposit-amount-btn"
+                      onClick={() =>
+                        triggerCopy(String(numericAmount), 'amount', 'Amount copied!')
+                      }
+                      className="px-5 py-2.5 rounded-[5px] bg-[#0d84ff] hover:bg-[#0070e6] text-white font-bold text-xs sm:text-[13px] flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                    >
+                      {copiedField === 'amount' ? (
+                        <>
+                          <Check className="w-4 h-4" />
+                          <span>Copied!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-4 h-4" />
+                          <span>Copy amount</span>
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      data-testid="copy-deposit-address-btn"
+                      onClick={() => {
+                        const targetToCopy =
+                          activeMethod.walletAddress ||
+                          activeMethod.bankDetails?.accountNumber ||
+                          '';
+                        triggerCopy(
+                          targetToCopy,
+                          'address',
+                          activeMethod.bankDetails ? 'Account number copied!' : 'Address copied!'
+                        );
+                      }}
+                      className="px-5 py-2.5 rounded-[5px] bg-[#0d84ff] hover:bg-[#0070e6] text-white font-bold text-xs sm:text-[13px] flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                    >
+                      {copiedField === 'address' ? (
+                        <>
+                          <Check className="w-4 h-4" />
+                          <span>Copied!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-4 h-4" />
+                          <span>
+                            {activeMethod.bankDetails ? 'Copy Account No.' : 'Copy Address'}
+                          </span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Countdown Timer & Waiting Status Bar */}
+                <div
+                  data-testid="deposit-timer-bar"
+                  className="bg-[#282d3c] rounded-[6px] px-5 py-3.5 border border-[#343b4f] flex flex-wrap items-center gap-6 text-xs sm:text-[13px]"
+                >
+                  <div className="flex items-center gap-2 text-slate-300">
+                    <Clock className="w-4 h-4 text-[#0d84ff] shrink-0" />
+                    <span>
+                      Time remaining:{' '}
+                      <strong className="text-white font-mono">
+                        {formatCountdown(remainingSeconds)}
+                      </strong>
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2 text-[#0d84ff] font-medium">
+                    <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                    <span>Waiting for Payment...</span>
+                  </div>
+                </div>
+
+                {/* Upload Payment Screenshot / Slip Form */}
+                <form
+                  onSubmit={handleConfirmDepositSubmission}
+                  className="bg-[#282d3c] rounded-[6px] p-4 border border-[#343b4f] space-y-3"
+                >
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-white flex items-center gap-2">
+                      <Upload className="w-3.5 h-3.5 text-[#0d84ff]" />
+                      <span>Upload Payment Screenshot / Slip</span>
+                    </label>
+                    <span className="text-[11px] text-slate-400">
+                      {activeMethod.bankDetails ? 'Required for Bank Transfer' : 'Instant verification proof'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <label
+                      data-testid="upload-payment-proof-label"
+                      className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-[5px] bg-[#1e222f] hover:bg-[#232838] border border-dashed border-[#454e68] text-xs text-slate-200 cursor-pointer transition-colors"
+                    >
+                      <Upload className="w-3.5 h-3.5 text-[#0d84ff] shrink-0" />
+                      <span className="truncate">
+                        {receiptFile ? receiptFile.name : 'Choose screenshot / slip...'}
+                      </span>
+                      <input
+                        type="file"
+                        data-testid="upload-payment-proof-input"
+                        accept="image/*,.pdf"
+                        onChange={handleReceiptFileChange}
+                        className="hidden"
+                      />
+                    </label>
+
+                    <input
+                      type="text"
+                      value={txHashInput}
+                      onChange={(e) => setTxHashInput(e.target.value)}
+                      placeholder={
+                        activeMethod.bankDetails
+                          ? 'Reference / Slip No. (Optional)'
+                          : 'Transaction Hash / TXID (Optional)'
+                      }
+                      className="px-3 py-2 rounded-[5px] bg-[#1e222f] border border-[#363e54] focus:border-[#0d84ff] text-xs text-white outline-none"
+                    />
+                  </div>
+
+                  {submissionSuccess && (
+                    <div
+                      data-testid="deposit-submission-success"
+                      className="p-3 rounded-md bg-emerald-500/15 border border-emerald-500/30 text-xs text-emerald-300 flex items-center gap-2"
+                    >
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <span>{submissionSuccess}</span>
+                    </div>
+                  )}
+
+                  {submissionError && (
+                    <div className="p-3 rounded-md bg-rose-500/15 border border-rose-500/30 text-xs text-rose-300">
+                      {submissionError}
+                    </div>
+                  )}
+
+                  <div className="flex justify-end">
+                    <button
+                      type="submit"
+                      data-testid="submit-deposit-proof-btn"
+                      disabled={isSubmitting}
+                      className="px-5 py-2 rounded-[5px] bg-[#12b76a] hover:bg-[#10a35e] disabled:opacity-50 text-white font-bold text-xs transition-colors cursor-pointer"
+                    >
+                      {isSubmitting ? 'Submitting...' : 'Submit Payment Proof'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
           </div>
         )}
       </div>

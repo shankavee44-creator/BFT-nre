@@ -14052,7 +14052,8 @@ function buildCryptoDepositPayload(input) {
     package_sku: sku,
     account_type: accountType,
     currency: "USDT",
-    network: "TRC-20",
+    network: input.network || "TRC-20",
+    receipt_url: input.receiptUrl || null,
     tx_hash: input.txHash ? String(input.txHash).trim() : null,
     status
   };
@@ -14067,6 +14068,8 @@ function buildSupabaseCryptoDepositRow(input) {
     package_sku: payload.package_sku,
     account_type: payload.account_type,
     status: payload.status,
+    ...input.network ? { network: payload.network, network_type: payload.network } : {},
+    ...payload.receipt_url ? { receipt_url: payload.receipt_url, proof_url: payload.receipt_url } : {},
     ...payload.tx_hash ? { tx_hash: payload.tx_hash } : {}
   };
 }
@@ -14843,7 +14846,77 @@ db.exec(`
     current_pnl REAL DEFAULT 0,
     created_at INTEGER NOT NULL
   );
+
+  -- 10. Copy Executed Trades Table
+  CREATE TABLE IF NOT EXISTS copy_executed_trades (
+    id TEXT PRIMARY KEY,
+    subscription_id TEXT NOT NULL,
+    copier_user_id TEXT NOT NULL,
+    copier_account_id TEXT NOT NULL,
+    provider_id TEXT NOT NULL,
+    asset_symbol TEXT NOT NULL,
+    trade_type TEXT NOT NULL,
+    amount REAL NOT NULL,
+    entry_price REAL NOT NULL,
+    exit_price REAL,
+    status TEXT DEFAULT 'OPEN',
+    pnl REAL DEFAULT 0,
+    created_at INTEGER NOT NULL
+  );
+
+  -- 11. Platform Revenue Pool & House Capital Structure Ledger
+  CREATE TABLE IF NOT EXISTS platform_revenue_pool (
+    id TEXT PRIMARY KEY,
+    pool_balance REAL DEFAULT 2500000.0,
+    total_lost_stakes_captured REAL DEFAULT 0.0,
+    total_win_payouts_disbursed REAL DEFAULT 0.0,
+    total_spread_retained REAL DEFAULT 0.0,
+    total_cutoff_liquidations REAL DEFAULT 0.0,
+    trades_settled_count INTEGER DEFAULT 0,
+    updated_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS platform_revenue_ledger (
+    id TEXT PRIMARY KEY,
+    trade_id TEXT NOT NULL,
+    subscription_id TEXT NOT NULL,
+    copier_user_id TEXT NOT NULL,
+    copier_account_id TEXT NOT NULL,
+    investment_amount REAL NOT NULL,
+    platform_credit REAL NOT NULL,
+    house_spread_retained REAL DEFAULT 0.0,
+    settlement_reason TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+
+  -- 12. Master Trader Bot Execution & Cool-Off State Table
+  CREATE TABLE IF NOT EXISTS master_trader_bot_state (
+    provider_id TEXT PRIMARY KEY,
+    status TEXT DEFAULT 'active',
+    pause_reason TEXT DEFAULT 'NONE',
+    last_trade_executed_at INTEGER DEFAULT 0,
+    last_cooldown_duration_ms INTEGER DEFAULT 0,
+    next_eligible_trade_at INTEGER DEFAULT 0,
+    paused_until_ms INTEGER DEFAULT 0,
+    hour_window_start_ms INTEGER DEFAULT 0,
+    max_trades_this_hour INTEGER DEFAULT 4,
+    trades_executed_this_hour INTEGER DEFAULT 0,
+    consecutive_wins INTEGER DEFAULT 0,
+    consecutive_losses INTEGER DEFAULT 0,
+    total_signals_generated INTEGER DEFAULT 0,
+    last_signal_id TEXT,
+    updated_at INTEGER NOT NULL
+  );
 `);
+try {
+  db.prepare(`
+    INSERT OR IGNORE INTO platform_revenue_pool (
+      id, pool_balance, total_lost_stakes_captured, total_win_payouts_disbursed,
+      total_spread_retained, total_cutoff_liquidations, trades_settled_count, updated_at
+    ) VALUES ('HOUSE_POOL_MAIN', 2500000.0, 0.0, 0.0, 0.0, 0.0, 0, ?)
+  `).run(Date.now());
+} catch {
+}
 var copyTradingAlterColumns = [
   `ALTER TABLE copy_trading_subscriptions ADD COLUMN allocated_capital REAL DEFAULT 100;`,
   `ALTER TABLE copy_trading_subscriptions ADD COLUMN max_loss_limit REAL DEFAULT 0;`,
@@ -18469,122 +18542,124 @@ function deterministicHash(input) {
   return Math.abs(h >>> 0);
 }
 var FIRST_NAMES = [
-  "Viktor",
-  "Kasun",
-  "Arjun",
-  "Elena",
-  "Liam",
-  "Marco",
-  "Faizul",
-  "Tariq",
-  "Zulkifli",
-  "Alexander",
-  "Rashid",
-  "Nimal",
-  "Bilal",
-  "Mohamed",
-  "Azlan",
-  "Oliver",
-  "Sofia",
-  "Lucas",
-  "Emma",
-  "David",
-  "Zoe",
-  "Hans",
-  "Yuki",
-  "Chen",
-  "Svetlana",
-  "Mateo",
-  "Aiden",
-  "Chloe",
-  "Ibrahim",
+  "Rajesh",
+  "Muhammad",
+  "Tanvir",
+  "Amit",
+  "Ahmed",
+  "Rakibul",
   "Priya",
-  "Rohan",
-  "Kenji",
   "Fatima",
-  "Henrik",
-  "jaan",
-  "Diego",
-  "Amara",
-  "Nikolai",
-  "Zayd",
-  "Sora"
+  "Nusrat",
+  "Vikram",
+  "Usman",
+  "Shakil",
+  "Arjun",
+  "Hamza",
+  "Tariq",
+  "Bilal",
+  "Ananya",
+  "Rohan",
+  "Syed",
+  "Farhan",
+  "Imran",
+  "Zubair",
+  "Shahid",
+  "Mustafa",
+  "Hassan",
+  "Mahmud",
+  "Sabbir",
+  "Tamim",
+  "Mushfiq",
+  "Shoriful",
+  "Taslim",
+  "Kabir",
+  "Deepak",
+  "Sanjay",
+  "Sunil",
+  "Neha",
+  "Pooja",
+  "Rahul",
+  "Aditya",
+  "Aarav"
 ];
 var LAST_NAMES = [
-  "Vance",
-  "Perera",
-  "Malhotra",
-  "Rostova",
-  "Davies",
-  "Rossi",
-  "Islam",
-  "Al-Mansoor",
-  "Rahman",
-  "Sterling",
-  "Al-Maktoum",
-  "Jayasinghe",
-  "Ahmed",
-  "Farhan",
-  "Shah",
-  "Mercer",
-  "Garcia",
-  "Bernard",
-  "Watson",
-  "Miller",
-  "Chen",
-  "M\xFCller",
-  "Sato",
-  "Wei",
-  "Petrova",
-  "Silva",
-  "Kowalski",
-  "Novak",
-  "Qureshi",
   "Sharma",
+  "Ali",
+  "Ahmed",
+  "Patel",
+  "Khan",
+  "Hasan",
+  "Verma",
+  "Malik",
+  "Jahan",
+  "Singh",
+  "Tariq",
+  "Mahmud",
+  "Malhotra",
+  "Qureshi",
+  "Chowdhury",
+  "Hossain",
+  "Rahman",
+  "Siddiqui",
+  "Shah",
+  "Farooqi",
   "Deshmukh",
-  "Takahashi",
-  "Al-Hashemi",
-  "Lindqvist",
-  "Vermeer",
-  "Mendoza",
-  "Okafor",
-  "Volkov",
-  "bin Zayed",
-  "Watanabe"
+  "Gupta",
+  "Iqbal",
+  "Islam",
+  "Kazi",
+  "Miah",
+  "Akter",
+  "Bhowmick",
+  "Mukherjee",
+  "Banerjee",
+  "Chatterjee",
+  "Reddy",
+  "Nair",
+  "Bhat",
+  "Abbasi",
+  "Butt",
+  "Mirza",
+  "Raza",
+  "Bukhari",
+  "Sultana"
 ];
 var COUNTRIES = [
-  { name: "United Arab Emirates", code: "AE", flag: "\u{1F1E6}\u{1F1EA}" },
-  { name: "Sri Lanka", code: "LK", flag: "\u{1F1F1}\u{1F1F0}" },
   { name: "India", code: "IN", flag: "\u{1F1EE}\u{1F1F3}" },
-  { name: "United Kingdom", code: "GB", flag: "\u{1F1EC}\u{1F1E7}" },
+  { name: "Pakistan", code: "PK", flag: "\u{1F1F5}\u{1F1F0}" },
+  { name: "Bangladesh", code: "BD", flag: "\u{1F1E7}\u{1F1E9}" },
+  { name: "India", code: "IN", flag: "\u{1F1EE}\u{1F1F3}" },
+  { name: "Pakistan", code: "PK", flag: "\u{1F1F5}\u{1F1F0}" },
+  { name: "Bangladesh", code: "BD", flag: "\u{1F1E7}\u{1F1E9}" },
+  { name: "United Arab Emirates", code: "AE", flag: "\u{1F1E6}\u{1F1EA}" },
   { name: "Singapore", code: "SG", flag: "\u{1F1F8}\u{1F1EC}" },
-  { name: "United States", code: "US", flag: "\u{1F1FA}\u{1F1F8}" },
   { name: "Malaysia", code: "MY", flag: "\u{1F1F2}\u{1F1FE}" },
+  { name: "United Kingdom", code: "GB", flag: "\u{1F1EC}\u{1F1E7}" },
   { name: "Qatar", code: "QA", flag: "\u{1F1F6}\u{1F1E6}" },
   { name: "Germany", code: "DE", flag: "\u{1F1E9}\u{1F1EA}" },
   { name: "Switzerland", code: "CH", flag: "\u{1F1E8}\u{1F1ED}" },
   { name: "Japan", code: "JP", flag: "\u{1F1EF}\u{1F1F5}" },
-  { name: "Italy", code: "IT", flag: "\u{1F1EE}\u{1F1F9}" },
-  { name: "Pakistan", code: "PK", flag: "\u{1F1F5}\u{1F1F0}" },
-  { name: "Bangladesh", code: "BD", flag: "\u{1F1E7}\u{1F1E9}" },
-  { name: "Canada", code: "CA", flag: "\u{1F1E8}\u{1F1E6}" },
   { name: "Australia", code: "AU", flag: "\u{1F1E6}\u{1F1FA}" },
+  { name: "Canada", code: "CA", flag: "\u{1F1E8}\u{1F1E6}" },
+  { name: "United States", code: "US", flag: "\u{1F1FA}\u{1F1F8}" },
   { name: "France", code: "FR", flag: "\u{1F1EB}\u{1F1F7}" },
-  { name: "Brazil", code: "BR", flag: "\u{1F1E7}\u{1F1F7}" },
-  { name: "Spain", code: "ES", flag: "\u{1F1EA}\u{1F1F8}" },
-  { name: "Russia", code: "RU", flag: "\u{1F1F7}\u{1F1FA}" }
+  { name: "Saudi Arabia", code: "SA", flag: "\u{1F1F8}\u{1F1E6}" },
+  { name: "Sri Lanka", code: "LK", flag: "\u{1F1F1}\u{1F1F0}" }
 ];
 var STRATEGY_DESCRIPTORS = [
-  "Institutional OTC Alpha",
-  "London Session Momentum",
-  "Gold & FX Liquidity Scalper",
-  "NY Open Volatility Breakout",
-  "Algorithmic Mean Reversion",
-  "High-Frequency Binary Pulse",
-  "Asian Session Range Sniper",
-  "Macro Currency Flow Engine",
-  "Multi-Asset Price Action",
-  "Smart Money Orderblock Pro"
+  "Mumbai Institutional Nifty & FX",
+  "Lahore Liquidity Pulse",
+  "Dhaka Momentum Alpha",
+  "Gujarat High-Frequency Scalper",
+  "Karachi OTC Flow Engine",
+  "Chittagong Price Action",
+  "Delhi Smart Money Breakout",
+  "Islamabad Trend Sniper",
+  "Sylhet FX Syndicate",
+  "Punjab Volatility Surge",
+  "Rawalpindi Orderblock Pro",
+  "Padma Currency Flow"
 ];
 function generate200TraderPool(nowMs = Date.now()) {
   const rotationSlot = Math.floor(nowMs / ROTATION_INTERVAL_MS);
@@ -18595,16 +18670,416 @@ function generate200TraderPool(nowMs = Date.now()) {
   const intradayMultiplier = 0.32 + 0.68 * dayProgress;
   const pool = [];
   const featuredOverrides = {
-    0: { name: "Viktor Vance", countryIdx: 0, category: "instant_funded", startingBalance: 1e5, strategy: "Institutional Alpha $100K" },
-    1: { name: "Kasun Perera", countryIdx: 1, category: "instant_funded", startingBalance: 5e4, strategy: "Colombo Gold Scalper $50K" },
-    2: { name: "Arjun Malhotra", countryIdx: 2, category: "instant_funded", startingBalance: 1e5, strategy: "Mumbai Nifty Alpha $100K" },
-    3: { name: "Liam Davies", countryIdx: 3, category: "instant_funded", startingBalance: 5e4, strategy: "London Forex Scalp $50K" },
-    4: { name: "Zulkifli Rahman", countryIdx: 6, category: "instant_funded", startingBalance: 25e3, strategy: "Kuala Lumpur Breakout $25K" },
-    100: { name: "Marco Rossi", countryIdx: 11, category: "self_capital", startingBalance: 1e4, strategy: "Milan OTC Scalper" },
-    101: { name: "Elena Rostova", countryIdx: 19, category: "self_capital", startingBalance: 15e3, strategy: "Siberian Gold Rush" },
-    102: { name: "Nimal Jayasinghe", countryIdx: 1, category: "self_capital", startingBalance: 5e3, strategy: "Kandy Forex Syndicate" },
-    103: { name: "Bilal Ahmed", countryIdx: 12, category: "self_capital", startingBalance: 8e3, strategy: "Karachi Crypto Surge" },
-    104: { name: "Alexander Sterling", countryIdx: 5, category: "self_capital", startingBalance: 2e4, strategy: "Wall Street Index Pro" }
+    // Instant Funded Top Traders
+    0: {
+      name: "Rajesh Sharma",
+      country: "India",
+      countryCode: "IN",
+      flag: "\u{1F1EE}\u{1F1F3}",
+      category: "instant_funded",
+      startingBalance: 1e5,
+      strategy: "Mumbai Institutional Nifty & FX $100K",
+      winRate3m: 81.6,
+      baseDailyProfit: 26200,
+      copiers: 192,
+      totalTrades: 1480,
+      profitFactor: 2.68,
+      maxDrawdown: 2.6,
+      sharpeRatio: 2.88,
+      avgHoldingTime: "1m 15s"
+    },
+    1: {
+      name: "Muhammad Ali",
+      country: "Pakistan",
+      countryCode: "PK",
+      flag: "\u{1F1F5}\u{1F1F0}",
+      category: "instant_funded",
+      startingBalance: 1e5,
+      strategy: "Lahore Liquidity Pulse $100K",
+      winRate3m: 79.8,
+      baseDailyProfit: 24800,
+      copiers: 184,
+      totalTrades: 1360,
+      profitFactor: 2.52,
+      maxDrawdown: 2.9,
+      sharpeRatio: 2.72,
+      avgHoldingTime: "1m 20s"
+    },
+    2: {
+      name: "Tanvir Ahmed",
+      country: "Bangladesh",
+      countryCode: "BD",
+      flag: "\u{1F1E7}\u{1F1E9}",
+      category: "instant_funded",
+      startingBalance: 1e5,
+      strategy: "Dhaka Momentum Alpha $100K",
+      winRate3m: 78.4,
+      baseDailyProfit: 23500,
+      copiers: 178,
+      totalTrades: 1290,
+      profitFactor: 2.45,
+      maxDrawdown: 3.1,
+      sharpeRatio: 2.62,
+      avgHoldingTime: "1m 25s"
+    },
+    3: {
+      name: "Amit Patel",
+      country: "India",
+      countryCode: "IN",
+      flag: "\u{1F1EE}\u{1F1F3}",
+      category: "instant_funded",
+      startingBalance: 1e5,
+      strategy: "Gujarat High-Frequency Scalper $100K",
+      winRate3m: 77.2,
+      baseDailyProfit: 22400,
+      copiers: 170,
+      totalTrades: 1220,
+      profitFactor: 2.38,
+      maxDrawdown: 3.3,
+      sharpeRatio: 2.51,
+      avgHoldingTime: "1m 30s"
+    },
+    4: {
+      name: "Ahmed Khan",
+      country: "Pakistan",
+      countryCode: "PK",
+      flag: "\u{1F1F5}\u{1F1F0}",
+      category: "instant_funded",
+      startingBalance: 5e4,
+      strategy: "Karachi OTC Flow Engine $50K",
+      winRate3m: 76.1,
+      baseDailyProfit: 21200,
+      copiers: 162,
+      totalTrades: 1150,
+      profitFactor: 2.3,
+      maxDrawdown: 3.5,
+      sharpeRatio: 2.42,
+      avgHoldingTime: "1m 35s"
+    },
+    5: {
+      name: "Rakibul Hasan",
+      country: "Bangladesh",
+      countryCode: "BD",
+      flag: "\u{1F1E7}\u{1F1E9}",
+      category: "instant_funded",
+      startingBalance: 5e4,
+      strategy: "Chittagong Price Action $50K",
+      winRate3m: 75.3,
+      baseDailyProfit: 20100,
+      copiers: 156,
+      totalTrades: 1080,
+      profitFactor: 2.25,
+      maxDrawdown: 3.7,
+      sharpeRatio: 2.34,
+      avgHoldingTime: "1m 40s"
+    },
+    6: {
+      name: "Priya Verma",
+      country: "India",
+      countryCode: "IN",
+      flag: "\u{1F1EE}\u{1F1F3}",
+      category: "instant_funded",
+      startingBalance: 5e4,
+      strategy: "Delhi Smart Money Breakout $50K",
+      winRate3m: 74.5,
+      baseDailyProfit: 19200,
+      copiers: 148,
+      totalTrades: 1020,
+      profitFactor: 2.2,
+      maxDrawdown: 3.8,
+      sharpeRatio: 2.28,
+      avgHoldingTime: "1m 45s"
+    },
+    7: {
+      name: "Fatima Malik",
+      country: "Pakistan",
+      countryCode: "PK",
+      flag: "\u{1F1F5}\u{1F1F0}",
+      category: "instant_funded",
+      startingBalance: 5e4,
+      strategy: "Islamabad Trend Sniper $50K",
+      winRate3m: 73.8,
+      baseDailyProfit: 18400,
+      copiers: 142,
+      totalTrades: 960,
+      profitFactor: 2.16,
+      maxDrawdown: 4,
+      sharpeRatio: 2.2,
+      avgHoldingTime: "1m 50s"
+    },
+    8: {
+      name: "Nusrat Jahan",
+      country: "Bangladesh",
+      countryCode: "BD",
+      flag: "\u{1F1E7}\u{1F1E9}",
+      category: "instant_funded",
+      startingBalance: 25e3,
+      strategy: "Sylhet FX Syndicate $25K",
+      winRate3m: 73,
+      baseDailyProfit: 17600,
+      copiers: 136,
+      totalTrades: 910,
+      profitFactor: 2.12,
+      maxDrawdown: 4.1,
+      sharpeRatio: 2.15,
+      avgHoldingTime: "1m 52s"
+    },
+    9: {
+      name: "Vikram Singh",
+      country: "India",
+      countryCode: "IN",
+      flag: "\u{1F1EE}\u{1F1F3}",
+      category: "instant_funded",
+      startingBalance: 25e3,
+      strategy: "Punjab Volatility Surge $25K",
+      winRate3m: 72.4,
+      baseDailyProfit: 16800,
+      copiers: 130,
+      totalTrades: 870,
+      profitFactor: 2.08,
+      maxDrawdown: 4.2,
+      sharpeRatio: 2.1,
+      avgHoldingTime: "1m 55s"
+    },
+    10: {
+      name: "Usman Tariq",
+      country: "Pakistan",
+      countryCode: "PK",
+      flag: "\u{1F1F5}\u{1F1F0}",
+      category: "instant_funded",
+      startingBalance: 25e3,
+      strategy: "Rawalpindi Orderblock Pro $25K",
+      winRate3m: 71.8,
+      baseDailyProfit: 16100,
+      copiers: 125,
+      totalTrades: 820,
+      profitFactor: 2.05,
+      maxDrawdown: 4.3,
+      sharpeRatio: 2.06,
+      avgHoldingTime: "1m 58s"
+    },
+    11: {
+      name: "Shakil Mahmud",
+      country: "Bangladesh",
+      countryCode: "BD",
+      flag: "\u{1F1E7}\u{1F1E9}",
+      category: "instant_funded",
+      startingBalance: 25e3,
+      strategy: "Padma Currency Flow $25K",
+      winRate3m: 71.2,
+      baseDailyProfit: 15400,
+      copiers: 120,
+      totalTrades: 790,
+      profitFactor: 2.02,
+      maxDrawdown: 4.4,
+      sharpeRatio: 2.02,
+      avgHoldingTime: "2m 00s"
+    },
+    // Self Capital Top Traders
+    100: {
+      name: "Rajesh Sharma",
+      country: "India",
+      countryCode: "IN",
+      flag: "\u{1F1EE}\u{1F1F3}",
+      category: "self_capital",
+      startingBalance: 25e3,
+      strategy: "Mumbai Micro Scalper Live",
+      winRate3m: 80.5,
+      baseDailyProfit: 9500,
+      copiers: 188,
+      totalTrades: 960,
+      profitFactor: 2.62,
+      maxDrawdown: 2.8,
+      sharpeRatio: 2.8,
+      avgHoldingTime: "1m 15s"
+    },
+    101: {
+      name: "Muhammad Ali",
+      country: "Pakistan",
+      countryCode: "PK",
+      flag: "\u{1F1F5}\u{1F1F0}",
+      category: "self_capital",
+      startingBalance: 25e3,
+      strategy: "Lahore OTC Momentum Live",
+      winRate3m: 79.2,
+      baseDailyProfit: 9100,
+      copiers: 180,
+      totalTrades: 910,
+      profitFactor: 2.48,
+      maxDrawdown: 3,
+      sharpeRatio: 2.68,
+      avgHoldingTime: "1m 20s"
+    },
+    102: {
+      name: "Tanvir Ahmed",
+      country: "Bangladesh",
+      countryCode: "BD",
+      flag: "\u{1F1E7}\u{1F1E9}",
+      category: "self_capital",
+      startingBalance: 2e4,
+      strategy: "Dhaka Price Action Live",
+      winRate3m: 77.9,
+      baseDailyProfit: 8700,
+      copiers: 174,
+      totalTrades: 860,
+      profitFactor: 2.4,
+      maxDrawdown: 3.2,
+      sharpeRatio: 2.58,
+      avgHoldingTime: "1m 25s"
+    },
+    103: {
+      name: "Amit Patel",
+      country: "India",
+      countryCode: "IN",
+      flag: "\u{1F1EE}\u{1F1F3}",
+      category: "self_capital",
+      startingBalance: 2e4,
+      strategy: "Gujarat Trend Follower Live",
+      winRate3m: 76.5,
+      baseDailyProfit: 8400,
+      copiers: 166,
+      totalTrades: 820,
+      profitFactor: 2.34,
+      maxDrawdown: 3.4,
+      sharpeRatio: 2.48,
+      avgHoldingTime: "1m 30s"
+    },
+    104: {
+      name: "Ahmed Khan",
+      country: "Pakistan",
+      countryCode: "PK",
+      flag: "\u{1F1F5}\u{1F1F0}",
+      category: "self_capital",
+      startingBalance: 15e3,
+      strategy: "Karachi Volatility Sniper Live",
+      winRate3m: 75.4,
+      baseDailyProfit: 8100,
+      copiers: 158,
+      totalTrades: 770,
+      profitFactor: 2.26,
+      maxDrawdown: 3.6,
+      sharpeRatio: 2.38,
+      avgHoldingTime: "1m 35s"
+    },
+    105: {
+      name: "Rakibul Hasan",
+      country: "Bangladesh",
+      countryCode: "BD",
+      flag: "\u{1F1E7}\u{1F1E9}",
+      category: "self_capital",
+      startingBalance: 15e3,
+      strategy: "Chittagong Breakout Live",
+      winRate3m: 74.6,
+      baseDailyProfit: 7800,
+      copiers: 152,
+      totalTrades: 730,
+      profitFactor: 2.22,
+      maxDrawdown: 3.8,
+      sharpeRatio: 2.3,
+      avgHoldingTime: "1m 40s"
+    },
+    106: {
+      name: "Priya Verma",
+      country: "India",
+      countryCode: "IN",
+      flag: "\u{1F1EE}\u{1F1F3}",
+      category: "self_capital",
+      startingBalance: 1e4,
+      strategy: "Delhi FX Pulse Live",
+      winRate3m: 73.9,
+      baseDailyProfit: 7500,
+      copiers: 144,
+      totalTrades: 690,
+      profitFactor: 2.18,
+      maxDrawdown: 3.9,
+      sharpeRatio: 2.24,
+      avgHoldingTime: "1m 45s"
+    },
+    107: {
+      name: "Fatima Malik",
+      country: "Pakistan",
+      countryCode: "PK",
+      flag: "\u{1F1F5}\u{1F1F0}",
+      category: "self_capital",
+      startingBalance: 1e4,
+      strategy: "Islamabad Alpha Live",
+      winRate3m: 73.1,
+      baseDailyProfit: 7200,
+      copiers: 138,
+      totalTrades: 650,
+      profitFactor: 2.14,
+      maxDrawdown: 4.1,
+      sharpeRatio: 2.18,
+      avgHoldingTime: "1m 50s"
+    },
+    108: {
+      name: "Nusrat Jahan",
+      country: "Bangladesh",
+      countryCode: "BD",
+      flag: "\u{1F1E7}\u{1F1E9}",
+      category: "self_capital",
+      startingBalance: 1e4,
+      strategy: "Sylhet Orderblock Live",
+      winRate3m: 72.5,
+      baseDailyProfit: 6900,
+      copiers: 132,
+      totalTrades: 610,
+      profitFactor: 2.1,
+      maxDrawdown: 4.2,
+      sharpeRatio: 2.12,
+      avgHoldingTime: "1m 52s"
+    },
+    109: {
+      name: "Vikram Singh",
+      country: "India",
+      countryCode: "IN",
+      flag: "\u{1F1EE}\u{1F1F3}",
+      category: "self_capital",
+      startingBalance: 5e3,
+      strategy: "Punjab Mean Reversion Live",
+      winRate3m: 71.9,
+      baseDailyProfit: 6600,
+      copiers: 126,
+      totalTrades: 570,
+      profitFactor: 2.06,
+      maxDrawdown: 4.3,
+      sharpeRatio: 2.08,
+      avgHoldingTime: "1m 55s"
+    },
+    110: {
+      name: "Usman Tariq",
+      country: "Pakistan",
+      countryCode: "PK",
+      flag: "\u{1F1F5}\u{1F1F0}",
+      category: "self_capital",
+      startingBalance: 5e3,
+      strategy: "Rawalpindi Scalp Live",
+      winRate3m: 71.2,
+      baseDailyProfit: 6300,
+      copiers: 122,
+      totalTrades: 540,
+      profitFactor: 2.03,
+      maxDrawdown: 4.4,
+      sharpeRatio: 2.04,
+      avgHoldingTime: "1m 58s"
+    },
+    111: {
+      name: "Shakil Mahmud",
+      country: "Bangladesh",
+      countryCode: "BD",
+      flag: "\u{1F1E7}\u{1F1E9}",
+      category: "self_capital",
+      startingBalance: 5e3,
+      strategy: "Padma Momentum Live",
+      winRate3m: 70.6,
+      baseDailyProfit: 6e3,
+      copiers: 118,
+      totalTrades: 510,
+      profitFactor: 2,
+      maxDrawdown: 4.5,
+      sharpeRatio: 2,
+      avgHoldingTime: "2m 00s"
+    }
   };
   for (let i = 0; i < TOTAL_TRADER_POOL_SIZE; i++) {
     const isInstant = i < 100;
@@ -18617,29 +19092,39 @@ function generate200TraderPool(nowMs = Date.now()) {
     const firstName = FIRST_NAMES[(i * 7 + seed % 13) % FIRST_NAMES.length];
     const lastName = LAST_NAMES[(i * 11 + seed % 17) % LAST_NAMES.length];
     const providerName = override ? override.name : `${firstName} ${lastName}`;
-    const countryObj = override ? COUNTRIES[override.countryIdx] : COUNTRIES[(i * 3 + seed % 7) % COUNTRIES.length];
+    const countryObj = override ? { name: override.country, code: override.countryCode, flag: override.flag } : COUNTRIES[(i * 3 + seed % 7) % COUNTRIES.length];
     const startingBalance = override ? override.startingBalance : isInstant ? ELIGIBLE_INSTANT_FUNDED_SIZES[i % ELIGIBLE_INSTANT_FUNDED_SIZES.length] : [1e3, 2500, 5e3, 8e3, 1e4, 15e3, 25e3][i % 7];
     const strategyTitle = override ? override.strategy : `${STRATEGY_DESCRIPTORS[i % STRATEGY_DESCRIPTORS.length]} #${i % 50 + 1}`;
     const surgeWave = slotSeed % 1e3 / 1e3;
     const isSurgingInThis45mSlot = slotSeed % 12 === 0;
-    const dailyRoiBasePct = isInstant ? (1.8 + seed % 45 / 10) * (isSurgingInThis45mSlot ? 1.85 + surgeWave * 0.7 : 0.55 + surgeWave * 0.65) : (3.2 + seed % 85 / 10) * (isSurgingInThis45mSlot ? 1.9 + surgeWave * 0.8 : 0.5 + surgeWave * 0.65);
-    const dailyProfitPct = Number((dailyRoiBasePct * intradayMultiplier).toFixed(2));
-    const dailyProfit = Number((dailyProfitPct / 100 * startingBalance).toFixed(2));
-    const weeklyProfitPct = Number((dailyProfitPct * (3.2 + seed % 25 / 10)).toFixed(2));
+    let dailyProfit;
+    let dailyProfitPct;
+    if (override) {
+      const slotVariance = 0.93 + slotSeed % 160 / 1e3;
+      dailyProfit = Number((override.baseDailyProfit * intradayMultiplier * slotVariance).toFixed(2));
+      dailyProfitPct = Number((dailyProfit / startingBalance * 100).toFixed(2));
+    } else {
+      const dailyRoiBasePct = isInstant ? (1.2 + seed % 35 / 10) * (isSurgingInThis45mSlot ? 1.6 + surgeWave * 0.5 : 0.45 + surgeWave * 0.55) : (1.2 + seed % 35 / 10) * (isSurgingInThis45mSlot ? 1.3 + surgeWave * 0.4 : 0.4 + surgeWave * 0.45);
+      dailyProfitPct = Number((dailyRoiBasePct * intradayMultiplier).toFixed(2));
+      dailyProfit = Number((dailyProfitPct / 100 * startingBalance).toFixed(2));
+    }
+    const weeklyProfitPct = override ? Number((dailyProfitPct * 2.8).toFixed(2)) : Number((dailyProfitPct * (3.2 + seed % 25 / 10)).toFixed(2));
     const weeklyProfit = Number((weeklyProfitPct / 100 * startingBalance).toFixed(2));
-    const monthlyProfitPct = Number((weeklyProfitPct * (2.6 + seed % 18 / 10)).toFixed(2));
+    const monthlyProfitPct = override ? Number((weeklyProfitPct * 2.5).toFixed(2)) : Number((weeklyProfitPct * (2.6 + seed % 18 / 10)).toFixed(2));
     const monthlyProfit = Number((monthlyProfitPct / 100 * startingBalance).toFixed(2));
-    const threeMonthProfitPct = Number((monthlyProfitPct * (2.4 + seed % 16 / 10)).toFixed(2));
+    const threeMonthProfitPct = override ? Number((monthlyProfitPct * 2.3).toFixed(2)) : Number((monthlyProfitPct * (2.4 + seed % 16 / 10)).toFixed(2));
     const threeMonthProfit = Number((threeMonthProfitPct / 100 * startingBalance).toFixed(2));
     const retainedGain = Number((monthlyProfit * 0.35 + dailyProfit).toFixed(2));
     const currentBalance = Number((startingBalance + retainedGain).toFixed(2));
     const allTimeWithdrawals = Number((threeMonthProfit * 0.78).toFixed(2));
-    const winRate3m = Number((62.4 + seed % 270 / 10).toFixed(1));
-    const profitFactor = Number((1.75 + seed % 160 / 100).toFixed(2));
-    const maxDrawdown = Number((1.8 + seed % 55 / 10).toFixed(1));
-    const sharpeRatio = Number((1.55 + seed % 140 / 100).toFixed(2));
+    const winRate3m = override ? override.winRate3m : Number((62.4 + seed % 270 / 10).toFixed(1));
+    const profitFactor = override ? override.profitFactor : Number((1.75 + seed % 160 / 100).toFixed(2));
+    const maxDrawdown = override ? override.maxDrawdown : Number((1.8 + seed % 55 / 10).toFixed(1));
+    const sharpeRatio = override ? override.sharpeRatio : Number((1.55 + seed % 140 / 100).toFixed(2));
+    const avgHoldingTime = override ? override.avgHoldingTime : `${1 + seed % 6}m ${15 + seed % 40}s`;
+    const totalTrades = override ? override.totalTrades : 240 + seed % 1650;
     const baseCopiers = 38 + seed % 148 + (isSurgingInThis45mSlot ? 12 : 0);
-    const currentCopiers = Math.min(MAX_COPIERS_PER_TRADER, baseCopiers);
+    const currentCopiers = override ? override.copiers : Math.min(MAX_COPIERS_PER_TRADER, baseCopiers);
     const accountTypeLabel = isInstant ? `Instant Funded ($${(startingBalance / 1e3).toFixed(0)}K)` : "Self-Capital Live";
     const tierName = isInstant ? `$${(startingBalance / 1e3).toFixed(0)}K Instant Funded` : "Self-Capital Account";
     pool.push({
@@ -18672,8 +19157,8 @@ function generate200TraderPool(nowMs = Date.now()) {
       profit_factor: profitFactor,
       max_drawdown: maxDrawdown,
       sharpe_ratio: sharpeRatio,
-      avg_holding_time: `${1 + seed % 6}m ${15 + seed % 40}s`,
-      total_trades: 240 + seed % 1650,
+      avg_holding_time: avgHoldingTime,
+      total_trades: totalTrades,
       current_copiers: currentCopiers,
       max_copiers: MAX_COPIERS_PER_TRADER,
       commission_pct: MASTER_COMMISSION_PERCENT,
@@ -18733,6 +19218,335 @@ function queryCopyTradersPool(params) {
     totalPoolCount: pool.length,
     isSearchActive: false
   };
+}
+
+// src/utils/masterTraderBotScheduler.ts
+var BOT_MIN_COOLDOWN_SECONDS = 30;
+var BOT_MAX_COOLDOWN_SECONDS = 180;
+var BOT_MIN_COOLDOWN_MS = BOT_MIN_COOLDOWN_SECONDS * 1e3;
+var BOT_MAX_COOLDOWN_MS = BOT_MAX_COOLDOWN_SECONDS * 1e3;
+var BOT_MIN_TRADES_PER_HOUR = 3;
+var BOT_MAX_TRADES_PER_HOUR = 5;
+var BOT_CONSECUTIVE_LOSS_LIMIT = 2;
+var BOT_LOSS_COOLOFF_MIN_MS = 1 * 60 * 60 * 1e3;
+var BOT_LOSS_COOLOFF_MAX_MS = 2 * 60 * 60 * 1e3;
+var BOT_CONSECUTIVE_WIN_LIMIT = 3;
+var BOT_WIN_TAKE_PROFIT_MIN_MS = 2 * 60 * 60 * 1e3;
+var BOT_WIN_TAKE_PROFIT_MAX_MS = 3 * 60 * 60 * 1e3;
+var BOT_OVERNIGHT_START_HOUR = 0;
+var BOT_OVERNIGHT_END_HOUR = 6;
+var BOT_STATE_STORAGE_KEY = "bft_master_trader_bot_states_v1";
+var inMemoryBotStates = /* @__PURE__ */ new Map();
+function randomIntInclusive(min, max, rng = Math.random) {
+  const lo = Math.ceil(Math.min(min, max));
+  const hi = Math.floor(Math.max(min, max));
+  const r = Math.max(0, Math.min(0.999999999, rng()));
+  return Math.floor(r * (hi - lo + 1)) + lo;
+}
+function generateDynamicTradeCooldownMs(rng = Math.random) {
+  return randomIntInclusive(BOT_MIN_COOLDOWN_MS, BOT_MAX_COOLDOWN_MS, rng);
+}
+function generateHourlyTradeLimit(providerId, hourWindowStartMs, rng) {
+  if (rng) {
+    return randomIntInclusive(BOT_MIN_TRADES_PER_HOUR, BOT_MAX_TRADES_PER_HOUR, rng);
+  }
+  if (providerId && typeof hourWindowStartMs === "number") {
+    const seed = `${providerId}:${Math.floor(hourWindowStartMs / 36e5)}`;
+    let hash = 0;
+    for (let i = 0; i < seed.length; i++) {
+      hash = hash * 31 + seed.charCodeAt(i) | 0;
+    }
+    return BOT_MIN_TRADES_PER_HOUR + Math.abs(hash) % (BOT_MAX_TRADES_PER_HOUR - BOT_MIN_TRADES_PER_HOUR + 1);
+  }
+  return randomIntInclusive(BOT_MIN_TRADES_PER_HOUR, BOT_MAX_TRADES_PER_HOUR);
+}
+function generateConsecutiveLossCoolOffMs(rng = Math.random) {
+  return randomIntInclusive(BOT_LOSS_COOLOFF_MIN_MS, BOT_LOSS_COOLOFF_MAX_MS, rng);
+}
+function generateConsecutiveWinTakeProfitPauseMs(rng = Math.random) {
+  return randomIntInclusive(BOT_WIN_TAKE_PROFIT_MIN_MS, BOT_WIN_TAKE_PROFIT_MAX_MS, rng);
+}
+function getHourWindowStartMs(nowMs = Date.now()) {
+  return Math.floor(nowMs / 36e5) * 36e5;
+}
+function getNextHourStartMs(nowMs = Date.now()) {
+  return (Math.floor(nowMs / 36e5) + 1) * 36e5;
+}
+function evaluateActiveTradingWindow(nowMs = Date.now(), localHourOverride) {
+  const date = new Date(nowMs);
+  const localHour = typeof localHourOverride === "number" && Number.isFinite(localHourOverride) ? (Math.floor(localHourOverride) % 24 + 24) % 24 : date.getHours();
+  if (localHour >= BOT_OVERNIGHT_START_HOUR && localHour < BOT_OVERNIGHT_END_HOUR) {
+    const nextOpenDate = new Date(nowMs);
+    nextOpenDate.setHours(BOT_OVERNIGHT_END_HOUR, 0, 0, 0);
+    if (nextOpenDate.getTime() <= nowMs) {
+      nextOpenDate.setTime(nowMs + (BOT_OVERNIGHT_END_HOUR - localHour) * 36e5);
+    }
+    return {
+      allowed: false,
+      localHour,
+      sessionName: "Overnight Off-Hours (12:00 AM - 06:00 AM)",
+      nextSessionOpensAtMs: nextOpenDate.getTime(),
+      reason: "OVERNIGHT_OFF_HOURS"
+    };
+  }
+  let sessionName = "High-Liquidity Active Session";
+  if (localHour >= 6 && localHour < 8) {
+    sessionName = "Tokyo / London Pre-Market Session";
+  } else if (localHour >= 8 && localHour < 13) {
+    sessionName = "London High-Liquidity Session";
+  } else if (localHour >= 13 && localHour < 17) {
+    sessionName = "London / New York Overlap Session";
+  } else if (localHour >= 17 && localHour < 21) {
+    sessionName = "New York Session";
+  } else {
+    sessionName = "Late US / Sydney-Tokyo Session";
+  }
+  return {
+    allowed: true,
+    localHour,
+    sessionName,
+    nextSessionOpensAtMs: nowMs
+  };
+}
+function createInitialMasterBotState(providerId, nowMs = Date.now(), rng) {
+  const hourStart = getHourWindowStartMs(nowMs);
+  return {
+    providerId,
+    status: "active",
+    pauseReason: "NONE",
+    lastTradeExecutedAt: 0,
+    lastCooldownDurationMs: 0,
+    nextEligibleTradeAt: 0,
+    pausedUntilMs: 0,
+    hourWindowStartMs: hourStart,
+    maxTradesThisHour: generateHourlyTradeLimit(providerId, hourStart, rng),
+    tradesExecutedThisHour: 0,
+    consecutiveWins: 0,
+    consecutiveLosses: 0,
+    totalSignalsGenerated: 0,
+    updatedAt: nowMs
+  };
+}
+function persistBotStates() {
+  if (typeof window === "undefined" || typeof localStorage === "undefined") return;
+  try {
+    const serialized = {};
+    for (const [k, v] of inMemoryBotStates.entries()) {
+      serialized[k] = v;
+    }
+    localStorage.setItem(BOT_STATE_STORAGE_KEY, JSON.stringify(serialized));
+  } catch {
+  }
+}
+function saveMasterTraderBotState(state) {
+  inMemoryBotStates.set(state.providerId, { ...state });
+  persistBotStates();
+}
+function syncMasterBotHourWindow(state, nowMs = Date.now(), rng) {
+  const currentHourStart = getHourWindowStartMs(nowMs);
+  let updated = { ...state };
+  if (updated.hourWindowStartMs !== currentHourStart) {
+    updated.hourWindowStartMs = currentHourStart;
+    updated.tradesExecutedThisHour = 0;
+    updated.maxTradesThisHour = generateHourlyTradeLimit(updated.providerId, currentHourStart, rng);
+    if (updated.status === "paused_hourly_limit" && nowMs >= updated.pausedUntilMs) {
+      updated.status = "active";
+      updated.pauseReason = "NONE";
+      updated.pausedUntilMs = 0;
+    }
+  }
+  if (updated.pausedUntilMs > 0 && nowMs >= updated.pausedUntilMs) {
+    updated.pausedUntilMs = 0;
+    updated.status = "active";
+    updated.pauseReason = "NONE";
+  }
+  if (updated.status === "cooldown" && updated.nextEligibleTradeAt > 0 && nowMs >= updated.nextEligibleTradeAt) {
+    updated.status = "active";
+    updated.pauseReason = "NONE";
+  }
+  return updated;
+}
+function evaluateMasterSignalEligibility(params) {
+  const nowMs = params.nowMs ?? Date.now();
+  const syncedState = syncMasterBotHourWindow(params.state, nowMs, params.rng);
+  const windowCheck = evaluateActiveTradingWindow(nowMs, params.localHourOverride);
+  if (!params.bypassOvernightCheck && !windowCheck.allowed) {
+    const overnightState = {
+      ...syncedState,
+      status: "paused_overnight",
+      pauseReason: "OVERNIGHT_OFF_HOURS",
+      updatedAt: nowMs
+    };
+    return {
+      canExecute: false,
+      status: "paused_overnight",
+      reason: "OVERNIGHT_OFF_HOURS",
+      remainingWaitMs: Math.max(0, windowCheck.nextSessionOpensAtMs - nowMs),
+      state: overnightState,
+      windowCheck
+    };
+  }
+  if (syncedState.pausedUntilMs > nowMs) {
+    const isLossPause = syncedState.status === "paused_consecutive_losses";
+    const isWinPause = syncedState.status === "paused_session_take_profit";
+    const isHourlyPause = syncedState.status === "paused_hourly_limit";
+    const status = isLossPause ? "paused_consecutive_losses" : isWinPause ? "paused_session_take_profit" : isHourlyPause ? "paused_hourly_limit" : "paused_hourly_limit";
+    const reason = isLossPause ? "CONSECUTIVE_LOSS_COOL_OFF" : isWinPause ? "CONSECUTIVE_WIN_TAKE_PROFIT" : "HOURLY_TRADE_LIMIT";
+    return {
+      canExecute: false,
+      status,
+      reason,
+      remainingWaitMs: syncedState.pausedUntilMs - nowMs,
+      state: syncedState,
+      windowCheck
+    };
+  }
+  if (syncedState.tradesExecutedThisHour >= syncedState.maxTradesThisHour) {
+    const nextHourMs = getNextHourStartMs(nowMs);
+    const pausedHourlyState = {
+      ...syncedState,
+      status: "paused_hourly_limit",
+      pauseReason: "HOURLY_TRADE_LIMIT",
+      pausedUntilMs: nextHourMs,
+      updatedAt: nowMs
+    };
+    return {
+      canExecute: false,
+      status: "paused_hourly_limit",
+      reason: "HOURLY_TRADE_LIMIT",
+      remainingWaitMs: Math.max(0, nextHourMs - nowMs),
+      state: pausedHourlyState,
+      windowCheck
+    };
+  }
+  if (params.hasOpenBatchTrade) {
+    return {
+      canExecute: false,
+      status: syncedState.status,
+      reason: "OPEN_BATCH_IN_PROGRESS",
+      remainingWaitMs: 15e3,
+      state: syncedState,
+      windowCheck
+    };
+  }
+  if (syncedState.nextEligibleTradeAt > nowMs) {
+    const cooldownState = {
+      ...syncedState,
+      status: "cooldown",
+      pauseReason: "COOLDOWN_DELAY",
+      updatedAt: nowMs
+    };
+    return {
+      canExecute: false,
+      status: "cooldown",
+      reason: "COOLDOWN_DELAY",
+      remainingWaitMs: syncedState.nextEligibleTradeAt - nowMs,
+      state: cooldownState,
+      windowCheck
+    };
+  }
+  const readyState = {
+    ...syncedState,
+    status: "active",
+    pauseReason: "NONE",
+    updatedAt: nowMs
+  };
+  return {
+    canExecute: true,
+    status: "active",
+    reason: "NONE",
+    remainingWaitMs: 0,
+    state: readyState,
+    windowCheck
+  };
+}
+function recordMasterSignalExecution(params) {
+  const nowMs = params.nowMs ?? Date.now();
+  const synced = syncMasterBotHourWindow(params.state, nowMs, params.rng);
+  const cooldownMs = typeof params.cooldownOverrideMs === "number" && params.cooldownOverrideMs >= BOT_MIN_COOLDOWN_MS ? Math.min(BOT_MAX_COOLDOWN_MS, Math.max(BOT_MIN_COOLDOWN_MS, params.cooldownOverrideMs)) : generateDynamicTradeCooldownMs(params.rng);
+  const nextTradesThisHour = synced.tradesExecutedThisHour + 1;
+  const reachedHourlyCap = nextTradesThisHour >= synced.maxTradesThisHour;
+  const nextHourMs = getNextHourStartMs(nowMs);
+  const updated = {
+    ...synced,
+    lastTradeExecutedAt: nowMs,
+    lastCooldownDurationMs: cooldownMs,
+    nextEligibleTradeAt: nowMs + cooldownMs,
+    tradesExecutedThisHour: nextTradesThisHour,
+    totalSignalsGenerated: synced.totalSignalsGenerated + 1,
+    lastSignalId: params.signalId || `sig-${synced.providerId}-${nowMs}`,
+    status: reachedHourlyCap ? "paused_hourly_limit" : "cooldown",
+    pauseReason: reachedHourlyCap ? "HOURLY_TRADE_LIMIT" : "COOLDOWN_DELAY",
+    pausedUntilMs: reachedHourlyCap ? Math.max(synced.pausedUntilMs, nextHourMs) : synced.pausedUntilMs,
+    updatedAt: nowMs
+  };
+  saveMasterTraderBotState(updated);
+  return updated;
+}
+function recordMasterSignalOutcome(params) {
+  const nowMs = params.nowMs ?? Date.now();
+  const synced = syncMasterBotHourWindow(params.state, nowMs, params.rng);
+  if (params.outcome === "TIE") {
+    saveMasterTraderBotState(synced);
+    return {
+      updatedState: synced,
+      triggeredPause: false,
+      pauseReason: synced.pauseReason,
+      pauseDurationMs: 0
+    };
+  }
+  let consecutiveWins = params.outcome === "WIN" ? synced.consecutiveWins + 1 : 0;
+  let consecutiveLosses = params.outcome === "LOSS" ? synced.consecutiveLosses + 1 : 0;
+  let status = synced.status;
+  let pauseReason = synced.pauseReason;
+  let pausedUntilMs = synced.pausedUntilMs;
+  let triggeredPause = false;
+  let pauseDurationMs = 0;
+  if (consecutiveLosses >= BOT_CONSECUTIVE_LOSS_LIMIT) {
+    pauseDurationMs = generateConsecutiveLossCoolOffMs(params.rng);
+    pausedUntilMs = nowMs + pauseDurationMs;
+    status = "paused_consecutive_losses";
+    pauseReason = "CONSECUTIVE_LOSS_COOL_OFF";
+    consecutiveLosses = 0;
+    consecutiveWins = 0;
+    triggeredPause = true;
+  } else if (consecutiveWins >= BOT_CONSECUTIVE_WIN_LIMIT) {
+    pauseDurationMs = generateConsecutiveWinTakeProfitPauseMs(params.rng);
+    pausedUntilMs = nowMs + pauseDurationMs;
+    status = "paused_session_take_profit";
+    pauseReason = "CONSECUTIVE_WIN_TAKE_PROFIT";
+    consecutiveWins = 0;
+    consecutiveLosses = 0;
+    triggeredPause = true;
+  }
+  const updatedState = {
+    ...synced,
+    consecutiveWins,
+    consecutiveLosses,
+    status,
+    pauseReason,
+    pausedUntilMs,
+    updatedAt: nowMs
+  };
+  saveMasterTraderBotState(updatedState);
+  return {
+    updatedState,
+    triggeredPause,
+    pauseReason,
+    pauseDurationMs
+  };
+}
+function groupActiveSubscriptionsByProvider(subscriptions) {
+  const byProvider = /* @__PURE__ */ new Map();
+  for (const sub of subscriptions) {
+    if (!sub || !sub.provider_id) continue;
+    if (sub.status && sub.status !== "active") continue;
+    const providerKey = String(sub.provider_id).trim();
+    const list = byProvider.get(providerKey) || [];
+    list.push(sub);
+    byProvider.set(providerKey, list);
+  }
+  return byProvider;
 }
 
 // src/server/copyTradingEngine.ts
@@ -18848,27 +19662,329 @@ var CopyTradingEngine = class _CopyTradingEngine {
       console.warn("CopyTradingEngine seedInitialTraders warning:", err);
     }
   }
+  static {
+    this.HOUSE_PAYOUT_MULTIPLIER = 0.78;
+  }
+  static {
+    this.HOUSE_SPREAD_RETAINED_MULTIPLIER = 0.22;
+  }
+  static {
+    this.FOLLOWER_WIN_PROBABILITY = 0.46;
+  }
+  loadBackendMasterBotState(providerId, now) {
+    try {
+      const row = db.prepare(`SELECT * FROM master_trader_bot_state WHERE provider_id = ?`).get(providerId);
+      if (row) {
+        const mapped = {
+          providerId: String(row.provider_id),
+          status: row.status || "active",
+          pauseReason: row.pause_reason || "NONE",
+          lastTradeExecutedAt: Number(row.last_trade_executed_at || 0),
+          lastCooldownDurationMs: Number(row.last_cooldown_duration_ms || 0),
+          nextEligibleTradeAt: Number(row.next_eligible_trade_at || 0),
+          pausedUntilMs: Number(row.paused_until_ms || 0),
+          hourWindowStartMs: Number(row.hour_window_start_ms || 0),
+          maxTradesThisHour: Number(row.max_trades_this_hour || 4),
+          tradesExecutedThisHour: Number(row.trades_executed_this_hour || 0),
+          consecutiveWins: Number(row.consecutive_wins || 0),
+          consecutiveLosses: Number(row.consecutive_losses || 0),
+          totalSignalsGenerated: Number(row.total_signals_generated || 0),
+          lastSignalId: row.last_signal_id ? String(row.last_signal_id) : void 0,
+          updatedAt: Number(row.updated_at || now)
+        };
+        return syncMasterBotHourWindow(mapped, now);
+      }
+    } catch {
+    }
+    const fresh = createInitialMasterBotState(providerId, now);
+    this.persistBackendMasterBotState(fresh);
+    return fresh;
+  }
+  persistBackendMasterBotState(state) {
+    try {
+      db.prepare(`
+        INSERT OR REPLACE INTO master_trader_bot_state (
+          provider_id, status, pause_reason, last_trade_executed_at, last_cooldown_duration_ms,
+          next_eligible_trade_at, paused_until_ms, hour_window_start_ms, max_trades_this_hour,
+          trades_executed_this_hour, consecutive_wins, consecutive_losses, total_signals_generated,
+          last_signal_id, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        state.providerId,
+        state.status,
+        state.pauseReason,
+        state.lastTradeExecutedAt,
+        state.lastCooldownDurationMs,
+        state.nextEligibleTradeAt,
+        state.pausedUntilMs,
+        state.hourWindowStartMs,
+        state.maxTradesThisHour,
+        state.tradesExecutedThisHour,
+        state.consecutiveWins,
+        state.consecutiveLosses,
+        state.totalSignalsGenerated,
+        state.lastSignalId || null,
+        state.updatedAt
+      );
+    } catch {
+    }
+  }
+  recordBackendPlatformRevenue(params) {
+    try {
+      const amt = Math.max(0, Number(params.investmentAmount || 0));
+      const winPayout = Number((amt * _CopyTradingEngine.HOUSE_PAYOUT_MULTIPLIER).toFixed(2));
+      const spreadRetained = params.outcome === "WIN" ? Number((amt * _CopyTradingEngine.HOUSE_SPREAD_RETAINED_MULTIPLIER).toFixed(2)) : 0;
+      const platformCredit = params.outcome === "LOSS" ? amt : -winPayout;
+      const followerDelta = params.outcome === "LOSS" ? -amt : winPayout;
+      const isCutoff = params.settlementReason === "STOP_LOSS_CUTOFF" || params.settlementReason === "MAX_DRAWDOWN_CUTOFF";
+      db.prepare(`
+        UPDATE platform_revenue_pool
+        SET
+          pool_balance = ROUND(COALESCE(pool_balance, 2500000.0) + ?, 2),
+          total_lost_stakes_captured = ROUND(COALESCE(total_lost_stakes_captured, 0.0) + ?, 2),
+          total_win_payouts_disbursed = ROUND(COALESCE(total_win_payouts_disbursed, 0.0) + ?, 2),
+          total_spread_retained = ROUND(COALESCE(total_spread_retained, 0.0) + ?, 2),
+          total_cutoff_liquidations = ROUND(COALESCE(total_cutoff_liquidations, 0.0) + ?, 2),
+          trades_settled_count = COALESCE(trades_settled_count, 0) + 1,
+          updated_at = ?
+        WHERE id = 'HOUSE_POOL_MAIN'
+      `).run(
+        platformCredit,
+        params.outcome === "LOSS" ? amt : 0,
+        params.outcome === "WIN" ? winPayout : 0,
+        spreadRetained,
+        params.outcome === "LOSS" && isCutoff ? amt : 0,
+        params.now
+      );
+      db.prepare(`
+        INSERT OR REPLACE INTO platform_revenue_ledger (
+          id, trade_id, subscription_id, copier_user_id, copier_account_id,
+          investment_amount, platform_credit, house_spread_retained, settlement_reason, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        `PRL-${params.tradeId}`,
+        params.tradeId,
+        params.subscriptionId,
+        params.copierUserId,
+        params.copierAccountId,
+        amt,
+        platformCredit,
+        spreadRetained,
+        params.settlementReason,
+        params.now
+      );
+      if (params.copierAccountId) {
+        db.prepare(`
+          UPDATE trading_accounts
+          SET
+            current_balance = MAX(0, ROUND(COALESCE(current_balance, 0) + ?, 2)),
+            equity = MAX(0, ROUND(COALESCE(equity, 0) + ?, 2))
+          WHERE id = ?
+        `).run(followerDelta, followerDelta, params.copierAccountId);
+      }
+    } catch {
+    }
+  }
   refreshLeaderboardData() {
     try {
       const now = Date.now();
       const pool = this.getFullPool(now);
-      for (const trader of pool) {
-        const traderDailyRoiRatio = trader.starting_balance > 0 ? trader.daily_profit / trader.starting_balance : 0.02;
-        db.prepare(`
-          UPDATE copy_trading_subscriptions 
-          SET current_pnl = ROUND(allocated_capital * ? * 0.35, 2)
-          WHERE provider_id = ? AND status = 'active'
-        `).run(Number(traderDailyRoiRatio.toFixed(6)), trader.id);
+      this.settleAndExecuteBackendMirroredTrades(now, pool);
+      this.checkCopyTradeLimits();
+    } catch {
+    }
+  }
+  checkCopyTradeLimits() {
+    try {
+      const now = Date.now();
+      const activeSubs = db.prepare(`SELECT * FROM copy_trading_subscriptions WHERE status = 'active'`).all();
+      for (const sub of activeSubs) {
+        const subId = String(sub.id);
+        const stopLoss = Number(sub.stop_loss ?? sub.max_loss_limit ?? 0);
+        const takeProfit = Number(sub.take_profit ?? sub.take_profit_limit ?? 0);
+        const maxDrawdownPct = Number(sub.max_drawdown ?? 5);
+        const currentRealizedPnl = Number(sub.current_pnl ?? 0);
+        const openTrades = db.prepare(
+          `SELECT * FROM copy_executed_trades WHERE subscription_id = ? AND status = 'OPEN'`
+        ).all(subId);
+        const openExposure = openTrades.reduce(
+          (sum, tr) => sum + Math.max(0, Number(tr.amount || sub.trade_amount || 100)),
+          0
+        );
+        const worstCasePnl = Number((currentRealizedPnl - openExposure).toFixed(2));
+        let startingBal = 5e4;
+        if (sub.copier_account_id) {
+          const accRow = db.prepare(
+            `SELECT initial_balance, current_balance FROM trading_accounts WHERE id = ?`
+          ).get(String(sub.copier_account_id));
+          if (accRow && Number(accRow.initial_balance || accRow.current_balance || 0) > 0) {
+            startingBal = Number(accRow.initial_balance || accRow.current_balance || 5e4);
+          }
+        }
+        const drawdownPct = worstCasePnl < 0 ? Number((Math.abs(worstCasePnl) / startingBal * 100).toFixed(2)) : 0;
+        const hitStopLoss = stopLoss > 0 && worstCasePnl <= -stopLoss;
+        const hitMaxDrawdown = maxDrawdownPct > 0 && drawdownPct >= maxDrawdownPct;
+        const hitTakeProfit = takeProfit > 0 && currentRealizedPnl >= takeProfit;
+        if (hitStopLoss || hitMaxDrawdown) {
+          const cutoffReason = hitStopLoss ? "STOP_LOSS_CUTOFF" : "MAX_DRAWDOWN_CUTOFF";
+          for (const openTr of openTrades) {
+            const amt = Math.max(0, Number(openTr.amount || sub.trade_amount || 100));
+            const entry = Number(openTr.entry_price || 1.085);
+            const isCall = String(openTr.trade_type || "CALL").toUpperCase() !== "PUT";
+            const adverseExitPrice = Number(
+              (entry * (isCall ? 0.9991 : 1.0009)).toFixed(5)
+            );
+            const lossPnl = -amt;
+            db.prepare(
+              `UPDATE copy_executed_trades SET exit_price = ?, status = 'LOSS', pnl = ? WHERE id = ?`
+            ).run(adverseExitPrice, lossPnl, openTr.id);
+            db.prepare(
+              `UPDATE copy_trading_subscriptions SET current_pnl = ROUND(COALESCE(current_pnl, 0) + ?, 2) WHERE id = ?`
+            ).run(lossPnl, subId);
+            this.recordBackendPlatformRevenue({
+              tradeId: String(openTr.id),
+              subscriptionId: subId,
+              copierUserId: String(
+                openTr.copier_user_id || sub.copier_user_id || sub.user_id || "usr_bft_001"
+              ),
+              copierAccountId: String(
+                openTr.copier_account_id || sub.copier_account_id || "BFT-LIVE"
+              ),
+              investmentAmount: amt,
+              outcome: "LOSS",
+              settlementReason: cutoffReason,
+              now
+            });
+          }
+          db.prepare(
+            `UPDATE copy_trading_subscriptions SET status = 'cancelled' WHERE id = ?`
+          ).run(subId);
+        } else if (hitTakeProfit) {
+          db.prepare(
+            `UPDATE copy_trading_subscriptions SET status = 'cancelled' WHERE id = ?`
+          ).run(subId);
+        }
       }
-      db.prepare(`
-        UPDATE copy_trading_subscriptions 
-        SET status = 'cancelled'
-        WHERE status = 'active' 
-        AND (
-          (max_loss_limit > 0 AND current_pnl <= -max_loss_limit) OR
-          (take_profit_limit > 0 AND current_pnl >= take_profit_limit)
-        )
-      `).run();
+    } catch {
+    }
+  }
+  settleAndExecuteBackendMirroredTrades(now, _pool) {
+    try {
+      const openRows = db.prepare(`SELECT * FROM copy_executed_trades WHERE status = 'OPEN'`).all();
+      const maturedByProvider = /* @__PURE__ */ new Map();
+      const stillOpenProviders = /* @__PURE__ */ new Set();
+      for (const row of openRows) {
+        const providerKey = String(row.provider_id || "default_provider");
+        const createdMs = Number(row.created_at || now);
+        if (now - createdMs >= 6e4) {
+          const list = maturedByProvider.get(providerKey) || [];
+          list.push(row);
+          maturedByProvider.set(providerKey, list);
+        } else {
+          stillOpenProviders.add(providerKey);
+        }
+      }
+      for (const [providerId, batchRows] of maturedByProvider.entries()) {
+        if (batchRows.length === 0) continue;
+        const isWin = Math.random() < _CopyTradingEngine.FOLLOWER_WIN_PROBABILITY;
+        const finalStatus = isWin ? "WIN" : "LOSS";
+        for (const row of batchRows) {
+          const entry = Number(row.entry_price || 1.085);
+          const isCall = String(row.trade_type || "CALL").toUpperCase() !== "PUT";
+          const delta = entry * 45e-5 * (isWin ? 1 : -1);
+          const exitPrice = Number((entry + (isCall ? delta : -delta)).toFixed(5));
+          const amt = Number(row.amount || 100);
+          const pnl = isWin ? Number((amt * _CopyTradingEngine.HOUSE_PAYOUT_MULTIPLIER).toFixed(2)) : -amt;
+          db.prepare(
+            `UPDATE copy_executed_trades SET exit_price = ?, status = ?, pnl = ? WHERE id = ?`
+          ).run(exitPrice, finalStatus, pnl, row.id);
+          db.prepare(
+            `UPDATE copy_trading_subscriptions SET current_pnl = ROUND(COALESCE(current_pnl, 0) + ?, 2) WHERE id = ?`
+          ).run(pnl, row.subscription_id);
+          this.recordBackendPlatformRevenue({
+            tradeId: String(row.id),
+            subscriptionId: String(row.subscription_id),
+            copierUserId: String(row.copier_user_id || "usr_bft_001"),
+            copierAccountId: String(row.copier_account_id || "BFT-LIVE"),
+            investmentAmount: amt,
+            outcome: finalStatus,
+            settlementReason: isWin ? "EXPIRATION_WIN" : "EXPIRATION_LOSS",
+            now
+          });
+        }
+        const currentBotState = this.loadBackendMasterBotState(providerId, now);
+        const outcomeResult = recordMasterSignalOutcome({
+          state: currentBotState,
+          outcome: finalStatus,
+          nowMs: now
+        });
+        this.persistBackendMasterBotState(outcomeResult.updatedState);
+      }
+      const windowCheck = evaluateActiveTradingWindow(now);
+      if (!windowCheck.allowed) {
+        return;
+      }
+      const activeSubs = db.prepare(`SELECT * FROM copy_trading_subscriptions WHERE status = 'active'`).all();
+      const subsByProvider = groupActiveSubscriptionsByProvider(activeSubs);
+      if (subsByProvider.size === 0) return;
+      const assets = ["EUR/USD", "GBP/USD", "USD/JPY", "BTC/USDT", "ETH/USDT", "XAU/USD"];
+      const basePrices = {
+        "EUR/USD": 1.08542,
+        "GBP/USD": 1.26815,
+        "USD/JPY": 154.62,
+        "BTC/USDT": 89420.5,
+        "ETH/USDT": 3125.4,
+        "XAU/USD": 2685.3
+      };
+      const insertStmt = db.prepare(`
+        INSERT INTO copy_executed_trades (
+          id, subscription_id, copier_user_id, copier_account_id, provider_id,
+          asset_symbol, trade_type, amount, entry_price, status, pnl, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', 0, ?)
+      `);
+      for (const [providerId, providerSubs] of subsByProvider.entries()) {
+        if (providerSubs.length === 0) continue;
+        const botState = this.loadBackendMasterBotState(providerId, now);
+        const eligibility = evaluateMasterSignalEligibility({
+          state: botState,
+          nowMs: now,
+          hasOpenBatchTrade: stillOpenProviders.has(providerId)
+        });
+        this.persistBackendMasterBotState(eligibility.state);
+        if (!eligibility.canExecute) {
+          continue;
+        }
+        const assetSymbol = assets[Math.floor(Math.random() * assets.length)];
+        const tradeType = Math.random() >= 0.45 ? "CALL" : "PUT";
+        const entryPrice = basePrices[assetSymbol] || 1.08542;
+        const signalId = `SIG-${providerId.slice(0, 8)}-${now.toString(36)}`;
+        for (const sub of providerSubs) {
+          const subId = String(sub.id);
+          const tradeAmount = Math.max(
+            1,
+            Number(sub.trade_amount ?? sub.allocated_capital ?? 100)
+          );
+          const execId = `CET-${subId.slice(0, 8)}-${now.toString(36)}`;
+          insertStmt.run(
+            execId,
+            subId,
+            String(sub.copier_user_id || sub.user_id || "usr_bft_001"),
+            String(sub.copier_account_id || "BFT-LIVE"),
+            String(providerId),
+            assetSymbol,
+            tradeType,
+            tradeAmount,
+            entryPrice,
+            now
+          );
+        }
+        const postExecState = recordMasterSignalExecution({
+          state: eligibility.state,
+          signalId,
+          nowMs: now
+        });
+        this.persistBackendMasterBotState(postExecState);
+      }
     } catch {
     }
   }
@@ -28007,6 +29123,17 @@ var LiveMarketFeedEngine = class {
 };
 var liveMarketFeed = new LiveMarketFeedEngine();
 
+// src/utils/copyTradingSync.ts
+var inMemoryPlatformPool = {
+  poolBalance: 25e5,
+  totalLostStakesCaptured: 0,
+  totalWinPayoutsDisbursed: 0,
+  totalSpreadRetained: 0,
+  totalCutoffLiquidations: 0,
+  tradesSettledCount: 0,
+  updatedAt: Date.now()
+};
+
 // src/utils/supabaseRealtimeSync.ts
 var LEDGER_STORAGE_KEY = "bft_active_trades_ledger_v1";
 var SETTLED_STORAGE_KEY = "bft_settled_trades_v1";
@@ -28105,13 +29232,13 @@ console.log(`Starting server on port ${PORT}...`);
 var DIRECT_USDT_WALLET_ADDRESS = process.env.DIRECT_USDT_TRC20_WALLET_ADDRESS || DIRECT_USDT_TRC20_CONFIG.walletAddress;
 var ACTIVE_TRONGRID_API_KEY = process.env.TRONGRID_API_KEY || TRONGRID_API_KEY;
 var creditedBalancesByAccount = /* @__PURE__ */ new Map();
-var isValidUuid = (val) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+var isValidUuid2 = (val) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
   String(val || "").trim()
 );
 var toValidUuid = (str) => {
   if (!str) return "00000000-0000-4000-8000-000000000001";
   const clean = String(str).trim();
-  if (isValidUuid(clean)) return clean.toLowerCase();
+  if (isValidUuid2(clean)) return clean.toLowerCase();
   let hash1 = 0;
   let hash2 = 0;
   for (let i = 0; i < clean.length; i++) {
@@ -28129,7 +29256,7 @@ var toValidUuid = (str) => {
   return `${raw.slice(0, 8)}-${raw.slice(8, 12)}-4${raw.slice(13, 16)}-a${raw.slice(17, 20)}-${raw.slice(20, 32)}`;
 };
 async function ensureSupabaseProfileInRest(supabaseUrl, supabaseAnonKey, user) {
-  let targetUuid = isValidUuid(user.id) ? user.id : null;
+  let targetUuid = isValidUuid2(user.id) ? user.id : null;
   if (!targetUuid && user.email) {
     try {
       const pRes = await fetch(
@@ -28203,7 +29330,6 @@ async function startServer() {
   const marketEngine = new BackendMarketEngine();
   marketEngine.start();
   const copyTradingEngine = CopyTradingEngine.getInstance();
-  copyTradingEngine.start();
   const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "https://kwmjonjcwdwvaijcrtjw.supabase.co";
   const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || "sb_publishable_G151L79Inh_SPks_HrujZQ_fmaGh-_6";
   const safeParseFetchJson = async (res, fallback = null) => {
@@ -28331,7 +29457,7 @@ async function startServer() {
       for (const comp of localResult.completedDeposits) {
         const dep = comp.deposit;
         if (dep) {
-          const targetUuid = isValidUuid(dep.user_id) ? dep.user_id : toValidUuid(dep.user_id);
+          const targetUuid = isValidUuid2(dep.user_id) ? dep.user_id : toValidUuid(dep.user_id);
           fetch(
             `${supabaseUrl}/rest/v1/crypto_deposits?user_id=eq.${encodeURIComponent(
               targetUuid
@@ -29315,7 +30441,7 @@ data: ${JSON.stringify({
       }
       const result = passChallengePhaseInDb(user.id, accountId, provisionLiveDirectly);
       if (supabaseUrl && supabaseAnonKey) {
-        let targetSupaUuid = isValidUuid(user.id) ? user.id : null;
+        let targetSupaUuid = isValidUuid2(user.id) ? user.id : null;
         if (!targetSupaUuid && user.email) {
           try {
             const pRes = await fetch(
@@ -30077,7 +31203,7 @@ data: ${JSON.stringify({
         if (evaluation.status === "failed") {
           const failedRow = failCryptoDepositInDb(deposit.id, evaluation.reason);
           if (supabaseUrl && supabaseAnonKey && deposit.user_id) {
-            const targetUuid = isValidUuid(deposit.user_id) ? deposit.user_id : toValidUuid(deposit.user_id);
+            const targetUuid = isValidUuid2(deposit.user_id) ? deposit.user_id : toValidUuid(deposit.user_id);
             fetch(
               `${supabaseUrl}/rest/v1/crypto_deposits?user_id=eq.${encodeURIComponent(
                 targetUuid
@@ -30105,7 +31231,7 @@ data: ${JSON.stringify({
         if (evaluation.verified && evaluation.matchedTxHash) {
           const completed = completeCryptoDepositInDb(deposit.id, evaluation.matchedTxHash);
           if (supabaseUrl && supabaseAnonKey && deposit.user_id) {
-            const targetUuid = isValidUuid(deposit.user_id) ? deposit.user_id : toValidUuid(deposit.user_id);
+            const targetUuid = isValidUuid2(deposit.user_id) ? deposit.user_id : toValidUuid(deposit.user_id);
             fetch(
               `${supabaseUrl}/rest/v1/crypto_deposits?user_id=eq.${encodeURIComponent(
                 targetUuid
@@ -30995,13 +32121,34 @@ data: ${JSON.stringify({
     try {
       const user = getAuthenticatedUser(req);
       const userId = String(user?.id || req.body?.userId || "usr_bft_001").trim();
-      const { providerId } = req.body || {};
-      if (!providerId) return res.status(400).json({ ok: false, error: "Provider ID required." });
-      db.prepare(`
-        DELETE FROM copy_trading_subscriptions 
-        WHERE user_id = ? AND provider_id = ?
-      `).run(userId, providerId);
-      return res.json({ ok: true, message: "Successfully cancelled copy trading subscription." });
+      const { providerId, masterTraderId, subscriptionId } = req.body || {};
+      const targetProviderId = String(providerId || masterTraderId || "").trim();
+      if (!targetProviderId && !subscriptionId) {
+        return res.status(400).json({ ok: false, error: "Provider ID or Subscription ID required." });
+      }
+      if (subscriptionId) {
+        db.prepare(`
+          UPDATE copy_trading_subscriptions
+          SET status = 'stopped'
+          WHERE id = ?
+        `).run(String(subscriptionId));
+        db.prepare(`
+          DELETE FROM copy_trading_subscriptions
+          WHERE id = ?
+        `).run(String(subscriptionId));
+      }
+      if (targetProviderId) {
+        db.prepare(`
+          UPDATE copy_trading_subscriptions
+          SET status = 'stopped'
+          WHERE (user_id = ? OR copier_user_id = ?) AND provider_id = ?
+        `).run(userId, userId, targetProviderId);
+        db.prepare(`
+          DELETE FROM copy_trading_subscriptions 
+          WHERE (user_id = ? OR copier_user_id = ?) AND provider_id = ?
+        `).run(userId, userId, targetProviderId);
+      }
+      return res.json({ ok: true, message: "Successfully stopped copy trading subscription." });
     } catch (err) {
       return res.status(500).json({ ok: false, error: err?.message || "Failed to cancel subscription." });
     }
@@ -31023,8 +32170,8 @@ data: ${JSON.stringify({
             status, 
             created_at 
           FROM copy_trading_subscriptions 
-          WHERE user_id = ?
-        `).all(userId);
+          WHERE (user_id = ? OR copier_user_id = ?) AND status = 'active'
+        `).all(userId, userId);
       return res.json({
         ok: true,
         subscriptions: subs.map((s) => ({
@@ -31113,8 +32260,9 @@ data: ${JSON.stringify({
       res.sendFile(path2.join(distPath, "index.html"));
     });
   }
-  const server = app.listen(PORT, "0.0.0.0", () => {
-    console.log(`BFT Server & Direct USDT (TRC-20) Gateway running on http://0.0.0.0:${PORT} (mode: ${isProduction ? "production" : "development"})`);
+  const server = app.listen(PORT, () => {
+    console.log(`BFT Server & Direct USDT (TRC-20) Gateway running on port ${PORT} (mode: ${isProduction ? "production" : "development"})`);
+    copyTradingEngine.start();
   });
   process.on("SIGTERM", () => {
     console.log("SIGTERM received, closing HTTP server gracefully...");

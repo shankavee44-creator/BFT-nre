@@ -22,6 +22,8 @@ export interface SupabaseUserLike {
     two_factor_enabled?: boolean;
     is_2fa_enabled?: boolean;
     totp_secret?: string;
+    numeric_id?: string | number;
+    status?: string;
   };
 }
 
@@ -30,6 +32,8 @@ export interface ProfileRecordLike {
   email?: string;
   full_name?: string;
   role?: string;
+  status?: string;
+  numeric_id?: string | number;
   is_admin?: boolean;
   referral_code?: string;
   referred_by?: string | null;
@@ -212,17 +216,13 @@ export function resolveOrBuildUserProfile(
   sponsorReferralCode?: string | null
 ): {
   needsUpsert: boolean;
-  upsertPayload: {
-    id: string;
-    email: string;
-    full_name: string;
-    referral_code: string;
-    kyc_status: string;
-  };
+  upsertPayload: Record<string, any>;
   resolvedProfile: {
     id: string;
     email: string;
     fullName: string;
+    numericId?: string;
+    numeric_id?: string;
     referralCode: string;
     referredBy: string | null;
     kycStatus: 'unverified' | 'pending' | 'verified';
@@ -282,6 +282,15 @@ export function resolveOrBuildUserProfile(
       ? Number(existingProfile.self_balance)
       : undefined;
 
+  const resolvedNumericId = String(
+    existingProfile?.numeric_id ||
+      user.user_metadata?.numeric_id ||
+      Math.floor(10000000 + Math.random() * 90000000)
+  );
+
+  const resolvedRole = existingProfile?.role || user.user_metadata?.role || 'trader';
+  const resolvedStatus = existingProfile?.status || 'active';
+
   const needsUpsert = !existingProfile || !existingProfile.id;
 
   return {
@@ -290,13 +299,23 @@ export function resolveOrBuildUserProfile(
       id: user.id,
       email: cleanEmail,
       full_name: resolvedFullName,
+      numeric_id: resolvedNumericId,
       referral_code: defaultReferralCode,
+      referred_by: existingProfile?.referred_by || sponsorReferralCode || null,
       kyc_status: kycStatus,
+      role: resolvedRole,
+      status: resolvedStatus,
+      self_balance: existingProfile?.self_balance ?? 0.00,
+      self_capital_balance: existingProfile?.self_capital_balance ?? 0.00,
+      demo_balance: existingProfile?.demo_balance ?? 10000.00,
+      funded_balance: existingProfile?.funded_balance ?? 0.00,
     },
     resolvedProfile: {
       id: user.id,
       email: cleanEmail,
       fullName: resolvedFullName,
+      numericId: resolvedNumericId,
+      numeric_id: resolvedNumericId,
       referralCode: defaultReferralCode,
       referredBy: existingProfile?.referred_by || sponsorReferralCode || null,
       kycStatus,

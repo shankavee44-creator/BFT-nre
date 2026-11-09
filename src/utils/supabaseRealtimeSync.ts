@@ -2155,6 +2155,75 @@ export function mapSupabaseTradingAccountRow(row: Record<string, any>): TradingA
   return sanitizeAccountForAntiBreach(rawAcc);
 }
 
+/**
+ * Uploads a deposit payment receipt screenshot image (DataURL or File)
+ * to Supabase Storage in the `deposit-receipts` bucket with a unique path
+ * convention: `${user_id}/${Date.now()}_${file_name}`.
+ */
+export async function uploadDepositReceiptScreenshot(params: {
+  userId?: string;
+  fileOrDataUrl: File | Blob | string;
+  fileName?: string;
+}): Promise<{ ok: boolean; publicUrl: string; error?: string }> {
+  const userId = params.userId || 'usr_bft_001';
+  const rawFileName = params.fileName || 'receipt.png';
+  const cleanFileName = rawFileName.replace(/[^a-zA-Z0-9_.-]/g, '_');
+  const filePath = `${userId}/${Date.now()}_${cleanFileName}`;
+
+  try {
+    let uploadBody: Blob | File;
+    if (typeof params.fileOrDataUrl === 'string') {
+      if (params.fileOrDataUrl.startsWith('data:')) {
+        const parts = params.fileOrDataUrl.split(',');
+        const mimeMatch = parts[0].match(/:(.*?);/);
+        const mime = mimeMatch ? mimeMatch[1] : 'image/png';
+        const bstr = atob(parts[1]);
+        let n = bstr.length;
+        const u8arr = new Uint8Array(n);
+        while (n--) {
+          u8arr[n] = bstr.charCodeAt(n);
+        }
+        uploadBody = new Blob([u8arr], { type: mime });
+      } else {
+        return { ok: true, publicUrl: params.fileOrDataUrl };
+      }
+    } else {
+      uploadBody = params.fileOrDataUrl;
+    }
+
+    console.log(`[Supabase Storage] Uploading screenshot to deposit-receipts bucket at path: ${filePath}`);
+    const { error: uploadErr } = await supabase.storage
+      .from('deposit-receipts')
+      .upload(filePath, uploadBody, {
+        cacheControl: '3600',
+        upsert: true,
+      });
+
+    if (uploadErr) {
+      console.warn('[Supabase Storage] Storage upload warning in deposit-receipts bucket:', uploadErr.message);
+      if (typeof params.fileOrDataUrl === 'string') {
+        return { ok: true, publicUrl: params.fileOrDataUrl };
+      }
+      return { ok: false, publicUrl: '', error: uploadErr.message };
+    }
+
+    const { data: publicUrlData } = supabase.storage
+      .from('deposit-receipts')
+      .getPublicUrl(filePath);
+
+    const publicUrl = publicUrlData?.publicUrl || filePath;
+    console.log(`[Supabase Storage] Successfully uploaded deposit receipt screenshot: ${publicUrl}`);
+
+    return { ok: true, publicUrl };
+  } catch (err: any) {
+    console.warn('[Supabase Storage] Exception uploading receipt screenshot:', err?.message || err);
+    if (typeof params.fileOrDataUrl === 'string') {
+      return { ok: true, publicUrl: params.fileOrDataUrl };
+    }
+    return { ok: false, publicUrl: '', error: err?.message || 'Upload exception' };
+  }
+}
+
 export async function insertSupabaseCryptoDeposit(params: {
   userId?: string;
   userEmail?: string;
@@ -2164,6 +2233,8 @@ export async function insertSupabaseCryptoDeposit(params: {
   sku: string;
   accountType?: 'challenge' | 'self_funded' | string;
   status?: CryptoDepositStatus | string;
+  network?: string;
+  receiptUrl?: string;
   txHash?: string | null;
   accountId?: string | null;
 }): Promise<{ ok: boolean; row?: Record<string, any>; error?: string }> {
@@ -2172,26 +2243,41 @@ export async function insertSupabaseCryptoDeposit(params: {
     userEmail: params.userEmail,
   });
 
-  const payload = buildSupabaseCryptoDepositRow({
-    userId: effectiveUserId,
-    walletAddress: params.walletAddress || DIRECT_USDT_TRC20_CONFIG.walletAddress,
-    amount: params.amount,
-    packageName: params.packageName,
-    sku: params.sku,
-    accountType: (params.accountType as CryptoDepositAccountType) || 'self_funded',
-    status: (params.status as CryptoDepositStatus) || 'pending',
-    txHash: params.txHash || undefined,
-  });
+  const amountLkr = Number((params.amount * 350.44).toFixed(2));
 
-  const corePayload = buildSupabaseCryptoDepositCoreRow({
-    userId: effectiveUserId,
-    walletAddress: params.walletAddress || DIRECT_USDT_TRC20_CONFIG.walletAddress,
-    amount: params.amount,
-    packageName: params.packageName,
-    sku: params.sku,
-    accountType: (params.accountType as CryptoDepositAccountType) || 'self_funded',
-    status: (params.status as CryptoDepositStatus) || 'pending',
-  });
+  const payload = {
+    ...buildSupabaseCryptoDepositRow({
+      userId: effectiveUserId,
+      walletAddress: params.walletAddress || DIRECT_USDT_TRC20_CONFIG.walletAddress,
+      network: params.network,
+      receiptUrl: params.receiptUrl,
+      amount: params.amount,
+      packageName: params.packageName,
+      sku: params.sku,
+      accountType: (params.accountType as CryptoDepositAccountType) || 'self_funded',
+      status: (params.status as CryptoDepositStatus) || 'pending',
+      txHash: params.txHash || undefined,
+    }),
+    amount_lkr: amountLkr,
+    lkr_amount: amountLkr,
+  };
+
+  const corePayload = {
+    ...buildSupabaseCryptoDepositCoreRow({
+      userId: effectiveUserId,
+      walletAddress: params.walletAddress || DIRECT_USDT_TRC20_CONFIG.walletAddress,
+      network: params.network,
+      receiptUrl: params.receiptUrl,
+      amount: params.amount,
+      packageName: params.packageName,
+      sku: params.sku,
+      accountType: (params.accountType as CryptoDepositAccountType) || 'self_funded',
+      status: (params.status as CryptoDepositStatus) || 'pending',
+    }),
+    amount_lkr: amountLkr,
+    lkr_amount: amountLkr,
+    payment_method: params.network || 'Commercial Bank',
+  };
 
   if (!effectiveUserId || !UUID_REGEX.test(effectiveUserId)) {
     return {
@@ -2200,7 +2286,40 @@ export async function insertSupabaseCryptoDeposit(params: {
     };
   }
 
+  // Dual insertion attempt into public.deposits and public.crypto_deposits
+  const depositsTablePayload = {
+    user_id: effectiveUserId,
+    amount: params.amount,
+    amount_lkr: amountLkr,
+    lkr_amount: amountLkr,
+    payment_method: params.network || 'Commercial Bank',
+    network: params.network || 'Commercial Bank',
+    wallet_address: params.walletAddress || '',
+    receipt_url: params.receiptUrl || '',
+    proof_url: params.receiptUrl || '',
+    status: params.status || 'Processing',
+    tx_hash: params.txHash || null,
+    package_name: params.packageName || '',
+    account_type: params.accountType || 'self_funded',
+  };
+
   try {
+    const { data: depData, error: depErr } = await supabase
+      .from('deposits')
+      .insert([depositsTablePayload])
+      .select('*')
+      .maybeSingle();
+    if (depErr) {
+      console.warn('[Supabase DB] Note on deposits table insert:', depErr.message);
+    } else {
+      console.log('[Supabase DB] Successfully inserted record into deposits table:', depData);
+    }
+  } catch (err: any) {
+    console.warn('[Supabase DB] Exception on deposits table insert:', err?.message);
+  }
+
+  try {
+    console.log('[Supabase DB] Inserting record into crypto_deposits table for user:', effectiveUserId);
     const { data: coreData, error: coreErr } = await supabase
       .from('crypto_deposits')
       .insert([corePayload])
@@ -2208,17 +2327,24 @@ export async function insertSupabaseCryptoDeposit(params: {
       .maybeSingle();
 
     if (!coreErr && coreData) {
+      console.log('[Supabase DB] Successfully inserted into crypto_deposits:', coreData);
       return { ok: true, row: { ...payload, ...coreData } };
+    }
+
+    if (coreErr) {
+      console.warn('[Supabase DB] crypto_deposits insert note:', coreErr.message);
     }
 
     // Fallback if select after insert is restricted by RLS
     const { error: plainErr } = await supabase.from('crypto_deposits').insert([corePayload]);
     if (!plainErr) {
+      console.log('[Supabase DB] Successfully inserted into crypto_deposits via plain insert');
       return { ok: true, row: { ...payload, created_at: new Date().toISOString() } };
     }
 
     return { ok: true, row: { ...payload, created_at: new Date().toISOString() } };
-  } catch {
+  } catch (err: any) {
+    console.warn('[Supabase DB] Exception on crypto_deposits insert:', err?.message);
     return { ok: true, row: { ...payload, created_at: new Date().toISOString() } };
   }
 }

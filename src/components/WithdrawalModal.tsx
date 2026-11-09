@@ -24,6 +24,8 @@ import {
   XCircle,
   RefreshCw,
   Smartphone,
+  Globe2,
+  Building2,
 } from 'lucide-react';
 import { TradingAccount, WithdrawalRequest, WithdrawalPaymentMethod, UserProfile, BinaryTrade } from '../types';
 import {
@@ -412,13 +414,21 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
     setSuccessBanner(null);
   }, [account?.id]);
 
-  // Synchronize paymentMethod when quotexMethod changes
+  // Synchronize paymentMethod and network when quotexMethod changes
   const handleChangeQuotexMethod = (nextMethod: QuotexPaymentMethodOption) => {
     setQuotexMethod(nextMethod);
     if (nextMethod === 'Bank Transfer') {
       setPaymentMethod('bank_transfer');
+      if (!bankName) setBankName('Commercial Bank');
     } else {
       setPaymentMethod('crypto_trc20');
+      const valStr = String(nextMethod);
+      if (valStr.includes('Polygon')) setNetwork('Polygon (MATIC)' as QuotexCryptoNetwork);
+      else if (valStr.includes('Aptos')) setNetwork('Aptos Network' as QuotexCryptoNetwork);
+      else if (valStr.includes('Arbitrum')) setNetwork('Arbitrum One' as QuotexCryptoNetwork);
+      else if (valStr.includes('Ethereum')) setNetwork('Ethereum (ERC-20)' as QuotexCryptoNetwork);
+      else if (valStr.includes('OKT')) setNetwork('OKT Chain' as QuotexCryptoNetwork);
+      else setNetwork('TRON (TRC-20)' as QuotexCryptoNetwork);
     }
   };
 
@@ -1450,18 +1460,38 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                           id="quotex-payment-method-select"
                           data-testid="quotex-payment-method-select"
                           value={quotexMethod}
-                          onChange={(e) => handleChangeQuotexMethod(e.target.value as QuotexPaymentMethodOption)}
+                          onChange={(e) => {
+                            const val = e.target.value as QuotexPaymentMethodOption;
+                            handleChangeQuotexMethod(val);
+                            if (val === 'Bank Transfer') {
+                              if (!bankName) setBankName('Commercial Bank');
+                            }
+                          }}
                           className="w-full px-3.5 py-2.5 bg-[#0e1017] border border-[#262c3a] focus:border-[#2b70ff] rounded-lg text-sm font-semibold text-white focus:outline-none transition-colors cursor-pointer"
                         >
-                          <option value="USDT">USDT</option>
-                          <option value="Binance Pay">Binance Pay</option>
-                          <option value="Bitcoin (BTC)">Bitcoin (BTC)</option>
-                          <option value="Ethereum (ETH)">Ethereum (ETH)</option>
-                          <option value="Bank Transfer">Bank Transfer</option>
+                          <option value="USDT">USDT (TRC-20 / BEP-20)</option>
+                          <option value="Bank Transfer">Bank Transfer (LKR)</option>
+                          <option value="USDT Polygon">USDT (Polygon)</option>
+                          <option value="Aptos">Aptos (USDT)</option>
+                          <option value="Arbitrum">Arbitrum One (USDT0)</option>
+                          <option value="Ethereum">Ethereum (ERC20)</option>
+                          <option value="OKT Chain">OKT Chain</option>
+                          <option value="iPay" disabled>iPay (Not available in your region)</option>
+                          <option value="UPay" disabled>UPay (Not available in your region)</option>
                         </select>
                       </div>
                     </div>
                   </div>
+
+                  {/* Aptos Network Warning Box */}
+                  {quotexMethod === ('Aptos' as any) && (
+                    <div className="p-3.5 rounded-xl bg-[#1d1b22] border border-amber-500/40 text-xs text-amber-200 flex items-start gap-2.5">
+                      <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                      <p className="text-[11px] text-slate-300 leading-relaxed">
+                        Ensure you only use this address for withdrawals on the Aptos network. Assets sent via the Sui network to this address will result in permanent loss.
+                      </p>
+                    </div>
+                  )}
 
                   {paymentMethod === 'crypto_trc20' ? (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1471,7 +1501,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                           htmlFor="trc20-wallet-input"
                           className="block text-xs text-[#8c96a6] mb-1.5 font-medium"
                         >
-                          Purse
+                          Purse Address
                         </label>
                         <input
                           id="trc20-wallet-input"
@@ -1479,7 +1509,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                           type="text"
                           value={purseAddress}
                           onChange={(e) => setPurseAddress(e.target.value)}
-                          placeholder="Enter wallet purse address..."
+                          placeholder="Enter crypto wallet address..."
                           className="w-full px-3.5 py-2.5 bg-[#0e1017] border border-[#262c3a] focus:border-[#2b70ff] rounded-lg text-xs sm:text-sm font-mono text-white focus:outline-none transition-colors"
                         />
                       </div>
@@ -1499,58 +1529,86 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                           onChange={(e) => handleChangeNetwork(e.target.value as QuotexCryptoNetwork)}
                           className="w-full px-3.5 py-2.5 bg-[#0e1017] border border-[#262c3a] focus:border-[#2b70ff] rounded-lg text-sm font-semibold text-white focus:outline-none transition-colors cursor-pointer"
                         >
-                          <option value="BSC (BEP20)">BSC (BEP20)</option>
                           <option value="TRON (TRC-20)">TRON (TRC-20)</option>
-                          <option value="Ethereum (ERC-20)">Ethereum (ERC-20)</option>
+                          <option value="BSC (BEP20)">BSC (BEP20)</option>
                           <option value="Polygon (MATIC)">Polygon (MATIC)</option>
+                          <option value="Aptos Network">Aptos Network</option>
+                          <option value="Arbitrum One">Arbitrum One</option>
+                          <option value="Ethereum (ERC-20)">Ethereum (ERC-20)</option>
+                          <option value="OKT Chain">OKT Chain</option>
                         </select>
                       </div>
                     </div>
                   ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-xs text-[#8c96a6] mb-1">Bank Name</label>
-                        <input
-                          name="bank_name"
-                          data-testid="bank-name-input"
-                          type="text"
-                          value={bankName}
-                          onChange={(e) => setBankName(e.target.value)}
-                          className="w-full px-3 py-2 bg-[#0e1017] border border-[#262c3a] rounded-lg text-xs text-white font-mono"
-                        />
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs text-[#8c96a6] mb-1">Bank Name</label>
+                          <input
+                            name="bank_name"
+                            data-testid="bank-name-input"
+                            type="text"
+                            value={bankName || 'Commercial Bank'}
+                            onChange={(e) => setBankName(e.target.value)}
+                            placeholder="Commercial Bank"
+                            className="w-full px-3 py-2 bg-[#0e1017] border border-[#262c3a] rounded-lg text-xs text-white font-mono"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-[#8c96a6] mb-1">Account Holder Name</label>
+                          <input
+                            name="account_holder_name"
+                            data-testid="bank-holder-input"
+                            type="text"
+                            value={accountHolder}
+                            onChange={(e) => setAccountHolder(e.target.value)}
+                            placeholder="A.D.H.W. Kumari"
+                            className="w-full px-3 py-2 bg-[#0e1017] border border-[#262c3a] rounded-lg text-xs text-white font-mono"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-[#8c96a6] mb-1">Bank Account Number / IBAN</label>
+                          <input
+                            name="bank_account_number"
+                            data-testid="bank-iban-input"
+                            type="text"
+                            value={accountNumber}
+                            onChange={(e) => setAccountNumber(e.target.value)}
+                            placeholder="e.g. 8174001908"
+                            className="w-full px-3 py-2 bg-[#0e1017] border border-[#262c3a] rounded-lg text-xs text-white font-mono"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-[#8c96a6] mb-1">Branch Name / SWIFT Code</label>
+                          <input
+                            name="branch_name"
+                            data-testid="bank-swift-input"
+                            type="text"
+                            value={swiftCode}
+                            onChange={(e) => setSwiftCode(e.target.value)}
+                            placeholder="Commercial Bank Main Branch"
+                            className="w-full px-3 py-2 bg-[#0e1017] border border-[#262c3a] rounded-lg text-xs text-white font-mono"
+                          />
+                        </div>
                       </div>
-                      <div>
-                        <label className="block text-xs text-[#8c96a6] mb-1">Account Holder Name</label>
-                        <input
-                          name="account_holder_name"
-                          data-testid="bank-holder-input"
-                          type="text"
-                          value={accountHolder}
-                          onChange={(e) => setAccountHolder(e.target.value)}
-                          className="w-full px-3 py-2 bg-[#0e1017] border border-[#262c3a] rounded-lg text-xs text-white font-mono"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-[#8c96a6] mb-1">Bank Account Number / IBAN</label>
-                        <input
-                          name="bank_account_number"
-                          data-testid="bank-iban-input"
-                          type="text"
-                          value={accountNumber}
-                          onChange={(e) => setAccountNumber(e.target.value)}
-                          className="w-full px-3 py-2 bg-[#0e1017] border border-[#262c3a] rounded-lg text-xs text-white font-mono"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-[#8c96a6] mb-1">Branch Name / SWIFT Code</label>
-                        <input
-                          name="branch_name"
-                          data-testid="bank-swift-input"
-                          type="text"
-                          value={swiftCode}
-                          onChange={(e) => setSwiftCode(e.target.value)}
-                          className="w-full px-3 py-2 bg-[#0e1017] border border-[#262c3a] rounded-lg text-xs text-white font-mono"
-                        />
+
+                      {/* Automatic USD to LKR Conversion Box */}
+                      <div className="p-3.5 rounded-xl bg-[#0e1017] border border-blue-500/40 space-y-1.5 text-xs">
+                        <div className="flex items-center justify-between text-slate-300">
+                          <span className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
+                            <Globe2 className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                            <span>Automatic LKR Currency Conversion</span>
+                          </span>
+                          <span className="px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 font-mono text-[10px] font-bold border border-blue-500/30">
+                            Fixed Rate: $1.00 USD = Rs. 339.31 LKR
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between pt-1">
+                          <span className="text-slate-400 text-xs font-medium">Net LKR Payout Amount:</span>
+                          <strong className="text-amber-400 font-mono text-sm font-extrabold">
+                            Rs. {(breakdown.netPayoutToReceive * 339.31).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} LKR
+                          </strong>
+                        </div>
                       </div>
                     </div>
                   )}

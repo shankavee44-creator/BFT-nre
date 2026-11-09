@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   WEEKLY_LEADERBOARD_TRADERS,
+  YOHAN_SIRIWARDHANA_ENTRY,
   KASUN_PERERA_ENTRY,
   resolveUserLeaderboardPosition,
   normalizeWeeklyLeaderboard,
@@ -11,33 +12,43 @@ import {
 } from './leaderboardEngine.ts';
 import { getIsoCountryCode } from '../components/CountryFlagIcon.tsx';
 
-test('Kasun Perera is positioned at 9th place with Sri Lankan flag and $18,995.22 profit', () => {
+test('Leaderboard consists of 15 traders with Rank 1 profit $66,456.11 and Rank 7 Yohan Siriwardhana ($29,456.71)', () => {
   const normalized = normalizeWeeklyLeaderboard(WEEKLY_LEADERBOARD_TRADERS);
-  const ninth = normalized[8];
-  assert.ok(ninth);
-  assert.equal(ninth.rank, 9);
-  assert.equal(ninth.name, 'Kasun Perera');
-  assert.equal(ninth.flag, '🇱🇰');
-  assert.equal(ninth.profit, 18995.22);
-  assert.equal(KASUN_PERERA_ENTRY.profit, 18995.22);
+  assert.equal(normalized.length, 15);
+
+  // Top 1: Rashid Al-Maktoum with $66,456.11
+  const top1 = normalized[0];
+  assert.equal(top1.rank, 1);
+  assert.equal(top1.profit, 66456.11);
+
+  // Rank 7: Yohan Siriwardhana with Sri Lanka flag and $29,456.71
+  const seventh = normalized[6];
+  assert.ok(seventh);
+  assert.equal(seventh.rank, 7);
+  assert.equal(seventh.name, 'Yohan Siriwardhana');
+  assert.equal(seventh.flag, '🇱🇰');
+  assert.equal(seventh.isoCode, 'LK');
+  assert.equal(seventh.profit, 29456.71);
+  assert.equal(YOHAN_SIRIWARDHANA_ENTRY.profit, 29456.71);
 });
 
-test('Weekly leaderboard includes traders from India, Pakistan, Malaysia, and Dubai with valid ISO codes', () => {
+test('Weekly leaderboard includes strong representation from India, Pakistan, Dubai (UAE), and Bangladesh with valid ISO codes', () => {
   const countries = new Set(WEEKLY_LEADERBOARD_TRADERS.map((t) => t.country));
   const flags = new Set(WEEKLY_LEADERBOARD_TRADERS.map((t) => t.flag));
 
   assert.equal(countries.has('India'), true);
   assert.equal(countries.has('Pakistan'), true);
-  assert.equal(countries.has('Malaysia'), true);
   assert.equal(countries.has('Dubai, UAE'), true);
+  assert.equal(countries.has('Bangladesh'), true);
+  assert.equal(countries.has('Sri Lanka'), true);
 
   assert.equal(flags.has('🇮🇳'), true);
   assert.equal(flags.has('🇵🇰'), true);
-  assert.equal(flags.has('🇲🇾'), true);
+  assert.equal(flags.has('🇧🇩'), true);
   assert.equal(flags.has('🇦🇪'), true);
   assert.equal(flags.has('🇱🇰'), true);
 
-  assert.equal(getIsoCountryCode('Malaysia'), 'my');
+  assert.equal(getIsoCountryCode('Bangladesh'), 'bd');
   assert.equal(getIsoCountryCode('Pakistan'), 'pk');
   assert.equal(getIsoCountryCode('Dubai, UAE'), 'ae');
   assert.equal(getIsoCountryCode('India'), 'in');
@@ -75,12 +86,19 @@ test('resolveUserLeaderboardPosition returns 1000+ when profit is $0, 0 trades, 
   assert.equal(demoResult.isUnranked, true);
   assert.equal(demoResult.rankLabel, '1000+');
 
-  // Rank 6 (top 20) -> #6
+  // Rank calculation based on new 15-trader distribution:
+  // $25,000 profit is higher than #9 ($23,410) -> Rank #9
   const fundedEligible = { tier: 'instant', phase: 'funded' };
   const activeRanked = resolveUserLeaderboardPosition(25000, 6, WEEKLY_LEADERBOARD_TRADERS, fundedEligible);
   assert.equal(activeRanked.isUnranked, false);
-  assert.equal(activeRanked.rankLabel, '#6');
+  assert.equal(activeRanked.rankLabel, '#9');
   assert.equal(activeRanked.verifiedWeeklyProfit, 25000);
+
+  // $32,000 profit is higher than #6 ($31,250) -> Rank #6
+  const activeRanked6 = resolveUserLeaderboardPosition(32000, 6, WEEKLY_LEADERBOARD_TRADERS, fundedEligible);
+  assert.equal(activeRanked6.isUnranked, false);
+  assert.equal(activeRanked6.rankLabel, '#6');
+  assert.equal(activeRanked6.verifiedWeeklyProfit, 32000);
 
   // Profit below 20th place -> 1000+
   const belowTop20 = resolveUserLeaderboardPosition(100, 5, WEEKLY_LEADERBOARD_TRADERS, fundedEligible);
@@ -105,17 +123,17 @@ test('formatCleanLeaderboardRow formats strictly rank number, flag, trader name,
     rankDisplay: '1',
     flag: '🇦🇪',
     name: 'Rashid Al-Maktoum',
-    profitFormatted: '+$48,990.50',
+    profitFormatted: '+$66,456.11',
     isTopThree: true,
   });
 
-  const kasun = formatCleanLeaderboardRow(normalized[8]);
-  assert.deepEqual(kasun, {
-    rank: 9,
-    rankDisplay: '9',
+  const seventh = formatCleanLeaderboardRow(normalized[6]);
+  assert.deepEqual(seventh, {
+    rank: 7,
+    rankDisplay: '7',
     flag: '🇱🇰',
-    name: 'Kasun Perera',
-    profitFormatted: '+$18,995.22',
+    name: 'Yohan Siriwardhana',
+    profitFormatted: '+$29,456.71',
     isTopThree: false,
   });
 });

@@ -141,19 +141,23 @@ test('Direct Referral Payout Bonus: credits 8% bonus on direct referral withdraw
   assert.equal(expectedBonus, 24.0);
 });
 
-test('Weekly Leaderboard query & Country Flag mapping: normalizes Kasun Perera at rank 9 with Sri Lanka flag', () => {
+test('Weekly Leaderboard query & Country Flag mapping: normalizes Yohan Siriwardhana at rank 7 with Sri Lanka flag and Top 1 at $66,456.11', () => {
   assert.equal(getCountryFlag('Sri Lanka'), '🇱🇰');
   assert.equal(getCountryFlag('United States'), '🇺🇸');
 
   const leaderboard = getWeeklyLeaderboardQuery();
-  assert.equal(leaderboard.length >= 10, true);
+  assert.equal(leaderboard.length >= 15, true);
 
-  const kasun = leaderboard.find((t) => t.name.includes('Kasun Perera'));
-  assert.ok(kasun, 'Kasun Perera exists in weekly leaderboard');
-  assert.equal(kasun?.rank, 9);
-  assert.equal(kasun?.country, 'Sri Lanka');
-  assert.equal(kasun?.flag, '🇱🇰');
-  assert.equal(kasun?.profit, 18995.22);
+  // Top 1
+  assert.equal(leaderboard[0].profit, 66456.11);
+
+  // Rank 7 Yohan Siriwardhana
+  const yohan = leaderboard.find((t) => t.name.includes('Yohan Siriwardhana'));
+  assert.ok(yohan, 'Yohan Siriwardhana exists in weekly leaderboard');
+  assert.equal(yohan?.rank, 7);
+  assert.equal(yohan?.country, 'Sri Lanka');
+  assert.equal(yohan?.flag, '🇱🇰');
+  assert.equal(yohan?.profit, 29456.71);
 });
 
 test('Personal Live Trading Account (Self-Funded Balance): supports direct deposits and unrestricted capital + profit withdrawals', () => {

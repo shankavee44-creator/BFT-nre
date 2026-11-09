@@ -122,6 +122,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     user: any;
   } | null>(null);
 
+  const [previewReceiptModal, setPreviewReceiptModal] = useState<{
+    url: string;
+    depositId: string;
+    user: string;
+    amount: number;
+  } | null>(null);
+
   // Manual Commission Modal
   const [isDistributeModalOpen, setIsDistributeModalOpen] = useState(false);
   const [distributeUserId, setDistributeUserId] = useState('');
@@ -434,6 +441,39 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           event: '*',
           schema: 'public',
           table: 'profiles',
+        },
+        () => {
+          fetchAllAdminData();
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'trading_accounts',
+        },
+        () => {
+          fetchAllAdminData();
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'crypto_deposits',
+        },
+        () => {
+          fetchAllAdminData();
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'deposits',
         },
         () => {
           fetchAllAdminData();
@@ -802,10 +842,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     const nameMatch = (u.full_name || '').toLowerCase().includes(q);
     const emailMatch = (u.email || '').toLowerCase().includes(q);
     const idMatch = (u.id || '').toLowerCase().includes(q);
+    const numIdMatch = String(u.numeric_id || u.numericId || '').toLowerCase().includes(q);
     const accMatch = (u.accounts || []).some((a: any) =>
       a.id.toLowerCase().includes(q)
     );
-    return nameMatch || emailMatch || idMatch || accMatch;
+    return nameMatch || emailMatch || idMatch || numIdMatch || accMatch;
   });
 
   const filteredDeposits = depositsList.filter((d) => {
@@ -1389,7 +1430,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         <div className="text-xs text-slate-400 flex flex-wrap items-center gap-x-3 gap-y-1 mt-0.5">
                           <span>{user.email}</span>
                           <span className="text-slate-600">•</span>
-                          <span>ID: {user.id}</span>
+                          <span>UUID: <strong className="text-slate-200">{user.id}</strong></span>
+                          <span className="text-slate-600">•</span>
+                          <span>Numeric ID: <strong className="text-amber-400 font-mono font-bold">{user.numeric_id || user.numericId}</strong></span>
                           <span className="text-slate-600">•</span>
                           <span>Ref Code: {user.referral_code || 'None'}</span>
                         </div>
@@ -1520,8 +1563,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       >
                         {dep.status}
                       </span>
-                      <span className="text-xs text-slate-400 font-bold">
-                        {dep.payment_method || 'USDT TRC-20'}
+                      <span className="text-xs text-[#ffaa00] font-bold">
+                        Network: {dep.network || dep.payment_method || 'Aptos'}
                       </span>
                     </div>
 
@@ -1533,9 +1576,37 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       <span>Date: {new Date(dep.created_at).toLocaleString()}</span>
                     </div>
 
-                    {dep.tx_hash && (
+                    {dep.wallet_address && (
                       <div className="text-[11px] text-slate-400 mt-1 font-mono truncate max-w-xl">
+                        Address: <span className="text-slate-200">{dep.wallet_address}</span>
+                      </div>
+                    )}
+
+                    {dep.tx_hash && (
+                      <div className="text-[11px] text-slate-400 mt-0.5 font-mono truncate max-w-xl">
                         Tx Hash: <span className="text-slate-200">{dep.tx_hash}</span>
+                      </div>
+                    )}
+
+                    {dep.receipt_url && (
+                      <div className="mt-2.5 flex items-center gap-2">
+                        <span className="text-[11px] text-[#00e676] font-bold flex items-center gap-1">
+                          <FileText className="w-3.5 h-3.5" /> Receipt Attached:
+                        </span>
+                        <img
+                          src={dep.receipt_url}
+                          alt="Deposit Receipt Screenshot"
+                          onClick={() =>
+                            setPreviewReceiptModal({
+                              url: dep.receipt_url,
+                              depositId: dep.id,
+                              user: dep.user_name || dep.user_email || dep.user_id,
+                              amount: dep.amount,
+                            })
+                          }
+                          className="w-14 h-14 object-cover rounded-xl border border-emerald-500/50 hover:border-emerald-400 transition-all cursor-pointer shadow-md hover:scale-105"
+                          title="Click to expand payment receipt"
+                        />
                       </div>
                     )}
                   </div>
@@ -1549,7 +1620,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           maximumFractionDigits: 2,
                         })}
                       </div>
-                      <div className="text-[10px] text-slate-400 uppercase">USDT Value</div>
+                      <div className="text-[11px] font-mono font-bold text-amber-400">
+                        Rs. {Number(dep.amount_lkr || dep.lkr_amount || Number(dep.amount || 0) * 350.44).toLocaleString('en-US', {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })} LKR
+                      </div>
+                      <div className="text-[10px] text-slate-400 uppercase">USDT / LKR Value</div>
                     </div>
 
                     {dep.status === 'pending' ? (
@@ -1733,6 +1810,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         <div className="text-lg sm:text-xl font-black text-rose-400">
                           -${grossVal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
                         </div>
+                        {isBank && (
+                          <div className="text-xs font-mono font-bold text-amber-400">
+                            Rs. {(grossVal * 339.31).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} LKR
+                          </div>
+                        )}
                         <div className="text-[10px] text-slate-400">
                           Fee ({feePercent}%): <span className="text-amber-400">-${feeVal.toFixed(2)}</span> • Net Payout:{' '}
                           <strong className="text-emerald-400">${netVal.toFixed(2)} USD</strong>
@@ -2482,6 +2564,53 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Lightbox Modal for Payment Receipt Screenshots */}
+      {previewReceiptModal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-60 bg-black/95 backdrop-blur-md flex items-center justify-center p-4 font-mono"
+        >
+          <div className="relative max-w-3xl w-full bg-[#0e0e15] border border-white/20 rounded-2xl p-5 shadow-2xl space-y-4">
+            <button
+              onClick={() => setPreviewReceiptModal(null)}
+              className="absolute top-4 right-4 p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-2 text-xs font-bold text-slate-300">
+              <FileText className="w-4 h-4 text-[#ff8800]" />
+              <span>Payment Receipt Screenshot — Deposit {previewReceiptModal.depositId}</span>
+            </div>
+
+            <div className="text-xs text-slate-400">
+              Trader: <strong className="text-white">{previewReceiptModal.user}</strong> • Amount:{' '}
+              <strong className="text-emerald-400">
+                ${Number(previewReceiptModal.amount).toFixed(2)} USDT
+              </strong>
+            </div>
+
+            <div className="max-h-[70vh] overflow-auto rounded-xl border border-white/10 bg-black flex items-center justify-center p-2">
+              <img
+                src={previewReceiptModal.url}
+                alt="Full Payment Receipt"
+                className="max-w-full max-h-[65vh] object-contain rounded-lg"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                onClick={() => setPreviewReceiptModal(null)}
+                className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs cursor-pointer"
+              >
+                Close Preview
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -453,35 +453,39 @@ function seedInitialData() {
     now - 86400000 * 1 + 92000
   );
 
-  // Insert Normalized Weekly Leaderboard with Kasun Perera at #9
+}
+
+export function syncLeaderboardData() {
+  const now = Date.now();
   const leaderboardSeed = [
-    { rank: 1, name: 'Rashid Al-Maktoum', country: 'Dubai, UAE', flag: '🇦🇪', tier: '$100,000 Instant Funded', profit: 48990.50, winRate: 79.4, payout: '1m 14s' },
-    { rank: 2, name: 'Arjun Malhotra', country: 'India', flag: '🇮🇳', tier: '$50,000 Two-Step', profit: 42150.80, winRate: 77.2, payout: '1m 28s' },
-    { rank: 3, name: 'Faizal Zulkifli', country: 'Malaysia', flag: '🇲🇾', tier: '$50,000 One-Step', profit: 36508.00, winRate: 75.8, payout: '1m 18s' },
-    { rank: 4, name: 'Hamza Qureshi', country: 'Pakistan', flag: '🇵🇰', tier: '$25,000 Instant Funded', profit: 31840.40, winRate: 74.1, payout: '1m 42s' },
-    { rank: 5, name: 'Tariq Al-Mansoor', country: 'Dubai, UAE', flag: '🇦🇪', tier: '$25,000 One-Step', profit: 28460.00, winRate: 72.6, payout: '1m 31s' },
-    { rank: 6, name: 'Vikramjit Singh', country: 'India', flag: '🇮🇳', tier: '$25,000 Two-Step', profit: 24404.00, winRate: 71.3, payout: '1m 49s' },
-    { rank: 7, name: 'Nurul Hidayah', country: 'Malaysia', flag: '🇲🇾', tier: '$10,000 One-Step', profit: 21940.00, winRate: 70.5, payout: '1m 15s' },
-    { rank: 8, name: 'Bilal Ahmed Khan', country: 'Pakistan', flag: '🇵🇰', tier: '$10,000 Two-Step', profit: 19720.20, winRate: 69.4, payout: '1m 36s' },
-    // Kasun Perera strictly normalized at #9
-    { rank: 9, name: 'Kasun Perera', country: 'Sri Lanka', flag: '🇱🇰', tier: '$10,000 Instant Funded', profit: 18995.22, winRate: 77.9, payout: '1m 12s' },
-    { rank: 10, name: 'Ananya Sharma', country: 'India', flag: '🇮🇳', tier: '$10,000 One-Step', profit: 17380.00, winRate: 68.1, payout: '1m 41s' },
-    { rank: 11, name: 'Zainab Al-Hashemi', country: 'Dubai, UAE', flag: '🇦🇪', tier: '$10,000 Instant Funded', profit: 15940.00, winRate: 67.4, payout: '1m 29s' },
-    { rank: 12, name: 'Syed Usman Ali', country: 'Pakistan', flag: '🇵🇰', tier: '$10,000 Two-Step', profit: 14820.50, winRate: 66.8, payout: '1m 52s' },
-    { rank: 13, name: 'Chong Wei Ming', country: 'Malaysia', flag: '🇲🇾', tier: '$5,000 One-Step', profit: 13750.00, winRate: 66.0, payout: '1m 20s' },
-    { rank: 14, name: 'Rohan Deshmukh', country: 'India', flag: '🇮🇳', tier: '$10,000 Instant Funded', profit: 12890.10, winRate: 65.2, payout: '1m 47s' },
-    { rank: 15, name: 'Khalid Bin Zayed', country: 'Dubai, UAE', flag: '🇦🇪', tier: '$5,000 Two-Step', profit: 11940.00, winRate: 64.5, payout: '1m 30s' },
+    { rank: 1, name: 'Rashid Al-Maktoum', country: 'Dubai, UAE', flag: '🇦🇪', tier: '$100,000 Instant Funded', profit: 66456.11, winRate: 81.2, payout: '1m 14s' },
+    { rank: 2, name: 'Arjun Malhotra', country: 'India', flag: '🇮🇳', tier: '$100,000 Two-Step', profit: 54120.80, winRate: 79.5, payout: '1m 28s' },
+    { rank: 3, name: 'Hamza Qureshi', country: 'Pakistan', flag: '🇵🇰', tier: '$50,000 Instant Funded', profit: 46890.40, winRate: 77.8, payout: '1m 35s' },
+    { rank: 4, name: 'Tanvir Hossain', country: 'Bangladesh', flag: '🇧🇩', tier: '$50,000 One-Step', profit: 39540.00, winRate: 76.2, payout: '1m 22s' },
+    { rank: 5, name: 'Tariq Al-Mansoor', country: 'Dubai, UAE', flag: '🇦🇪', tier: '$50,000 One-Step', profit: 34820.50, winRate: 75.1, payout: '1m 31s' },
+    { rank: 6, name: 'Vikramjit Singh', country: 'India', flag: '🇮🇳', tier: '$25,000 Two-Step', profit: 31250.00, winRate: 74.3, payout: '1m 49s' },
+    // Yohan Siriwardhana strictly normalized at #7
+    { rank: 7, name: 'Yohan Siriwardhana', country: 'Sri Lanka', flag: '🇱🇰', tier: '$50,000 Instant Funded', profit: 29456.71, winRate: 78.4, payout: '1m 15s' },
+    { rank: 8, name: 'Bilal Ahmed Khan', country: 'Pakistan', flag: '🇵🇰', tier: '$25,000 Two-Step', profit: 26840.20, winRate: 72.9, payout: '1m 36s' },
+    { rank: 9, name: 'Faizal Zulkifli', country: 'Malaysia', flag: '🇲🇾', tier: '$25,000 Instant Funded', profit: 23410.00, winRate: 71.8, payout: '1m 18s' },
+    { rank: 10, name: 'Ananya Sharma', country: 'India', flag: '🇮🇳', tier: '$25,000 One-Step', profit: 20780.00, winRate: 70.4, payout: '1m 41s' },
+    { rank: 11, name: 'Zainab Al-Hashemi', country: 'Dubai, UAE', flag: '🇦🇪', tier: '$10,000 Instant Funded', profit: 18650.00, winRate: 69.2, payout: '1m 29s' },
+    { rank: 12, name: 'Syed Usman Ali', country: 'Pakistan', flag: '🇵🇰', tier: '$10,000 Two-Step', profit: 16920.50, winRate: 68.1, payout: '1m 52s' },
+    { rank: 13, name: 'Shakib Rahman', country: 'Bangladesh', flag: '🇧🇩', tier: '$10,000 One-Step', profit: 15340.00, winRate: 67.5, payout: '1m 38s' },
+    { rank: 14, name: 'Rohan Deshmukh', country: 'India', flag: '🇮🇳', tier: '$10,000 Instant Funded', profit: 13890.10, winRate: 66.3, payout: '1m 47s' },
+    { rank: 15, name: 'Alexander Schmidt', country: 'Germany', flag: '🇩🇪', tier: '$10,000 Two-Step', profit: 12450.00, winRate: 65.7, payout: '1m 30s' },
   ];
 
   for (const lb of leaderboardSeed) {
     db.prepare(`
-      INSERT INTO leaderboard (id, rank, name, country, flag, account_tier, profit, win_rate, payout_time, updated_at)
+      INSERT OR REPLACE INTO leaderboard (id, rank, name, country, flag, account_tier, profit, win_rate, payout_time, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(`LB-${lb.rank}`, lb.rank, lb.name, lb.country, lb.flag, lb.tier, lb.profit, lb.winRate, lb.payout, now);
   }
 }
 
 seedInitialData();
+syncLeaderboardData();
 
 // ============================================================================
 // Database Query & Business Rule Helper Functions
@@ -1286,27 +1290,28 @@ export function updateUserKycStatus(
     const subStatus = data.status === 'pending' ? 'Pending Verification' : data.status;
     if (existingSub) {
       db.prepare(`
-        UPDATE kyc_submissions SET
-          doc_type = COALESCE(?, doc_type),
-          document_number = COALESCE(?, document_number),
-          front_document_url = COALESCE(?, front_document_url),
-          back_document_url = COALESCE(?, back_document_url),
-          front_file_name = COALESCE(?, front_file_name),
-          back_file_name = COALESCE(?, back_file_name),
-          status = ?,
-          profile_locked = 1,
-          updated_at = ?
-        WHERE user_id = ?
+        INSERT OR REPLACE INTO kyc_submissions (
+          id, user_id, full_name, address, date_of_birth, country, profile_locked,
+          doc_type, document_number, front_document_url, back_document_url, front_file_name, back_file_name,
+          status, created_at, updated_at
+        ) VALUES (
+          (SELECT id FROM kyc_submissions WHERE user_id = ?), ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, 'pending', (SELECT created_at FROM kyc_submissions WHERE user_id = ?), ?
+        )
       `).run(
+        userId,
+        userId,
+        user.full_name,
+        user.address || 'N/A',
+        user.date_of_birth || 'N/A',
+        user.country || 'United States',
         data.docType || null,
         data.documentNumber || null,
         data.frontDocumentUrl || null,
         data.backDocumentUrl || null,
         data.frontFileName || null,
         data.backFileName || null,
-        subStatus,
-        now,
-        userId
+        userId,
+        now
       );
     } else {
       db.prepare(`

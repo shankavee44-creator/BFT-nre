@@ -235,7 +235,7 @@ async function startServer() {
   marketEngine.start();
 
   const copyTradingEngine = CopyTradingEngine.getInstance();
-  copyTradingEngine.start();
+  // copyTradingEngine.start(); // Moved to inside app.listen
 
   const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || 'https://kwmjonjcwdwvaijcrtjw.supabase.co';
   const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || 'sb_publishable_G151L79Inh_SPks_HrujZQ_fmaGh-_6';
@@ -3680,8 +3680,9 @@ Sitemap: https://binaryfundedtrader.com/sitemap.xml`);
     });
   }
 
-  const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`BFT Server & Direct USDT (TRC-20) Gateway running on http://0.0.0.0:${PORT} (mode: ${isProduction ? 'production' : 'development'})`);
+  const server = app.listen(PORT, () => {
+    console.log(`BFT Server & Direct USDT (TRC-20) Gateway running on port ${PORT} (mode: ${isProduction ? 'production' : 'development'})`);
+    copyTradingEngine.start();
   });
 
   process.on('SIGTERM', () => {

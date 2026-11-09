@@ -17,16 +17,94 @@ export type CryptoDepositStatus =
  */
 export const DEPOSIT_EXPIRY_MS = 60 * 60 * 1000; // 3,600,000 ms (60 minutes)
 
+export interface CryptoDepositNetworkConfig {
+  id: string;
+  name: string;
+  symbol: string;
+  walletAddress: string;
+  minDeposit: string;
+  arrivalTime: string;
+  withdrawalAvailableTime: string;
+  contractAddress?: string;
+  warningNotice?: string;
+}
+
+export const DEPOSIT_NETWORKS: CryptoDepositNetworkConfig[] = [
+  {
+    id: 'aptos',
+    name: 'Aptos',
+    symbol: 'USDT',
+    walletAddress: '0xbd1d3f8f90be020831202ab4cfc816d1650e29c02c1f9e175497db505696db44',
+    minDeposit: '0.01 USDT',
+    arrivalTime: '~ 1 minutes',
+    withdrawalAvailableTime: '~ 1 minutes',
+    warningNotice:
+      'Ensure you only use this address for deposits on the Aptos network. Assets sent via the Sui network to this address will result in permanent loss.',
+  },
+  {
+    id: 'polygon',
+    name: 'Polygon (USDT0)',
+    symbol: 'USDT',
+    walletAddress: '0x67517c4ff6c010e4893b2234c4628f9e56ca4575',
+    minDeposit: '0.01 USDT',
+    arrivalTime: '~ 2 minutes',
+    withdrawalAvailableTime: '~ 10 minutes',
+    contractAddress: '***b58e8f',
+  },
+  {
+    id: 'arbitrum',
+    name: 'Arbitrum One (USDT0)',
+    symbol: 'USDT',
+    walletAddress: '0x67517c4ff6c010e4893b2234c4628f9e56ca4575',
+    minDeposit: '0.01 USDT',
+    arrivalTime: '~ 18 minutes',
+    withdrawalAvailableTime: '~ 18 minutes',
+    contractAddress: '***9fcbb9',
+  },
+  {
+    id: 'ethereum',
+    name: 'Ethereum (ERC20)',
+    symbol: 'USDT',
+    walletAddress: '0x67517c4ff6c010e4893b2234c4628f9e56ca4575',
+    minDeposit: '0.01 USDT',
+    arrivalTime: '~ 7 minutes',
+    withdrawalAvailableTime: '~ 20 minutes',
+    contractAddress: '***831ec7',
+  },
+  {
+    id: 'okt',
+    name: 'OKT Chain',
+    symbol: 'USDT',
+    walletAddress: '0x67517c4ff6c010e4893b2234c4628f9e56ca4575',
+    minDeposit: '0.01 USDT',
+    arrivalTime: '~ 1 minutes',
+    withdrawalAvailableTime: '~ 1 minutes',
+    contractAddress: '***c65c50',
+  },
+  {
+    id: 'trc20',
+    name: 'TRON (TRC20)',
+    symbol: 'USDT',
+    walletAddress: 'TWr3rLWrWGBcfwix5osJwAwMXmpcu4PNSp',
+    minDeposit: '0.01 USDT',
+    arrivalTime: '~ 2 minutes',
+    withdrawalAvailableTime: '~ 5 minutes',
+    contractAddress: '***a475',
+  },
+];
+
 export interface CryptoDepositRecordInput {
   userId?: string;
   accountId?: string | null;
   walletAddress?: string;
+  network?: string;
+  receiptUrl?: string;
   amount: number;
   packageName: string;
   sku: string;
   accountType: CryptoDepositAccountType;
   txHash?: string;
-  status?: CryptoDepositStatus;
+  status?: CryptoDepositStatus | string;
 }
 
 export interface TronGridTrc20TokenInfo {
@@ -376,7 +454,8 @@ export function buildCryptoDepositPayload(input: CryptoDepositRecordInput) {
     package_sku: sku,
     account_type: accountType,
     currency: 'USDT',
-    network: 'TRC-20',
+    network: input.network || 'TRC-20',
+    receipt_url: input.receiptUrl || null,
     tx_hash: input.txHash ? String(input.txHash).trim() : null,
     status,
   };
@@ -392,6 +471,8 @@ export function buildSupabaseCryptoDepositRow(input: CryptoDepositRecordInput) {
     package_sku: payload.package_sku,
     account_type: payload.account_type,
     status: payload.status,
+    ...(input.network ? { network: payload.network, network_type: payload.network } : {}),
+    ...(payload.receipt_url ? { receipt_url: payload.receipt_url, proof_url: payload.receipt_url } : {}),
     ...(payload.tx_hash ? { tx_hash: payload.tx_hash } : {}),
   };
 }
@@ -406,6 +487,8 @@ export function buildSupabaseCryptoDepositCoreRow(input: CryptoDepositRecordInpu
     package_sku: payload.package_sku,
     account_type: payload.account_type,
     status: payload.status,
+    ...(payload.network ? { network: payload.network } : {}),
+    ...(payload.receipt_url ? { receipt_url: payload.receipt_url } : {}),
   };
 }
 

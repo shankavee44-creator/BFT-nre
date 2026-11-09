@@ -732,6 +732,18 @@ export async function saveCopyTradingSubscriptionToSupabase(
     };
   }
 
+  // 3.1 Validate copier balance is sufficient (must be > 0 and >= trade_amount)
+  if (params.currentBalance !== undefined && params.currentBalance !== null) {
+    const curBal = Number(params.currentBalance);
+    const requiredTradeAmt = Number(params.trade_amount || 0);
+    if (curBal <= 0 || curBal < requiredTradeAmt) {
+      return {
+        ok: false,
+        error: `Insufficient Balance: Your available account balance ($${curBal.toFixed(2)}) is insufficient to copy trades ($${requiredTradeAmt.toFixed(2)} required per trade). Please deposit funds or switch accounts.`,
+      };
+    }
+  }
+
   // 3.5. Enforce Account Type Matching Rules
   const copierCanonical = resolveCanonicalCopyAccountType(
     params.accountType || params.accountCategory || params.accountId
@@ -1668,7 +1680,7 @@ export async function fetchCopyExecutedTradesFromSupabase(
   userId?: string | null,
   supabaseClient?: typeof supabase
 ): Promise<CopyExecutedTradeRow[]> {
-  if (!isCopyExecutedTradesTableAvailable) return [];
+  if (!isCopyExecutedTradesTableAvailable && !supabaseClient) return [];
   try {
     const client = supabaseClient || supabase;
     const copierUserId =
@@ -2562,6 +2574,21 @@ export async function executeMirroredMasterTradesCycle(params: {
       )
     );
 
+    // Filter copiers by available balance check (balance >= tradeAmount and balance > 0)
+    const validCopierSubs = providerCopierSubs.filter((sub) => {
+      const tradeAmount = Math.max(1, Number(sub.trade_amount || 100));
+      const activeBal = params.activeAccount?.currentBalance;
+      if (typeof activeBal === 'number' && Number.isFinite(activeBal)) {
+        if (activeBal <= 0 || activeBal < tradeAmount) {
+          console.warn(`[CopyTradingEngine] Blocked copy trade execution for subscription ${sub.resolvedSubId}: Insufficient balance ($${activeBal.toFixed(2)} < required $${tradeAmount.toFixed(2)})`);
+          return false;
+        }
+      }
+      return true;
+    });
+
+    if (validCopierSubs.length === 0) continue;
+
     const postExecState = recordMasterSignalExecution({
       state: botState,
       nowMs: now,
@@ -2570,7 +2597,7 @@ export async function executeMirroredMasterTradesCycle(params: {
     saveMasterTraderBotState(postExecState);
 
     // Build the batch of copier trades for all active copiers of this Master Trader
-    const batchRows: CopyExecutedTradeRow[] = providerCopierSubs.map((sub, idx) => {
+    const batchRows: CopyExecutedTradeRow[] = validCopierSubs.map((sub, idx) => {
       const subId = sub.resolvedSubId;
       const tradeAmount = Math.max(1, Number(sub.trade_amount || 100));
       const newTradeId = ensureTradeUuid(`copy-mirror-${providerId}-${subId}-${now}-${idx}`);

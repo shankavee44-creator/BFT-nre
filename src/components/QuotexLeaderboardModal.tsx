@@ -5,6 +5,7 @@ import { CountryFlagIcon } from './CountryFlagIcon';
 import {
   LeaderboardTrader,
   WEEKLY_LEADERBOARD_TRADERS,
+  YOHAN_SIRIWARDHANA_ENTRY,
   KASUN_PERERA_ENTRY,
   resolveUserLeaderboardPosition,
   normalizeWeeklyLeaderboard,
@@ -44,7 +45,7 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
   const [quickAllocation, setQuickAllocation] = useState<number>(100);
   const [quickCopyToast, setQuickCopyToast] = useState<string | null>(null);
 
-  // Dynamic live weekly performance updates while keeping Kasun Perera anchored at #9 ($18,995.22)
+  // Dynamic live weekly performance updates while keeping Yohan Siriwardhana anchored at #7 ($29,456.71)
   useEffect(() => {
     if (!isOpen) return;
     setResetInfo(getMondayWeeklyResetInfo());
@@ -54,7 +55,7 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
         const next = prev.map((t) => ({ ...t }));
         const eligibleIndices = next
           .map((t, idx) =>
-            t.rank > 3 && t.id !== KASUN_PERERA_ENTRY.id && t.rank !== 8 && t.rank !== 10 ? idx : -1
+            t.rank > 3 && t.id !== YOHAN_SIRIWARDHANA_ENTRY.id && t.rank !== 7 && t.rank !== 8 && t.rank !== 10 ? idx : -1
           )
           .filter((idx) => idx !== -1);
 
@@ -235,6 +236,13 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
                       >
                         {topRow.rankDisplay}
                       </span>
+                      <CountryFlagIcon
+                        country={topTrader.country}
+                        isoCode={topTrader.isoCode}
+                        flagEmoji={topRow.flag}
+                        showIsoBadge={false}
+                        className="w-4 h-3 rounded-[2px] shadow-sm border border-white/15 shrink-0 inline-block align-middle object-cover"
+                      />
                       <div className="min-w-0 flex-1">
                         <div className="text-[10.5px] font-bold text-white leading-tight truncate">{topRow.name}</div>
                         <div className="text-[9.5px] font-mono font-black text-[#00e676] leading-tight tabular-nums">
@@ -269,7 +277,7 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
           </div>
         )}
 
-        {/* 3. Clean Institutional Top 20 List (Strictly Rank Number, Country Flag, Trader Name, and Profit Amount with Quick Copy) */}
+        {/* 3. Clean Institutional Top 15 List (Strictly Rank Number, Country Flag, Trader Name, and Profit Amount with Quick Copy) */}
         <div
           data-testid="leaderboard-traders-list"
           className="flex-1 overflow-y-auto divide-y divide-white/[0.06] px-2.5 sm:px-3 py-0.5 sm:py-1 bg-[#0a0a0a]"

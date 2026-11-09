@@ -77,8 +77,9 @@ export async function ensureSupabaseProfileAndDemoAccount(params: {
   fullName?: string;
   referralCode?: string;
   sponsorCode?: string | null;
+  numericId?: string;
 }): Promise<{ ok: boolean; profile?: any; error?: string }> {
-  const { userId, email, fullName, referralCode, sponsorCode } = params;
+  const { userId, email, fullName, referralCode, sponsorCode, numericId } = params;
   if (!userId || !UUID_REGEX.test(userId)) {
     return { ok: true };
   }
@@ -87,83 +88,96 @@ export async function ensureSupabaseProfileAndDemoAccount(params: {
   const cleanName = fullName || (cleanEmail ? cleanEmail.split('@')[0] : 'BFT Trader');
   const genRefCode =
     referralCode || `BFT-${userId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 6).toUpperCase()}`;
+  const cleanNumericId =
+    numericId || String(Math.floor(10000000 + Math.random() * 90000000));
 
   try {
     // 1. Check if profile already exists
-    const { data: existingProfile } = await supabase
+    const { data: existingProfile, error: readError } = await supabase
       .from('profiles')
       .select('*')
       .eq('id', userId)
       .maybeSingle();
 
+    if (readError) {
+      console.warn('[Profile Creation] Profile read notice:', readError.message);
+    }
+
     let profileResult = existingProfile;
 
-    if (!existingProfile) {
-      // Look up sponsor UUID if sponsor code provided
-      let sponsorUuid: string | null = null;
-      if (sponsorCode && sponsorCode.trim()) {
-        try {
-          const { data: sp } = await supabase
-            .from('profiles')
-            .select('id')
-            .ilike('referral_code', sponsorCode.trim())
-            .maybeSingle();
-          if (sp?.id && sp.id !== userId) {
-            sponsorUuid = sp.id;
-          }
-        } catch {
-          // ignore
-        }
-      }
-
-      // Upsert profile with core fields and automatic fallback if optional columns are missing
-      const deterministicNumericId = String(Math.floor(10000000 + Math.random() * 90000000));
-      const upsertRow: Record<string, any> = {
-        id: userId,
-        email: cleanEmail,
-        full_name: cleanName,
-        numeric_id: deterministicNumericId,
-        balance: 0.00,
-        self_balance: 0.00,
-        self_capital_balance: 0.00,
-        demo_balance: 10000.00,
-        funded_balance: 0.00,
-        role: 'user',
-        referral_code: genRefCode,
-        referred_by: sponsorUuid,
-        kyc_status: 'unverified',
-      };
-
-      for (let attempt = 0; attempt < 4; attempt++) {
-        const { data: insertedProfile, error: upsertError } = await supabase
+    // Look up sponsor UUID if sponsor code provided
+    let sponsorUuid: string | null = existingProfile?.referred_by || null;
+    if (!sponsorUuid && sponsorCode && sponsorCode.trim()) {
+      try {
+        const { data: sp } = await supabase
           .from('profiles')
-          .upsert(upsertRow, { onConflict: 'id' })
-          .select('*')
+          .select('id')
+          .ilike('referral_code', sponsorCode.trim())
           .maybeSingle();
+        if (sp?.id && sp.id !== userId) {
+          sponsorUuid = sp.id;
+        }
+      } catch (spErr: any) {
+        console.warn('[Profile Creation] Sponsor lookup warning:', spErr?.message);
+      }
+    }
 
-        if (!upsertError) {
-          profileResult = insertedProfile;
-          break;
-        }
-        const missingColMatch = String(upsertError.message || '').match(/Could not find the '([^']+)' column/i);
-        if (missingColMatch?.[1] && missingColMatch[1] in upsertRow) {
-          delete upsertRow[missingColMatch[1]];
-          continue;
-        }
+    const upsertRow: Record<string, any> = {
+      id: userId,
+      email: cleanEmail,
+      full_name: existingProfile?.full_name || cleanName,
+      numeric_id: existingProfile?.numeric_id || cleanNumericId,
+      balance: existingProfile?.balance ?? 0.00,
+      self_balance: existingProfile?.self_balance ?? existingProfile?.self_capital_balance ?? 0.00,
+      self_capital_balance: existingProfile?.self_capital_balance ?? existingProfile?.self_balance ?? 0.00,
+      demo_balance: existingProfile?.demo_balance ?? 10000.00,
+      funded_balance: existingProfile?.funded_balance ?? 0.00,
+      role: existingProfile?.role || 'trader',
+      status: existingProfile?.status || 'active',
+      referral_code: existingProfile?.referral_code || genRefCode,
+      referred_by: sponsorUuid,
+      kyc_status: existingProfile?.kyc_status || 'unverified',
+    };
+
+    console.log('[Profile Creation] Upserting user record into public.profiles for ID:', userId);
+
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const { data: insertedProfile, error: upsertError } = await supabase
+        .from('profiles')
+        .upsert(upsertRow, { onConflict: 'id' })
+        .select('*')
+        .maybeSingle();
+
+      if (!upsertError) {
+        profileResult = insertedProfile;
+        console.log('[Profile Creation] Successfully synced profile in public.profiles:', userId);
         break;
       }
+
+      console.warn(`[Profile Creation Attempt ${attempt + 1} Error]:`, upsertError.message);
+
+      const missingColMatch = String(upsertError.message || '').match(/Could not find the '([^']+)' column/i);
+      if (missingColMatch?.[1] && missingColMatch[1] in upsertRow) {
+        delete upsertRow[missingColMatch[1]];
+        continue;
+      }
+      break;
     }
 
     // 2. Ensure initial Demo trading account exists in trading_accounts
     try {
-      const { data: existingAccounts } = await supabase
+      const { data: existingAccounts, error: accReadErr } = await supabase
         .from('trading_accounts')
         .select('id')
         .eq('user_id', userId)
         .limit(1);
 
+      if (accReadErr) {
+        console.warn('[Trading Accounts Read Warning]:', accReadErr.message);
+      }
+
       if (!existingAccounts || existingAccounts.length === 0) {
-        await supabase
+        const { error: accInsertErr } = await supabase
           .from('trading_accounts')
           .insert({
             user_id: userId,
@@ -176,15 +190,20 @@ export async function ensureSupabaseProfileAndDemoAccount(params: {
             profit_target: 0.0,
             challenge_phase: 'demo',
             status: 'active',
-          })
-          .then(undefined, () => {});
+          });
+        if (accInsertErr) {
+          console.warn('[Trading Accounts Insert Warning]:', accInsertErr.message);
+        } else {
+          console.log('[Trading Accounts] Demo account created for user:', userId);
+        }
       }
-    } catch {
-      // Non-blocking for demo account
+    } catch (accErr: any) {
+      console.warn('[Trading Accounts Exception]:', accErr?.message);
     }
 
     return { ok: true, profile: profileResult };
   } catch (err: any) {
+    console.error('[ensureSupabaseProfileAndDemoAccount Exception]:', err?.message || err);
     return { ok: false, error: err?.message || 'Failed to ensure user profile' };
   }
 }

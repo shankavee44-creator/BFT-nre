@@ -12,35 +12,38 @@ export interface LeaderboardTrader {
   recentWin?: boolean;
 }
 
-export const KASUN_PERERA_ENTRY: LeaderboardTrader = {
-  id: 'usr_09',
-  rank: 9,
-  name: 'Kasun Perera',
+export const YOHAN_SIRIWARDHANA_ENTRY: LeaderboardTrader = {
+  id: 'usr_07',
+  rank: 7,
+  name: 'Yohan Siriwardhana',
   country: 'Sri Lanka',
   flag: '🇱🇰',
   isoCode: 'LK',
-  accountTier: '$10,000 Instant Funded',
-  profit: 18995.22,
-  winRate: 77.9,
-  payoutTime: '1m 12s',
+  accountTier: '$50,000 Instant Funded',
+  profit: 29456.71,
+  winRate: 78.4,
+  payoutTime: '1m 15s',
 };
 
+// Backwards compatibility alias if needed
+export const KASUN_PERERA_ENTRY = YOHAN_SIRIWARDHANA_ENTRY;
+
 export const WEEKLY_LEADERBOARD_TRADERS: LeaderboardTrader[] = [
-  { id: 'usr_01', rank: 1, name: 'Rashid Al-Maktoum', country: 'Dubai, UAE', flag: '🇦🇪', isoCode: 'AE', accountTier: '$100,000 Instant Funded', profit: 48990.50, winRate: 79.4, payoutTime: '1m 14s' },
-  { id: 'usr_02', rank: 2, name: 'Arjun Malhotra', country: 'India', flag: '🇮🇳', isoCode: 'IN', accountTier: '$50,000 Two-Step', profit: 42150.80, winRate: 77.2, payoutTime: '1m 28s' },
-  { id: 'usr_03', rank: 3, name: 'Faizal Zulkifli', country: 'Malaysia', flag: '🇲🇾', isoCode: 'MY', accountTier: '$50,000 One-Step', profit: 36508.00, winRate: 75.8, payoutTime: '1m 18s' },
-  { id: 'usr_04', rank: 4, name: 'Hamza Qureshi', country: 'Pakistan', flag: '🇵🇰', isoCode: 'PK', accountTier: '$25,000 Instant Funded', profit: 31840.40, winRate: 74.1, payoutTime: '1m 42s' },
-  { id: 'usr_05', rank: 5, name: 'Tariq Al-Mansoor', country: 'Dubai, UAE', flag: '🇦🇪', isoCode: 'AE', accountTier: '$25,000 One-Step', profit: 28460.00, winRate: 72.6, payoutTime: '1m 31s' },
-  { id: 'usr_06', rank: 6, name: 'Vikramjit Singh', country: 'India', flag: '🇮🇳', isoCode: 'IN', accountTier: '$25,000 Two-Step', profit: 24404.00, winRate: 71.3, payoutTime: '1m 49s' },
-  { id: 'usr_07', rank: 7, name: 'Nurul Hidayah', country: 'Malaysia', flag: '🇲🇾', isoCode: 'MY', accountTier: '$10,000 One-Step', profit: 21940.00, winRate: 70.5, payoutTime: '1m 15s' },
-  { id: 'usr_08', rank: 8, name: 'Bilal Ahmed Khan', country: 'Pakistan', flag: '🇵🇰', isoCode: 'PK', accountTier: '$10,000 Two-Step', profit: 19720.20, winRate: 69.4, payoutTime: '1m 36s' },
-  KASUN_PERERA_ENTRY,
-  { id: 'usr_10', rank: 10, name: 'Ananya Sharma', country: 'India', flag: '🇮🇳', isoCode: 'IN', accountTier: '$10,000 One-Step', profit: 17380.00, winRate: 68.1, payoutTime: '1m 41s' },
-  { id: 'usr_11', rank: 11, name: 'Zainab Al-Hashemi', country: 'Dubai, UAE', flag: '🇦🇪', isoCode: 'AE', accountTier: '$10,000 Instant Funded', profit: 15940.00, winRate: 67.4, payoutTime: '1m 29s' },
-  { id: 'usr_12', rank: 12, name: 'Syed Usman Ali', country: 'Pakistan', flag: '🇵🇰', isoCode: 'PK', accountTier: '$10,000 Two-Step', profit: 14820.50, winRate: 66.8, payoutTime: '1m 52s' },
-  { id: 'usr_13', rank: 13, name: 'Chong Wei Ming', country: 'Malaysia', flag: '🇲🇾', isoCode: 'MY', accountTier: '$5,000 One-Step', profit: 13750.00, winRate: 66.0, payoutTime: '1m 20s' },
-  { id: 'usr_14', rank: 14, name: 'Rohan Deshmukh', country: 'India', flag: '🇮🇳', isoCode: 'IN', accountTier: '$10,000 Instant Funded', profit: 12890.10, winRate: 65.2, payoutTime: '1m 47s' },
-  { id: 'usr_15', rank: 15, name: 'Khalid Bin Zayed', country: 'Dubai, UAE', flag: '🇦🇪', isoCode: 'AE', accountTier: '$5,000 Two-Step', profit: 11940.00, winRate: 64.5, payoutTime: '1m 30s' },
+  { id: 'usr_01', rank: 1, name: 'Rashid Al-Maktoum', country: 'Dubai, UAE', flag: '🇦🇪', isoCode: 'AE', accountTier: '$100,000 Instant Funded', profit: 66456.11, winRate: 81.2, payoutTime: '1m 14s' },
+  { id: 'usr_02', rank: 2, name: 'Arjun Malhotra', country: 'India', flag: '🇮🇳', isoCode: 'IN', accountTier: '$100,000 Two-Step', profit: 54120.80, winRate: 79.5, payoutTime: '1m 28s' },
+  { id: 'usr_03', rank: 3, name: 'Hamza Qureshi', country: 'Pakistan', flag: '🇵🇰', isoCode: 'PK', accountTier: '$50,000 Instant Funded', profit: 46890.40, winRate: 77.8, payoutTime: '1m 35s' },
+  { id: 'usr_04', rank: 4, name: 'Tanvir Hossain', country: 'Bangladesh', flag: '🇧🇩', isoCode: 'BD', accountTier: '$50,000 One-Step', profit: 39540.00, winRate: 76.2, payoutTime: '1m 22s' },
+  { id: 'usr_05', rank: 5, name: 'Tariq Al-Mansoor', country: 'Dubai, UAE', flag: '🇦🇪', isoCode: 'AE', accountTier: '$50,000 One-Step', profit: 34820.50, winRate: 75.1, payoutTime: '1m 31s' },
+  { id: 'usr_06', rank: 6, name: 'Vikramjit Singh', country: 'India', flag: '🇮🇳', isoCode: 'IN', accountTier: '$25,000 Two-Step', profit: 31250.00, winRate: 74.3, payoutTime: '1m 49s' },
+  YOHAN_SIRIWARDHANA_ENTRY,
+  { id: 'usr_08', rank: 8, name: 'Bilal Ahmed Khan', country: 'Pakistan', flag: '🇵🇰', isoCode: 'PK', accountTier: '$25,000 Two-Step', profit: 26840.20, winRate: 72.9, payoutTime: '1m 36s' },
+  { id: 'usr_09', rank: 9, name: 'Faizal Zulkifli', country: 'Malaysia', flag: '🇲🇾', isoCode: 'MY', accountTier: '$25,000 Instant Funded', profit: 23410.00, winRate: 71.8, payoutTime: '1m 18s' },
+  { id: 'usr_10', rank: 10, name: 'Ananya Sharma', country: 'India', flag: '🇮🇳', isoCode: 'IN', accountTier: '$25,000 One-Step', profit: 20780.00, winRate: 70.4, payoutTime: '1m 41s' },
+  { id: 'usr_11', rank: 11, name: 'Zainab Al-Hashemi', country: 'Dubai, UAE', flag: '🇦🇪', isoCode: 'AE', accountTier: '$10,000 Instant Funded', profit: 18650.00, winRate: 69.2, payoutTime: '1m 29s' },
+  { id: 'usr_12', rank: 12, name: 'Syed Usman Ali', country: 'Pakistan', flag: '🇵🇰', isoCode: 'PK', accountTier: '$10,000 Two-Step', profit: 16920.50, winRate: 68.1, payoutTime: '1m 52s' },
+  { id: 'usr_13', rank: 13, name: 'Shakib Rahman', country: 'Bangladesh', flag: '🇧🇩', isoCode: 'BD', accountTier: '$10,000 One-Step', profit: 15340.00, winRate: 67.5, payoutTime: '1m 38s' },
+  { id: 'usr_14', rank: 14, name: 'Rohan Deshmukh', country: 'India', flag: '🇮🇳', isoCode: 'IN', accountTier: '$10,000 Instant Funded', profit: 13890.10, winRate: 66.3, payoutTime: '1m 47s' },
+  { id: 'usr_15', rank: 15, name: 'Alexander Schmidt', country: 'Germany', flag: '🇩🇪', isoCode: 'DE', accountTier: '$10,000 Two-Step', profit: 12450.00, winRate: 65.7, payoutTime: '1m 30s' },
 ];
 
 /**
@@ -129,28 +132,28 @@ export function resolveUserLeaderboardPosition(
 }
 
 /**
- * Keeps Kasun Perera anchored at 9th place with Sri Lankan flag (🇱🇰) and $18,995.22 profit
+ * Keeps Yohan Siriwardhana anchored at 7th place with Sri Lankan flag (🇱🇰) and $29,456.71 profit
  * while ordering other traders by profit.
  */
 export function normalizeWeeklyLeaderboard(traders: LeaderboardTrader[]): LeaderboardTrader[] {
   const others = traders
-    .filter((t) => t.id !== 'usr_09' && t.name !== 'Kasun Perera')
+    .filter((t) => t.id !== YOHAN_SIRIWARDHANA_ENTRY.id && t.name !== 'Yohan Siriwardhana' && t.name !== 'Kasun Perera')
     .sort((a, b) => b.profit - a.profit);
 
   const result: LeaderboardTrader[] = [];
   let rankCounter = 1;
 
   for (const trader of others) {
-    if (rankCounter === 9) {
-      result.push({ ...KASUN_PERERA_ENTRY, rank: 9 });
+    if (rankCounter === 7) {
+      result.push({ ...YOHAN_SIRIWARDHANA_ENTRY, rank: 7 });
       rankCounter++;
     }
     result.push({ ...trader, rank: rankCounter });
     rankCounter++;
   }
 
-  if (!result.some((t) => t.rank === 9 && t.name === 'Kasun Perera')) {
-    result.splice(8, 0, { ...KASUN_PERERA_ENTRY, rank: 9 });
+  if (!result.some((t) => t.rank === 7 && t.name === 'Yohan Siriwardhana')) {
+    result.splice(6, 0, { ...YOHAN_SIRIWARDHANA_ENTRY, rank: 7 });
   }
 
   return result.slice(0, 20).map((t, index) => ({
