@@ -1,6 +1,8 @@
 {
-  "name": "Binary Funded Trader (BFT)",
-  "description": "Binary Funded Trader (BFT) is the leading global binary options proprietary trading platform offering up to $100K funded accounts, automated copy trading, high payout splits, and fast crypto payouts.",
+  "name": "BFT — Binary Funded Trading",
+  "description": "Trade binary options with up to $100,000 in institutional funded capital or self-funded personal live balance. Instant payouts, copy trading, and P2P transfers.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

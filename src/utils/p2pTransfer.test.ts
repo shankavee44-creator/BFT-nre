@@ -357,3 +357,131 @@ test('deduplicateP2PTransferRecords deduplicates both identical IDs and temporar
   assert.equal(deduped[1].amount, 50.00);
 });
 
+test('Bug Fix 1 & 2: executeP2PBalanceTransfer strictly deducts sender balance once even if RPC returns double-deducted value, and credits receiver Self-Capital balance', async () => {
+  const profileUpdates: Array<{ id: string; payload: any }> = [];
+  let receiverRow: any = {
+    id: '99991048-1111-4222-8333-444455556666',
+    numeric_id: '100201',
+    full_name: 'Kasun Perera',
+    email: 'kasun@example.com',
+    self_balance: 100.0,
+    self_capital_balance: 0, // Un-synced 0 column on receiver
+  };
+
+  const fakeSupabaseClient: any = {
+    rpc: async () => ({
+      // Simulate a buggy DB trigger + RPC that tried to deduct $50 twice (250.5 - 100 = 150.5)
+      data: {
+        success: true,
+        new_balance: 150.5,
+        receiver_name: 'Kasun Perera',
+      },
+      error: null,
+    }),
+    from: (table: string) => {
+      if (table === 'profiles') {
+        return {
+          select: () => ({
+            or: () => ({
+              limit: async () => ({
+                data: [receiverRow],
+                error: null,
+              }),
+            }),
+            eq: (_col: string, val: any) => ({
+              maybeSingle: async () => {
+                if (String(val) === '100201' || String(val) === receiverRow.id) {
+                  return { data: receiverRow, error: null };
+                }
+                return { data: null, error: null };
+              },
+              limit: async () => ({
+                data: String(val) === '100201' ? [receiverRow] : [],
+                error: null,
+              }),
+            }),
+            limit: async () => ({
+              data: [receiverRow],
+              error: null,
+            }),
+          }),
+          update: (payload: any) => ({
+            eq: (_col: string, val: any) => {
+              profileUpdates.push({ id: String(val), payload });
+              if (String(val) === receiverRow.id) {
+                receiverRow = { ...receiverRow, ...payload };
+              }
+              return Promise.resolve({ data: null, error: null });
+            },
+          }),
+        };
+      }
+      return {
+        select: () => ({
+          eq: () => ({
+            order: () => ({
+              limit: async () => ({ data: [], error: null }),
+            }),
+          }),
+        }),
+        insert: () => ({
+          select: () => ({
+            single: async () => ({
+              data: { id: 'a1234567-89ab-cdef-0123-456789abcdef', created_at: new Date().toISOString() },
+              error: null,
+            }),
+          }),
+        }),
+        update: () => ({
+          eq: () => ({
+            eq: async () => ({ data: null, error: null }),
+          }),
+        }),
+      };
+    },
+  };
+
+  const result = await executeP2PBalanceTransfer({
+    userProfile: mockUserProfile,
+    accounts: [mockPersonalAccount, mockFundedAccount],
+    receiverNumericId: '100201',
+    transferAmount: 50.0,
+    supabaseClient: fakeSupabaseClient,
+  });
+
+  assert.equal(result.ok, true);
+  // Sender balance must be deducted strictly ONCE: 250.50 - 50.00 = 200.50 (NOT 150.50)
+  assert.equal(result.previousBalance, 250.5);
+  assert.equal(result.newBalance, 200.5);
+  assert.equal(result.updatedProfile?.selfBalance, 200.5);
+  assert.equal(result.updatedProfile?.self_capital_balance, 200.5);
+  assert.equal(result.updatedAccount?.currentBalance, 200.5);
+
+  // Receiver Self-Capital must be incremented from 100.00 to 150.00 on both self_balance and self_capital_balance
+  assert.equal(receiverRow.self_balance, 150.0);
+  assert.equal(receiverRow.self_capital_balance, 150.0);
+});
+
+test('Bug Fix 3: resolveTransferableLiveBalance and validateP2PTransferInput never trigger false Insufficient Capital when one self-capital field is 0 and another is positive', () => {
+  const unSyncedProfile: UserProfile = {
+    ...mockUserProfile,
+    selfBalance: 0,
+    self_capital_balance: 420.75,
+  };
+  const resolved = resolveTransferableLiveBalance(unSyncedProfile, [
+    { ...mockPersonalAccount, currentBalance: 0, equity: 0 },
+  ]);
+  assert.equal(resolved.availableLiveBalance, 420.75);
+  assert.equal(resolved.selfCapitalBalance, 420.75);
+
+  const validation = validateP2PTransferInput({
+    senderNumericId: '88412095',
+    receiverNumericId: '100202',
+    transferAmount: 120.75,
+    availableLiveBalance: resolved.availableLiveBalance,
+  });
+  assert.equal(validation.valid, true);
+  assert.equal(validation.exceedsSelfCapitalBalance, false);
+});
+
+

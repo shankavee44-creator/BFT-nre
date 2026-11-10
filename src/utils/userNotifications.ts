@@ -3,6 +3,7 @@ import type { TradingAccount, UserProfile } from '../types/index.ts';
 import {
   resolveUserNumericId,
   resolveTransferableLiveBalance,
+  extractProfileSelfCapitalBalance,
   createP2PTransferRecord,
   saveLocalP2PTransferRecord,
   type P2PTransferRecord,
@@ -14,6 +15,45 @@ import {
 } from './supabaseRealtimeSync.ts';
 
 export const USER_NOTIFICATIONS_STORAGE_KEY = 'bft_user_notifications_v1';
+export const CREDITED_P2P_NOTIFS_STORAGE_KEY = 'bft_credited_incoming_p2p_v1';
+
+const inMemoryCreditedNotifIds = new Set<string>();
+
+export function hasCreditedIncomingP2P(userId: string | null | undefined, notifId: string | null | undefined): boolean {
+  const cleanId = String(notifId || '').trim();
+  if (!cleanId) return false;
+  const memKey = `${userId || 'default'}:${cleanId}`;
+  if (inMemoryCreditedNotifIds.has(memKey)) return true;
+  if (typeof window === 'undefined' || typeof localStorage === 'undefined') return false;
+  try {
+    const raw = localStorage.getItem(`${CREDITED_P2P_NOTIFS_STORAGE_KEY}_${userId || 'default'}`);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.includes(cleanId);
+  } catch {
+    return false;
+  }
+}
+
+export function markCreditedIncomingP2P(userId: string | null | undefined, notifId: string | null | undefined): void {
+  const cleanId = String(notifId || '').trim();
+  if (!cleanId) return;
+  const memKey = `${userId || 'default'}:${cleanId}`;
+  inMemoryCreditedNotifIds.add(memKey);
+  if (typeof window === 'undefined' || typeof localStorage === 'undefined') return;
+  try {
+    const key = `${CREDITED_P2P_NOTIFS_STORAGE_KEY}_${userId || 'default'}`;
+    const raw = localStorage.getItem(key);
+    const parsed: string[] = raw ? JSON.parse(raw) : [];
+    const list = Array.isArray(parsed) ? parsed : [];
+    if (!list.includes(cleanId)) {
+      list.unshift(cleanId);
+      localStorage.setItem(key, JSON.stringify(list.slice(0, 100)));
+    }
+  } catch {
+    // ignore storage errors
+  }
+}
 
 export type UserNotificationType =
   | 'p2p_received'
@@ -310,46 +350,63 @@ export async function processIncomingP2PTransfer(params: {
   const safeAmount = Math.max(0, Number(Number(params.amount || 0).toFixed(2)));
   const createdAt = params.createdAt || new Date().toISOString();
 
+  const notifId =
+    params.notificationId ||
+    `notif-p2p-rcv-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+
+  const alreadyCredited = hasCreditedIncomingP2P(params.userProfile.id, notifId);
+  const shouldSkipIncrement = Boolean(params.skipBalanceIncrementIfAlreadySynced || alreadyCredited);
+
   const { availableLiveBalance, targetAccount } = resolveTransferableLiveBalance(
     params.userProfile,
     params.accounts || []
   );
 
-  let nextSelfBalance = params.skipBalanceIncrementIfAlreadySynced
+  let nextSelfBalance = shouldSkipIncrement
     ? availableLiveBalance
     : Number((availableLiveBalance + safeAmount).toFixed(2));
 
-  recordDirectBalanceCommit('self_balance', nextSelfBalance);
-
-  if (isDefaultClient && !params.skipBalanceIncrementIfAlreadySynced) {
+  if (isDefaultClient) {
     try {
+      const freshRow = await fetchSupabaseProfileRow({
+        userId: params.userProfile.id,
+        userEmail: params.userProfile.email,
+      });
+      if (freshRow) {
+        const remoteBal = extractProfileSelfCapitalBalance(freshRow, availableLiveBalance);
+        if (shouldSkipIncrement) {
+          nextSelfBalance = Number(Math.max(availableLiveBalance, remoteBal).toFixed(2));
+        } else if (remoteBal >= availableLiveBalance + safeAmount - 0.01) {
+          // Database already credited the incoming amount (e.g. via sender's atomic update or RPC)
+          nextSelfBalance = Number(remoteBal.toFixed(2));
+        } else {
+          // Database hasn't reflected the incoming credit yet or only updated one column; credit now
+          const baseBal = Math.max(availableLiveBalance, remoteBal);
+          nextSelfBalance = Number((baseBal + safeAmount).toFixed(2));
+        }
+      }
+      recordDirectBalanceCommit('self_balance', nextSelfBalance);
       await commitProfileBalanceToSupabase({
         userId: params.userProfile.id,
         userEmail: params.userProfile.email,
         column: 'self_balance',
         newBalance: nextSelfBalance,
       });
-      const freshRow = await fetchSupabaseProfileRow({
-        userId: params.userProfile.id,
-        userEmail: params.userProfile.email,
-      });
-      if (freshRow) {
-        const remoteBal = Number(freshRow.self_capital_balance ?? freshRow.self_balance ?? freshRow.balance ?? nextSelfBalance);
-        if (Number.isFinite(remoteBal) && remoteBal >= 0) {
-          nextSelfBalance = Number(remoteBal.toFixed(2));
-          recordDirectBalanceCommit('self_balance', nextSelfBalance);
-        }
-      }
     } catch {
-      // ignore
+      recordDirectBalanceCommit('self_balance', nextSelfBalance);
     }
+  } else {
+    recordDirectBalanceCommit('self_balance', nextSelfBalance);
   }
+
+  markCreditedIncomingP2P(params.userProfile.id, notifId);
 
   const updatedProfile: UserProfile = {
     ...params.userProfile,
     numericId: receiverNumericId,
     numeric_id: receiverNumericId,
     selfBalance: nextSelfBalance,
+    self_capital_balance: nextSelfBalance,
   };
 
   const updatedAccount: TradingAccount | undefined = targetAccount
@@ -361,9 +418,6 @@ export async function processIncomingP2PTransfer(params: {
     : undefined;
 
   const toastMessage = formatP2PReceivedToastMessage(safeAmount, cleanSenderId);
-  const notifId =
-    params.notificationId ||
-    `notif-p2p-rcv-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 
   const notification: UserNotificationItem = {
     id: notifId,

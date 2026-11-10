@@ -250,7 +250,39 @@ export function saveLocalP2PTransferRecord(
 }
 
 /**
- * Fetches P2P transfer history from the `balance_transfers` table in Supabase,
+ * Extracts the authoritative Self-Capital balance from a Supabase `profiles` row.
+ * Handles both `self_capital_balance` and `self_balance` (and `balance` fallback),
+ * ensuring an un-synced `0` default in one column never masks a positive Self-Capital balance in the other.
+ */
+export function extractProfileSelfCapitalBalance(
+  row?: Record<string, any> | null,
+  fallback: number = 0
+): number {
+  if (!row || typeof row !== 'object') return fallback;
+  const parseCol = (val: unknown): number | undefined => {
+    if (val === undefined || val === null || val === '') return undefined;
+    const cleaned = typeof val === 'string' ? val.replace(/[^0-9.-]+/g, '') : String(val);
+    const num = parseFloat(cleaned);
+    return Number.isFinite(num) ? Number(num.toFixed(2)) : undefined;
+  };
+
+  const selfCap = parseCol(row.self_capital_balance ?? row.selfCapitalBalance);
+  const selfBal = parseCol(row.self_balance ?? row.selfBalance);
+  const genericBal = parseCol(row.balance);
+
+  if (selfCap !== undefined && selfBal !== undefined) {
+    if (selfCap === 0 && selfBal > 0) return selfBal;
+    if (selfBal === 0 && selfCap > 0) return selfCap;
+    return selfCap;
+  }
+  if (selfCap !== undefined) return selfCap;
+  if (selfBal !== undefined) return selfBal;
+  if (genericBal !== undefined) return genericBal;
+  return fallback;
+}
+
+/**
+ * Fetches P2P transfer history from `balance_transfers` and `p2p_transfers` in Supabase,
  * merging with locally persisted P2P records and strictly deduplicating.
  */
 export async function fetchP2PTransfersFromSupabase(params: {
@@ -260,36 +292,74 @@ export async function fetchP2PTransfersFromSupabase(params: {
 }): Promise<P2PTransferRecord[]> {
   const client = params.supabaseClient || supabase;
   const userId = String(params.userId || '').trim();
+  const cleanNumId = String(params.userNumericId || '').trim().replace(/^#/, '');
   const localList = loadLocalP2PTransferHistory(userId, params.userNumericId);
   const candidateList = [...localList];
 
-  if (userId && UUID_REGEX.test(userId) && typeof client?.from === 'function') {
-    try {
-      const { data, error } = await (client.from('balance_transfers') as any)
-        .select('*')
-        .or(`sender_user_id.eq.${userId},receiver_user_id.eq.${userId}`)
-        .order('created_at', { ascending: false })
-        .limit(50);
-
-      if (!error && Array.isArray(data)) {
-        for (const row of data) {
-          const isSent = String(row.sender_user_id || '') === userId;
-          const direction = isSent ? 'sent' : 'received';
-          const amount = Number(row.amount || 0);
-          const record = createP2PTransferRecord({
-            id: String(row.id),
-            direction,
-            senderNumericId: row.sender_numeric_id || (isSent ? params.userNumericId || '58021601' : '100201'),
-            receiverNumericId: row.receiver_numeric_id || (!isSent ? params.userNumericId || '58021601' : '100202'),
-            amount,
-            createdAt: row.created_at || new Date().toISOString(),
-            status: 'completed',
-          });
-          candidateList.push(record);
+  if (typeof client?.from === 'function') {
+    const tablesToQuery = ['balance_transfers', 'p2p_transfers'];
+    for (const tableName of tablesToQuery) {
+      try {
+        const filters: string[] = [];
+        if (userId && UUID_REGEX.test(userId)) {
+          if (tableName === 'balance_transfers') {
+            filters.push(`sender_user_id.eq.${userId}`, `receiver_user_id.eq.${userId}`);
+          } else {
+            filters.push(`sender_id.eq.${userId}`, `receiver_id.eq.${userId}`);
+          }
         }
+        if (cleanNumId && /^\d+$/.test(cleanNumId)) {
+          filters.push(
+            `sender_numeric_id.eq.${cleanNumId}`,
+            `receiver_numeric_id.eq.${cleanNumId}`
+          );
+        }
+        if (filters.length === 0) continue;
+
+        const { data, error } = await (client.from(tableName) as any)
+          .select('*')
+          .or(filters.join(','))
+          .order('created_at', { ascending: false })
+          .limit(50);
+
+        if (!error && Array.isArray(data)) {
+          for (const row of data) {
+            const rowSenderUid = String(row.sender_user_id ?? row.sender_id ?? '');
+            const rowSenderNum = String(row.sender_numeric_id ?? '').trim().replace(/^#/, '');
+            const isSent =
+              (userId && rowSenderUid === userId) ||
+              (cleanNumId && rowSenderNum === cleanNumId);
+            const direction: P2PTransferDirection = isSent ? 'sent' : 'received';
+            const amount = Number(row.amount ?? row.transfer_amount ?? 0);
+            if (!Number.isFinite(amount) || amount <= 0) continue;
+
+            const record = createP2PTransferRecord({
+              id: String(row.id),
+              direction,
+              senderNumericId:
+                row.sender_numeric_id || (isSent ? cleanNumId || '58021601' : '100201'),
+              receiverNumericId:
+                row.receiver_numeric_id || (!isSent ? cleanNumId || '58021601' : '100202'),
+              amount,
+              previousBalance: Number(
+                isSent
+                  ? row.sender_previous_balance ?? row.previous_balance ?? 0
+                  : row.receiver_previous_balance ?? row.previous_balance ?? 0
+              ),
+              newBalance: Number(
+                isSent
+                  ? row.sender_new_balance ?? row.new_balance ?? 0
+                  : row.receiver_new_balance ?? row.new_balance ?? 0
+              ),
+              createdAt: row.created_at || new Date().toISOString(),
+              status: row.status === 'failed' ? 'failed' : 'completed',
+            });
+            candidateList.push(record);
+          }
+        }
+      } catch {
+        // ignore table / offline errors
       }
-    } catch {
-      // ignore table / offline errors
     }
   }
 
@@ -360,6 +430,7 @@ export interface RecipientLookupResult {
     fullName?: string;
     numericId: string;
     selfBalance: number;
+    selfCapitalBalance: number;
   };
   error?: string;
 }
@@ -400,16 +471,25 @@ export async function lookupRecipientByNumericId(params: {
         ? `numeric_id.eq.${digitsOnly},numeric_id.eq.${numericAsNum}`
         : `numeric_id.eq.${digitsOnly}`;
 
-      const { data, error } = await (client.from('profiles') as any)
-        .select('id, email, full_name, numeric_id, self_balance, balance')
-        .or(orFilter)
-        .limit(1);
+      let data: any = null;
+      let error: any = null;
+      const baseSelect = (client.from('profiles') as any).select('*');
+      if (typeof baseSelect?.or === 'function') {
+        const res = await baseSelect.or(orFilter).limit(1);
+        data = res?.data;
+        error = res?.error;
+      } else if (typeof baseSelect?.eq === 'function') {
+        const res = await baseSelect.eq('numeric_id', digitsOnly).limit(1);
+        data = res?.data;
+        error = res?.error;
+      }
 
       if (!error && Array.isArray(data) && data.length > 0) {
         const row = data[0];
         if (params.currentUserId && String(row.id) === String(params.currentUserId)) {
           return { found: false, error: 'You cannot transfer funds to your own account.' };
         }
+        const resolvedSelfBal = extractProfileSelfCapitalBalance(row, 0);
         return {
           found: true,
           profile: {
@@ -417,7 +497,8 @@ export async function lookupRecipientByNumericId(params: {
             email: String(row.email || ''),
             fullName: row.full_name || undefined,
             numericId: String(row.numeric_id ?? digitsOnly),
-            selfBalance: Number(row.self_balance ?? row.balance ?? 0),
+            selfBalance: resolvedSelfBal,
+            selfCapitalBalance: resolvedSelfBal,
           },
         };
       }
@@ -428,7 +509,7 @@ export async function lookupRecipientByNumericId(params: {
     // 2. Fallback: Search profiles for deterministic match if `numeric_id` column was NULL
     try {
       const { data: allProfiles, error: fetchErr } = await (client.from('profiles') as any)
-        .select('id, email, full_name, numeric_id, self_balance, balance')
+        .select('*')
         .limit(200);
 
       if (!fetchErr && Array.isArray(allProfiles)) {
@@ -451,6 +532,7 @@ export async function lookupRecipientByNumericId(params: {
               .then(() => {})
               .catch(() => {});
           }
+          const resolvedSelfBal = extractProfileSelfCapitalBalance(matched, 0);
           return {
             found: true,
             profile: {
@@ -458,7 +540,8 @@ export async function lookupRecipientByNumericId(params: {
               email: String(matched.email || ''),
               fullName: matched.full_name || undefined,
               numericId: String(matched.numeric_id ?? digitsOnly),
-              selfBalance: Number(matched.self_balance ?? matched.balance ?? 0),
+              selfBalance: resolvedSelfBal,
+              selfCapitalBalance: resolvedSelfBal,
             },
           };
         }
@@ -487,6 +570,7 @@ export async function lookupRecipientByNumericId(params: {
         fullName: mockNames[digitsOnly] || `Trader #${digitsOnly}`,
         numericId: digitsOnly,
         selfBalance: 500,
+        selfCapitalBalance: 500,
       },
     };
   }
@@ -499,7 +583,7 @@ export async function lookupRecipientByNumericId(params: {
 
 /**
  * Strictly resolves the user's Self-Capital (Live Balance) for P2P transfers.
- * Funds can ONLY be transferred from the user's Self-Capital balance (`self_balance` / Personal Live account).
+ * Funds can ONLY be transferred from the user's Self-Capital balance (`self_capital_balance` / `self_balance` / Personal Live account).
  * Funded Challenge / Evaluation / Demo balances are never eligible for P2P transfers.
  */
 export function resolveTransferableLiveBalance(
@@ -515,13 +599,45 @@ export function resolveTransferableLiveBalance(
     (a) =>
       isPersonalLiveAccount(a) ||
       a.accountType === 'personal' ||
+      (a as any).accountType === 'self_funded' ||
+      (a as any).accountCategory === 'personal_live' ||
       String(a.id || '').startsWith('BFT-PERS')
   );
 
-  const rawSelf =
-    userProfile?.selfBalance !== undefined && Number.isFinite(Number(userProfile.selfBalance))
-      ? Number(userProfile.selfBalance)
-      : personalAcc?.currentBalance ?? 0;
+  const profileCandidates = [
+    userProfile?.selfBalance,
+    userProfile?.self_capital_balance,
+    (userProfile as any)?.selfCapitalBalance,
+    (userProfile as any)?.self_balance,
+  ]
+    .filter((v) => v !== undefined && v !== null && v !== '')
+    .map((v) => parseNumericAmount(v))
+    .filter((n) => Number.isFinite(n) && n >= 0);
+
+  const accountCandidate =
+    personalAcc?.currentBalance !== undefined &&
+    personalAcc?.currentBalance !== null &&
+    Number.isFinite(parseNumericAmount(personalAcc.currentBalance))
+      ? Math.max(0, parseNumericAmount(personalAcc.currentBalance))
+      : undefined;
+
+  // Prefer any positive Self-Capital value across profile fields (self_capital_balance / self_balance / selfBalance)
+  // or Personal Live account currentBalance if profile fields were initialized to 0 before sync.
+  const positiveProfileBal = profileCandidates.find((n) => n > 0);
+  let rawSelf = 0;
+
+  if (positiveProfileBal !== undefined) {
+    rawSelf = positiveProfileBal;
+  } else if (profileCandidates.length > 0) {
+    // If profile explicitly has 0 and personalAcc also has 0 (or isn't higher), use 0;
+    // if personalAcc has a positive Self-Capital balance while profile had an un-synced 0, use personalAcc!
+    rawSelf =
+      accountCandidate !== undefined && accountCandidate > 0
+        ? accountCandidate
+        : profileCandidates[0];
+  } else if (accountCandidate !== undefined) {
+    rawSelf = accountCandidate;
+  }
 
   const selfBalance = Math.max(0, Number(rawSelf.toFixed(2)));
 
@@ -538,7 +654,7 @@ export function resolveTransferableLiveBalance(
  */
 export function parseNumericAmount(val: unknown): number {
   if (typeof val === 'number') return Number.isFinite(val) ? val : 0;
-  if (!val) return 0;
+  if (val === undefined || val === null || val === '') return 0;
   const cleaned = String(val).replace(/[^0-9.-]+/g, '');
   const parsed = parseFloat(cleaned);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -561,27 +677,40 @@ export function buildTransferBalanceRpcPayload(
 
 /**
  * Validates the recipient's numeric_id and transfer amount strictly against the sender's Self-Capital balance.
- * If the input amount exceeds the user's current Self-Capital balance, returns:
- * 'Transfers are only allowed from your Self-Capital balance.'
  */
 export function validateP2PTransferInput(params: {
   senderNumericId?: string | number | null;
   receiverNumericId: string | number;
   transferAmount: string | number;
   availableLiveBalance: string | number;
+  userProfile?: UserProfile | null;
+  accounts?: TradingAccount[];
 }): P2PTransferValidationResult {
   const rawReceiver = String(params.receiverNumericId ?? '').trim();
   const cleanReceiver = rawReceiver.replace(/^#/, '').trim();
-  
-  const liveBalanceNum = parseNumericAmount(params.availableLiveBalance);
+
+  let liveBalanceNum = parseNumericAmount(params.availableLiveBalance);
+  if (liveBalanceNum <= 0 && (params.userProfile || params.accounts)) {
+    const resolved = resolveTransferableLiveBalance(params.userProfile, params.accounts || []);
+    if (resolved.availableLiveBalance > liveBalanceNum) {
+      liveBalanceNum = resolved.availableLiveBalance;
+    }
+  }
+
   const transferAmountNum = parseNumericAmount(params.transferAmount);
   const parsedAmount = transferAmountNum;
 
   const normalizedAmount =
-    Number.isFinite(transferAmountNum) && transferAmountNum > 0 ? parseFloat(transferAmountNum.toFixed(2)) : 0;
+    Number.isFinite(transferAmountNum) && transferAmountNum > 0
+      ? parseFloat(transferAmountNum.toFixed(2))
+      : 0;
+  const normalizedAvailable =
+    Number.isFinite(liveBalanceNum) && liveBalanceNum > 0
+      ? parseFloat(liveBalanceNum.toFixed(2))
+      : 0;
 
-  // Check if input amount exceeds the user's current Self-Capital balance using strict float numeric comparison
-  if (parseFloat(String(transferAmountNum)) > parseFloat(String(liveBalanceNum))) {
+  // Check if input amount exceeds the user's current Self-Capital balance using 2-decimal precision
+  if (normalizedAmount > 0 && normalizedAmount > normalizedAvailable + 1e-6) {
     return {
       valid: false,
       error: P2P_SELF_CAPITAL_ONLY_ERROR,
@@ -647,6 +776,17 @@ export function validateP2PTransferInput(params: {
     };
   }
 
+  if (normalizedAvailable <= 0) {
+    return {
+      valid: false,
+      error: P2P_SELF_CAPITAL_ONLY_ERROR,
+      normalizedReceiverNumericId: cleanReceiver,
+      receiverNumericIdAsNumber: Number(cleanReceiver),
+      normalizedAmount,
+      exceedsSelfCapitalBalance: true,
+    };
+  }
+
   return {
     valid: true,
     normalizedReceiverNumericId: cleanReceiver,
@@ -656,14 +796,23 @@ export function validateP2PTransferInput(params: {
   };
 }
 
+function isInsufficientBalanceRpcMessage(msg: string): boolean {
+  const lower = msg.toLowerCase();
+  return (
+    lower.includes('insufficient') ||
+    lower.includes('no capital') ||
+    lower.includes('not enough') ||
+    lower.includes('self-capital') ||
+    lower.includes('self_balance') ||
+    lower.includes('self_capital_balance') ||
+    lower.includes('low balance')
+  );
+}
+
 function extractRpcFailureMessage(data: any, error: any): string | null {
   if (error) {
     const msg = String(error.message || error.details || error.hint || 'P2P transfer failed.');
-    if (
-      msg.toLowerCase().includes('insufficient') ||
-      msg.toLowerCase().includes('self-capital') ||
-      msg.toLowerCase().includes('self_balance')
-    ) {
+    if (isInsufficientBalanceRpcMessage(msg)) {
       return P2P_SELF_CAPITAL_ONLY_ERROR;
     }
     return msg;
@@ -676,17 +825,17 @@ function extractRpcFailureMessage(data: any, error: any): string | null {
       data.status === 'failed'
     ) {
       const rawErr = String(data.error || data.message || data.reason || 'Transfer rejected by server.');
-      if (
-        rawErr.toLowerCase().includes('insufficient') ||
-        rawErr.toLowerCase().includes('self-capital') ||
-        rawErr.toLowerCase().includes('self_balance')
-      ) {
+      if (isInsufficientBalanceRpcMessage(rawErr)) {
         return P2P_SELF_CAPITAL_ONLY_ERROR;
       }
       return rawErr;
     }
     if (typeof data.error === 'string' && data.error.trim()) {
-      return data.error.trim();
+      const cleanErr = data.error.trim();
+      if (isInsufficientBalanceRpcMessage(cleanErr)) {
+        return P2P_SELF_CAPITAL_ONLY_ERROR;
+      }
+      return cleanErr;
     }
   }
   if (data === false) {
@@ -715,355 +864,554 @@ function isMissingRpcFunctionError(error: any): boolean {
 
 let lastP2PExecutionTime = 0;
 let lastP2PSignature = '';
+const inFlightP2PSignatures = new Set<string>();
 
 /**
- * Executes a P2P Self-Capital balance transfer by calling the updated Supabase RPC function:
- * `transfer_balance_p2p(p_receiver_numeric_id, p_transfer_amount)`
- * (with automatic fallback to `transfer_balance_to_user` and direct atomic profile/notification sync)
- * and updates the user's live Self-Capital balance in real-time.
+ * Helper to update a profile's Self-Capital balance in Supabase across both
+ * `self_capital_balance` and `self_balance` columns with graceful column fallback.
+ */
+async function updateProfileSelfCapitalInSupabase(
+  client: typeof supabase,
+  profileId: string,
+  newBalance: number
+): Promise<boolean> {
+  if (!profileId || typeof client?.from !== 'function') return false;
+  const rounded = Math.max(0, Number(newBalance.toFixed(2)));
+
+  const payloadsToTry: Array<Record<string, number>> = [
+    { self_balance: rounded, self_capital_balance: rounded },
+    { self_balance: rounded },
+    { self_capital_balance: rounded },
+    { balance: rounded },
+  ];
+
+  for (const payload of payloadsToTry) {
+    try {
+      const { error } = await (client.from('profiles') as any)
+        .update(payload)
+        .eq('id', profileId);
+      if (!error) {
+        return true;
+      }
+      const errMsg = String(error.message || error.details || '');
+      if (!/column|schema cache/i.test(errMsg)) {
+        break;
+      }
+    } catch {
+      break;
+    }
+  }
+  return false;
+}
+
+/**
+ * Executes a P2P Self-Capital balance transfer:
+ * 1. Prevents duplicate balance deduction (strictly 1x deduction from sender's Self-Capital).
+ * 2. Prevents false "Insufficient Capital" errors by resolving and syncing `self_capital_balance` & `self_balance`.
+ * 3. Guarantees the incoming transfer amount is added to the recipient's Self-Capital balance (`self_capital_balance` & `self_balance`).
+ * 4. Synchronizes `profiles`, `balance_transfers` / `p2p_transfers`, and `user_notifications` in Supabase without race conditions.
  */
 export async function executeP2PBalanceTransfer(
   params: ExecuteP2PTransferParams
 ): Promise<ExecuteP2PTransferResult> {
   const now = Date.now();
-  const signature = `${params.userProfile?.id}_${params.receiverNumericId}_${params.transferAmount}`;
-  if (now - lastP2PExecutionTime < 4000 && lastP2PSignature === signature) {
+  const normalizedInputAmt = Number(parseNumericAmount(params.transferAmount).toFixed(2));
+  const cleanTargetNumId = String(params.receiverNumericId ?? '').trim().replace(/\D/g, '');
+  const signature = `${params.userProfile?.id}_${cleanTargetNumId}_${normalizedInputAmt}`;
+
+  if (
+    inFlightP2PSignatures.has(signature) ||
+    (now - lastP2PExecutionTime < 4000 && lastP2PSignature === signature)
+  ) {
     return {
       ok: false,
       error: 'Transfer request is already being processed. Please do not double-submit.',
-      transferAmount: Number(params.transferAmount || 0),
-      receiverNumericId: String(params.receiverNumericId || ''),
+      transferAmount: normalizedInputAmt,
+      receiverNumericId: cleanTargetNumId,
       previousBalance: 0,
       newBalance: 0,
       balanceColumn: 'self_balance',
     };
   }
+
+  inFlightP2PSignatures.add(signature);
   lastP2PExecutionTime = now;
   lastP2PSignature = signature;
 
-  const client = params.supabaseClient || supabase;
-  const isDefaultSupabaseClient = !params.supabaseClient;
-  const senderNumericId = resolveUserNumericId(params.userProfile);
-  const { availableLiveBalance, balanceColumn, targetAccount } = resolveTransferableLiveBalance(
-    params.userProfile,
-    params.accounts || []
-  );
-
-  const validation = validateP2PTransferInput({
-    senderNumericId,
-    receiverNumericId: params.receiverNumericId,
-    transferAmount: params.transferAmount,
-    availableLiveBalance,
-  });
-
-  if (!validation.valid) {
-    return {
-      ok: false,
-      error: validation.error || P2P_SELF_CAPITAL_ONLY_ERROR,
-      transferAmount: validation.normalizedAmount,
-      receiverNumericId: validation.normalizedReceiverNumericId,
-      previousBalance: availableLiveBalance,
-      newBalance: availableLiveBalance,
-      balanceColumn: 'self_balance',
-    };
-  }
-
-  const rpcPayload = buildTransferBalanceRpcPayload(
-    validation.normalizedReceiverNumericId,
-    validation.normalizedAmount
-  );
-
-  let rpcData: any = null;
-  let rpcError: any = null;
-  let receiverName: string | undefined;
-  let receiverUserId: string | undefined;
-
   try {
-    // 1. Primary call to updated Supabase RPC: transfer_balance_p2p
-    const res = await client.rpc('transfer_balance_p2p', rpcPayload);
-    rpcData = res.data;
-    rpcError = res.error;
+    const client = params.supabaseClient || supabase;
+    const isDefaultSupabaseClient = !params.supabaseClient;
+    let senderNumericId = resolveUserNumericId(params.userProfile);
 
-    // Retry with string parameter if signature expects text
-    if (
-      rpcError &&
-      !isMissingRpcFunctionError(rpcError) &&
-      String(rpcError.message || '').toLowerCase().includes('invalid input syntax')
-    ) {
-      const retryRes = await client.rpc('transfer_balance_p2p', {
-        p_receiver_numeric_id: validation.normalizedReceiverNumericId,
-        p_transfer_amount: validation.normalizedAmount,
-      });
-      rpcData = retryRes.data;
-      rpcError = retryRes.error;
-    }
-
-    // 2. Fallback to legacy RPC name transfer_balance_to_user if transfer_balance_p2p is not yet deployed
-    if (rpcError && isMissingRpcFunctionError(rpcError)) {
-      const legacyRes = await client.rpc('transfer_balance_to_user', rpcPayload);
-      rpcData = legacyRes.data;
-      rpcError = legacyRes.error;
-    }
-  } catch (err: any) {
-    rpcError = err;
-  }
-
-  // If the RPC returned an explicit database/validation error (and not a missing function in dev environment)
-  if (rpcError && !isMissingRpcFunctionError(rpcError)) {
-    const cleanErr =
-      extractRpcFailureMessage(rpcData, rpcError) || 'Unable to complete P2P balance transfer.';
-    return {
-      ok: false,
-      error: cleanErr,
-      transferAmount: validation.normalizedAmount,
-      receiverNumericId: validation.normalizedReceiverNumericId,
-      previousBalance: availableLiveBalance,
-      newBalance: availableLiveBalance,
-      balanceColumn: 'self_balance',
-    };
-  }
-
-  // Check if rpcData itself encodes a business failure (e.g. { success: false, error: 'User not found' })
-  const dataFailure = extractRpcFailureMessage(rpcData, null);
-  if (dataFailure) {
-    return {
-      ok: false,
-      error: dataFailure,
-      transferAmount: validation.normalizedAmount,
-      receiverNumericId: validation.normalizedReceiverNumericId,
-      previousBalance: availableLiveBalance,
-      newBalance: availableLiveBalance,
-      balanceColumn: 'self_balance',
-    };
-  }
-
-  // If the RPC function was missing on the remote DB, perform direct profiles self_balance validation & transfer
-  // querying the exact numeric_id column and inserting recipient record & notifications
-  if (rpcError && isMissingRpcFunctionError(rpcError) && typeof client.from === 'function') {
-    try {
-      const recipientLookup = await lookupRecipientByNumericId({
-        receiverNumericId: validation.normalizedReceiverNumericId,
-        currentUserId: params.userProfile.id,
-        currentUserNumericId: senderNumericId,
-        supabaseClient: client,
-      });
-
-      if (!recipientLookup.found || !recipientLookup.profile) {
-        return {
-          ok: false,
-          error: recipientLookup.error || `Recipient with Trader ID #${validation.normalizedReceiverNumericId} could not be verified.`,
-          transferAmount: validation.normalizedAmount,
-          receiverNumericId: validation.normalizedReceiverNumericId,
-          previousBalance: availableLiveBalance,
-          newBalance: availableLiveBalance,
-          balanceColumn: 'self_balance',
-        };
-      }
-
-      const receiverProfile = recipientLookup.profile;
-      receiverUserId = receiverProfile.id;
-      receiverName = receiverProfile.fullName || receiverProfile.email || undefined;
-
-      const receiverCurrentBal = Number(receiverProfile.selfBalance || 0);
-      const receiverNextBal = Number(
-        (receiverCurrentBal + validation.normalizedAmount).toFixed(2)
-      );
-
-      // Atomically update recipient's self_balance in Supabase
-      await (client.from('profiles') as any)
-        .update({ self_balance: receiverNextBal })
-        .eq('id', receiverProfile.id);
-
-      // Insert record into balance_transfers if table exists
-      try {
-        await (client.from('balance_transfers') as any).insert([
-          {
-            sender_user_id: params.userProfile.id,
-            receiver_user_id: receiverProfile.id,
-            sender_numeric_id: senderNumericId,
-            receiver_numeric_id: validation.normalizedReceiverNumericId,
-            amount: validation.normalizedAmount,
-            status: 'completed',
-            created_at: new Date().toISOString(),
-          },
-        ]);
-      } catch {
-        // non-blocking
-      }
-
-      // Insert notification into `user_notifications` for the recipient
-      try {
-        await (client.from('user_notifications') as any).insert([
-          {
-            user_id: receiverProfile.id,
-            title: 'P2P Deposit Received! 💰',
-            message: `You received $${validation.normalizedAmount.toFixed(2)} into your Self-Capital balance from User #${senderNumericId}.`,
-            type: 'p2p_received',
-            amount: validation.normalizedAmount,
-            sender_numeric_id: senderNumericId,
-            receiver_numeric_id: validation.normalizedReceiverNumericId,
-            is_read: false,
-            created_at: new Date().toISOString(),
-          },
-        ]);
-      } catch {
-        // non-blocking
-      }
-    } catch (err: any) {
-      console.warn('Fallback direct P2P transfer error:', err);
-    }
-  }
-
-  if (rpcData && typeof rpcData === 'object') {
-    receiverName =
-      rpcData.receiver_name ||
-      rpcData.recipient_name ||
-      rpcData.full_name ||
-      receiverName;
-    receiverUserId = rpcData.receiver_id || rpcData.recipient_id || receiverUserId;
-  }
-
-  // Strictly deduct exclusively from the user's Self-Capital balance (`self_balance`)
-  const expectedNewBalance = Math.max(
-    0,
-    Number((availableLiveBalance - validation.normalizedAmount).toFixed(2))
-  );
-
-  let authoritativeNewBalance = expectedNewBalance;
-  let refreshedNumericId: string | undefined;
-
-  if (rpcData && typeof rpcData === 'object') {
-    const rpcBal = Number(
-      rpcData.new_balance ??
-        rpcData.sender_new_balance ??
-        rpcData.self_capital_balance ??
-        rpcData.self_balance ??
-        NaN
-    );
-    if (Number.isFinite(rpcBal) && rpcBal >= 0) {
-      authoritativeNewBalance = Number(rpcBal.toFixed(2));
-    }
-  }
-
-  const isOfflineFetchError =
-    rpcError &&
-    /failed to fetch|networkerror|load failed/i.test(
-      String(rpcError.message || rpcError.details || '')
+    let { availableLiveBalance, balanceColumn, targetAccount } = resolveTransferableLiveBalance(
+      params.userProfile,
+      params.accounts || []
     );
 
-  if (isDefaultSupabaseClient && !isOfflineFetchError) {
-    try {
-      const freshRow = await fetchSupabaseProfileRow({
-        userId: params.userProfile.id,
-        userEmail: params.userProfile.email,
-      });
-
-      if (freshRow) {
-        if (freshRow.numeric_id !== undefined && freshRow.numeric_id !== null) {
-          refreshedNumericId = String(freshRow.numeric_id).trim();
-        }
-        const remoteSelfBal = Number(
-          freshRow.self_capital_balance ?? freshRow.self_balance ?? NaN
-        );
-
-        if (Number.isFinite(remoteSelfBal) && remoteSelfBal >= 0) {
-          if (
-            Math.abs(remoteSelfBal - availableLiveBalance) < 0.005 &&
-            expectedNewBalance !== availableLiveBalance
-          ) {
-            recordDirectBalanceCommit('self_balance', expectedNewBalance);
-            await commitProfileBalanceToSupabase({
-              userId: params.userProfile.id,
-              userEmail: params.userProfile.email,
-              column: 'self_balance',
-              newBalance: expectedNewBalance,
-            });
-            authoritativeNewBalance = expectedNewBalance;
-          } else {
-            authoritativeNewBalance = Number(remoteSelfBal.toFixed(2));
-            recordDirectBalanceCommit('self_balance', authoritativeNewBalance);
+    // Pre-check sender's Supabase profile row when using the real Supabase client:
+    // 1. If local state had a stale 0 balance while Supabase has active Self-Capital, rescue the real balance.
+    // 2. If one of `self_capital_balance` or `self_balance` in Supabase is out of sync (e.g. 0 vs positive),
+    //    sync both columns before calling the RPC so the SQL RPC never falsely throws "Insufficient Capital".
+    if (isDefaultSupabaseClient) {
+      try {
+        const preSenderRow = await fetchSupabaseProfileRow({
+          userId: params.userProfile.id,
+          userEmail: params.userProfile.email,
+        });
+        if (preSenderRow) {
+          if (preSenderRow.numeric_id !== undefined && preSenderRow.numeric_id !== null) {
+            const dbNumId = String(preSenderRow.numeric_id).trim().replace(/\D/g, '');
+            if (dbNumId) senderNumericId = dbNumId;
+          }
+          const dbSelfBal = extractProfileSelfCapitalBalance(preSenderRow, availableLiveBalance);
+          if (dbSelfBal > availableLiveBalance && availableLiveBalance < normalizedInputAmt) {
+            availableLiveBalance = dbSelfBal;
+          }
+          const rawSc = Number(preSenderRow.self_capital_balance ?? NaN);
+          const rawSb = Number(preSenderRow.self_balance ?? NaN);
+          const needsPreSync =
+            (Number.isFinite(rawSc) && Math.abs(rawSc - availableLiveBalance) > 0.005) ||
+            (Number.isFinite(rawSb) && Math.abs(rawSb - availableLiveBalance) > 0.005);
+          if (needsPreSync && preSenderRow.id) {
+            await updateProfileSelfCapitalInSupabase(
+              client,
+              String(preSenderRow.id),
+              availableLiveBalance
+            );
           }
         }
-      } else {
-        recordDirectBalanceCommit('self_balance', authoritativeNewBalance);
-        commitProfileBalanceToSupabase({
+      } catch {
+        // non-blocking
+      }
+    }
+
+    const validation = validateP2PTransferInput({
+      senderNumericId,
+      receiverNumericId: params.receiverNumericId,
+      transferAmount: params.transferAmount,
+      availableLiveBalance,
+      userProfile: params.userProfile,
+      accounts: params.accounts,
+    });
+
+    if (!validation.valid) {
+      return {
+        ok: false,
+        error: validation.error || P2P_SELF_CAPITAL_ONLY_ERROR,
+        transferAmount: validation.normalizedAmount,
+        receiverNumericId: validation.normalizedReceiverNumericId,
+        previousBalance: availableLiveBalance,
+        newBalance: availableLiveBalance,
+        balanceColumn: 'self_balance',
+      };
+    }
+
+    // Look up recipient BEFORE calling RPC so we have their pre-transfer Self-Capital balance snapshot
+    let preLookupRecipient: RecipientLookupResult['profile'] | undefined;
+    if (typeof client?.from === 'function') {
+      try {
+        const preLookup = await lookupRecipientByNumericId({
+          receiverNumericId: validation.normalizedReceiverNumericId,
+          currentUserId: params.userProfile.id,
+          currentUserNumericId: senderNumericId,
+          supabaseClient: client,
+        });
+        if (!preLookup.found && preLookup.error?.includes('own')) {
+          return {
+            ok: false,
+            error: preLookup.error,
+            transferAmount: validation.normalizedAmount,
+            receiverNumericId: validation.normalizedReceiverNumericId,
+            previousBalance: availableLiveBalance,
+            newBalance: availableLiveBalance,
+            balanceColumn: 'self_balance',
+          };
+        }
+        if (preLookup.found && preLookup.profile) {
+          preLookupRecipient = preLookup.profile;
+        }
+      } catch {
+        // continue to RPC
+      }
+    }
+
+    // Calculate the sender's new Self-Capital balance strictly ONCE
+    const expectedNewBalance = Math.max(
+      0,
+      Number((availableLiveBalance - validation.normalizedAmount).toFixed(2))
+    );
+
+    // Lock the sender's balance mutation immediately so concurrent polls cannot revert or double-deduct
+    recordDirectBalanceCommit('self_balance', expectedNewBalance);
+
+    const rpcPayload = buildTransferBalanceRpcPayload(
+      validation.normalizedReceiverNumericId,
+      validation.normalizedAmount
+    );
+
+    let rpcData: any = null;
+    let rpcError: any = null;
+    let receiverName: string | undefined =
+      preLookupRecipient?.fullName || preLookupRecipient?.email || undefined;
+    let receiverUserId: string | undefined = preLookupRecipient?.id;
+
+    try {
+      // 1. Primary call to Supabase RPC: transfer_balance_p2p
+      const res = await client.rpc('transfer_balance_p2p', rpcPayload);
+      rpcData = res.data;
+      rpcError = res.error;
+
+      // Retry with string parameter if signature expects text
+      if (
+        rpcError &&
+        !isMissingRpcFunctionError(rpcError) &&
+        String(rpcError.message || '').toLowerCase().includes('invalid input syntax')
+      ) {
+        const retryRes = await client.rpc('transfer_balance_p2p', {
+          p_receiver_numeric_id: validation.normalizedReceiverNumericId,
+          p_transfer_amount: validation.normalizedAmount,
+        });
+        rpcData = retryRes.data;
+        rpcError = retryRes.error;
+      }
+
+      // 2. Fallback to legacy RPC name transfer_balance_to_user if transfer_balance_p2p is not yet deployed
+      if (rpcError && isMissingRpcFunctionError(rpcError)) {
+        const legacyRes = await client.rpc('transfer_balance_to_user', rpcPayload);
+        rpcData = legacyRes.data;
+        rpcError = legacyRes.error;
+      }
+    } catch (err: any) {
+      rpcError = err;
+    }
+
+    const extractedFailure = extractRpcFailureMessage(rpcData, rpcError);
+    const isFalseInsufficientCapitalFromRpc =
+      extractedFailure === P2P_SELF_CAPITAL_ONLY_ERROR &&
+      availableLiveBalance >= validation.normalizedAmount;
+
+    const shouldRunDirectFallback =
+      (rpcError && isMissingRpcFunctionError(rpcError)) || isFalseInsufficientCapitalFromRpc;
+
+    // If the RPC returned a genuine error (e.g. recipient not found) and not a missing RPC or false insufficient capital error
+    if (extractedFailure && !shouldRunDirectFallback) {
+      // Restore sender balance lock back to availableLiveBalance since transfer did not execute
+      recordDirectBalanceCommit('self_balance', availableLiveBalance);
+      return {
+        ok: false,
+        error: extractedFailure,
+        transferAmount: validation.normalizedAmount,
+        receiverNumericId: validation.normalizedReceiverNumericId,
+        previousBalance: availableLiveBalance,
+        newBalance: availableLiveBalance,
+        balanceColumn: 'self_balance',
+      };
+    }
+
+    if (rpcData && typeof rpcData === 'object') {
+      receiverName =
+        rpcData.receiver_name ||
+        rpcData.recipient_name ||
+        rpcData.full_name ||
+        receiverName;
+      receiverUserId = rpcData.receiver_id || rpcData.recipient_id || receiverUserId;
+    }
+
+    // Ensure recipient is verified and their Self-Capital balance (`self_capital_balance` & `self_balance`),
+    // ledger entry (`balance_transfers` / `p2p_transfers`), and `user_notifications` are all synchronized in Supabase!
+    if (typeof client?.from === 'function') {
+      try {
+        if (!preLookupRecipient) {
+          const recipientLookup = await lookupRecipientByNumericId({
+            receiverNumericId: validation.normalizedReceiverNumericId,
+            currentUserId: params.userProfile.id,
+            currentUserNumericId: senderNumericId,
+            supabaseClient: client,
+          });
+          if (shouldRunDirectFallback && (!recipientLookup.found || !recipientLookup.profile)) {
+            recordDirectBalanceCommit('self_balance', availableLiveBalance);
+            return {
+              ok: false,
+              error:
+                recipientLookup.error ||
+                `Recipient with Trader ID #${validation.normalizedReceiverNumericId} could not be verified.`,
+              transferAmount: validation.normalizedAmount,
+              receiverNumericId: validation.normalizedReceiverNumericId,
+              previousBalance: availableLiveBalance,
+              newBalance: availableLiveBalance,
+              balanceColumn: 'self_balance',
+            };
+          }
+          if (recipientLookup.found && recipientLookup.profile) {
+            preLookupRecipient = recipientLookup.profile;
+          }
+        }
+
+        if (preLookupRecipient) {
+          receiverUserId = preLookupRecipient.id;
+          receiverName =
+            preLookupRecipient.fullName || preLookupRecipient.email || receiverName;
+
+          // Expected recipient Self-Capital balance = pre-transfer Self-Capital + transferAmount (strictly 1x addition)
+          const receiverExpectedNextBal = Number(
+            (Number(preLookupRecipient.selfBalance || 0) + validation.normalizedAmount).toFixed(2)
+          );
+
+          // Atomically update recipient's `self_balance` and `self_capital_balance` in `profiles`
+          await updateProfileSelfCapitalInSupabase(
+            client,
+            preLookupRecipient.id,
+            receiverExpectedNextBal
+          );
+
+          // Also synchronize recipient's self_funded / personal account in `trading_accounts` if present
+          if (UUID_REGEX.test(preLookupRecipient.id)) {
+            try {
+              await (client.from('trading_accounts') as any)
+                .update({
+                  current_balance: receiverExpectedNextBal,
+                  equity: receiverExpectedNextBal,
+                })
+                .eq('user_id', preLookupRecipient.id)
+                .in('account_type', ['self_funded', 'personal', 'personal_live']);
+            } catch {
+              // non-blocking
+            }
+          }
+
+          const nowIso = new Date().toISOString();
+          const recentCutoffIso = new Date(Date.now() - 25000).toISOString();
+
+          // Synchronize `balance_transfers` table without creating duplicate rows if RPC already inserted one
+          try {
+            let alreadyInBalanceTransfers = false;
+            if (!shouldRunDirectFallback && UUID_REGEX.test(String(params.userProfile.id || ''))) {
+              const { data: existingBt } = await (client.from('balance_transfers') as any)
+                .select('id')
+                .eq('sender_user_id', params.userProfile.id)
+                .eq('receiver_user_id', preLookupRecipient.id)
+                .eq('amount', validation.normalizedAmount)
+                .gte('created_at', recentCutoffIso)
+                .limit(1);
+              alreadyInBalanceTransfers = Array.isArray(existingBt) && existingBt.length > 0;
+            }
+            if (!alreadyInBalanceTransfers) {
+              await (client.from('balance_transfers') as any).insert([
+                {
+                  sender_user_id: params.userProfile.id,
+                  receiver_user_id: preLookupRecipient.id,
+                  sender_numeric_id: senderNumericId,
+                  receiver_numeric_id: validation.normalizedReceiverNumericId,
+                  amount: validation.normalizedAmount,
+                  status: 'completed',
+                  created_at: nowIso,
+                },
+              ]);
+            }
+          } catch {
+            // non-blocking
+          }
+
+          // Synchronize `p2p_transfers` table if present without creating duplicate rows
+          try {
+            let alreadyInP2PTransfers = false;
+            if (!shouldRunDirectFallback && UUID_REGEX.test(String(params.userProfile.id || ''))) {
+              const { data: existingPt } = await (client.from('p2p_transfers') as any)
+                .select('id')
+                .eq('sender_id', params.userProfile.id)
+                .eq('receiver_id', preLookupRecipient.id)
+                .eq('amount', validation.normalizedAmount)
+                .gte('created_at', recentCutoffIso)
+                .limit(1);
+              alreadyInP2PTransfers = Array.isArray(existingPt) && existingPt.length > 0;
+            }
+            if (!alreadyInP2PTransfers) {
+              await (client.from('p2p_transfers') as any).insert([
+                {
+                  sender_id: params.userProfile.id,
+                  receiver_id: preLookupRecipient.id,
+                  sender_numeric_id: senderNumericId,
+                  receiver_numeric_id: validation.normalizedReceiverNumericId,
+                  amount: validation.normalizedAmount,
+                  status: 'completed',
+                  created_at: nowIso,
+                },
+              ]);
+            }
+          } catch {
+            // non-blocking
+          }
+
+          // Synchronize `user_notifications` for the recipient so they receive an instant notification
+          try {
+            let alreadyNotified = false;
+            if (!shouldRunDirectFallback && UUID_REGEX.test(preLookupRecipient.id)) {
+              const { data: existingNotif } = await (client.from('user_notifications') as any)
+                .select('id')
+                .eq('user_id', preLookupRecipient.id)
+                .eq('type', 'p2p_received')
+                .eq('amount', validation.normalizedAmount)
+                .gte('created_at', recentCutoffIso)
+                .limit(1);
+              alreadyNotified = Array.isArray(existingNotif) && existingNotif.length > 0;
+            }
+            if (!alreadyNotified) {
+              await (client.from('user_notifications') as any).insert([
+                {
+                  user_id: preLookupRecipient.id,
+                  title: 'P2P Deposit Received! 💰',
+                  message: `You received $${validation.normalizedAmount.toFixed(2)} into your Self-Capital balance from User #${senderNumericId}.`,
+                  type: 'p2p_received',
+                  amount: validation.normalizedAmount,
+                  sender_numeric_id: senderNumericId,
+                  receiver_numeric_id: validation.normalizedReceiverNumericId,
+                  is_read: false,
+                  created_at: nowIso,
+                },
+              ]);
+            }
+          } catch {
+            // non-blocking
+          }
+        }
+      } catch (err: any) {
+        console.warn('P2P recipient synchronization warning:', err);
+      }
+    }
+
+    // Authoritative sender balance is strictly `expectedNewBalance = availableLiveBalance - transferAmount` (1x deduction).
+    // Never accept a double-deducted balance from a database trigger/RPC race condition.
+    const authoritativeNewBalance = expectedNewBalance;
+    let refreshedNumericId: string | undefined;
+
+    const isOfflineFetchError =
+      rpcError &&
+      /failed to fetch|networkerror|load failed/i.test(
+        String(rpcError.message || rpcError.details || '')
+      );
+
+    recordDirectBalanceCommit('self_balance', authoritativeNewBalance);
+
+    if (isDefaultSupabaseClient && !isOfflineFetchError) {
+      try {
+        // Explicitly commit the exact 1x-deducted balance to both `self_balance` and `self_capital_balance`
+        await commitProfileBalanceToSupabase({
           userId: params.userProfile.id,
           userEmail: params.userProfile.email,
           column: 'self_balance',
           newBalance: authoritativeNewBalance,
-        }).catch(() => {});
+        });
+
+        // Also update sender's `self_funded` / `personal` row in `trading_accounts` if present
+        if (UUID_REGEX.test(String(params.userProfile.id || ''))) {
+          try {
+            await (client.from('trading_accounts') as any)
+              .update({
+                current_balance: authoritativeNewBalance,
+                equity: authoritativeNewBalance,
+              })
+              .eq('user_id', params.userProfile.id)
+              .in('account_type', ['self_funded', 'personal', 'personal_live']);
+          } catch {
+            // non-blocking
+          }
+        }
+
+        const freshRow = await fetchSupabaseProfileRow({
+          userId: params.userProfile.id,
+          userEmail: params.userProfile.email,
+        });
+
+        if (freshRow) {
+          if (freshRow.numeric_id !== undefined && freshRow.numeric_id !== null) {
+            refreshedNumericId = String(freshRow.numeric_id).trim();
+          }
+          const remoteSc = Number(freshRow.self_capital_balance ?? NaN);
+          const remoteSb = Number(freshRow.self_balance ?? NaN);
+          if (
+            (Number.isFinite(remoteSc) && Math.abs(remoteSc - authoritativeNewBalance) > 0.005) ||
+            (Number.isFinite(remoteSb) && Math.abs(remoteSb - authoritativeNewBalance) > 0.005)
+          ) {
+            await updateProfileSelfCapitalInSupabase(
+              client,
+              String(freshRow.id || params.userProfile.id),
+              authoritativeNewBalance
+            );
+          }
+        }
+      } catch {
+        recordDirectBalanceCommit('self_balance', authoritativeNewBalance);
       }
-    } catch {
-      recordDirectBalanceCommit('self_balance', authoritativeNewBalance);
     }
-  } else {
-    recordDirectBalanceCommit('self_balance', authoritativeNewBalance);
-  }
 
-  const finalNumericId = refreshedNumericId || senderNumericId;
+    const finalNumericId = refreshedNumericId || senderNumericId;
 
-  const updatedProfile: UserProfile = {
-    ...params.userProfile,
-    numericId: finalNumericId,
-    numeric_id: finalNumericId,
-    selfBalance: authoritativeNewBalance,
-  };
+    const updatedProfile: UserProfile = {
+      ...params.userProfile,
+      numericId: finalNumericId,
+      numeric_id: finalNumericId,
+      selfBalance: authoritativeNewBalance,
+      self_capital_balance: authoritativeNewBalance,
+    };
 
-  const updatedAccount: TradingAccount | undefined = targetAccount
-    ? {
-        ...targetAccount,
-        currentBalance: authoritativeNewBalance,
-        equity: authoritativeNewBalance,
+    const updatedAccount: TradingAccount | undefined = targetAccount
+      ? {
+          ...targetAccount,
+          currentBalance: authoritativeNewBalance,
+          equity: authoritativeNewBalance,
+        }
+      : undefined;
+
+    const record = createP2PTransferRecord({
+      direction: 'sent',
+      senderNumericId: finalNumericId,
+      receiverNumericId: validation.normalizedReceiverNumericId,
+      receiverName,
+      amount: validation.normalizedAmount,
+      previousBalance: availableLiveBalance,
+      newBalance: authoritativeNewBalance,
+      status: 'completed',
+    });
+
+    if (isDefaultSupabaseClient) {
+      saveLocalP2PTransferRecord(params.userProfile.id, record, finalNumericId);
+    }
+
+    if (typeof window !== 'undefined') {
+      try {
+        window.dispatchEvent(
+          new CustomEvent('bft-realtime-profile-update', {
+            detail: {
+              id: params.userProfile.id,
+              email: params.userProfile.email,
+              numeric_id: finalNumericId,
+              self_balance: authoritativeNewBalance,
+              self_capital_balance: authoritativeNewBalance,
+            },
+          })
+        );
+      } catch {
+        // ignore
       }
-    : undefined;
-
-  const record = createP2PTransferRecord({
-    direction: 'sent',
-    senderNumericId: finalNumericId,
-    receiverNumericId: validation.normalizedReceiverNumericId,
-    receiverName,
-    amount: validation.normalizedAmount,
-    previousBalance: availableLiveBalance,
-    newBalance: authoritativeNewBalance,
-    status: 'completed',
-  });
-
-  if (isDefaultSupabaseClient) {
-    saveLocalP2PTransferRecord(params.userProfile.id, record, finalNumericId);
-  }
-
-  if (typeof window !== 'undefined') {
-    try {
-      window.dispatchEvent(
-        new CustomEvent('bft-realtime-profile-update', {
-          detail: {
-            id: params.userProfile.id,
-            email: params.userProfile.email,
-            numeric_id: finalNumericId,
-            self_balance: authoritativeNewBalance,
-            self_capital_balance: authoritativeNewBalance,
-          },
-        })
-      );
-    } catch {
-      // ignore
     }
-  }
 
-  return {
-    ok: true,
-    message: `Successfully transferred $${validation.normalizedAmount.toLocaleString('en-US', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    })} from your Self-Capital Balance to Trader ID #${validation.normalizedReceiverNumericId}.`,
-    transferAmount: validation.normalizedAmount,
-    receiverNumericId: validation.normalizedReceiverNumericId,
-    receiverName,
-    previousBalance: availableLiveBalance,
-    newBalance: authoritativeNewBalance,
-    balanceColumn,
-    updatedProfile,
-    updatedAccount,
-    record,
-  };
+    return {
+      ok: true,
+      message: `Successfully transferred $${validation.normalizedAmount.toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })} from your Self-Capital Balance to Trader ID #${validation.normalizedReceiverNumericId}.`,
+      transferAmount: validation.normalizedAmount,
+      receiverNumericId: validation.normalizedReceiverNumericId,
+      receiverName,
+      previousBalance: availableLiveBalance,
+      newBalance: authoritativeNewBalance,
+      balanceColumn,
+      updatedProfile,
+      updatedAccount,
+      record,
+    };
+  } finally {
+    inFlightP2PSignatures.delete(signature);
+  }
 }

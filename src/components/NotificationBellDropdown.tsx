@@ -16,11 +16,11 @@ import {
   normalizeUserNotificationRow,
   processIncomingP2PTransfer,
   formatP2PReceivedToastMessage,
+  hasCreditedIncomingP2P,
   type UserNotificationItem,
 } from '../utils/userNotifications.ts';
 import { resolveUserNumericId } from '../utils/p2pTransfer.ts';
 import { soundEngine } from '../utils/soundEffects.ts';
-import { fetchSupabaseProfileRow } from '../utils/supabaseRealtimeSync.ts';
 
 export interface NotificationBellDropdownProps {
   userProfile: UserProfile;
@@ -55,7 +55,36 @@ export const NotificationBellDropdown: React.FC<NotificationBellDropdownProps> =
       userNumericId,
     });
     for (const item of items) {
+      const wasProcessed = processedRealtimeIdsRef.current.has(item.id);
       processedRealtimeIdsRef.current.add(item.id);
+
+      // If an unread incoming P2P transfer arrives via polling before realtime, ensure Self-Capital is credited once
+      if (
+        !wasProcessed &&
+        !item.is_read &&
+        item.type === 'p2p_received' &&
+        item.amount &&
+        item.amount > 0 &&
+        !hasCreditedIncomingP2P(userProfile.id, item.id)
+      ) {
+        try {
+          const res = await processIncomingP2PTransfer({
+            userProfile,
+            accounts,
+            amount: item.amount,
+            senderNumericId: item.sender_numeric_id || '100201',
+            notificationId: item.id,
+            createdAt: item.created_at,
+            skipBalanceIncrementIfAlreadySynced: false,
+          });
+          onUpdateProfile(res.updatedProfile);
+          if (res.updatedAccount && onUpdateAccount) {
+            onUpdateAccount(res.updatedAccount);
+          }
+        } catch {
+          // ignore
+        }
+      }
     }
     setNotifications(items);
   };
@@ -128,19 +157,6 @@ export const NotificationBellDropdown: React.FC<NotificationBellDropdownProps> =
                   skipBalanceIncrementIfAlreadySynced: false,
                 });
                 onUpdateProfile(res.updatedProfile);
-                try {
-                  const freshRow = await fetchSupabaseProfileRow({
-                    userId: userProfile.id,
-                    userEmail: userProfile.email,
-                  });
-                  if (freshRow) {
-                    const freshProfile = {
-                      ...res.updatedProfile,
-                      selfBalance: Number(freshRow.self_capital_balance ?? freshRow.self_balance ?? freshRow.balance ?? res.updatedProfile.selfBalance),
-                    };
-                    onUpdateProfile(freshProfile);
-                  }
-                } catch {}
                 if (res.updatedAccount && onUpdateAccount) {
                   onUpdateAccount(res.updatedAccount);
                 }

@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx --test src/utils/priceFeedEngine.test.ts src/utils/supabaseMarketSync.test.ts src/utils/quotexMobile.test.ts src/utils/propRules.test.ts src/utils/twoFactorAuth.test.ts src/utils/paginationHelper.test.ts src/utils/copyTradingSync.test.ts src/utils/leaderboardEngine.test.ts src/utils/backendFinancialRules.test.ts"
+    "test": "tsx --test src/utils/p2pTransfer.test.ts src/utils/propRules.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

@@ -124,6 +124,7 @@ import { NotificationBellDropdown } from './NotificationBellDropdown';
 import {
   resolveUserNumericId,
   resolveTransferableLiveBalance,
+  extractProfileSelfCapitalBalance,
   loadLocalP2PTransferHistory,
   fetchP2PTransfersFromSupabase,
   deduplicateP2PTransferRecords,
@@ -443,13 +444,22 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           userId: currentProfile.id,
           userEmail: currentProfile.email,
         });
-        const freshSelfBal = Number(supaProfile.self_capital_balance ?? supaProfile.self_balance ?? supaProfile.balance);
-        const hasBalanceChanged = Number.isFinite(freshSelfBal) && Math.abs(freshSelfBal - Number(currentProfile.selfBalance || 0)) > 0.001;
+        const freshSelfBal = extractProfileSelfCapitalBalance(
+          supaProfile,
+          Number(synced.updatedProfile.selfBalance ?? currentProfile.selfBalance ?? 0)
+        );
+        const hasBalanceChanged =
+          Number.isFinite(freshSelfBal) &&
+          Math.abs(freshSelfBal - Number(currentProfile.selfBalance || 0)) > 0.001;
 
         if (synced.changed || hasBalanceChanged) {
+          const resolvedSelf = Number.isFinite(freshSelfBal)
+            ? freshSelfBal
+            : synced.updatedProfile.selfBalance;
           const finalProfile: UserProfile = {
             ...synced.updatedProfile,
-            selfBalance: Number.isFinite(freshSelfBal) ? freshSelfBal : synced.updatedProfile.selfBalance,
+            selfBalance: resolvedSelf,
+            self_capital_balance: resolvedSelf,
             numericId: supaProfile.numeric_id || synced.updatedProfile.numericId,
             numeric_id: supaProfile.numeric_id || synced.updatedProfile.numericId,
           };

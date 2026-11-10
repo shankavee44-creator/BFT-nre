@@ -1,138 +1,160 @@
-export type ChallengeTier = 'one-step' | 'two-step' | 'instant' | 'personal' | 'demo';
-
-export type AccountCategory = 'prop' | 'personal_live' | 'demo';
-
-export type AccountSize = 2500 | 5000 | 10000 | 25000 | 50000 | 100000 | number;
-
-export type PromoCodeType = 'SPOOKY40' | 'SPOOKY20' | 'BFT40' | 'BFT20';
+export type ChallengeTier = 'two-step' | 'one-step' | 'instant' | 'demo' | 'personal' | string;
+export type AccountSize = 5000 | 10000 | 25000 | 50000 | 100000 | number;
+export type PromoCodeType = '50OFF' | 'FREE100' | string | null;
+export type BinaryOptionDirection = 'CALL' | 'PUT';
+export type KYCDocumentType = 'id_card' | 'passport' | 'driving_license' | string;
+export type WithdrawalPaymentMethod = 'crypto_trc20' | 'crypto_bep20' | 'binance_pay' | 'bank_transfer' | string;
 
 export interface EvaluationPackage {
-  id: string;
   tier: ChallengeTier;
   tierName: string;
   size: AccountSize;
   price: number;
-  profitTarget: number; // in percent (30 for one-step, 25 for two-step phase 1, 0 for instant)
-  profitDaysRequirement?: number; // 5 days
-  minProfitableDayPercent?: number; // 0.5% profit per day
-  minTradingDaysText?: string; // "5 days (>= 0.5%/day)"
-  step2Target?: number; // in percent (15 for two-step phase 2)
-  step2Days?: number; // 5 days
-  maxDailyDrawdown: number; // in percent (10 for one-step, 8 for two-step, 6 for instant)
-  maxOverallLoss: number; // in percent (15 for one-step, 20 for two-step, 12 for instant)
-  maxRiskPerTradePercent?: number; // 5% of capital
-  payoutSplit: number; // 80% first 3 months -> 90% after 3 months
-  upgradedPayoutSplit?: number; // 90%
-  leverage: string;
-  popular?: boolean;
-  unlimitedTime?: boolean;
-  refundOnFirstPayout?: boolean;
-  resetCourtesyDiscount?: number; // 10 (%)
+  originalPrice?: number;
+  dailyLossLimitPercent: number;
+  maxOverallLossPercent: number;
+  profitTargetPhase1Percent: number;
+  profitTargetPhase2Percent?: number;
+  profitSplitPercent: number;
+  minTradingDays: number;
+  dailyWithdrawalsFee?: number;
+  dailyWithdrawalsUnlocked?: boolean;
+  promoCodeApplied?: PromoCodeType;
+  sku?: string;
 }
-
-export interface RuleViolationLog {
-  id: string;
-  rule: 'DAILY_LOSS' | 'OVERALL_LOSS' | 'MAX_RISK_PER_TRADE' | 'MARTINGALE' | 'HEDGING' | 'NEWS_TRADING' | 'DURATION' | 'POSITION_SPIKE';
-  ruleName: string;
-  severity: 'critical' | 'warning';
-  message: string;
-  timestamp: number;
-  details?: string;
-}
-
-export type BreachType = 'none' | 'soft' | 'hard';
-
-export type ChallengeAccountType = 'instant' | 'one_step' | 'two_step' | 'personal' | 'demo';
 
 export interface TradingAccount {
-  id: string; // e.g. BFT-78291 or UUID from trading_accounts
-  supabaseAccountId?: string; // UUID from public.trading_accounts
-  ownerId?: string;
-  ownerEmail?: string;
+  id: string;
+  supabaseAccountId?: string;
+  userId?: string;
+  user_id?: string;
+  userEmail?: string;
   loginId: string;
   passwordHash: string;
   tier: ChallengeTier;
-  accountType?: ChallengeAccountType | string;
+  accountType?: string;
+  accountCategory?: 'prop' | 'personal_live' | 'demo' | string;
+  account_category?: string;
   tierName: string;
-  accountCategory?: AccountCategory;
-  depositedCapital?: number;
-  size: AccountSize;
-  currentBalance: number;
+  size: number;
   initialBalance: number;
+  depositedCapital?: number;
+  currentBalance: number;
   startingDayEquity: number;
   equity: number;
   dailyLossLimitPercent: number;
   maxOverallLossPercent: number;
-  profitTargetPercent?: number | null; // e.g. 30 for one_step, 25 for two_step phase_1, 15 for two_step phase_2, 0/null for instant/funded
-  step2ProfitTargetPercent?: number; // 15 for two_step phase_2
-  maxRiskPerTradePercent?: number; // default 5%
-  status:
-    | 'active'
-    | 'passed'
-    | 'passed_phase_1'
-    | 'soft_breached'
-    | 'hard_breached'
-    | 'failed'
-    | 'soft-breached'
-    | 'hard-breached'
-    | 'breached'
-    | 'suspended';
-  breachType?: BreachType;
-  softBreachResetTime?: number; // ms timestamp of next daily reset
-  discountEligible?: boolean; // 10% courtesy discount on re-purchase
-  dailyWithdrawalsUnlocked?: boolean; // Paid +15% add-on at checkout
-  monthsCompleted?: number; // >= 3 upgrades split from 80% to 90% + scaling plan
-  scalingActive?: boolean;
-  firstWithdrawalCompleted?: boolean; // Mandatory 14-day waiting period for very first withdrawal
-  nextWithdrawalAvailableAt?: number; // 7-day standard cycle timer
-  certificateId?: string;
-  passedAt?: string;
-  createdDate: string;
-  lastActiveDate: string;
-  phase: 'phase_1' | 'phase_2' | 'funded' | 'personal_live' | 'demo';
-  challengePhase?: 'phase_1' | 'phase_2' | 'funded' | string;
+  maxRiskPerTradePercent?: number;
+  profitTargetPercent?: number;
+  status: 'active' | 'breached' | 'passed' | 'passed_phase_1' | 'soft-breached' | 'hard-breached' | string;
+  breachType?: 'none' | 'daily' | 'overall' | 'soft' | 'hard' | string;
+  breachReason?: string;
+  phase: 'phase_1' | 'phase_2' | 'funded' | 'demo' | 'personal_live' | string;
   tradingDaysCompleted: number;
   tradesCount: number;
   winRate: number;
-  breachReason?: string;
-  breachedAt?: number;
-  violationLogs?: RuleViolationLog[];
+  dailyWithdrawalsUnlocked?: boolean;
+  firstWithdrawalCompleted?: boolean;
+  monthsCompleted?: number;
+  scalingActive?: boolean;
+  certificateId?: string;
+  createdDate: string;
+  lastActiveDate: string;
+  [key: string]: any;
 }
 
-export type BinaryOptionDirection = 'CALL' | 'PUT';
+export interface UserProfile {
+  id: string;
+  numeric_id?: string | number;
+  numericId?: string | number;
+  fullName: string;
+  full_name?: string;
+  email: string;
+  phone?: string;
+  country: string;
+  address?: string;
+  dateOfBirth?: string;
+  telegramHandle?: string;
+  avatarUrl?: string;
+  kycStatus: 'unverified' | 'pending' | 'verified' | 'rejected' | string;
+  kycDocumentType?: KYCDocumentType;
+  kycDocumentNumber?: string;
+  kycSubmittedAt?: string;
+  kycTimerEndsAt?: number;
+  kycFrontFileName?: string;
+  kycBackFileName?: string;
+  kycFrontUrl?: string;
+  kycBackUrl?: string;
+  profileLocked?: boolean;
+  isLoggedIn?: boolean;
+  isAdmin?: boolean;
+  role?: string;
+  referralCode?: string;
+  referredBy?: string | null;
+  affiliateTier?: 'basic' | 'vip' | string;
+  selfBalance?: number;
+  self_balance?: number;
+  self_capital_balance?: number;
+  demoBalance?: number;
+  demo_balance?: number;
+  fundedBalance?: number;
+  funded_balance?: number;
+  is_2fa_enabled?: boolean;
+  totp_secret?: string;
+  createdAt?: string;
+  [key: string]: any;
+}
+
+export interface UserAccount {
+  id: string;
+  fullName: string;
+  email: string;
+  passwordHash?: string;
+  country?: string;
+  referralCode?: string;
+  referredBy?: string | null;
+  affiliateTier?: 'basic' | 'vip' | string;
+  createdAt: string;
+  [key: string]: any;
+}
 
 export interface BinaryTrade {
   id: string;
   accountId: string;
+  accountTier?: string;
+  accountCategory?: string;
   asset: string;
   direction: BinaryOptionDirection;
   strikePrice: number;
-  currentPrice: number;
   closePrice?: number;
   investment: number;
   payoutPercentage: number;
   potentialPayout: number;
-  startTime: number;
-  durationSeconds: number; // 30, 60, 180, 300
-  endTime: number;
-  status: 'active' | 'won' | 'lost' | 'tie';
   pnl?: number;
-  accountTier?: string; // e.g. 'demo', 'personal', 'one-step', 'two-step', 'instant'
+  creditedAmount?: number;
+  startTime: number;
+  endTime: number;
+  durationSeconds: number;
+  status: 'active' | 'won' | 'lost' | 'tie' | 'cancelled' | string;
+  isCopyTrade?: boolean;
+  copySubscriptionId?: string;
+  providerId?: string;
+  providerName?: string;
+  [key: string]: any;
 }
 
-export interface TradeResultOverlayData {
-  id: string;
-  isWin: boolean;
-  isTie?: boolean;
-  profitAmount: number;
-  investment: number;
-  asset: string;
-  direction: BinaryOptionDirection;
-  strikePrice: number;
-  closePrice: number;
+export interface AssetInfo {
+  symbol: string;
+  name: string;
+  category: 'forex' | 'crypto' | 'commodities' | 'indices' | 'stocks' | string;
+  basePrice: number;
   payoutPercentage: number;
-  startTime: number;
-  endTime: number;
+  volatility: number;
+  decimals: number;
+  isOtc?: boolean;
+  flag1?: string;
+  flag2?: string;
+  [key: string]: any;
 }
 
 export interface Candle {
@@ -141,186 +163,106 @@ export interface Candle {
   high: number;
   low: number;
   close: number;
-  volume: number;
+  volume?: number;
 }
 
-export type AssetCategory =
-  | 'Forex (OTC)'
-  | 'Crypto (OTC)'
-  | 'Commodities (OTC)'
-  | 'Indices (OTC)'
-  | 'Stocks (OTC)'
-  | 'Forex'
-  | 'Crypto'
-  | 'Commodities'
-  | 'Indices'
-  | 'Stocks'
-  | 'Stocks & Indices'
-  | 'Deriv Synthetics'
-  | 'Synthetics'
-  | 'OTC';
-
-export interface AssetInfo {
-  symbol: string;
-  name: string;
-  payout: number; // percent e.g. 92
-  category: AssetCategory;
-  basePrice: number;
-  volatility: number;
-  pipDecimals: number;
-  flag?: string;
-}
-
-export type WithdrawalPaymentMethod = 'crypto_trc20' | 'bank_transfer';
-
-export interface BankTransferDetails {
-  bankName: string;
-  accountHolder: string;
-  accountNumber: string;
-  swiftCode: string;
-  branchName?: string;
+export interface TradeResultOverlayData {
+  id: string;
+  asset: string;
+  direction: BinaryOptionDirection;
+  investment: number;
+  pnl: number;
+  creditedAmount: number;
+  status: 'won' | 'lost' | 'tie';
+  strikePrice: number;
+  closePrice: number;
+  timestamp: number;
 }
 
 export interface WithdrawalRequest {
   id: string;
-  userId?: string;
   accountId: string;
-  accountType?: 'self' | 'funded' | string;
-  amount: number; // gross requested amount
-  withdrawalFee?: number; // 3% (self) or 10% (funded) withdrawal fee
-  netReceivedAmount?: number; // net after fee
-  profitSplitApplied?: number; // 100 (self) or 80/90 (funded)
-  paymentMethod?: WithdrawalPaymentMethod;
-  payoutMethod?: 'crypto' | 'bank';
-  networkType?: string;
-  trc20Address: string;
-  bankDetails?: BankTransferDetails;
-  referenceNumber?: string;
-  requestedAt: number;
-  countdownEndsAt?: number;
-  completedAt?: number;
-  status: 'pending' | 'processing' | 'completed' | 'success' | 'paid' | 'rejected' | 'cancelled' | 'doubled';
-  rejectionReason?: string;
+  userId?: string;
+  amount: number;
+  grossAmount?: number;
+  feeAmount?: number;
+  netPayout?: number;
+  profitShareRate?: number;
+  method: WithdrawalPaymentMethod;
+  walletAddress: string;
+  network?: string;
+  bankDetails?: {
+    bankName?: string;
+    accountName?: string;
+    accountNumber?: string;
+    swiftCode?: string;
+  };
+  status: 'pending' | 'processing' | 'completed' | 'approved' | 'rejected' | 'declined' | string;
+  requestedAt: string;
+  processedAt?: string;
   txHash?: string;
-  isDoublePayoutEligible: boolean;
-  timeElapsedSeconds: number;
+  referenceNumber?: string;
+  declineReason?: string;
+  [key: string]: any;
 }
-
-export type KYCStatus = 'unverified' | 'pending' | 'verified' | 'approved' | 'rejected';
-
-export type KYCDocumentType = 'ID Card' | 'Passport' | 'Driving License';
-
-export interface UserProfile {
-  id: string;
-  email: string;
-  fullName: string;
-  address?: string;
-  dateOfBirth?: string;
-  profileLocked?: boolean;
-  profileLockedAt?: string;
-  country: string;
-  avatarUrl: string;
-  telegramHandle: string;
-  kycStatus: KYCStatus;
-  kycDocumentType?: KYCDocumentType | string;
-  kycDocumentNumber?: string;
-  kycDocumentFileName?: string;
-  kycBackDocumentFileName?: string;
-  kycFrontDocumentUrl?: string;
-  kycBackDocumentUrl?: string;
-  kycExtractedName?: string;
-  kycExtractedDob?: string;
-  kycSubmittedAt?: string;
-  kycVerificationEndsAt?: number; // ms timestamp when 2-minute auto-verification completes
-  kycRejectionReason?: string;
-  twoFactorEnabled: boolean;
-  is2faEnabled?: boolean;
-  totpSecret?: string;
-  activeAccountId: string;
-  referralCode?: string;
-  referredBy?: string;
-  isLoggedIn?: boolean;
-  rememberMe?: boolean;
-  role?: 'admin' | 'trader' | string;
-  isAdmin?: boolean;
-  selfBalance?: number;
-  demoBalance?: number;
-  fundedBalance?: number;
-  numericId?: string | number;
-  numeric_id?: string | number;
-}
-
-export interface UserAccount {
-  id: string; // e.g. "usr_bft_001"
-  name: string;
-  email: string;
-  password?: string;
-  referralCode: string; // e.g. "BFT-ALEX77"
-  referredBy?: string; // Parent user ID
-  registeredTier?: AffiliateTier; // 'basic' or 'vip' based on sponsor status at signup time
-  createdAt: string;
-}
-
-export type ReferralLevel = 1 | 2 | 3;
-export type AffiliateTier = 'basic' | 'vip';
 
 export interface ReferralRecord {
-  id: string; // e.g. "REF-1092"
-  referrerId: string; // The affiliate user who earns the commission
-  referredUserId: string; // The buyer user who purchased the package
+  id: string;
+  referrerId: string;
+  referredUserId: string;
   referredUserName: string;
   referredUserEmail: string;
-  level: ReferralLevel; // 1 = Direct, 2 = Sub, 3 = Sub-Sub
-  commissionType?: 'package' | 'withdrawal'; // 'package' or 'withdrawal'
-  packageTier: ChallengeTier;
-  packageName: string;
+  level: 1 | 2 | 3 | number;
+  sourceType?: 'purchase' | 'withdrawal' | 'deposit' | 'trade_activity' | string;
+  packagePurchased: string;
   packagePrice: number;
-  commissionRate: number; // e.g. 0.10, 0.15, 0.05, 0.08, 0.02
-  commissionAmount: number; // exact earned USDT
-  status: 'pending' | 'paid';
-  affiliateTier?: AffiliateTier; // 'basic' or 'vip'
-  createdAt: string;
+  commissionRate: number;
+  commissionAmount: number;
+  status: 'paid' | 'pending' | string;
+  date: string;
+  timestamp?: number;
+  [key: string]: any;
 }
 
 export interface ReferredUser {
   id: string;
   fullName: string;
-  level: ReferralLevel;
-  latestPurchase?: { name: string; amount: number; sku?: string };
-  isFundedActive?: boolean;
-  registeredTier?: AffiliateTier;
+  email: string;
+  country?: string;
+  joinedDate: string;
+  level: 1 | 2 | 3 | number;
+  hasPurchased?: boolean;
+  totalVolume?: number;
+  totalCommissionGenerated?: number;
+  status?: 'active' | 'pending' | string;
+  [key: string]: any;
 }
 
 export interface AffiliatePayout {
-  id: string; // e.g. "AFF-PAY-801"
+  id: string;
   userId: string;
   amount: number;
-  method: 'USDT (TRC-20)' | 'Bank Transfer';
-  details: string; // TRC-20 address or bank IBAN/wire details
-  status: 'pending' | 'processing' | 'completed';
+  walletAddress: string;
+  network: string;
+  status: 'completed' | 'pending' | 'processing' | 'rejected' | string;
   requestedAt: string;
   processedAt?: string;
   txHash?: string;
 }
 
 export interface AffiliateStats {
-  lifetimeEarnings: number;
+  totalEarnings: number;
   availableBalance: number;
-  pendingCommission: number;
-  totalReferralsCount: number;
-  activeFundedCount: number; // Count of referrals who actually purchased a Funded Account
-  vipThreshold: number; // 1,000 Active Funded Referrals
-  vipProgressPercent: number; // 0 - 100%
-  remainingToVip: number; // 1,000 - activeFundedCount
-  affiliateTier: AffiliateTier; // 'basic' | 'vip'
-  isVipUnlocked: boolean;
-  milestoneRewardAmount: number; // $10,000
-  milestoneClaimed?: boolean;
-  level1Count: number;
+  withdrawnAmount: number;
   level1Earnings: number;
-  level2Count: number;
   level2Earnings: number;
-  level3Count: number;
   level3Earnings: number;
-  withdrawalEarnings?: number;
+  withdrawalBonusEarnings: number;
+  level1Count: number;
+  level2Count: number;
+  level3Count: number;
+  activeTradersCount: number;
+  currentTier: 'basic' | 'vip';
+  milestoneBonusEarned: number;
+  milestoneProgressPercent: number;
 }

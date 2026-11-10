@@ -30,7 +30,6 @@ import {
   type P2PTransferRecord,
 } from '../utils/p2pTransfer.ts';
 import { soundEngine } from '../utils/soundEffects.ts';
-import { fetchSupabaseProfileRow } from '../utils/supabaseRealtimeSync.ts';
 
 export interface P2PBalanceTransferModalProps {
   isOpen: boolean;
@@ -243,27 +242,8 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
       if (result.updatedProfile) {
         onUpdateProfile(result.updatedProfile);
       }
-      try {
-        const freshRow = await fetchSupabaseProfileRow({
-          userId: userProfile.id,
-          userEmail: userProfile.email,
-        });
-        if (freshRow) {
-          const freshProfile = {
-            ...userProfile,
-            selfBalance: Number(freshRow.self_capital_balance ?? freshRow.self_balance ?? freshRow.balance ?? result.updatedProfile?.selfBalance ?? availableLiveBalance),
-            numericId: freshRow.numeric_id || ownNumericId,
-            numeric_id: freshRow.numeric_id || ownNumericId,
-          };
-          onUpdateProfile(freshProfile);
-        }
-      } catch {}
-
       if (result.updatedAccount && onUpdateAccount) {
         onUpdateAccount(result.updatedAccount);
-      }
-      if (onRefreshBalance) {
-        await Promise.resolve(onRefreshBalance()).catch(() => {});
       }
 
       const refreshedList = loadLocalP2PTransferHistory(userProfile.id, ownNumericId);

@@ -715,7 +715,7 @@ function buildSafeProfileBalancePayload(
     if (isColumnSupported('self_balance')) {
       payload.self_balance = rounded;
     }
-    if (knownProfileColumns.has('self_capital_balance') && !unsupportedProfileColumns.has('self_capital_balance')) {
+    if (isColumnSupported('self_capital_balance')) {
       payload.self_capital_balance = rounded;
     }
     if (Object.keys(payload).length === 0 && isColumnSupported('balance')) {
@@ -879,7 +879,21 @@ export function applyRealtimeProfileUpdate(
     return Number.isFinite(num) ? num : undefined;
   };
 
-  const rawSelf = parseNumeric(row.self_capital_balance ?? row.self_balance);
+  const rawSelf = (() => {
+    const sc = parseNumeric(row.self_capital_balance);
+    const sb = parseNumeric(row.self_balance);
+    const mut = localBalanceMutations.self_balance;
+    if (sc !== undefined && sb !== undefined) {
+      if (mut) {
+        if (Math.abs(sb - mut.committedBalance) < 0.005) return sb;
+        if (Math.abs(sc - mut.committedBalance) < 0.005) return sc;
+      }
+      if (sc === 0 && sb > 0) return sb;
+      if (sb === 0 && sc > 0) return sc;
+      return sc;
+    }
+    return sc ?? sb;
+  })();
   const rawDemo = parseNumeric(row.demo_balance);
   const rawFunded = parseNumeric(row.funded_balance);
 
@@ -991,6 +1005,7 @@ export function applyRealtimeProfileUpdate(
 
   const profileChanged =
     nextSelf !== prevProfile.selfBalance ||
+    nextSelf !== prevProfile.self_capital_balance ||
     nextDemo !== prevProfile.demoBalance ||
     nextFunded !== prevProfile.fundedBalance ||
     resolvedKycStatus !== prevProfile.kycStatus ||
@@ -1013,6 +1028,7 @@ export function applyRealtimeProfileUpdate(
         profileLocked: nextLocked,
         twoFactorEnabled: nextTwoFactor,
         selfBalance: nextSelf,
+        self_capital_balance: nextSelf,
         demoBalance: nextDemo,
         fundedBalance: nextFunded,
         numericId: nextNumericId,
@@ -2618,12 +2634,19 @@ export function getAuthoritativeAccountBalance(
   }
 
   if (isPersonalLiveAccount(account)) {
-    if (
-      userProfile?.selfBalance !== undefined &&
-      userProfile?.selfBalance !== null &&
-      Number.isFinite(Number(userProfile.selfBalance))
-    ) {
-      return Number(userProfile.selfBalance);
+    const candidates = [
+      userProfile?.selfBalance,
+      userProfile?.self_capital_balance,
+      (userProfile as any)?.selfCapitalBalance,
+      (userProfile as any)?.self_balance,
+    ]
+      .filter((v) => v !== undefined && v !== null && v !== '')
+      .map((v) => Number(v))
+      .filter((n) => Number.isFinite(n) && n >= 0);
+
+    if (candidates.length > 0) {
+      const positive = candidates.find((n) => n > 0);
+      return positive !== undefined ? positive : candidates[0];
     }
     return Number(account.currentBalance ?? 0);
   }
