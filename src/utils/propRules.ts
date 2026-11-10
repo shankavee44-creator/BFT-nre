@@ -1495,6 +1495,10 @@ export function validateZeroToleranceTradeExecution(params: {
   const { account } = params;
   const stake = Number(params.stake);
   const currentBalance = Number(account?.currentBalance ?? 0);
+  const bonusBalance = isPersonalLiveAccount(account)
+    ? Math.max(0, Number(account?.bonusBalance ?? account?.bonus_balance ?? 0))
+    : 0;
+  const effectiveAvailableBalance = Number((currentBalance + bonusBalance).toFixed(2));
 
   if (!Number.isFinite(stake) || stake <= 0) {
     return {
@@ -1507,14 +1511,14 @@ export function validateZeroToleranceTradeExecution(params: {
     };
   }
 
-  if (stake > currentBalance) {
+  if (stake > effectiveAvailableBalance + 1e-6) {
     return {
       allowed: false,
       code: 'INSUFFICIENT_BALANCE',
-      reason: `Insufficient balance. Available capital: $${currentBalance.toFixed(2)}`,
-      remainingDailyBuffer: currentBalance,
-      remainingOverallBuffer: currentBalance,
-      maxAllowedStake: currentBalance,
+      reason: `Insufficient balance. Available capital: $${effectiveAvailableBalance.toFixed(2)}`,
+      remainingDailyBuffer: effectiveAvailableBalance,
+      remainingOverallBuffer: effectiveAvailableBalance,
+      maxAllowedStake: effectiveAvailableBalance,
     };
   }
 
@@ -1523,7 +1527,7 @@ export function validateZeroToleranceTradeExecution(params: {
       allowed: true,
       remainingDailyBuffer: Infinity,
       remainingOverallBuffer: Infinity,
-      maxAllowedStake: currentBalance,
+      maxAllowedStake: effectiveAvailableBalance,
     };
   }
 

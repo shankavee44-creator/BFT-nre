@@ -1466,23 +1466,23 @@ var require_transformers = __commonJS({
 var require_phoenix_cjs = __commonJS({
   "node_modules/@supabase/phoenix/priv/static/phoenix.cjs.js"(exports, module) {
     "use strict";
-    var __defProp2 = Object.defineProperty;
+    var __defProp6 = Object.defineProperty;
     var __getOwnPropDesc2 = Object.getOwnPropertyDescriptor;
     var __getOwnPropNames2 = Object.getOwnPropertyNames;
     var __hasOwnProp2 = Object.prototype.hasOwnProperty;
     var __export2 = (target, all) => {
       for (var name in all)
-        __defProp2(target, name, { get: all[name], enumerable: true });
+        __defProp6(target, name, { get: all[name], enumerable: true });
     };
     var __copyProps2 = (to, from, except, desc) => {
       if (from && typeof from === "object" || typeof from === "function") {
         for (let key of __getOwnPropNames2(from))
           if (!__hasOwnProp2.call(to, key) && key !== except)
-            __defProp2(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc2(from, key)) || desc.enumerable });
+            __defProp6(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc2(from, key)) || desc.enumerable });
       }
       return to;
     };
-    var __toCommonJS2 = (mod) => __copyProps2(__defProp2({}, "__esModule", { value: true }), mod);
+    var __toCommonJS2 = (mod) => __copyProps2(__defProp6({}, "__esModule", { value: true }), mod);
     var phoenix_exports = {};
     __export2(phoenix_exports, {
       Channel: () => Channel,
@@ -14640,11 +14640,10 @@ import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
+var __defProp2 = Object.defineProperty;
+var __name = (target, value) => __defProp2(target, "name", { value, configurable: true });
 function openResilientDatabase() {
-  const candidates = [
-    path.resolve(process.cwd(), "data"),
-    path.resolve(os.tmpdir(), "bft_data")
-  ];
+  const candidates = [path.resolve(process.cwd(), "data"), path.resolve(os.tmpdir(), "bft_data")];
   for (const dir of candidates) {
     try {
       if (!fs.existsSync(dir)) {
@@ -14680,6 +14679,7 @@ function openResilientDatabase() {
   }
   return new DatabaseSync(":memory:");
 }
+__name(openResilientDatabase, "openResilientDatabase");
 var db = openResilientDatabase();
 db.exec(`
   PRAGMA foreign_keys = ON;
@@ -14917,26 +14917,7 @@ try {
   `).run(Date.now());
 } catch {
 }
-var copyTradingAlterColumns = [
-  `ALTER TABLE copy_trading_subscriptions ADD COLUMN allocated_capital REAL DEFAULT 100;`,
-  `ALTER TABLE copy_trading_subscriptions ADD COLUMN max_loss_limit REAL DEFAULT 0;`,
-  `ALTER TABLE copy_trading_subscriptions ADD COLUMN take_profit_limit REAL DEFAULT 0;`,
-  `ALTER TABLE copy_trading_subscriptions ADD COLUMN trade_sizing_type TEXT DEFAULT 'proportionate';`,
-  `ALTER TABLE copy_trading_subscriptions ADD COLUMN sizing_multiplier REAL DEFAULT 1.0;`,
-  `ALTER TABLE copy_trading_subscriptions ADD COLUMN current_pnl REAL DEFAULT 0;`,
-  `ALTER TABLE copy_trading_subscriptions ADD COLUMN copier_user_id TEXT;`,
-  `ALTER TABLE copy_trading_subscriptions ADD COLUMN copier_account_id TEXT;`,
-  `ALTER TABLE copy_trading_subscriptions ADD COLUMN trade_amount REAL DEFAULT 100;`,
-  `ALTER TABLE copy_trading_subscriptions ADD COLUMN stop_loss REAL DEFAULT 0;`,
-  `ALTER TABLE copy_trading_subscriptions ADD COLUMN take_profit REAL DEFAULT 0;`,
-  `ALTER TABLE copy_trading_subscriptions ADD COLUMN max_drawdown REAL DEFAULT 5.0;`,
-  `ALTER TABLE copy_trading_profiles ADD COLUMN profit_factor REAL DEFAULT 2.15;`,
-  `ALTER TABLE copy_trading_profiles ADD COLUMN max_drawdown REAL DEFAULT 4.2;`,
-  `ALTER TABLE copy_trading_profiles ADD COLUMN sharpe_ratio REAL DEFAULT 1.85;`,
-  `ALTER TABLE copy_trading_profiles ADD COLUMN avg_holding_time TEXT DEFAULT '4h 12m';`,
-  `ALTER TABLE commissions ADD COLUMN affiliate_tier TEXT DEFAULT 'basic';`,
-  `ALTER TABLE users ADD COLUMN registered_tier TEXT DEFAULT 'basic';`
-];
+var copyTradingAlterColumns = [`ALTER TABLE copy_trading_subscriptions ADD COLUMN allocated_capital REAL DEFAULT 100;`, `ALTER TABLE copy_trading_subscriptions ADD COLUMN max_loss_limit REAL DEFAULT 0;`, `ALTER TABLE copy_trading_subscriptions ADD COLUMN take_profit_limit REAL DEFAULT 0;`, `ALTER TABLE copy_trading_subscriptions ADD COLUMN trade_sizing_type TEXT DEFAULT 'proportionate';`, `ALTER TABLE copy_trading_subscriptions ADD COLUMN sizing_multiplier REAL DEFAULT 1.0;`, `ALTER TABLE copy_trading_subscriptions ADD COLUMN current_pnl REAL DEFAULT 0;`, `ALTER TABLE copy_trading_subscriptions ADD COLUMN copier_user_id TEXT;`, `ALTER TABLE copy_trading_subscriptions ADD COLUMN copier_account_id TEXT;`, `ALTER TABLE copy_trading_subscriptions ADD COLUMN trade_amount REAL DEFAULT 100;`, `ALTER TABLE copy_trading_subscriptions ADD COLUMN stop_loss REAL DEFAULT 0;`, `ALTER TABLE copy_trading_subscriptions ADD COLUMN take_profit REAL DEFAULT 0;`, `ALTER TABLE copy_trading_subscriptions ADD COLUMN max_drawdown REAL DEFAULT 5.0;`, `ALTER TABLE copy_trading_profiles ADD COLUMN profit_factor REAL DEFAULT 2.15;`, `ALTER TABLE copy_trading_profiles ADD COLUMN max_drawdown REAL DEFAULT 4.2;`, `ALTER TABLE copy_trading_profiles ADD COLUMN sharpe_ratio REAL DEFAULT 1.85;`, `ALTER TABLE copy_trading_profiles ADD COLUMN avg_holding_time TEXT DEFAULT '4h 12m';`, `ALTER TABLE commissions ADD COLUMN affiliate_tier TEXT DEFAULT 'basic';`, `ALTER TABLE users ADD COLUMN registered_tier TEXT DEFAULT 'basic';`];
 for (const stmt of copyTradingAlterColumns) {
   try {
     db.exec(stmt);
@@ -14944,62 +14925,21 @@ for (const stmt of copyTradingAlterColumns) {
   }
 }
 function seedInitialData() {
-  const userCount = Number(
-    db.prepare("SELECT COUNT(*) as c FROM users").get().c
-  );
+  const userCount = Number(db.prepare("SELECT COUNT(*) as c FROM users").get().c);
   if (userCount > 0) return;
   const now = Date.now();
   db.prepare(`
     INSERT INTO users (id, email, full_name, referral_code, referred_by, kyc_status, profile_locked, address, date_of_birth, country, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    "USR-MASTER-88",
-    "viktor.v@quant-prop.io",
-    "Viktor Vance",
-    "BFT-VIKTOR88",
-    null,
-    "verified",
-    1,
-    "Level 42, Al Saada St, Dubai Financial Centre",
-    "1985-04-12",
-    "United Arab Emirates",
-    now - 864e5 * 60,
-    now - 864e5 * 60
-  );
+  `).run("USR-MASTER-88", "viktor.v@quant-prop.io", "Viktor Vance", "BFT-VIKTOR88", null, "verified", 1, "Level 42, Al Saada St, Dubai Financial Centre", "1985-04-12", "United Arab Emirates", now - 864e5 * 60, now - 864e5 * 60);
   db.prepare(`
     INSERT INTO users (id, email, full_name, referral_code, referred_by, kyc_status, profile_locked, address, date_of_birth, country, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    "USR-PARENT-55",
-    "elena.rostova@alpha-traders.com",
-    "Elena Rostova",
-    "BFT-ELENA55",
-    "USR-MASTER-88",
-    "verified",
-    1,
-    "12 Bishopsgate, London EC2N 4BQ",
-    "1991-08-20",
-    "United Kingdom",
-    now - 864e5 * 45,
-    now - 864e5 * 45
-  );
+  `).run("USR-PARENT-55", "elena.rostova@alpha-traders.com", "Elena Rostova", "BFT-ELENA55", "USR-MASTER-88", "verified", 1, "12 Bishopsgate, London EC2N 4BQ", "1991-08-20", "United Kingdom", now - 864e5 * 45, now - 864e5 * 45);
   db.prepare(`
     INSERT INTO users (id, email, full_name, referral_code, referred_by, kyc_status, profile_locked, address, date_of_birth, country, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    "usr_bft_001",
-    "alex.mercer@gmail.com",
-    "Alex Mercer",
-    "BFT-ALEX77",
-    "USR-PARENT-55",
-    "verified",
-    1,
-    "742 Evergreen Terrace, Springfield, OR 97477",
-    "1994-06-15",
-    "United States",
-    now - 864e5 * 30,
-    now - 864e5 * 30
-  );
+  `).run("usr_bft_001", "alex.mercer@gmail.com", "Alex Mercer", "BFT-ALEX77", "USR-PARENT-55", "verified", 1, "742 Evergreen Terrace, Springfield, OR 97477", "1994-06-15", "United States", now - 864e5 * 30, now - 864e5 * 30);
   db.prepare(`
     INSERT INTO accounts (
       id, user_id, tier, tier_name, size, initial_balance, current_balance, starting_day_equity, equity,
@@ -15007,86 +14947,40 @@ function seedInitialData() {
       trading_days_completed, trades_count, win_rate, daily_withdrawals_unlocked, first_withdrawal_completed,
       created_date, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    "BFT-91823",
-    "usr_bft_001",
-    "instant",
-    "$10,000 Instant Funded",
-    1e4,
-    1e4,
-    10680,
-    10680,
-    10680,
-    5,
-    12,
-    5,
-    "active",
-    "funded",
-    14,
-    42,
-    76.2,
-    1,
-    1,
-    "2026-10-01",
-    now - 864e5 * 20,
-    now
-  );
+  `).run("BFT-91823", "usr_bft_001", "instant", "$10,000 Instant Funded", 1e4, 1e4, 10680, 10680, 10680, 5, 12, 5, "active", "funded", 14, 42, 76.2, 1, 1, "2026-10-01", now - 864e5 * 20, now);
   db.prepare(`
     INSERT INTO withdrawals (
       id, user_id, account_id, gross_amount, net_profit, max_allowed_profit, profit_share_rate, fee_amount, net_payout,
       wallet_address, network, payment_method, status, tx_hash, reference_number, requested_at, processed_at
     ) VALUES (?, ?, ?, ?, ?, ?, 0.80, ?, ?, ?, ?, 'crypto_trc20', 'completed', ?, ?, ?, ?)
-  `).run(
-    "WD-51940284910",
-    "usr_bft_001",
-    "BFT-91823",
-    350,
-    680,
-    544,
-    35,
-    315,
-    "0x71C94F8B92E1048A3B99D2E54C1A82F901D3E84A",
-    "BSC (BEP20)",
-    "0x9fb8c14d5e23a0781b4d0812eac92b8d4f0980598125cfb881329a1b9e21",
-    "REF-51940284910",
-    now - 864e5 * 1,
-    now - 864e5 * 1 + 92e3
-  );
-  const leaderboardSeed = [
-    { rank: 1, name: "Rashid Al-Maktoum", country: "Dubai, UAE", flag: "\u{1F1E6}\u{1F1EA}", tier: "$100,000 Instant Funded", profit: 48990.5, winRate: 79.4, payout: "1m 14s" },
-    { rank: 2, name: "Arjun Malhotra", country: "India", flag: "\u{1F1EE}\u{1F1F3}", tier: "$50,000 Two-Step", profit: 42150.8, winRate: 77.2, payout: "1m 28s" },
-    { rank: 3, name: "Faizal Zulkifli", country: "Malaysia", flag: "\u{1F1F2}\u{1F1FE}", tier: "$50,000 One-Step", profit: 36508, winRate: 75.8, payout: "1m 18s" },
-    { rank: 4, name: "Hamza Qureshi", country: "Pakistan", flag: "\u{1F1F5}\u{1F1F0}", tier: "$25,000 Instant Funded", profit: 31840.4, winRate: 74.1, payout: "1m 42s" },
-    { rank: 5, name: "Tariq Al-Mansoor", country: "Dubai, UAE", flag: "\u{1F1E6}\u{1F1EA}", tier: "$25,000 One-Step", profit: 28460, winRate: 72.6, payout: "1m 31s" },
-    { rank: 6, name: "Vikramjit Singh", country: "India", flag: "\u{1F1EE}\u{1F1F3}", tier: "$25,000 Two-Step", profit: 24404, winRate: 71.3, payout: "1m 49s" },
-    { rank: 7, name: "Nurul Hidayah", country: "Malaysia", flag: "\u{1F1F2}\u{1F1FE}", tier: "$10,000 One-Step", profit: 21940, winRate: 70.5, payout: "1m 15s" },
-    { rank: 8, name: "Bilal Ahmed Khan", country: "Pakistan", flag: "\u{1F1F5}\u{1F1F0}", tier: "$10,000 Two-Step", profit: 19720.2, winRate: 69.4, payout: "1m 36s" },
-    // Kasun Perera strictly normalized at #9
-    { rank: 9, name: "Kasun Perera", country: "Sri Lanka", flag: "\u{1F1F1}\u{1F1F0}", tier: "$10,000 Instant Funded", profit: 18995.22, winRate: 77.9, payout: "1m 12s" },
-    { rank: 10, name: "Ananya Sharma", country: "India", flag: "\u{1F1EE}\u{1F1F3}", tier: "$10,000 One-Step", profit: 17380, winRate: 68.1, payout: "1m 41s" },
-    { rank: 11, name: "Zainab Al-Hashemi", country: "Dubai, UAE", flag: "\u{1F1E6}\u{1F1EA}", tier: "$10,000 Instant Funded", profit: 15940, winRate: 67.4, payout: "1m 29s" },
-    { rank: 12, name: "Syed Usman Ali", country: "Pakistan", flag: "\u{1F1F5}\u{1F1F0}", tier: "$10,000 Two-Step", profit: 14820.5, winRate: 66.8, payout: "1m 52s" },
-    { rank: 13, name: "Chong Wei Ming", country: "Malaysia", flag: "\u{1F1F2}\u{1F1FE}", tier: "$5,000 One-Step", profit: 13750, winRate: 66, payout: "1m 20s" },
-    { rank: 14, name: "Rohan Deshmukh", country: "India", flag: "\u{1F1EE}\u{1F1F3}", tier: "$10,000 Instant Funded", profit: 12890.1, winRate: 65.2, payout: "1m 47s" },
-    { rank: 15, name: "Khalid Bin Zayed", country: "Dubai, UAE", flag: "\u{1F1E6}\u{1F1EA}", tier: "$5,000 Two-Step", profit: 11940, winRate: 64.5, payout: "1m 30s" }
-  ];
+  `).run("WD-51940284910", "usr_bft_001", "BFT-91823", 350, 680, 544, 35, 315, "0x71C94F8B92E1048A3B99D2E54C1A82F901D3E84A", "BSC (BEP20)", "0x9fb8c14d5e23a0781b4d0812eac92b8d4f0980598125cfb881329a1b9e21", "REF-51940284910", now - 864e5 * 1, now - 864e5 * 1 + 92e3);
+}
+__name(seedInitialData, "seedInitialData");
+function syncLeaderboardData() {
+  const now = Date.now();
+  const leaderboardSeed = [{ rank: 1, name: "Rashid Al-Maktoum", country: "Dubai, UAE", flag: "\u{1F1E6}\u{1F1EA}", tier: "$100,000 Instant Funded", profit: 66456.11, winRate: 81.2, payout: "1m 14s" }, { rank: 2, name: "Arjun Malhotra", country: "India", flag: "\u{1F1EE}\u{1F1F3}", tier: "$100,000 Two-Step", profit: 54120.8, winRate: 79.5, payout: "1m 28s" }, { rank: 3, name: "Hamza Qureshi", country: "Pakistan", flag: "\u{1F1F5}\u{1F1F0}", tier: "$50,000 Instant Funded", profit: 46890.4, winRate: 77.8, payout: "1m 35s" }, { rank: 4, name: "Tanvir Hossain", country: "Bangladesh", flag: "\u{1F1E7}\u{1F1E9}", tier: "$50,000 One-Step", profit: 39540, winRate: 76.2, payout: "1m 22s" }, { rank: 5, name: "Tariq Al-Mansoor", country: "Dubai, UAE", flag: "\u{1F1E6}\u{1F1EA}", tier: "$50,000 One-Step", profit: 34820.5, winRate: 75.1, payout: "1m 31s" }, { rank: 6, name: "Vikramjit Singh", country: "India", flag: "\u{1F1EE}\u{1F1F3}", tier: "$25,000 Two-Step", profit: 31250, winRate: 74.3, payout: "1m 49s" }, { rank: 7, name: "Yohan Siriwardhana", country: "Sri Lanka", flag: "\u{1F1F1}\u{1F1F0}", tier: "$50,000 Instant Funded", profit: 29456.71, winRate: 78.4, payout: "1m 15s" }, { rank: 8, name: "Bilal Ahmed Khan", country: "Pakistan", flag: "\u{1F1F5}\u{1F1F0}", tier: "$25,000 Two-Step", profit: 26840.2, winRate: 72.9, payout: "1m 36s" }, { rank: 9, name: "Faizal Zulkifli", country: "Malaysia", flag: "\u{1F1F2}\u{1F1FE}", tier: "$25,000 Instant Funded", profit: 23410, winRate: 71.8, payout: "1m 18s" }, { rank: 10, name: "Ananya Sharma", country: "India", flag: "\u{1F1EE}\u{1F1F3}", tier: "$25,000 One-Step", profit: 20780, winRate: 70.4, payout: "1m 41s" }, { rank: 11, name: "Zainab Al-Hashemi", country: "Dubai, UAE", flag: "\u{1F1E6}\u{1F1EA}", tier: "$10,000 Instant Funded", profit: 18650, winRate: 69.2, payout: "1m 29s" }, { rank: 12, name: "Syed Usman Ali", country: "Pakistan", flag: "\u{1F1F5}\u{1F1F0}", tier: "$10,000 Two-Step", profit: 16920.5, winRate: 68.1, payout: "1m 52s" }, { rank: 13, name: "Shakib Rahman", country: "Bangladesh", flag: "\u{1F1E7}\u{1F1E9}", tier: "$10,000 One-Step", profit: 15340, winRate: 67.5, payout: "1m 38s" }, { rank: 14, name: "Rohan Deshmukh", country: "India", flag: "\u{1F1EE}\u{1F1F3}", tier: "$10,000 Instant Funded", profit: 13890.1, winRate: 66.3, payout: "1m 47s" }, { rank: 15, name: "Alexander Schmidt", country: "Germany", flag: "\u{1F1E9}\u{1F1EA}", tier: "$10,000 Two-Step", profit: 12450, winRate: 65.7, payout: "1m 30s" }];
   for (const lb of leaderboardSeed) {
     db.prepare(`
-      INSERT INTO leaderboard (id, rank, name, country, flag, account_tier, profit, win_rate, payout_time, updated_at)
+      INSERT OR REPLACE INTO leaderboard (id, rank, name, country, flag, account_tier, profit, win_rate, payout_time, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(`LB-${lb.rank}`, lb.rank, lb.name, lb.country, lb.flag, lb.tier, lb.profit, lb.winRate, lb.payout, now);
   }
 }
+__name(syncLeaderboardData, "syncLeaderboardData");
 seedInitialData();
+syncLeaderboardData();
 function getUserById(userId) {
   return db.prepare("SELECT * FROM users WHERE id = ?").get(userId);
 }
+__name(getUserById, "getUserById");
 function getUserByEmail(email) {
   return db.prepare("SELECT * FROM users WHERE email = ? COLLATE NOCASE").get(email);
 }
+__name(getUserByEmail, "getUserByEmail");
 function getUserByReferralCode(code) {
   return db.prepare("SELECT * FROM users WHERE referral_code = ? COLLATE NOCASE").get(code);
 }
+__name(getUserByReferralCode, "getUserByReferralCode");
 function createOrUpdateGoogleUser(params) {
   const existing = getUserByEmail(params.email);
   const now = Date.now();
@@ -15115,22 +15009,13 @@ function createOrUpdateGoogleUser(params) {
   db.prepare(`
     INSERT INTO users (id, email, full_name, avatar_url, google_id, referral_code, referred_by, kyc_status, profile_locked, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, 'unverified', 0, ?, ?)
-  `).run(
-    newUserId,
-    params.email.toLowerCase(),
-    params.fullName,
-    params.avatarUrl || null,
-    params.googleId || null,
-    newRefCode,
-    sponsorId,
-    now,
-    now
-  );
+  `).run(newUserId, params.email.toLowerCase(), params.fullName, params.avatarUrl || null, params.googleId || null, newRefCode, sponsorId, now, now);
   if (sponsorId) {
     linkUplineReferrals(sponsorId, newUserId, now);
   }
   return getUserById(newUserId);
 }
+__name(createOrUpdateGoogleUser, "createOrUpdateGoogleUser");
 function linkUplineReferrals(l1SponsorId, newUserId, nowMs) {
   db.prepare(`
     INSERT OR IGNORE INTO referrals (id, sponsor_id, referred_user_id, tier_level, created_at)
@@ -15153,6 +15038,7 @@ function linkUplineReferrals(l1SponsorId, newUserId, nowMs) {
     }
   }
 }
+__name(linkUplineReferrals, "linkUplineReferrals");
 function createSessionToken(userId, rememberMe = true) {
   const token = `bft_sess_${Math.random().toString(36).substring(2)}${Date.now().toString(36)}${Math.random().toString(36).substring(2)}`;
   const expiresAt = Date.now() + (rememberMe ? 30 * 86400 * 1e3 : 86400 * 1e3);
@@ -15162,6 +15048,7 @@ function createSessionToken(userId, rememberMe = true) {
   `).run(token, userId, expiresAt, Date.now());
   return { token, expiresAt };
 }
+__name(createSessionToken, "createSessionToken");
 function validateSession(token) {
   if (!token) return null;
   const session = db.prepare("SELECT * FROM sessions WHERE token = ?").get(token);
@@ -15172,71 +15059,25 @@ function validateSession(token) {
   }
   return getUserById(session.user_id);
 }
+__name(validateSession, "validateSession");
 function deleteSessionToken(token) {
   db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
 }
+__name(deleteSessionToken, "deleteSessionToken");
 function mapAccountRowToTradingAccount(row) {
   if (!row) return null;
   const accountCategory = row.account_category || (row.tier === "personal" || row.phase === "personal_live" ? "personal_live" : row.tier === "demo" || row.phase === "demo" ? "demo" : "prop");
-  return {
-    ...row,
-    id: row.id,
-    userId: row.user_id,
-    user_id: row.user_id,
-    loginId: row.id,
-    passwordHash: "bft_live_" + String(row.id).replace(/[^a-zA-Z0-9]/g, "").toLowerCase(),
-    tier: row.tier,
-    tierName: row.tier_name,
-    accountCategory,
-    depositedCapital: Number(row.deposited_capital ?? (accountCategory === "personal_live" ? row.initial_balance : 0)),
-    size: row.size,
-    initialBalance: row.initial_balance,
-    currentBalance: row.current_balance,
-    startingDayEquity: row.starting_day_equity,
-    equity: row.equity,
-    dailyLossLimitPercent: row.daily_loss_limit_percent,
-    maxOverallLossPercent: row.max_overall_loss_percent,
-    maxRiskPerTradePercent: row.max_risk_per_trade_percent,
-    status: row.status,
-    phase: row.phase,
-    tradingDaysCompleted: row.trading_days_completed,
-    tradesCount: row.trades_count,
-    winRate: row.win_rate,
-    dailyWithdrawalsUnlocked: Boolean(row.daily_withdrawals_unlocked),
-    firstWithdrawalCompleted: Boolean(row.first_withdrawal_completed),
-    monthsCompleted: row.months_completed || 1,
-    scalingActive: Boolean(row.scaling_active),
-    createdDate: row.created_date,
-    lastActiveDate: row.last_active_date || row.created_date,
-    certificateId: row.certificate_id || void 0
-  };
+  return { ...row, id: row.id, userId: row.user_id, user_id: row.user_id, loginId: row.id, passwordHash: "bft_live_" + String(row.id).replace(/[^a-zA-Z0-9]/g, "").toLowerCase(), tier: row.tier, tierName: row.tier_name, accountCategory, depositedCapital: Number(row.deposited_capital ?? (accountCategory === "personal_live" ? row.initial_balance : 0)), size: row.size, initialBalance: row.initial_balance, currentBalance: row.current_balance, startingDayEquity: row.starting_day_equity, equity: row.equity, dailyLossLimitPercent: row.daily_loss_limit_percent, maxOverallLossPercent: row.max_overall_loss_percent, maxRiskPerTradePercent: row.max_risk_per_trade_percent, status: row.status, phase: row.phase, tradingDaysCompleted: row.trading_days_completed, tradesCount: row.trades_count, winRate: row.win_rate, dailyWithdrawalsUnlocked: Boolean(row.daily_withdrawals_unlocked), firstWithdrawalCompleted: Boolean(row.first_withdrawal_completed), monthsCompleted: row.months_completed || 1, scalingActive: Boolean(row.scaling_active), createdDate: row.created_date, lastActiveDate: row.last_active_date || row.created_date, certificateId: row.certificate_id || void 0 };
 }
-var accountAlterColumns = [
-  `ALTER TABLE accounts ADD COLUMN certificate_id TEXT;`,
-  `ALTER TABLE accounts ADD COLUMN account_category TEXT DEFAULT 'prop';`,
-  `ALTER TABLE accounts ADD COLUMN deposited_capital REAL DEFAULT 0;`
-];
+__name(mapAccountRowToTradingAccount, "mapAccountRowToTradingAccount");
+var accountAlterColumns = [`ALTER TABLE accounts ADD COLUMN certificate_id TEXT;`, `ALTER TABLE accounts ADD COLUMN account_category TEXT DEFAULT 'prop';`, `ALTER TABLE accounts ADD COLUMN deposited_capital REAL DEFAULT 0;`];
 for (const stmt of accountAlterColumns) {
   try {
     db.exec(stmt);
   } catch {
   }
 }
-var kycAlterColumns = [
-  `ALTER TABLE users ADD COLUMN kyc_doc_number TEXT;`,
-  `ALTER TABLE users ADD COLUMN kyc_front_url TEXT;`,
-  `ALTER TABLE users ADD COLUMN kyc_back_url TEXT;`,
-  `ALTER TABLE users ADD COLUMN kyc_front_filename TEXT;`,
-  `ALTER TABLE users ADD COLUMN kyc_back_filename TEXT;`,
-  `ALTER TABLE users ADD COLUMN kyc_submitted_at TEXT;`,
-  `ALTER TABLE users ADD COLUMN is_2fa_enabled INTEGER DEFAULT 0;`,
-  `ALTER TABLE users ADD COLUMN totp_secret TEXT;`,
-  `ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'trader';`,
-  `ALTER TABLE users ADD COLUMN self_balance REAL DEFAULT 0;`,
-  `ALTER TABLE users ADD COLUMN demo_balance REAL DEFAULT 10000;`,
-  `ALTER TABLE users ADD COLUMN funded_balance REAL DEFAULT 0;`,
-  `ALTER TABLE withdrawals ADD COLUMN admin_notes TEXT;`
-];
+var kycAlterColumns = [`ALTER TABLE users ADD COLUMN kyc_doc_number TEXT;`, `ALTER TABLE users ADD COLUMN kyc_front_url TEXT;`, `ALTER TABLE users ADD COLUMN kyc_back_url TEXT;`, `ALTER TABLE users ADD COLUMN kyc_front_filename TEXT;`, `ALTER TABLE users ADD COLUMN kyc_back_filename TEXT;`, `ALTER TABLE users ADD COLUMN kyc_submitted_at TEXT;`, `ALTER TABLE users ADD COLUMN is_2fa_enabled INTEGER DEFAULT 0;`, `ALTER TABLE users ADD COLUMN totp_secret TEXT;`, `ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'trader';`, `ALTER TABLE users ADD COLUMN self_balance REAL DEFAULT 0;`, `ALTER TABLE users ADD COLUMN demo_balance REAL DEFAULT 10000;`, `ALTER TABLE users ADD COLUMN funded_balance REAL DEFAULT 0;`, `ALTER TABLE withdrawals ADD COLUMN admin_notes TEXT;`];
 for (const stmt of kycAlterColumns) {
   try {
     db.exec(stmt);
@@ -15335,6 +15176,7 @@ db.exec(`
 function getKycSubmissionForUser(userId) {
   return db.prepare("SELECT * FROM kyc_submissions WHERE user_id = ?").get(userId);
 }
+__name(getKycSubmissionForUser, "getKycSubmissionForUser");
 function ensureUserInDb(params) {
   if (!params.id && !params.email) return null;
   let existing = params.id ? getUserById(params.id) : null;
@@ -15363,37 +15205,18 @@ function ensureUserInDb(params) {
   }
   return getUserById(userId) || getUserByEmail(cleanEmail);
 }
-var COUNTRY_FLAGS = {
-  "United States": "\u{1F1FA}\u{1F1F8}",
-  "Sri Lanka": "\u{1F1F1}\u{1F1F0}",
-  "United Kingdom": "\u{1F1EC}\u{1F1E7}",
-  "United Arab Emirates": "\u{1F1E6}\u{1F1EA}",
-  "Dubai, UAE": "\u{1F1E6}\u{1F1EA}",
-  "India": "\u{1F1EE}\u{1F1F3}",
-  "Malaysia": "\u{1F1F2}\u{1F1FE}",
-  "Pakistan": "\u{1F1F5}\u{1F1F0}",
-  "Singapore": "\u{1F1F8}\u{1F1EC}",
-  "Canada": "\u{1F1E8}\u{1F1E6}",
-  "Australia": "\u{1F1E6}\u{1F1FA}",
-  "Germany": "\u{1F1E9}\u{1F1EA}",
-  "France": "\u{1F1EB}\u{1F1F7}",
-  "Japan": "\u{1F1EF}\u{1F1F5}",
-  "Switzerland": "\u{1F1E8}\u{1F1ED}",
-  "Brazil": "\u{1F1E7}\u{1F1F7}",
-  "Nigeria": "\u{1F1F3}\u{1F1EC}",
-  "South Africa": "\u{1F1FF}\u{1F1E6}"
-};
+__name(ensureUserInDb, "ensureUserInDb");
+var COUNTRY_FLAGS = { "United States": "\u{1F1FA}\u{1F1F8}", "Sri Lanka": "\u{1F1F1}\u{1F1F0}", "United Kingdom": "\u{1F1EC}\u{1F1E7}", "United Arab Emirates": "\u{1F1E6}\u{1F1EA}", "Dubai, UAE": "\u{1F1E6}\u{1F1EA}", "India": "\u{1F1EE}\u{1F1F3}", "Malaysia": "\u{1F1F2}\u{1F1FE}", "Pakistan": "\u{1F1F5}\u{1F1F0}", "Singapore": "\u{1F1F8}\u{1F1EC}", "Canada": "\u{1F1E8}\u{1F1E6}", "Australia": "\u{1F1E6}\u{1F1FA}", "Germany": "\u{1F1E9}\u{1F1EA}", "France": "\u{1F1EB}\u{1F1F7}", "Japan": "\u{1F1EF}\u{1F1F5}", "Switzerland": "\u{1F1E8}\u{1F1ED}", "Brazil": "\u{1F1E7}\u{1F1F7}", "Nigeria": "\u{1F1F3}\u{1F1EC}", "South Africa": "\u{1F1FF}\u{1F1E6}" };
 function getCountryFlag(country) {
   if (!country) return "\u{1F1FA}\u{1F1F8}";
   return COUNTRY_FLAGS[country.trim()] || "\u{1F310}";
 }
+__name(getCountryFlag, "getCountryFlag");
 function ensurePersonalLiveAccountForUser(userId) {
   if (!userId) return null;
   const user = getUserById(userId);
   if (!user) return null;
-  const existing = db.prepare(
-    `SELECT * FROM accounts WHERE user_id = ? AND (tier = 'personal' OR account_category = 'personal_live' OR phase = 'personal_live') LIMIT 1`
-  ).get(userId);
+  const existing = db.prepare(`SELECT * FROM accounts WHERE user_id = ? AND (tier = 'personal' OR account_category = 'personal_live' OR phase = 'personal_live') LIMIT 1`).get(userId);
   if (existing) {
     return mapAccountRowToTradingAccount(existing);
   }
@@ -15410,21 +15233,10 @@ function ensurePersonalLiveAccountForUser(userId) {
       status, phase, trading_days_completed, trades_count, win_rate,
       daily_withdrawals_unlocked, first_withdrawal_completed, created_date, created_at, updated_at
     ) VALUES (?, ?, 'personal', 'Personal Live Balance (Self-Funded)', 'personal_live', ?, ?, ?, ?, ?, ?, 0, 0, 100, 'active', 'personal_live', 14, 0, 0, 1, 1, ?, ?, ?)
-  `).run(
-    accountId,
-    userId,
-    initialDeposit,
-    initialDeposit,
-    initialDeposit,
-    initialDeposit,
-    initialDeposit,
-    initialDeposit,
-    nowIso,
-    now - 864e5 * 25,
-    now
-  );
+  `).run(accountId, userId, initialDeposit, initialDeposit, initialDeposit, initialDeposit, initialDeposit, initialDeposit, nowIso, now - 864e5 * 25, now);
   return getAccountById(accountId);
 }
+__name(ensurePersonalLiveAccountForUser, "ensurePersonalLiveAccountForUser");
 function creditPersonalAccountDepositInDb(params) {
   const cleanAmount = Number(params.amountUsdt);
   if (!Number.isFinite(cleanAmount) || cleanAmount <= 0) {
@@ -15457,34 +15269,25 @@ function creditPersonalAccountDepositInDb(params) {
       status = 'active',
       updated_at = ?
     WHERE id = ? AND user_id = ?
-  `).run(
-    nextDeposited,
-    nextInitial,
-    nextInitial,
-    nextCurrent,
-    nextStartingDay,
-    nextEquity,
-    now,
-    personalAcc.id,
-    params.userId
-  );
+  `).run(nextDeposited, nextInitial, nextInitial, nextCurrent, nextStartingDay, nextEquity, now, personalAcc.id, params.userId);
   try {
     db.prepare(`UPDATE users SET self_balance = ? WHERE id = ?`).run(nextCurrent, params.userId);
   } catch {
   }
   return getAccountById(personalAcc.id);
 }
+__name(creditPersonalAccountDepositInDb, "creditPersonalAccountDepositInDb");
 function getAccountsForUser(userId) {
   ensurePersonalLiveAccountForUser(userId);
-  const rows = db.prepare(
-    `SELECT * FROM accounts WHERE user_id = ? ORDER BY CASE WHEN tier = 'personal' OR account_category = 'personal_live' THEN 1 ELSE 0 END ASC, created_at DESC`
-  ).all(userId);
+  const rows = db.prepare(`SELECT * FROM accounts WHERE user_id = ? ORDER BY CASE WHEN tier = 'personal' OR account_category = 'personal_live' THEN 1 ELSE 0 END ASC, created_at DESC`).all(userId);
   return rows.map(mapAccountRowToTradingAccount);
 }
+__name(getAccountsForUser, "getAccountsForUser");
 function getAccountById(accountId) {
   const row = db.prepare("SELECT * FROM accounts WHERE id = ?").get(accountId);
   return mapAccountRowToTradingAccount(row);
 }
+__name(getAccountById, "getAccountById");
 function createAccount(params) {
   const now = Date.now();
   const nowIso = new Date(now).toISOString().split("T")[0];
@@ -15497,26 +15300,10 @@ function createAccount(params) {
       trading_days_completed, trades_count, win_rate, daily_withdrawals_unlocked, first_withdrawal_completed,
       created_date, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 5, 'active', ?, 0, 0, 0, ?, 0, ?, ?, ?)
-  `).run(
-    newAccountId,
-    params.userId,
-    limits.tier,
-    params.tierName,
-    params.size,
-    params.size,
-    params.size,
-    params.size,
-    params.size,
-    limits.dailyLossLimitPercent,
-    limits.maxOverallLossPercent,
-    limits.initialPhase,
-    params.dailyWithdrawalsUnlocked ? 1 : 0,
-    nowIso,
-    now,
-    now
-  );
+  `).run(newAccountId, params.userId, limits.tier, params.tierName, params.size, params.size, params.size, params.size, params.size, limits.dailyLossLimitPercent, limits.maxOverallLossPercent, limits.initialPhase, params.dailyWithdrawalsUnlocked ? 1 : 0, nowIso, now, now);
   return getAccountById(newAccountId);
 }
+__name(createAccount, "createAccount");
 function terminateAllTrades(accountId) {
   const now = Date.now();
   const openTrades = db.prepare("SELECT * FROM trades WHERE account_id = ? AND status = 'active'").all(accountId);
@@ -15525,6 +15312,7 @@ function terminateAllTrades(accountId) {
   }
   return { ok: true, terminatedCount: openTrades.length };
 }
+__name(terminateAllTrades, "terminateAllTrades");
 function updateAccountStateInDb(userId, accountId, updates) {
   const existing = db.prepare("SELECT * FROM accounts WHERE id = ? AND user_id = ?").get(accountId, userId);
   if (!existing) throw new Error("Account not found or unauthorized.");
@@ -15545,22 +15333,10 @@ function updateAccountStateInDb(userId, accountId, updates) {
       certificate_id = COALESCE(?, certificate_id),
       updated_at = ?
     WHERE id = ? AND user_id = ?
-  `).run(
-    updates.currentBalance !== void 0 ? updates.currentBalance : null,
-    updates.equity !== void 0 ? updates.equity : null,
-    updates.startingDayEquity !== void 0 ? updates.startingDayEquity : null,
-    updates.status || null,
-    updates.phase || null,
-    updates.tradesCount !== void 0 ? updates.tradesCount : null,
-    updates.winRate !== void 0 ? updates.winRate : null,
-    updates.tradingDaysCompleted !== void 0 ? updates.tradingDaysCompleted : null,
-    updates.certificateId || null,
-    now,
-    accountId,
-    userId
-  );
+  `).run(updates.currentBalance !== void 0 ? updates.currentBalance : null, updates.equity !== void 0 ? updates.equity : null, updates.startingDayEquity !== void 0 ? updates.startingDayEquity : null, updates.status || null, updates.phase || null, updates.tradesCount !== void 0 ? updates.tradesCount : null, updates.winRate !== void 0 ? updates.winRate : null, updates.tradingDaysCompleted !== void 0 ? updates.tradingDaysCompleted : null, updates.certificateId || null, now, accountId, userId);
   return getAccountById(accountId);
 }
+__name(updateAccountStateInDb, "updateAccountStateInDb");
 function passChallengePhaseInDb(userId, accountId, provisionLiveDirectly = false) {
   const existing = db.prepare("SELECT * FROM accounts WHERE id = ? AND user_id = ?").get(accountId, userId);
   if (!existing) throw new Error("Challenge account not found or unauthorized.");
@@ -15578,10 +15354,7 @@ function passChallengePhaseInDb(userId, accountId, provisionLiveDirectly = false
     WHERE id = ? AND user_id = ?
   `).run(lockedStatus, certId, now, accountId, userId);
   const nextPhase = isToPhase2 ? "phase_2" : "funded";
-  const nextLimits = getDynamicAccountLimits(normType, nextPhase, {
-    dailyDrawdown: existing.daily_loss_limit_percent,
-    maxDrawdown: existing.max_overall_loss_percent
-  });
+  const nextLimits = getDynamicAccountLimits(normType, nextPhase, { dailyDrawdown: existing.daily_loss_limit_percent, maxDrawdown: existing.max_overall_loss_percent });
   const nextPrefix = isToPhase2 ? "BFT-P2" : "BFT-LIVE";
   const nextAccountId = `${nextPrefix}-${Math.floor(1e4 + Math.random() * 89999)}`;
   const baseTierName = String(existing.tier_name || "").replace(/\s*\(Phase \d\)/i, "");
@@ -15594,33 +15367,10 @@ function passChallengePhaseInDb(userId, accountId, provisionLiveDirectly = false
       trading_days_completed, trades_count, win_rate, daily_withdrawals_unlocked, first_withdrawal_completed,
       certificate_id, created_date, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, 14, 0, 0, ?, 0, ?, ?, ?, ?)
-  `).run(
-    nextAccountId,
-    userId,
-    nextLimits.tier,
-    nextTierName,
-    existing.size,
-    existing.size,
-    nextBalance,
-    nextBalance,
-    nextBalance,
-    nextLimits.dailyLossLimitPercent,
-    nextLimits.maxOverallLossPercent,
-    existing.max_risk_per_trade_percent || 5,
-    nextPhase,
-    existing.daily_withdrawals_unlocked || 0,
-    !isToPhase2 ? certId : null,
-    nowIso,
-    now + 1,
-    now + 1
-  );
-  return {
-    lockedAccount: getAccountById(accountId),
-    deployedAccount: getAccountById(nextAccountId),
-    certificateId: certId,
-    isRealFundedDeployed: !isToPhase2
-  };
+  `).run(nextAccountId, userId, nextLimits.tier, nextTierName, existing.size, existing.size, nextBalance, nextBalance, nextBalance, nextLimits.dailyLossLimitPercent, nextLimits.maxOverallLossPercent, existing.max_risk_per_trade_percent || 5, nextPhase, existing.daily_withdrawals_unlocked || 0, !isToPhase2 ? certId : null, nowIso, now + 1, now + 1);
+  return { lockedAccount: getAccountById(accountId), deployedAccount: getAccountById(nextAccountId), certificateId: certId, isRealFundedDeployed: !isToPhase2 };
 }
+__name(passChallengePhaseInDb, "passChallengePhaseInDb");
 function lockUserProfile(userId, data) {
   const user = getUserById(userId);
   if (!user) throw new Error("User not found.");
@@ -15648,15 +15398,7 @@ function lockUserProfile(userId, data) {
       profile_locked = 1,
       updated_at = ?
     WHERE id = ?
-  `).run(
-    cleanName,
-    cleanAddress,
-    cleanDob,
-    cleanCountry,
-    data.telegramHandle?.trim() || null,
-    now,
-    userId
-  );
+  `).run(cleanName, cleanAddress, cleanDob, cleanCountry, data.telegramHandle?.trim() || null, now, userId);
   const existingSub = getKycSubmissionForUser(userId);
   if (existingSub) {
     db.prepare(`
@@ -15674,20 +15416,11 @@ function lockUserProfile(userId, data) {
       INSERT INTO kyc_submissions (
         id, user_id, full_name, address, date_of_birth, country, profile_locked, status, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
-    `).run(
-      `KYC-SUB-${userId}-${now.toString(36)}`,
-      userId,
-      cleanName,
-      cleanAddress,
-      cleanDob,
-      cleanCountry,
-      user.kyc_status || "unverified",
-      now,
-      now
-    );
+    `).run(`KYC-SUB-${userId}-${now.toString(36)}`, userId, cleanName, cleanAddress, cleanDob, cleanCountry, user.kyc_status || "unverified", now, now);
   }
   return getUserById(userId);
 }
+__name(lockUserProfile, "lockUserProfile");
 function updateUserKycStatus(userId, data) {
   const now = Date.now();
   const submittedIso = data.submittedAt || new Date(now).toISOString().split("T")[0];
@@ -15706,50 +15439,21 @@ function updateUserKycStatus(userId, data) {
       profile_locked = CASE WHEN ? IN ('pending', 'verified') THEN 1 ELSE profile_locked END,
       updated_at = ?
     WHERE id = ?
-  `).run(
-    data.status,
-    data.docType || null,
-    data.documentNumber || null,
-    data.frontDocumentUrl || null,
-    data.backDocumentUrl || null,
-    data.frontFileName || null,
-    data.backFileName || null,
-    submittedIso,
-    data.timerEndsAt || null,
-    data.status,
-    now,
-    data.status,
-    now,
-    userId
-  );
+  `).run(data.status, data.docType || null, data.documentNumber || null, data.frontDocumentUrl || null, data.backDocumentUrl || null, data.frontFileName || null, data.backFileName || null, submittedIso, data.timerEndsAt || null, data.status, now, data.status, now, userId);
   const user = getUserById(userId);
   if (user) {
     const existingSub = getKycSubmissionForUser(userId);
     const subStatus = data.status === "pending" ? "Pending Verification" : data.status;
     if (existingSub) {
       db.prepare(`
-        UPDATE kyc_submissions SET
-          doc_type = COALESCE(?, doc_type),
-          document_number = COALESCE(?, document_number),
-          front_document_url = COALESCE(?, front_document_url),
-          back_document_url = COALESCE(?, back_document_url),
-          front_file_name = COALESCE(?, front_file_name),
-          back_file_name = COALESCE(?, back_file_name),
-          status = ?,
-          profile_locked = 1,
-          updated_at = ?
-        WHERE user_id = ?
-      `).run(
-        data.docType || null,
-        data.documentNumber || null,
-        data.frontDocumentUrl || null,
-        data.backDocumentUrl || null,
-        data.frontFileName || null,
-        data.backFileName || null,
-        subStatus,
-        now,
-        userId
-      );
+        INSERT OR REPLACE INTO kyc_submissions (
+          id, user_id, full_name, address, date_of_birth, country, profile_locked,
+          doc_type, document_number, front_document_url, back_document_url, front_file_name, back_file_name,
+          status, created_at, updated_at
+        ) VALUES (
+          (SELECT id FROM kyc_submissions WHERE user_id = ?), ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, 'pending', (SELECT created_at FROM kyc_submissions WHERE user_id = ?), ?
+        )
+      `).run(userId, userId, user.full_name, user.address || "N/A", user.date_of_birth || "N/A", user.country || "United States", data.docType || null, data.documentNumber || null, data.frontDocumentUrl || null, data.backDocumentUrl || null, data.frontFileName || null, data.backFileName || null, userId, now);
     } else {
       db.prepare(`
         INSERT INTO kyc_submissions (
@@ -15757,27 +15461,12 @@ function updateUserKycStatus(userId, data) {
           doc_type, document_number, front_document_url, back_document_url, front_file_name, back_file_name,
           status, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        `KYC-SUB-${userId}-${now.toString(36)}`,
-        userId,
-        user.full_name || "Verified Trader",
-        user.address || "",
-        user.date_of_birth || "",
-        user.country || "United States",
-        data.docType || "ID Card",
-        data.documentNumber || null,
-        data.frontDocumentUrl || null,
-        data.backDocumentUrl || null,
-        data.frontFileName || null,
-        data.backFileName || null,
-        subStatus,
-        now,
-        now
-      );
+      `).run(`KYC-SUB-${userId}-${now.toString(36)}`, userId, user.full_name || "Verified Trader", user.address || "", user.date_of_birth || "", user.country || "United States", data.docType || "ID Card", data.documentNumber || null, data.frontDocumentUrl || null, data.backDocumentUrl || null, data.frontFileName || null, data.backFileName || null, subStatus, now, now);
     }
   }
   return getUserById(userId);
 }
+__name(updateUserKycStatus, "updateUserKycStatus");
 function processWithdrawalRequest(params) {
   const user = getUserById(params.userId);
   if (!user) throw new Error("User not found.");
@@ -15795,17 +15484,13 @@ function processWithdrawalRequest(params) {
     }
     const availableBalance = Math.max(0, Number(account.current_balance.toFixed(2)));
     if (availableBalance < 10) {
-      throw new Error(
-        `Minimum withdrawal threshold is $10.00. Current Personal Live balance is $${availableBalance.toFixed(2)}.`
-      );
+      throw new Error(`Minimum withdrawal threshold is $10.00. Current Personal Live balance is $${availableBalance.toFixed(2)}.`);
     }
     if (params.requestedAmount < 10) {
       throw new Error("Minimum withdrawal amount is $10.00 USD.");
     }
     if (params.requestedAmount > availableBalance) {
-      throw new Error(
-        `Cannot withdraw more than your available Personal Live balance ($${availableBalance.toFixed(2)}).`
-      );
+      throw new Error(`Cannot withdraw more than your available Personal Live balance ($${availableBalance.toFixed(2)}).`);
     }
     const feeAmount2 = Number((params.requestedAmount * 0.03).toFixed(2));
     const netPayout2 = Number((params.requestedAmount - feeAmount2).toFixed(2));
@@ -15817,44 +15502,14 @@ function processWithdrawalRequest(params) {
         id, user_id, account_id, gross_amount, net_profit, max_allowed_profit, profit_share_rate, fee_amount, net_payout,
         wallet_address, network, payment_method, status, reference_number, tx_hash, requested_at, processed_at
       ) VALUES (?, ?, ?, ?, ?, ?, 1.00, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, NULL)
-    `).run(
-      withdrawalId2,
-      params.userId,
-      params.accountId,
-      params.requestedAmount,
-      availableBalance,
-      availableBalance,
-      feeAmount2,
-      netPayout2,
-      params.walletAddress,
-      params.network,
-      params.paymentMethod,
-      refNumber2,
-      refNumber2,
-      now2
-    );
+    `).run(withdrawalId2, params.userId, params.accountId, params.requestedAmount, availableBalance, availableBalance, feeAmount2, netPayout2, params.walletAddress, params.network, params.paymentMethod, refNumber2, refNumber2, now2);
     const updatedAccount2 = getAccountById(account.id);
     const withdrawalRecord2 = db.prepare("SELECT * FROM withdrawals WHERE id = ?").get(withdrawalId2);
-    return {
-      ok: true,
-      withdrawal: withdrawalRecord2,
-      updatedAccount: updatedAccount2,
-      breakdown: {
-        requestedAmount: params.requestedAmount,
-        netProfit: availableBalance,
-        maxAllowed80Percent: availableBalance,
-        profitShareRate: 1,
-        feeAmount: feeAmount2,
-        netPayout: netPayout2,
-        isPersonalLive: true
-      }
-    };
+    return { ok: true, withdrawal: withdrawalRecord2, updatedAccount: updatedAccount2, breakdown: { requestedAmount: params.requestedAmount, netProfit: availableBalance, maxAllowed80Percent: availableBalance, profitShareRate: 1, feeAmount: feeAmount2, netPayout: netPayout2, isPersonalLive: true } };
   }
   const isLiveFunded = account.tier === "instant" || account.phase === "funded";
   if (!isLiveFunded) {
-    throw new Error(
-      "Withdrawals are locked during the Challenge Phase. Trade to hit your profit target first to pass the challenge, earn your Completion Certificate, and unlock your Live Funded Account."
-    );
+    throw new Error("Withdrawals are locked during the Challenge Phase. Trade to hit your profit target first to pass the challenge, earn your Completion Certificate, and unlock your Live Funded Account.");
   }
   if (account.status !== "active") {
     throw new Error("Account is not active.");
@@ -15874,9 +15529,7 @@ function processWithdrawalRequest(params) {
   }
   const maxAllowed80Percent = Number((netProfit * 0.8).toFixed(2));
   if (params.requestedAmount > maxAllowed80Percent) {
-    throw new Error(
-      `Withdrawal exceeds the 80% profit payout ceiling. Maximum allowable withdrawal is $${maxAllowed80Percent.toFixed(2)} (80% of $${netProfit.toFixed(2)} net generated profit).`
-    );
+    throw new Error(`Withdrawal exceeds the 80% profit payout ceiling. Maximum allowable withdrawal is $${maxAllowed80Percent.toFixed(2)} (80% of $${netProfit.toFixed(2)} net generated profit).`);
   }
   const feeAmount = Number((params.requestedAmount * 0.1).toFixed(2));
   const netPayout = Number((params.requestedAmount - feeAmount).toFixed(2));
@@ -15888,22 +15541,7 @@ function processWithdrawalRequest(params) {
       id, user_id, account_id, gross_amount, net_profit, max_allowed_profit, profit_share_rate, fee_amount, net_payout,
       wallet_address, network, payment_method, status, reference_number, tx_hash, requested_at, processed_at
     ) VALUES (?, ?, ?, ?, ?, ?, 0.80, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, NULL)
-  `).run(
-    withdrawalId,
-    params.userId,
-    params.accountId,
-    params.requestedAmount,
-    netProfit,
-    maxAllowed80Percent,
-    feeAmount,
-    netPayout,
-    params.walletAddress,
-    params.network,
-    params.paymentMethod,
-    refNumber,
-    refNumber,
-    now
-  );
+  `).run(withdrawalId, params.userId, params.accountId, params.requestedAmount, netProfit, maxAllowed80Percent, feeAmount, netPayout, params.walletAddress, params.network, params.paymentMethod, refNumber, refNumber, now);
   if (user.referred_by) {
     const isVip = user.registered_tier === "vip";
     const bonusRate = isVip ? 0.1 : 0.08;
@@ -15914,33 +15552,13 @@ function processWithdrawalRequest(params) {
       INSERT INTO commissions (
         id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, affiliate_tier, status, created_at
       ) VALUES (?, ?, ?, 'withdrawal', 1, ?, ?, ?, ?, ?, 'paid', ?)
-    `).run(
-      commId,
-      user.referred_by,
-      user.id,
-      `Direct Referral Payout Bonus (${(bonusRate * 100).toFixed(0)}% of $${params.requestedAmount.toFixed(2)} Withdrawal by ${user.full_name})`,
-      params.requestedAmount,
-      bonusRate,
-      bonusAmount,
-      affiliateTier,
-      now
-    );
+    `).run(commId, user.referred_by, user.id, `Direct Referral Payout Bonus (${(bonusRate * 100).toFixed(0)}% of $${params.requestedAmount.toFixed(2)} Withdrawal by ${user.full_name})`, params.requestedAmount, bonusRate, bonusAmount, affiliateTier, now);
   }
   const updatedAccount = getAccountById(account.id);
   const withdrawalRecord = db.prepare("SELECT * FROM withdrawals WHERE id = ?").get(withdrawalId);
-  return {
-    ok: true,
-    withdrawal: withdrawalRecord,
-    updatedAccount,
-    breakdown: {
-      requestedAmount: params.requestedAmount,
-      netProfit,
-      maxAllowed80Percent,
-      feeAmount,
-      netPayout
-    }
-  };
+  return { ok: true, withdrawal: withdrawalRecord, updatedAccount, breakdown: { requestedAmount: params.requestedAmount, netProfit, maxAllowed80Percent, feeAmount, netPayout } };
 }
+__name(processWithdrawalRequest, "processWithdrawalRequest");
 function syncSupabaseProfilesToAffiliateTree(profilesList) {
   if (!Array.isArray(profilesList) || profilesList.length === 0) return;
   const now = Date.now();
@@ -15969,12 +15587,7 @@ function syncSupabaseProfilesToAffiliateTree(profilesList) {
       db.prepare("UPDATE users SET referred_by = ?, updated_at = ? WHERE id = ?").run(referredBy, now, existing.id);
     }
   }
-  const defaultPackages = [
-    { pkgId: "BFT-IF-25K", pkgName: "$25K Instant Funded", sku: "BFT-IF-25K", amount: 250 },
-    { pkgId: "BFT-1S-50K", pkgName: "$50K 1-Step Challenge", sku: "BFT-1S-50K", amount: 289 },
-    { pkgId: "BFT-IF-10K", pkgName: "$10K Instant Funded", sku: "BFT-IF-10K", amount: 149 },
-    { pkgId: "BFT-2S-25K", pkgName: "$25K 2-Step Challenge", sku: "BFT-2S-25K", amount: 189 }
-  ];
+  const defaultPackages = [{ pkgId: "BFT-IF-25K", pkgName: "$25K Instant Funded", sku: "BFT-IF-25K", amount: 250 }, { pkgId: "BFT-1S-50K", pkgName: "$50K 1-Step Challenge", sku: "BFT-1S-50K", amount: 289 }, { pkgId: "BFT-IF-10K", pkgName: "$10K Instant Funded", sku: "BFT-IF-10K", amount: 149 }, { pkgId: "BFT-2S-25K", pkgName: "$25K 2-Step Challenge", sku: "BFT-2S-25K", amount: 189 }];
   let idx = 0;
   for (const p of profilesList) {
     if (!p?.id || !p?.referred_by) continue;
@@ -15996,16 +15609,7 @@ function syncSupabaseProfilesToAffiliateTree(profilesList) {
               id, user_id, account_id, package_id, package_name, package_sku,
               amount, package_amount, account_type, status, tx_hash, created_at
             ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, 'challenge', 'completed', NULL, ?)
-          `).run(
-            `PUR-SYNC-${userId.slice(0, 8).toUpperCase()}`,
-            userId,
-            pkg.pkgId,
-            pkg.pkgName,
-            pkg.sku,
-            pkg.amount,
-            pkg.amount,
-            now - idx * 6e4
-          );
+          `).run(`PUR-SYNC-${userId.slice(0, 8).toUpperCase()}`, userId, pkg.pkgId, pkg.pkgName, pkg.sku, pkg.amount, pkg.amount, now - idx * 6e4);
           if (!existingComm) {
             creditPurchaseCommissions(userId, pkg.pkgName, pkg.amount, null);
           }
@@ -16015,6 +15619,7 @@ function syncSupabaseProfilesToAffiliateTree(profilesList) {
     }
   }
 }
+__name(syncSupabaseProfilesToAffiliateTree, "syncSupabaseProfilesToAffiliateTree");
 function creditPurchaseCommissions(buyerUserId, packageName, packagePrice, referralCodeUsed) {
   let buyer = getUserById(buyerUserId);
   const now = Date.now();
@@ -16051,19 +15656,7 @@ function creditPurchaseCommissions(buyerUserId, packageName, packagePrice, refer
     INSERT INTO commissions (id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, affiliate_tier, status, created_at)
     VALUES (?, ?, ?, 'purchase', 1, ?, ?, ?, ?, ?, 'paid', ?)
   `).run(l1Id, l1SponsorId, buyer.id, packageName, packagePrice, l1Rate, l1Amount, effectiveTier, now);
-  commissionsRecorded.push({
-    id: l1Id,
-    level: 1,
-    sponsorId: l1SponsorId,
-    referredUserId: buyer.id,
-    referredUserName: buyer.full_name,
-    referredUserEmail: buyer.email,
-    packageName,
-    packagePrice,
-    rate: l1Rate,
-    amount: l1Amount,
-    affiliateTier: effectiveTier
-  });
+  commissionsRecorded.push({ id: l1Id, level: 1, sponsorId: l1SponsorId, referredUserId: buyer.id, referredUserName: buyer.full_name, referredUserEmail: buyer.email, packageName, packagePrice, rate: l1Rate, amount: l1Amount, affiliateTier: effectiveTier });
   const l1User = getUserById(l1SponsorId);
   if (l1User?.referred_by && l1User.referred_by !== buyer.id) {
     const l2SponsorId = l1User.referred_by;
@@ -16073,19 +15666,7 @@ function creditPurchaseCommissions(buyerUserId, packageName, packagePrice, refer
       INSERT INTO commissions (id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, affiliate_tier, status, created_at)
       VALUES (?, ?, ?, 'purchase', 2, ?, ?, ?, ?, ?, 'paid', ?)
     `).run(l2Id, l2SponsorId, buyer.id, packageName, packagePrice, l2Rate, l2Amount, effectiveTier, now);
-    commissionsRecorded.push({
-      id: l2Id,
-      level: 2,
-      sponsorId: l2SponsorId,
-      referredUserId: buyer.id,
-      referredUserName: buyer.full_name,
-      referredUserEmail: buyer.email,
-      packageName,
-      packagePrice,
-      rate: l2Rate,
-      amount: l2Amount,
-      affiliateTier: effectiveTier
-    });
+    commissionsRecorded.push({ id: l2Id, level: 2, sponsorId: l2SponsorId, referredUserId: buyer.id, referredUserName: buyer.full_name, referredUserEmail: buyer.email, packageName, packagePrice, rate: l2Rate, amount: l2Amount, affiliateTier: effectiveTier });
     const l2User = getUserById(l2SponsorId);
     if (l2User?.referred_by && l2User.referred_by !== buyer.id) {
       const l3SponsorId = l2User.referred_by;
@@ -16095,100 +15676,54 @@ function creditPurchaseCommissions(buyerUserId, packageName, packagePrice, refer
         INSERT INTO commissions (id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, affiliate_tier, status, created_at)
         VALUES (?, ?, ?, 'purchase', 3, ?, ?, ?, ?, ?, 'paid', ?)
       `).run(l3Id, l3SponsorId, buyer.id, packageName, packagePrice, l3Rate, l3Amount, effectiveTier, now);
-      commissionsRecorded.push({
-        id: l3Id,
-        level: 3,
-        sponsorId: l3SponsorId,
-        referredUserId: buyer.id,
-        referredUserName: buyer.full_name,
-        referredUserEmail: buyer.email,
-        packageName,
-        packagePrice,
-        rate: l3Rate,
-        amount: l3Amount,
-        affiliateTier: effectiveTier
-      });
+      commissionsRecorded.push({ id: l3Id, level: 3, sponsorId: l3SponsorId, referredUserId: buyer.id, referredUserName: buyer.full_name, referredUserEmail: buyer.email, packageName, packagePrice, rate: l3Rate, amount: l3Amount, affiliateTier: effectiveTier });
     }
   }
   return commissionsRecorded;
 }
+__name(creditPurchaseCommissions, "creditPurchaseCommissions");
 function getLatestPurchaseForUserInDb(userId) {
   if (!userId) return null;
   try {
     const pur = db.prepare("SELECT * FROM user_purchases WHERE user_id = ? ORDER BY created_at DESC LIMIT 1").get(userId);
     if (pur && Number(pur.package_amount ?? pur.amount ?? 0) > 0) {
-      return {
-        package_name: pur.package_name || "Challenge Package",
-        package_sku: pur.package_sku || pur.package_id || "BFT-PKG",
-        amount: Number(pur.package_amount ?? pur.amount ?? 0),
-        created_at: pur.created_at
-      };
+      return { package_name: pur.package_name || "Challenge Package", package_sku: pur.package_sku || pur.package_id || "BFT-PKG", amount: Number(pur.package_amount ?? pur.amount ?? 0), created_at: pur.created_at };
     }
   } catch {
   }
   try {
     const dep = db.prepare("SELECT * FROM crypto_deposits WHERE user_id = ? ORDER BY created_at DESC LIMIT 1").get(userId);
     if (dep && Number(dep.amount ?? 0) > 0) {
-      return {
-        package_name: dep.package_name || "Challenge Package",
-        package_sku: dep.package_sku || dep.sku || "BFT-PKG",
-        amount: Number(dep.amount),
-        created_at: dep.created_at
-      };
+      return { package_name: dep.package_name || "Challenge Package", package_sku: dep.package_sku || dep.sku || "BFT-PKG", amount: Number(dep.amount), created_at: dep.created_at };
     }
   } catch {
   }
   try {
-    const comm = db.prepare(
-      "SELECT * FROM commissions WHERE referred_user_id = ? AND source_type != 'withdrawal' ORDER BY created_at DESC LIMIT 1"
-    ).get(userId);
+    const comm = db.prepare("SELECT * FROM commissions WHERE referred_user_id = ? AND source_type != 'withdrawal' ORDER BY created_at DESC LIMIT 1").get(userId);
     if (comm && Number(comm.base_amount ?? 0) > 0) {
       const cleanName = String(comm.package_name || "").replace(/^Level\s*\d+\s*Commission:\s*/i, "").trim();
-      return {
-        package_name: cleanName || "Challenge Package",
-        package_sku: "BFT-PKG",
-        amount: Number(comm.base_amount),
-        created_at: comm.created_at
-      };
+      return { package_name: cleanName || "Challenge Package", package_sku: "BFT-PKG", amount: Number(comm.base_amount), created_at: comm.created_at };
     }
   } catch {
   }
   return null;
 }
+__name(getLatestPurchaseForUserInDb, "getLatestPurchaseForUserInDb");
 function getAffiliateDashboardStats(userId) {
   let targetId = (userId || "").trim();
   if (!targetId) {
-    return {
-      stats: {
-        totalEarned: 0,
-        unpaidEarnings: 0,
-        paidEarnings: 0,
-        level1Earnings: 0,
-        level2Earnings: 0,
-        level3Earnings: 0,
-        withdrawalEarnings: 0,
-        teamSize: 0,
-        activeFundedCount: 0,
-        isVipUnlocked: false,
-        recentCommissions: [],
-        networkTree: []
-      }
-    };
+    return { stats: { totalEarned: 0, unpaidEarnings: 0, paidEarnings: 0, level1Earnings: 0, level2Earnings: 0, level3Earnings: 0, withdrawalEarnings: 0, teamSize: 0, activeFundedCount: 0, isVipUnlocked: false, recentCommissions: [], networkTree: [] } };
   }
-  let commissions = db.prepare(
-    `SELECT c.*, u.full_name as referred_user_name, u.email as referred_user_email
+  let commissions = db.prepare(`SELECT c.*, u.full_name as referred_user_name, u.email as referred_user_email
        FROM commissions c
        LEFT JOIN users u ON c.referred_user_id = u.id
        WHERE c.sponsor_id = ?
-       ORDER BY c.created_at DESC`
-  ).all(targetId);
-  let referrals = db.prepare(
-    `SELECT r.*, u.full_name, u.email, u.created_at as joined_at
+       ORDER BY c.created_at DESC`).all(targetId);
+  let referrals = db.prepare(`SELECT r.*, u.full_name, u.email, u.created_at as joined_at
        FROM referrals r
        JOIN users u ON r.referred_user_id = u.id
        WHERE r.sponsor_id = ?
-       ORDER BY r.tier_level ASC, r.created_at DESC`
-  ).all(targetId);
+       ORDER BY r.tier_level ASC, r.created_at DESC`).all(targetId);
   let totalEarnings = 0;
   let level1Earnings = 0;
   let level2Earnings = 0;
@@ -16205,89 +15740,33 @@ function getAffiliateDashboardStats(userId) {
   }
   const enrichedReferrals = referrals.map((r) => {
     const latestPurchase = getLatestPurchaseForUserInDb(r.referred_user_id);
-    return {
-      ...r,
-      package_name: latestPurchase?.package_name || null,
-      package_sku: latestPurchase?.package_sku || null,
-      package_price: latestPurchase?.amount || 0,
-      latestPurchase: latestPurchase ? {
-        name: latestPurchase.package_name,
-        sku: latestPurchase.package_sku,
-        amount: latestPurchase.amount
-      } : void 0
-    };
+    return { ...r, package_name: latestPurchase?.package_name || null, package_sku: latestPurchase?.package_sku || null, package_price: latestPurchase?.amount || 0, latestPurchase: latestPurchase ? { name: latestPurchase.package_name, sku: latestPurchase.package_sku, amount: latestPurchase.amount } : void 0 };
   });
-  const networkTree = enrichedReferrals.map((r) => ({
-    id: r.referred_user_id,
-    fullName: r.full_name || "Trader",
-    email: r.email,
-    level: r.tier_level || 1,
-    latestPurchase: r.latestPurchase
-  }));
-  const activeFundedCount = networkTree.filter(
-    (n) => n.latestPurchase && Number(n.latestPurchase.amount) > 0
-  ).length;
+  const networkTree = enrichedReferrals.map((r) => ({ id: r.referred_user_id, fullName: r.full_name || "Trader", email: r.email, level: r.tier_level || 1, latestPurchase: r.latestPurchase }));
+  const activeFundedCount = networkTree.filter((n) => n.latestPurchase && Number(n.latestPurchase.amount) > 0).length;
   const vipThreshold = 1e3;
   const isVipUnlocked = activeFundedCount >= vipThreshold;
   const remainingToVip = Math.max(0, vipThreshold - activeFundedCount);
   const vipProgressPercent = Math.min(100, Number((activeFundedCount / vipThreshold * 100).toFixed(1)));
   const affiliateTier = isVipUnlocked ? "vip" : "basic";
   const milestoneRewardAmount = 1e4;
-  const normalizedCommissions = commissions.map((c) => ({
-    ...c,
-    affiliate_tier: c.affiliate_tier || (c.rate >= 0.15 || c.source_type === "withdrawal" && c.rate >= 0.1 ? "vip" : "basic")
-  }));
-  return {
-    totalEarnings: Number(totalEarnings.toFixed(2)),
-    level1Earnings: Number(level1Earnings.toFixed(2)),
-    level2Earnings: Number(level2Earnings.toFixed(2)),
-    level3Earnings: Number(level3Earnings.toFixed(2)),
-    withdrawalBonusEarnings: Number(withdrawalBonusEarnings.toFixed(2)),
-    teamSize: referrals.length,
-    activeFundedCount,
-    vipThreshold,
-    vipProgressPercent,
-    remainingToVip,
-    isVipUnlocked,
-    affiliateTier,
-    milestoneRewardAmount,
-    level1Count: referrals.filter((r) => r.tier_level === 1).length,
-    level2Count: referrals.filter((r) => r.tier_level === 2).length,
-    level3Count: referrals.filter((r) => r.tier_level === 3).length,
-    recentCommissions: normalizedCommissions.slice(0, 50),
-    referrals: enrichedReferrals.slice(0, 50),
-    networkTree
-  };
+  const normalizedCommissions = commissions.map((c) => ({ ...c, affiliate_tier: c.affiliate_tier || (c.rate >= 0.15 || c.source_type === "withdrawal" && c.rate >= 0.1 ? "vip" : "basic") }));
+  return { totalEarnings: Number(totalEarnings.toFixed(2)), level1Earnings: Number(level1Earnings.toFixed(2)), level2Earnings: Number(level2Earnings.toFixed(2)), level3Earnings: Number(level3Earnings.toFixed(2)), withdrawalBonusEarnings: Number(withdrawalBonusEarnings.toFixed(2)), teamSize: referrals.length, activeFundedCount, vipThreshold, vipProgressPercent, remainingToVip, isVipUnlocked, affiliateTier, milestoneRewardAmount, level1Count: referrals.filter((r) => r.tier_level === 1).length, level2Count: referrals.filter((r) => r.tier_level === 2).length, level3Count: referrals.filter((r) => r.tier_level === 3).length, recentCommissions: normalizedCommissions.slice(0, 50), referrals: enrichedReferrals.slice(0, 50), networkTree };
 }
+__name(getAffiliateDashboardStats, "getAffiliateDashboardStats");
 function getWeeklyLeaderboardQuery() {
   const rows = db.prepare("SELECT * FROM leaderboard ORDER BY rank ASC").all();
-  return rows.map((r) => ({
-    id: r.id,
-    rank: r.rank,
-    name: r.name,
-    country: r.country,
-    flag: r.flag,
-    accountTier: r.account_tier,
-    profit: r.profit,
-    winRate: r.win_rate,
-    payoutTime: r.payout_time
-  }));
+  return rows.map((r) => ({ id: r.id, rank: r.rank, name: r.name, country: r.country, flag: r.flag, accountTier: r.account_tier, profit: r.profit, winRate: r.win_rate, payoutTime: r.payout_time }));
 }
+__name(getWeeklyLeaderboardQuery, "getWeeklyLeaderboardQuery");
 function recordAdminAuditLog(adminUserId, action, targetId, targetType, details) {
   const id = `AUDIT-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
   db.prepare(`
     INSERT INTO admin_audit_logs (id, admin_user_id, action, target_id, target_type, details, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    id,
-    adminUserId,
-    action,
-    targetId,
-    targetType,
-    details ? typeof details === "string" ? details : JSON.stringify(details) : null,
-    Date.now()
-  );
+  `).run(id, adminUserId, action, targetId, targetType, details ? typeof details === "string" ? details : JSON.stringify(details) : null, Date.now());
 }
+__name(recordAdminAuditLog, "recordAdminAuditLog");
 function getAdminMetrics() {
   const totalUsers = Number(db.prepare("SELECT COUNT(*) as c FROM users").get()?.c || 0);
   const totalAccounts = Number(db.prepare("SELECT COUNT(*) as c FROM accounts").get()?.c || 0);
@@ -16300,20 +15779,9 @@ function getAdminMetrics() {
   const pendingKyc = Number(db.prepare("SELECT COUNT(*) as c FROM users WHERE kyc_status IN ('pending', 'Pending Verification')").get()?.c || 0);
   const totalCommissions = Number(db.prepare("SELECT SUM(commission_amount) as s FROM commissions WHERE status = 'paid'").get()?.s || 0);
   const totalAffiliates = Number(db.prepare("SELECT COUNT(DISTINCT sponsor_id) as c FROM referrals").get()?.c || 0);
-  return {
-    totalUsers,
-    totalAccounts,
-    totalActiveBalance: Number(totalActiveBalance.toFixed(2)),
-    totalDeposited: Number(totalDeposited.toFixed(2)),
-    pendingDepositsCount: pendingDeposits,
-    pendingDepositsAmount: Number(pendingDepositsSum.toFixed(2)),
-    pendingWithdrawalsCount: pendingWithdrawals,
-    pendingWithdrawalsAmount: Number(pendingWithdrawalsSum.toFixed(2)),
-    pendingKycCount: pendingKyc,
-    totalCommissionsPaid: Number(totalCommissions.toFixed(2)),
-    totalAffiliatesCount: totalAffiliates
-  };
+  return { totalUsers, totalAccounts, totalActiveBalance: Number(totalActiveBalance.toFixed(2)), totalDeposited: Number(totalDeposited.toFixed(2)), pendingDepositsCount: pendingDeposits, pendingDepositsAmount: Number(pendingDepositsSum.toFixed(2)), pendingWithdrawalsCount: pendingWithdrawals, pendingWithdrawalsAmount: Number(pendingWithdrawalsSum.toFixed(2)), pendingKycCount: pendingKyc, totalCommissionsPaid: Number(totalCommissions.toFixed(2)), totalAffiliatesCount: totalAffiliates };
 }
+__name(getAdminMetrics, "getAdminMetrics");
 function getAdminUsersList() {
   const users = db.prepare(`
     SELECT u.*,
@@ -16325,29 +15793,10 @@ function getAdminUsersList() {
   `).all();
   return users.map((u) => {
     const userAccounts = db.prepare("SELECT * FROM accounts WHERE user_id = ? ORDER BY created_at DESC").all(u.id);
-    return {
-      id: u.id,
-      email: u.email,
-      fullName: u.full_name,
-      role: u.role || "trader",
-      avatarUrl: u.avatar_url,
-      country: u.country,
-      referralCode: u.referral_code,
-      referredBy: u.referred_by,
-      sponsorName: u.sponsor_name || null,
-      kycStatus: u.kyc_status,
-      profileLocked: Boolean(u.profile_locked),
-      address: u.address,
-      dateOfBirth: u.date_of_birth,
-      telegramHandle: u.telegram_handle,
-      selfBalance: u.self_balance ?? 0,
-      accountsCount: u.accounts_count || 0,
-      totalBalance: Number((u.total_balance || 0).toFixed(2)),
-      createdAt: u.created_at,
-      accounts: userAccounts.map(mapAccountRowToTradingAccount)
-    };
+    return { id: u.id, email: u.email, fullName: u.full_name, role: u.role || "trader", avatarUrl: u.avatar_url, country: u.country, referralCode: u.referral_code, referredBy: u.referred_by, sponsorName: u.sponsor_name || null, kycStatus: u.kyc_status, profileLocked: Boolean(u.profile_locked), address: u.address, dateOfBirth: u.date_of_birth, telegramHandle: u.telegram_handle, selfBalance: u.self_balance ?? 0, accountsCount: u.accounts_count || 0, totalBalance: Number((u.total_balance || 0).toFixed(2)), createdAt: u.created_at, accounts: userAccounts.map(mapAccountRowToTradingAccount) };
   });
 }
+__name(getAdminUsersList, "getAdminUsersList");
 function adminUpdateAccountBalance(params) {
   const account = db.prepare("SELECT * FROM accounts WHERE id = ?").get(params.accountId);
   if (!account) throw new Error(`Trading account ${params.accountId} not found.`);
@@ -16384,15 +15833,10 @@ function adminUpdateAccountBalance(params) {
     } catch {
     }
   }
-  recordAdminAuditLog(
-    params.adminUserId,
-    "MODIFY_BALANCE",
-    params.accountId,
-    "account",
-    { oldBalance, newBalance: targetBalance, delta, reason: params.reason }
-  );
+  recordAdminAuditLog(params.adminUserId, "MODIFY_BALANCE", params.accountId, "account", { oldBalance, newBalance: targetBalance, delta, reason: params.reason });
   return getAccountById(params.accountId);
 }
+__name(adminUpdateAccountBalance, "adminUpdateAccountBalance");
 function adminSetUserRole(userId, newRole, adminUserId) {
   const user = getUserById(userId);
   if (!user) throw new Error("User not found.");
@@ -16400,19 +15844,8 @@ function adminSetUserRole(userId, newRole, adminUserId) {
   recordAdminAuditLog(adminUserId, "CHANGE_ROLE", userId, "user", { oldRole: user.role, newRole });
   return getUserById(userId);
 }
-var depositAlterColumns = [
-  `ALTER TABLE deposits ADD COLUMN wallet_address TEXT DEFAULT 'TWr3rLWrWGBcfwix5osJwAwMXmpcu4PNSp';`,
-  `ALTER TABLE deposits ADD COLUMN package_name TEXT;`,
-  `ALTER TABLE deposits ADD COLUMN sku TEXT;`,
-  `ALTER TABLE deposits ADD COLUMN package_sku TEXT;`,
-  `ALTER TABLE deposits ADD COLUMN account_type TEXT DEFAULT 'self_funded';`,
-  `ALTER TABLE deposits ADD COLUMN is_fulfilled INTEGER DEFAULT 0;`,
-  `ALTER TABLE deposits ADD COLUMN expires_at INTEGER;`,
-  `ALTER TABLE crypto_deposits ADD COLUMN package_sku TEXT;`,
-  `ALTER TABLE crypto_deposits ADD COLUMN is_fulfilled INTEGER DEFAULT 0;`,
-  `ALTER TABLE crypto_deposits ADD COLUMN processed_at INTEGER;`,
-  `ALTER TABLE crypto_deposits ADD COLUMN expires_at INTEGER;`,
-  `CREATE TABLE IF NOT EXISTS user_purchases (
+__name(adminSetUserRole, "adminSetUserRole");
+var depositAlterColumns = [`ALTER TABLE deposits ADD COLUMN wallet_address TEXT DEFAULT 'TWr3rLWrWGBcfwix5osJwAwMXmpcu4PNSp';`, `ALTER TABLE deposits ADD COLUMN package_name TEXT;`, `ALTER TABLE deposits ADD COLUMN sku TEXT;`, `ALTER TABLE deposits ADD COLUMN package_sku TEXT;`, `ALTER TABLE deposits ADD COLUMN account_type TEXT DEFAULT 'self_funded';`, `ALTER TABLE deposits ADD COLUMN is_fulfilled INTEGER DEFAULT 0;`, `ALTER TABLE deposits ADD COLUMN expires_at INTEGER;`, `ALTER TABLE crypto_deposits ADD COLUMN package_sku TEXT;`, `ALTER TABLE crypto_deposits ADD COLUMN is_fulfilled INTEGER DEFAULT 0;`, `ALTER TABLE crypto_deposits ADD COLUMN processed_at INTEGER;`, `ALTER TABLE crypto_deposits ADD COLUMN expires_at INTEGER;`, `CREATE TABLE IF NOT EXISTS user_purchases (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     account_id TEXT,
@@ -16427,10 +15860,7 @@ var depositAlterColumns = [
     created_at INTEGER NOT NULL,
     processed_at INTEGER,
     expires_at INTEGER
-  );`,
-  `ALTER TABLE user_purchases ADD COLUMN processed_at INTEGER;`,
-  `ALTER TABLE user_purchases ADD COLUMN expires_at INTEGER;`,
-  `CREATE TABLE IF NOT EXISTS transactions (
+  );`, `ALTER TABLE user_purchases ADD COLUMN processed_at INTEGER;`, `ALTER TABLE user_purchases ADD COLUMN expires_at INTEGER;`, `CREATE TABLE IF NOT EXISTS transactions (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     account_id TEXT,
@@ -16446,8 +15876,7 @@ var depositAlterColumns = [
     created_at INTEGER NOT NULL,
     processed_at INTEGER,
     expires_at INTEGER
-  );`
-];
+  );`];
 for (const stmt of depositAlterColumns) {
   try {
     db.exec(stmt);
@@ -16458,70 +15887,55 @@ function expireStalePendingDepositsInDb(nowMs = Date.now(), expiryWindowMs = DEP
   const cutoffMs = nowMs - expiryWindowMs;
   let expiredRows = [];
   try {
-    expiredRows = db.prepare(
-      `SELECT id FROM crypto_deposits WHERE status = 'pending' AND created_at <= ?`
-    ).all(cutoffMs);
+    expiredRows = db.prepare(`SELECT id FROM crypto_deposits WHERE status = 'pending' AND created_at <= ?`).all(cutoffMs);
   } catch {
     expiredRows = [];
   }
   const expiredIds = expiredRows.map((r) => String(r.id));
   try {
-    db.prepare(
-      `UPDATE crypto_deposits
+    db.prepare(`UPDATE crypto_deposits
        SET status = 'failed',
            is_fulfilled = 0,
            account_id = NULL,
            processed_at = ?
-       WHERE status = 'pending' AND created_at <= ?`
-    ).run(nowMs, cutoffMs);
+       WHERE status = 'pending' AND created_at <= ?`).run(nowMs, cutoffMs);
   } catch {
   }
   try {
-    db.prepare(
-      `UPDATE deposits
+    db.prepare(`UPDATE deposits
        SET status = 'failed',
            is_fulfilled = 0,
            account_id = NULL,
            decline_reason = 'Expired after 1 hour (60 minutes) without blockchain confirmation',
            processed_at = ?
-       WHERE status = 'pending' AND created_at <= ?`
-    ).run(nowMs, cutoffMs);
+       WHERE status = 'pending' AND created_at <= ?`).run(nowMs, cutoffMs);
   } catch {
   }
   try {
-    db.prepare(
-      `UPDATE transactions
+    db.prepare(`UPDATE transactions
        SET status = 'failed',
            account_id = NULL,
            processed_at = ?
-       WHERE status = 'pending' AND created_at <= ?`
-    ).run(nowMs, cutoffMs);
+       WHERE status = 'pending' AND created_at <= ?`).run(nowMs, cutoffMs);
   } catch {
   }
   try {
-    db.prepare(
-      `UPDATE user_purchases
+    db.prepare(`UPDATE user_purchases
        SET status = 'failed',
            account_id = NULL,
            processed_at = ?
-       WHERE status = 'pending' AND created_at <= ?`
-    ).run(nowMs, cutoffMs);
+       WHERE status = 'pending' AND created_at <= ?`).run(nowMs, cutoffMs);
   } catch {
   }
-  return {
-    expiredCount: expiredIds.length,
-    expiredIds,
-    cutoffMs
-  };
+  return { expiredCount: expiredIds.length, expiredIds, cutoffMs };
 }
+__name(expireStalePendingDepositsInDb, "expireStalePendingDepositsInDb");
 function createUserPurchaseRecord(params) {
   const now = params.createdAtMs ?? Date.now();
   const expiresAt = now + DEPOSIT_EXPIRY_MS;
   const id = params.id || `PUR-${now.toString(36).toUpperCase()}-${Math.floor(1e3 + Math.random() * 9e3)}`;
   const cleanAmount = Number(Math.max(0.01, Number(params.amount || 0)).toFixed(2));
-  const cleanPkgAmount = Number(
-    Math.max(0.01, Number(params.packageAmount ?? params.amount ?? 0)).toFixed(2)
-  );
+  const cleanPkgAmount = Number(Math.max(0.01, Number(params.packageAmount ?? params.amount ?? 0)).toFixed(2));
   const accountType = params.accountType === "self_funded" ? "self_funded" : "challenge";
   const sku = String(params.packageSku || params.packageId || "BFT-2S-10K").trim().toUpperCase();
   const packageId = String(params.packageId || sku).trim();
@@ -16532,23 +15946,10 @@ function createUserPurchaseRecord(params) {
       id, user_id, account_id, package_id, package_name, package_sku,
       amount, package_amount, account_type, status, tx_hash, created_at, expires_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    id,
-    params.userId,
-    params.accountId || null,
-    packageId,
-    packageName,
-    sku,
-    cleanAmount,
-    cleanPkgAmount,
-    accountType,
-    status,
-    params.txHash || null,
-    now,
-    expiresAt
-  );
+  `).run(id, params.userId, params.accountId || null, packageId, packageName, sku, cleanAmount, cleanPkgAmount, accountType, status, params.txHash || null, now, expiresAt);
   return db.prepare("SELECT * FROM user_purchases WHERE id = ?").get(id);
 }
+__name(createUserPurchaseRecord, "createUserPurchaseRecord");
 function getUserPurchases(params) {
   expireStalePendingDepositsInDb();
   if (params?.userId) {
@@ -16556,6 +15957,7 @@ function getUserPurchases(params) {
   }
   return db.prepare("SELECT * FROM user_purchases ORDER BY created_at DESC LIMIT 100").all();
 }
+__name(getUserPurchases, "getUserPurchases");
 function getTransactions(params) {
   expireStalePendingDepositsInDb();
   if (params?.userId) {
@@ -16563,6 +15965,7 @@ function getTransactions(params) {
   }
   return db.prepare("SELECT * FROM transactions ORDER BY created_at DESC LIMIT 100").all();
 }
+__name(getTransactions, "getTransactions");
 function createDepositRequest(params) {
   const now = params.createdAtMs ?? Date.now();
   const expiresAt = now + DEPOSIT_EXPIRY_MS;
@@ -16573,114 +15976,40 @@ function createDepositRequest(params) {
   const accountType = params.accountType === "challenge" ? "challenge" : "self_funded";
   const packageName = params.packageName || (accountType === "challenge" ? "Funded Challenge Evaluation" : `Self-Funded Personal Live Deposit ($${cleanAmount.toFixed(2)} USDT)`);
   const sku = params.sku || (accountType === "challenge" ? `BFT-CHALLENGE-${Math.round(cleanAmount)}` : `BFT-SELF-${Math.round(cleanAmount)}`);
-  ensureUserInDb({
-    id: params.userId,
-    email: `${String(params.userId).toLowerCase().replace(/[^a-z0-9]/g, "")}@client-bft.com`,
-    fullName: `Trader ${String(params.userId).slice(-4)}`
-  });
+  ensureUserInDb({ id: params.userId, email: `${String(params.userId).toLowerCase().replace(/[^a-z0-9]/g, "")}@client-bft.com`, fullName: `Trader ${String(params.userId).slice(-4)}` });
   db.prepare(`
     INSERT INTO deposits (
       id, user_id, account_id, amount, payment_method, currency, network,
       wallet_address, package_name, sku, package_sku, account_type,
       tx_hash, deposit_slip_url, status, created_at, expires_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-  `).run(
-    id,
-    params.userId,
-    params.accountId || null,
-    cleanAmount,
-    params.paymentMethod,
-    params.currency || "USDT",
-    params.network || "TRC-20",
-    walletAddress,
-    packageName,
-    sku,
-    sku,
-    accountType,
-    params.txHash || null,
-    params.depositSlipUrl || null,
-    now,
-    expiresAt
-  );
+  `).run(id, params.userId, params.accountId || null, cleanAmount, params.paymentMethod, params.currency || "USDT", params.network || "TRC-20", walletAddress, packageName, sku, sku, accountType, params.txHash || null, params.depositSlipUrl || null, now, expiresAt);
   db.prepare(`
     INSERT OR REPLACE INTO crypto_deposits (
       id, user_id, account_id, wallet_address, amount, package_name, sku, package_sku,
       account_type, currency, network, tx_hash, status, created_at, expires_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-  `).run(
-    id,
-    params.userId,
-    params.accountId || null,
-    walletAddress,
-    cleanAmount,
-    packageName,
-    sku,
-    sku,
-    accountType,
-    params.currency || "USDT",
-    params.network || "TRC-20",
-    params.txHash || null,
-    now,
-    expiresAt
-  );
+  `).run(id, params.userId, params.accountId || null, walletAddress, cleanAmount, packageName, sku, sku, accountType, params.currency || "USDT", params.network || "TRC-20", params.txHash || null, now, expiresAt);
   try {
     db.prepare(`
       INSERT OR REPLACE INTO transactions (
         id, user_id, account_id, wallet_address, amount, package_name, package_sku,
         account_type, currency, network, tx_hash, status, created_at, expires_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-    `).run(
-      id,
-      params.userId,
-      params.accountId || null,
-      walletAddress,
-      cleanAmount,
-      packageName,
-      sku,
-      accountType,
-      params.currency || "USDT",
-      params.network || "TRC-20",
-      params.txHash || null,
-      now,
-      expiresAt
-    );
+    `).run(id, params.userId, params.accountId || null, walletAddress, cleanAmount, packageName, sku, accountType, params.currency || "USDT", params.network || "TRC-20", params.txHash || null, now, expiresAt);
   } catch {
   }
   try {
-    createUserPurchaseRecord({
-      id,
-      userId: params.userId,
-      accountId: params.accountId || null,
-      packageId: sku,
-      packageName,
-      packageSku: sku,
-      amount: cleanAmount,
-      packageAmount: cleanAmount,
-      accountType,
-      status: "pending",
-      txHash: params.txHash || null,
-      createdAtMs: now
-    });
+    createUserPurchaseRecord({ id, userId: params.userId, accountId: params.accountId || null, packageId: sku, packageName, packageSku: sku, amount: cleanAmount, packageAmount: cleanAmount, accountType, status: "pending", txHash: params.txHash || null, createdAtMs: now });
   } catch {
   }
   return db.prepare("SELECT * FROM crypto_deposits WHERE id = ?").get(id);
 }
+__name(createDepositRequest, "createDepositRequest");
 function createCryptoDepositRecord(params) {
-  return createDepositRequest({
-    userId: params.userId,
-    accountId: params.accountId,
-    amount: params.amount,
-    paymentMethod: "USDT (TRC-20)",
-    walletAddress: params.walletAddress || "TWr3rLWrWGBcfwix5osJwAwMXmpcu4PNSp",
-    packageName: params.packageName,
-    sku: params.sku,
-    accountType: params.accountType,
-    currency: "USDT",
-    network: "TRC-20",
-    txHash: params.txHash,
-    createdAtMs: params.createdAtMs ?? params.createdAt
-  });
+  return createDepositRequest({ userId: params.userId, accountId: params.accountId, amount: params.amount, paymentMethod: "USDT (TRC-20)", walletAddress: params.walletAddress || "TWr3rLWrWGBcfwix5osJwAwMXmpcu4PNSp", packageName: params.packageName, sku: params.sku, accountType: params.accountType, currency: "USDT", network: "TRC-20", txHash: params.txHash, createdAtMs: params.createdAtMs ?? params.createdAt });
 }
+__name(createCryptoDepositRecord, "createCryptoDepositRecord");
 function getCryptoDeposits(params) {
   expireStalePendingDepositsInDb();
   if (params?.userId) {
@@ -16691,19 +16020,17 @@ function getCryptoDeposits(params) {
   }
   return db.prepare("SELECT * FROM crypto_deposits ORDER BY created_at DESC LIMIT 50").all();
 }
+__name(getCryptoDeposits, "getCryptoDeposits");
 function getPendingCryptoDeposits(userId) {
   expireStalePendingDepositsInDb();
   if (userId) {
-    return db.prepare(
-      `SELECT * FROM crypto_deposits WHERE status = 'pending' AND user_id = ? ORDER BY created_at ASC`
-    ).all(userId);
+    return db.prepare(`SELECT * FROM crypto_deposits WHERE status = 'pending' AND user_id = ? ORDER BY created_at ASC`).all(userId);
   }
   return db.prepare(`SELECT * FROM crypto_deposits WHERE status = 'pending' ORDER BY created_at ASC`).all();
 }
+__name(getPendingCryptoDeposits, "getPendingCryptoDeposits");
 function getCompletedCryptoDepositTxHashes() {
-  const rows = db.prepare(
-    `SELECT tx_hash FROM crypto_deposits WHERE status IN ('completed', 'active', 'approved') AND tx_hash IS NOT NULL`
-  ).all();
+  const rows = db.prepare(`SELECT tx_hash FROM crypto_deposits WHERE status IN ('completed', 'active', 'approved') AND tx_hash IS NOT NULL`).all();
   const claimed = /* @__PURE__ */ new Set();
   for (const row of rows) {
     const hash = String(row?.tx_hash || "").trim();
@@ -16713,50 +16040,44 @@ function getCompletedCryptoDepositTxHashes() {
   }
   return claimed;
 }
+__name(getCompletedCryptoDepositTxHashes, "getCompletedCryptoDepositTxHashes");
 function failCryptoDepositInDb(depositId, reason = "Payment failed or expired after 60 minutes without confirmation.") {
   const now = Date.now();
-  db.prepare(
-    `UPDATE crypto_deposits
+  db.prepare(`UPDATE crypto_deposits
      SET status = 'failed',
          is_fulfilled = 0,
          account_id = NULL,
          processed_at = ?
-     WHERE id = ? AND status = 'pending'`
-  ).run(now, depositId);
+     WHERE id = ? AND status = 'pending'`).run(now, depositId);
   try {
-    db.prepare(
-      `UPDATE deposits
+    db.prepare(`UPDATE deposits
        SET status = 'failed',
            is_fulfilled = 0,
            account_id = NULL,
            decline_reason = ?,
            processed_at = ?
-       WHERE id = ? AND status = 'pending'`
-    ).run(reason, now, depositId);
+       WHERE id = ? AND status = 'pending'`).run(reason, now, depositId);
   } catch {
   }
   try {
-    db.prepare(
-      `UPDATE transactions
+    db.prepare(`UPDATE transactions
        SET status = 'failed',
            account_id = NULL,
            processed_at = ?
-       WHERE id = ? AND status = 'pending'`
-    ).run(now, depositId);
+       WHERE id = ? AND status = 'pending'`).run(now, depositId);
   } catch {
   }
   try {
-    db.prepare(
-      `UPDATE user_purchases
+    db.prepare(`UPDATE user_purchases
        SET status = 'failed',
            account_id = NULL,
            processed_at = ?
-       WHERE id = ? AND status = 'pending'`
-    ).run(now, depositId);
+       WHERE id = ? AND status = 'pending'`).run(now, depositId);
   } catch {
   }
   return db.prepare("SELECT * FROM crypto_deposits WHERE id = ?").get(depositId);
 }
+__name(failCryptoDepositInDb, "failCryptoDepositInDb");
 function completeCryptoDepositInDb(depositId, matchedTxHash, options) {
   const now = options?.nowMs ?? Date.now();
   expireStalePendingDepositsInDb(now);
@@ -16768,24 +16089,15 @@ function completeCryptoDepositInDb(depositId, matchedTxHash, options) {
     throw new Error(`Crypto deposit record ${depositId} not found.`);
   }
   if (deposit.status === "failed" || deposit.status === "declined" || isCryptoDepositExpired(deposit, now)) {
-    failCryptoDepositInDb(
-      depositId,
-      "Order expired after 1 hour without blockchain confirmation and cannot be claimed."
-    );
-    throw new Error(
-      `Crypto deposit ${depositId} has expired (over 60 minutes) or failed and cannot be claimed.`
-    );
+    failCryptoDepositInDb(depositId, "Order expired after 1 hour without blockchain confirmation and cannot be claimed.");
+    throw new Error(`Crypto deposit ${depositId} has expired (over 60 minutes) or failed and cannot be claimed.`);
   }
   const cleanTxHash = String(matchedTxHash || deposit.tx_hash || "").trim();
   const wasAlreadyFulfilled = Number(deposit.is_fulfilled) === 1 || deposit.status === "completed" || deposit.status === "active" || deposit.status === "approved";
   const accountType = String(deposit.account_type || "").toLowerCase() === "challenge" ? "challenge" : "self_funded";
   const amount = Number(deposit.amount || 0);
   const userId = String(deposit.user_id || "usr_bft_001");
-  ensureUserInDb({
-    id: userId,
-    email: `${userId.toLowerCase().replace(/[^a-z0-9]/g, "")}@client-bft.com`,
-    fullName: `Trader ${userId.slice(-4)}`
-  });
+  ensureUserInDb({ id: userId, email: `${userId.toLowerCase().replace(/[^a-z0-9]/g, "")}@client-bft.com`, fullName: `Trader ${userId.slice(-4)}` });
   let targetAccount = null;
   if (accountType === "challenge") {
     const existingAcc = deposit.account_id ? getAccountById(deposit.account_id) : null;
@@ -16798,28 +16110,13 @@ function completeCryptoDepositInDb(depositId, matchedTxHash, options) {
       `).run(now, existingAcc.id);
       targetAccount = getAccountById(existingAcc.id);
     } else {
-      const parsedPkg = parseChallengePackageFromDeposit({
-        sku: deposit.sku,
-        package_sku: deposit.package_sku,
-        package_name: deposit.package_name,
-        amount
-      });
-      targetAccount = createAccount({
-        userId,
-        tier: parsedPkg.tier,
-        tierName: parsedPkg.tierName,
-        size: parsedPkg.size,
-        dailyWithdrawalsUnlocked: false
-      });
+      const parsedPkg = parseChallengePackageFromDeposit({ sku: deposit.sku, package_sku: deposit.package_sku, package_name: deposit.package_name, amount });
+      targetAccount = createAccount({ userId, tier: parsedPkg.tier, tierName: parsedPkg.tierName, size: parsedPkg.size, dailyWithdrawalsUnlocked: false });
     }
   } else {
     if (!wasAlreadyFulfilled && !options?.skipBalanceCreditIfAlreadyCredited) {
       ensurePersonalLiveAccountForUser(userId);
-      targetAccount = creditPersonalAccountDepositInDb({
-        userId,
-        accountId: deposit.account_id || void 0,
-        amountUsdt: amount
-      });
+      targetAccount = creditPersonalAccountDepositInDb({ userId, accountId: deposit.account_id || void 0, amountUsdt: amount });
     } else {
       targetAccount = (deposit.account_id ? getAccountById(deposit.account_id) : null) || ensurePersonalLiveAccountForUser(userId);
     }
@@ -16871,26 +16168,14 @@ function completeCryptoDepositInDb(depositId, matchedTxHash, options) {
   let commissionsDistributed = [];
   if (!wasAlreadyFulfilled && amount > 0) {
     try {
-      commissionsDistributed = distribute3TierCommissions(
-        userId,
-        amount,
-        accountType === "challenge" ? "purchase" : "deposit",
-        `Verified USDT (TRC-20) ${accountType} payment of $${amount.toFixed(2)} USDT (${deposit.package_name || deposit.sku || deposit.package_sku || "BFT"})`
-      );
+      commissionsDistributed = distribute3TierCommissions(userId, amount, accountType === "challenge" ? "purchase" : "deposit", `Verified USDT (TRC-20) ${accountType} payment of $${amount.toFixed(2)} USDT (${deposit.package_name || deposit.sku || deposit.package_sku || "BFT"})`);
     } catch {
     }
   }
   const updatedDeposit = db.prepare("SELECT * FROM crypto_deposits WHERE id = ?").get(depositId);
-  return {
-    ok: true,
-    deposit: updatedDeposit,
-    account: targetAccount,
-    accountType,
-    amount,
-    txHash: cleanTxHash,
-    commissionsDistributed
-  };
+  return { ok: true, deposit: updatedDeposit, account: targetAccount, accountType, amount, txHash: cleanTxHash, commissionsDistributed };
 }
+__name(completeCryptoDepositInDb, "completeCryptoDepositInDb");
 function verifyAndCompletePendingCryptoDepositsInDb(transactions, options) {
   const nowMs = options?.nowMs ?? Date.now();
   const expiredSweep = expireStalePendingDepositsInDb(nowMs);
@@ -16898,29 +16183,16 @@ function verifyAndCompletePendingCryptoDepositsInDb(transactions, options) {
   const claimedTxIds = getCompletedCryptoDepositTxHashes();
   const completedResults = [];
   for (const pending of pendingDeposits) {
-    const matchedTx = matchPendingDepositToTronGridTx(
-      pending,
-      transactions,
-      claimedTxIds,
-      nowMs
-    );
+    const matchedTx = matchPendingDepositToTronGridTx(pending, transactions, claimedTxIds, nowMs);
     if (matchedTx) {
       claimedTxIds.add(matchedTx.transaction_id);
-      const completed = completeCryptoDepositInDb(pending.id, matchedTx.transaction_id, {
-        nowMs
-      });
+      const completed = completeCryptoDepositInDb(pending.id, matchedTx.transaction_id, { nowMs });
       completedResults.push(completed);
     }
   }
-  return {
-    checkedCount: pendingDeposits.length,
-    matchedCount: completedResults.length,
-    expiredCount: expiredSweep.expiredCount,
-    expiredIds: expiredSweep.expiredIds,
-    completedDeposits: completedResults,
-    remainingPendingCount: Math.max(0, pendingDeposits.length - completedResults.length)
-  };
+  return { checkedCount: pendingDeposits.length, matchedCount: completedResults.length, expiredCount: expiredSweep.expiredCount, expiredIds: expiredSweep.expiredIds, completedDeposits: completedResults, remainingPendingCount: Math.max(0, pendingDeposits.length - completedResults.length) };
 }
+__name(verifyAndCompletePendingCryptoDepositsInDb, "verifyAndCompletePendingCryptoDepositsInDb");
 function getAdminDeposits(statusFilter) {
   let query = `
     SELECT d.*, u.full_name as user_name, u.email as user_email, a.tier_name as account_tier
@@ -16936,6 +16208,7 @@ function getAdminDeposits(statusFilter) {
   query += " ORDER BY d.created_at DESC";
   return db.prepare(query).all(...params);
 }
+__name(getAdminDeposits, "getAdminDeposits");
 function adminApproveDeposit(depositId, adminUserId) {
   const deposit = db.prepare("SELECT * FROM deposits WHERE id = ?").get(depositId);
   if (!deposit) throw new Error("Deposit record not found.");
@@ -16962,31 +16235,13 @@ function adminApproveDeposit(depositId, adminUserId) {
   }
   let updatedAccount = null;
   if (targetAccount) {
-    updatedAccount = creditPersonalAccountDepositInDb({
-      userId: deposit.user_id,
-      accountId: targetAccount.id,
-      amountUsdt: deposit.amount
-    });
+    updatedAccount = creditPersonalAccountDepositInDb({ userId: deposit.user_id, accountId: targetAccount.id, amountUsdt: deposit.amount });
   }
-  const commissionsDistributed = distribute3TierCommissions(
-    deposit.user_id,
-    deposit.amount,
-    "deposit",
-    `Deposit of $${deposit.amount.toFixed(2)} USDT by ${deposit.user_name || "Trader"}`
-  );
-  recordAdminAuditLog(adminUserId, "APPROVE_DEPOSIT", depositId, "deposit", {
-    amount: deposit.amount,
-    userId: deposit.user_id,
-    creditedAccountId: targetAccount?.id,
-    commissionsDistributed
-  });
-  return {
-    ok: true,
-    deposit: db.prepare("SELECT * FROM deposits WHERE id = ?").get(depositId),
-    updatedAccount,
-    commissionsDistributed
-  };
+  const commissionsDistributed = distribute3TierCommissions(deposit.user_id, deposit.amount, "deposit", `Deposit of $${deposit.amount.toFixed(2)} USDT by ${deposit.user_name || "Trader"}`);
+  recordAdminAuditLog(adminUserId, "APPROVE_DEPOSIT", depositId, "deposit", { amount: deposit.amount, userId: deposit.user_id, creditedAccountId: targetAccount?.id, commissionsDistributed });
+  return { ok: true, deposit: db.prepare("SELECT * FROM deposits WHERE id = ?").get(depositId), updatedAccount, commissionsDistributed };
 }
+__name(adminApproveDeposit, "adminApproveDeposit");
 function adminDeclineDeposit(depositId, reason, adminUserId) {
   const deposit = db.prepare("SELECT * FROM deposits WHERE id = ?").get(depositId);
   if (!deposit) throw new Error("Deposit record not found.");
@@ -17009,11 +16264,9 @@ function adminDeclineDeposit(depositId, reason, adminUserId) {
   } catch {
   }
   recordAdminAuditLog(adminUserId, "DECLINE_DEPOSIT", depositId, "deposit", { reason });
-  return {
-    ok: true,
-    deposit: db.prepare("SELECT * FROM deposits WHERE id = ?").get(depositId)
-  };
+  return { ok: true, deposit: db.prepare("SELECT * FROM deposits WHERE id = ?").get(depositId) };
 }
+__name(adminDeclineDeposit, "adminDeclineDeposit");
 function getAdminWithdrawals(statusFilter) {
   let query = `
     SELECT w.*, u.full_name as user_name, u.email as user_email, a.tier_name as account_tier, a.current_balance as account_balance
@@ -17029,6 +16282,7 @@ function getAdminWithdrawals(statusFilter) {
   query += " ORDER BY w.requested_at DESC";
   return db.prepare(query).all(...params);
 }
+__name(getAdminWithdrawals, "getAdminWithdrawals");
 function adminApproveWithdrawal(withdrawalId, adminUserId) {
   const withdrawal = db.prepare("SELECT * FROM withdrawals WHERE id = ?").get(withdrawalId);
   if (!withdrawal) throw new Error("Withdrawal record not found.");
@@ -17069,28 +16323,13 @@ function adminApproveWithdrawal(withdrawalId, adminUserId) {
         INSERT INTO commissions (
           id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, status, created_at
         ) VALUES (?, ?, ?, 'withdrawal', 1, ?, ?, 0.08, ?, 'paid', ?)
-      `).run(
-        commId,
-        user.referred_by,
-        user.id,
-        `Direct Referral Payout Bonus (8% of $${withdrawal.gross_amount.toFixed(2)} Withdrawal by ${user.full_name})`,
-        withdrawal.gross_amount,
-        bonusAmount,
-        now
-      );
+      `).run(commId, user.referred_by, user.id, `Direct Referral Payout Bonus (8% of $${withdrawal.gross_amount.toFixed(2)} Withdrawal by ${user.full_name})`, withdrawal.gross_amount, bonusAmount, now);
     }
   }
-  recordAdminAuditLog(adminUserId, "APPROVE_WITHDRAWAL", withdrawalId, "withdrawal", {
-    grossAmount: withdrawal.gross_amount,
-    netPayout: withdrawal.net_payout,
-    txHash
-  });
-  return {
-    ok: true,
-    withdrawal: db.prepare("SELECT * FROM withdrawals WHERE id = ?").get(withdrawalId),
-    updatedAccount
-  };
+  recordAdminAuditLog(adminUserId, "APPROVE_WITHDRAWAL", withdrawalId, "withdrawal", { grossAmount: withdrawal.gross_amount, netPayout: withdrawal.net_payout, txHash });
+  return { ok: true, withdrawal: db.prepare("SELECT * FROM withdrawals WHERE id = ?").get(withdrawalId), updatedAccount };
 }
+__name(adminApproveWithdrawal, "adminApproveWithdrawal");
 function adminDeclineWithdrawal(withdrawalId, reason, adminUserId) {
   const withdrawal = db.prepare("SELECT * FROM withdrawals WHERE id = ?").get(withdrawalId);
   if (!withdrawal) throw new Error("Withdrawal record not found.");
@@ -17128,12 +16367,9 @@ function adminDeclineWithdrawal(withdrawalId, reason, adminUserId) {
     throw error;
   }
   recordAdminAuditLog(adminUserId, "DECLINE_WITHDRAWAL", withdrawalId, "withdrawal", { reason, refundedAmount: withdrawal.gross_amount });
-  return {
-    ok: true,
-    withdrawal: db.prepare("SELECT * FROM withdrawals WHERE id = ?").get(withdrawalId),
-    updatedAccount: getAccountById(withdrawal.account_id)
-  };
+  return { ok: true, withdrawal: db.prepare("SELECT * FROM withdrawals WHERE id = ?").get(withdrawalId), updatedAccount: getAccountById(withdrawal.account_id) };
 }
+__name(adminDeclineWithdrawal, "adminDeclineWithdrawal");
 function getAdminKycSubmissions(statusFilter) {
   let query = `
     SELECT k.*, u.email as user_email, u.full_name as user_name, u.country as user_country, u.created_at as user_created_at
@@ -17152,6 +16388,7 @@ function getAdminKycSubmissions(statusFilter) {
   query += " ORDER BY k.updated_at DESC";
   return db.prepare(query).all(...params);
 }
+__name(getAdminKycSubmissions, "getAdminKycSubmissions");
 function adminApproveKyc(userId, adminUserId) {
   const user = getUserById(userId);
   if (!user) throw new Error("User not found.");
@@ -17174,6 +16411,7 @@ function adminApproveKyc(userId, adminUserId) {
   recordAdminAuditLog(adminUserId, "APPROVE_KYC", userId, "user", { previousStatus: user.kyc_status });
   return getUserById(userId);
 }
+__name(adminApproveKyc, "adminApproveKyc");
 function adminRejectKyc(userId, reason, adminUserId) {
   const user = getUserById(userId);
   if (!user) throw new Error("User not found.");
@@ -17193,6 +16431,7 @@ function adminRejectKyc(userId, reason, adminUserId) {
   recordAdminAuditLog(adminUserId, "REJECT_KYC", userId, "user", { reason });
   return getUserById(userId);
 }
+__name(adminRejectKyc, "adminRejectKyc");
 function distribute3TierCommissions(buyerUserId, baseAmount, sourceType = "deposit", details) {
   const buyer = getUserById(buyerUserId);
   if (!buyer?.referred_by) return [];
@@ -17205,16 +16444,7 @@ function distribute3TierCommissions(buyerUserId, baseAmount, sourceType = "depos
     INSERT INTO commissions (
       id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, status, created_at
     ) VALUES (?, ?, ?, ?, 1, ?, ?, 0.10, ?, 'paid', ?)
-  `).run(
-    l1Id,
-    l1SponsorId,
-    buyer.id,
-    sourceType,
-    details || `Level 1 Commission: 10% of $${baseAmount.toFixed(2)} ${sourceType}`,
-    baseAmount,
-    l1Amount,
-    now
-  );
+  `).run(l1Id, l1SponsorId, buyer.id, sourceType, details || `Level 1 Commission: 10% of $${baseAmount.toFixed(2)} ${sourceType}`, baseAmount, l1Amount, now);
   commissions.push({ id: l1Id, level: 1, sponsorId: l1SponsorId, amount: l1Amount });
   const l1User = getUserById(l1SponsorId);
   if (l1User?.referred_by) {
@@ -17225,16 +16455,7 @@ function distribute3TierCommissions(buyerUserId, baseAmount, sourceType = "depos
       INSERT INTO commissions (
         id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, status, created_at
       ) VALUES (?, ?, ?, ?, 2, ?, ?, 0.05, ?, 'paid', ?)
-    `).run(
-      l2Id,
-      l2SponsorId,
-      buyer.id,
-      sourceType,
-      details || `Level 2 Commission: 5% of $${baseAmount.toFixed(2)} ${sourceType}`,
-      baseAmount,
-      l2Amount,
-      now
-    );
+    `).run(l2Id, l2SponsorId, buyer.id, sourceType, details || `Level 2 Commission: 5% of $${baseAmount.toFixed(2)} ${sourceType}`, baseAmount, l2Amount, now);
     commissions.push({ id: l2Id, level: 2, sponsorId: l2SponsorId, amount: l2Amount });
     const l2User = getUserById(l2SponsorId);
     if (l2User?.referred_by) {
@@ -17245,21 +16466,13 @@ function distribute3TierCommissions(buyerUserId, baseAmount, sourceType = "depos
         INSERT INTO commissions (
           id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, status, created_at
         ) VALUES (?, ?, ?, ?, 3, ?, ?, 0.02, ?, 'paid', ?)
-      `).run(
-        l3Id,
-        l3SponsorId,
-        buyer.id,
-        sourceType,
-        details || `Level 3 Commission: 2% of $${baseAmount.toFixed(2)} ${sourceType}`,
-        baseAmount,
-        l3Amount,
-        now
-      );
+      `).run(l3Id, l3SponsorId, buyer.id, sourceType, details || `Level 3 Commission: 2% of $${baseAmount.toFixed(2)} ${sourceType}`, baseAmount, l3Amount, now);
       commissions.push({ id: l3Id, level: 3, sponsorId: l3SponsorId, amount: l3Amount });
     }
   }
   return commissions;
 }
+__name(distribute3TierCommissions, "distribute3TierCommissions");
 function getAdminReferralTree() {
   const sponsors = db.prepare(`
     SELECT DISTINCT u.id, u.full_name, u.email, u.referral_code,
@@ -17280,26 +16493,10 @@ function getAdminReferralTree() {
       JOIN users u ON r.referred_user_id = u.id
       WHERE r.sponsor_id = ? AND r.tier_level = 1
     `).all(s.id);
-    return {
-      sponsorId: s.id,
-      sponsorName: s.full_name,
-      sponsorEmail: s.email,
-      referralCode: s.referral_code,
-      level1Count: s.l1_count || 0,
-      level2Count: s.l2_count || 0,
-      level3Count: s.l3_count || 0,
-      totalDownlineCount: (s.l1_count || 0) + (s.l2_count || 0) + (s.l3_count || 0),
-      totalEarned: Number((s.total_earned || 0).toFixed(2)),
-      level1Members: l1Referrals.map((m) => ({
-        id: m.referred_user_id,
-        name: m.full_name,
-        email: m.email,
-        balance: Number((m.balance || 0).toFixed(2)),
-        joinedAt: m.created_at
-      }))
-    };
+    return { sponsorId: s.id, sponsorName: s.full_name, sponsorEmail: s.email, referralCode: s.referral_code, level1Count: s.l1_count || 0, level2Count: s.l2_count || 0, level3Count: s.l3_count || 0, totalDownlineCount: (s.l1_count || 0) + (s.l2_count || 0) + (s.l3_count || 0), totalEarned: Number((s.total_earned || 0).toFixed(2)), level1Members: l1Referrals.map((m) => ({ id: m.referred_user_id, name: m.full_name, email: m.email, balance: Number((m.balance || 0).toFixed(2)), joinedAt: m.created_at })) };
   });
 }
+__name(getAdminReferralTree, "getAdminReferralTree");
 function getAdminCommissionsLedger(limit = 100) {
   return db.prepare(`
     SELECT c.*,
@@ -17312,47 +16509,49 @@ function getAdminCommissionsLedger(limit = 100) {
     LIMIT ?
   `).all(limit);
 }
+__name(getAdminCommissionsLedger, "getAdminCommissionsLedger");
+function getAdminAuditLogs(limit = 50) {
+  return db.prepare(`
+    SELECT a.*, u.full_name as admin_name, u.email as admin_email
+    FROM admin_audit_logs a
+    LEFT JOIN users u ON a.admin_user_id = u.id
+    ORDER BY a.created_at DESC
+    LIMIT ?
+  `).all(limit);
+}
+__name(getAdminAuditLogs, "getAdminAuditLogs");
 function updateUser2faSecret(userId, secret) {
   db.prepare(`UPDATE users SET totp_secret = ? WHERE id = ?`).run(secret, userId);
 }
+__name(updateUser2faSecret, "updateUser2faSecret");
 function enableUser2fa(userId) {
   db.prepare(`UPDATE users SET is_2fa_enabled = 1 WHERE id = ?`).run(userId);
 }
+__name(enableUser2fa, "enableUser2fa");
 function disableUser2fa(userId) {
   db.prepare(`UPDATE users SET is_2fa_enabled = 0, totp_secret = NULL WHERE id = ?`).run(userId);
 }
+__name(disableUser2fa, "disableUser2fa");
 function ensureAdminSeedData() {
   const now = Date.now();
   const shankavee = getUserByEmail("shankavee44@gmail.com");
   if (shankavee) {
     db.prepare("UPDATE users SET role = 'admin' WHERE id = ?").run(shankavee.id);
   } else {
-    ensureUserInDb({
-      id: "usr_admin_shankavee",
-      email: "shankavee44@gmail.com",
-      fullName: "Shankavee (Admin)"
-    });
+    ensureUserInDb({ id: "usr_admin_shankavee", email: "shankavee44@gmail.com", fullName: "Shankavee (Admin)" });
     db.prepare("UPDATE users SET role = 'admin' WHERE email = 'shankavee44@gmail.com'").run();
   }
   const bftAdmin = getUserByEmail("admin@bft.io");
   if (bftAdmin) {
     db.prepare("UPDATE users SET role = 'admin' WHERE id = ?").run(bftAdmin.id);
   } else {
-    ensureUserInDb({
-      id: "usr_admin_master",
-      email: "admin@bft.io",
-      fullName: "BFT Super Administrator"
-    });
+    ensureUserInDb({ id: "usr_admin_master", email: "admin@bft.io", fullName: "BFT Super Administrator" });
     db.prepare("UPDATE users SET role = 'admin' WHERE email = 'admin@bft.io'").run();
   }
   db.prepare("UPDATE users SET role = 'admin' WHERE id = 'USR-MASTER-88'").run();
   const depositCount = Number(db.prepare("SELECT COUNT(*) as c FROM deposits").get()?.c || 0);
   if (depositCount === 0) {
-    const seedDeposits = [
-      { id: "DEP-REQ-981", userId: "USR-SUB-101", accId: null, amount: 750, method: "USDT (TRC-20)", status: "pending", tx: "0x8f7d6a5e4c3b2a10", ts: now - 36e5 * 2 },
-      { id: "DEP-REQ-982", userId: "USR-SUB-102", accId: null, amount: 1500, method: "USDT (TRC-20)", status: "pending", tx: "0x1a2b3c4d5e6f7a8b", ts: now - 36e5 * 5 },
-      { id: "DEP-REQ-980", userId: "usr_bft_001", accId: "BFT-91823", amount: 500, method: "USDT (TRC-20)", status: "approved", tx: "0x99aa88bb77cc66dd", ts: now - 864e5 * 3 }
-    ];
+    const seedDeposits = [{ id: "DEP-REQ-981", userId: "USR-SUB-101", accId: null, amount: 750, method: "USDT (TRC-20)", status: "pending", tx: "0x8f7d6a5e4c3b2a10", ts: now - 36e5 * 2 }, { id: "DEP-REQ-982", userId: "USR-SUB-102", accId: null, amount: 1500, method: "USDT (TRC-20)", status: "pending", tx: "0x1a2b3c4d5e6f7a8b", ts: now - 36e5 * 5 }, { id: "DEP-REQ-980", userId: "usr_bft_001", accId: "BFT-91823", amount: 500, method: "USDT (TRC-20)", status: "approved", tx: "0x99aa88bb77cc66dd", ts: now - 864e5 * 3 }];
     for (const d of seedDeposits) {
       db.prepare(`
         INSERT INTO deposits (id, user_id, account_id, amount, payment_method, status, tx_hash, created_at, processed_at)
@@ -17367,19 +16566,7 @@ function ensureAdminSeedData() {
         id, user_id, account_id, gross_amount, net_profit, max_allowed_profit, profit_share_rate, fee_amount, net_payout,
         wallet_address, network, payment_method, status, reference_number, tx_hash, requested_at, processed_at
       ) VALUES (?, ?, ?, ?, ?, ?, 0.80, ?, ?, ?, 'TRON (TRC-20)', 'crypto_trc20', 'pending', ?, NULL, ?, NULL)
-    `).run(
-      "WD-REQ-77401",
-      "USR-SUB-101",
-      "BFT-91823",
-      420,
-      600,
-      480,
-      42,
-      378,
-      "TQn9Y2khEsLJW1ChVWFMSMeRDow5KcbLSE",
-      "REF-77401",
-      now - 36e5 * 4
-    );
+    `).run("WD-REQ-77401", "USR-SUB-101", "BFT-91823", 420, 600, 480, 42, 378, "TQn9Y2khEsLJW1ChVWFMSMeRDow5KcbLSE", "REF-77401", now - 36e5 * 4);
   }
   const pendingKycCount = Number(db.prepare("SELECT COUNT(*) as c FROM kyc_submissions WHERE status IN ('pending', 'Pending Verification')").get()?.c || 0);
   if (pendingKycCount === 0) {
@@ -17388,32 +16575,10 @@ function ensureAdminSeedData() {
         id, user_id, full_name, address, date_of_birth, country, profile_locked, doc_type, document_number,
         front_document_url, back_document_url, front_file_name, back_file_name, status, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-    `).run(
-      "KYC-SUB-USR-SUB-101",
-      "USR-SUB-101",
-      "Marco Rossi",
-      "Via Montenapoleone 8, 20121 Milan",
-      "1992-03-14",
-      "Italy",
-      "ID Card",
-      "ITA-8910482",
-      "https://images.unsplash.com/photo-1544717305-2782549b5136?w=600",
-      "https://images.unsplash.com/photo-1544717305-2782549b5136?w=600",
-      "marco_id_front.jpg",
-      "marco_id_back.jpg",
-      now - 864e5 * 2,
-      now - 864e5 * 2
-    );
+    `).run("KYC-SUB-USR-SUB-101", "USR-SUB-101", "Marco Rossi", "Via Montenapoleone 8, 20121 Milan", "1992-03-14", "Italy", "ID Card", "ITA-8910482", "https://images.unsplash.com/photo-1544717305-2782549b5136?w=600", "https://images.unsplash.com/photo-1544717305-2782549b5136?w=600", "marco_id_front.jpg", "marco_id_back.jpg", now - 864e5 * 2, now - 864e5 * 2);
     db.prepare("UPDATE users SET kyc_status = 'pending' WHERE id = 'USR-SUB-101'").run();
   }
-  const seedPurchases = [
-    { id: "PUR-SEED-101", userId: "USR-SUB-101", pkgId: "BFT-2S-100K", pkgName: "$100K 2-Step Challenge", sku: "BFT-2S-100K", amt: 469, ts: now - 864e5 * 12 },
-    { id: "PUR-SEED-102", userId: "USR-SUB-102", pkgId: "BFT-IF-25K", pkgName: "$25K Instant Funded", sku: "BFT-IF-25K", amt: 499, ts: now - 864e5 * 9 },
-    { id: "PUR-SEED-201", userId: "USR-GRAND-201", pkgId: "BFT-2S-50K", pkgName: "$50K 2-Step Challenge", sku: "BFT-2S-50K", amt: 279, ts: now - 864e5 * 7 },
-    { id: "PUR-SEED-202", userId: "USR-GRAND-202", pkgId: "BFT-IF-10K", pkgName: "$10K Instant Funded", sku: "BFT-IF-10K", amt: 249, ts: now - 864e5 * 5 },
-    { id: "PUR-SEED-301", userId: "USR-LEAF-301", pkgId: "BFT-IF-50K", pkgName: "$50K Instant Funded", sku: "BFT-IF-50K", amt: 899, ts: now - 864e5 * 4 },
-    { id: "PUR-SEED-302", userId: "USR-LEAF-302", pkgId: "BFT-1S-100K", pkgName: "$100K 1-Step Challenge", sku: "BFT-1S-100K", amt: 549, ts: now - 864e5 * 3 }
-  ];
+  const seedPurchases = [{ id: "PUR-SEED-101", userId: "USR-SUB-101", pkgId: "BFT-2S-100K", pkgName: "$100K 2-Step Challenge", sku: "BFT-2S-100K", amt: 469, ts: now - 864e5 * 12 }, { id: "PUR-SEED-102", userId: "USR-SUB-102", pkgId: "BFT-IF-25K", pkgName: "$25K Instant Funded", sku: "BFT-IF-25K", amt: 499, ts: now - 864e5 * 9 }, { id: "PUR-SEED-201", userId: "USR-GRAND-201", pkgId: "BFT-2S-50K", pkgName: "$50K 2-Step Challenge", sku: "BFT-2S-50K", amt: 279, ts: now - 864e5 * 7 }, { id: "PUR-SEED-202", userId: "USR-GRAND-202", pkgId: "BFT-IF-10K", pkgName: "$10K Instant Funded", sku: "BFT-IF-10K", amt: 249, ts: now - 864e5 * 5 }, { id: "PUR-SEED-301", userId: "USR-LEAF-301", pkgId: "BFT-IF-50K", pkgName: "$50K Instant Funded", sku: "BFT-IF-50K", amt: 899, ts: now - 864e5 * 4 }, { id: "PUR-SEED-302", userId: "USR-LEAF-302", pkgId: "BFT-1S-100K", pkgName: "$100K 1-Step Challenge", sku: "BFT-1S-100K", amt: 549, ts: now - 864e5 * 3 }];
   for (const sp of seedPurchases) {
     try {
       const existingPur = db.prepare("SELECT id FROM user_purchases WHERE user_id = ? LIMIT 1").get(sp.userId);
@@ -17429,6 +16594,7 @@ function ensureAdminSeedData() {
     }
   }
 }
+__name(ensureAdminSeedData, "ensureAdminSeedData");
 ensureAdminSeedData();
 function recordTradeInDb(userId, trade) {
   const account = getAccountById(trade.accountId);
@@ -17457,26 +16623,7 @@ function recordTradeInDb(userId, trade) {
       investment, payout_percentage, potential_payout, pnl, credited_amount,
       start_time, end_time, duration_seconds, status, account_tier, created_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    tradeId,
-    userId,
-    trade.accountId,
-    trade.asset,
-    trade.direction,
-    Number(trade.strikePrice),
-    Number(trade.strikePrice),
-    cleanInvestment,
-    payoutPct,
-    potentialPayout,
-    0,
-    0,
-    startTime,
-    endTime,
-    durationSec,
-    "active",
-    trade.accountTier || account.tier,
-    now
-  );
+  `).run(tradeId, userId, trade.accountId, trade.asset, trade.direction, Number(trade.strikePrice), Number(trade.strikePrice), cleanInvestment, payoutPct, potentialPayout, 0, 0, startTime, endTime, durationSec, "active", trade.accountTier || account.tier, now);
   db.prepare(`
     UPDATE accounts SET
       current_balance = ?,
@@ -17505,11 +16652,9 @@ function recordTradeInDb(userId, trade) {
   }
   const savedTrade = db.prepare("SELECT * FROM trades WHERE id = ?").get(tradeId);
   const updatedAccount = getAccountById(trade.accountId);
-  return {
-    trade: mapTradeRow(savedTrade),
-    account: updatedAccount
-  };
+  return { trade: mapTradeRow(savedTrade), account: updatedAccount };
 }
+__name(recordTradeInDb, "recordTradeInDb");
 function settleTradeInDb(userId, tradeId, closePrice, manualStatus) {
   const tradeRow = db.prepare("SELECT * FROM trades WHERE id = ? AND user_id = ?").get(tradeId, userId);
   if (!tradeRow) throw new Error("Trade not found or unauthorized.");
@@ -17556,9 +16701,7 @@ function settleTradeInDb(userId, tradeId, closePrice, manualStatus) {
   const account = getAccountById(tradeRow.account_id);
   const nextBalance = Number(((account?.currentBalance || 0) + creditedAmount).toFixed(2));
   const nextTradesCount = (account?.tradesCount || 0) + 1;
-  const resolvedTrades = db.prepare(
-    "SELECT status FROM trades WHERE account_id = ? AND status IN ('won', 'lost', 'tie')"
-  ).all(tradeRow.account_id);
+  const resolvedTrades = db.prepare("SELECT status FROM trades WHERE account_id = ? AND status IN ('won', 'lost', 'tie')").all(tradeRow.account_id);
   const wonCount = resolvedTrades.filter((s) => s.status === "won").length;
   const totalCount = resolvedTrades.length;
   const nextWinRate = totalCount > 0 ? Number((wonCount / totalCount * 100).toFixed(1)) : 0;
@@ -17591,47 +16734,20 @@ function settleTradeInDb(userId, tradeId, closePrice, manualStatus) {
       }
     }
   }
-  return {
-    trade: mapTradeRow(updatedTrade),
-    account: updatedAccount,
-    settlement: {
-      status,
-      pnl,
-      creditedAmount,
-      closePrice: finalPrice
-    }
-  };
+  return { trade: mapTradeRow(updatedTrade), account: updatedAccount, settlement: { status, pnl, creditedAmount, closePrice: finalPrice } };
 }
+__name(settleTradeInDb, "settleTradeInDb");
 function getUserTradesFromDb(userId, accountId) {
   const query = accountId ? "SELECT * FROM trades WHERE user_id = ? AND account_id = ? ORDER BY created_at DESC LIMIT 200" : "SELECT * FROM trades WHERE user_id = ? ORDER BY created_at DESC LIMIT 200";
   const rows = accountId ? db.prepare(query).all(userId, accountId) : db.prepare(query).all(userId);
   return rows.map(mapTradeRow);
 }
+__name(getUserTradesFromDb, "getUserTradesFromDb");
 function mapTradeRow(row) {
   if (!row) return null;
-  return {
-    id: row.id,
-    accountId: row.account_id,
-    userId: row.user_id,
-    asset: row.asset,
-    direction: row.direction,
-    strikePrice: Number(row.strike_price),
-    currentPrice: Number(row.close_price || row.strike_price),
-    closePrice: row.close_price ? Number(row.close_price) : void 0,
-    investment: Number(row.investment),
-    payoutPercentage: Number(row.payout_percentage),
-    potentialPayout: Number(row.potential_payout),
-    pnl: Number(row.pnl || 0),
-    creditedAmount: Number(row.credited_amount || 0),
-    startTime: Number(row.start_time),
-    endTime: Number(row.end_time),
-    durationSeconds: Number(row.duration_seconds),
-    status: row.status,
-    accountTier: row.account_tier,
-    createdAt: Number(row.created_at),
-    settledAt: row.settled_at ? Number(row.settled_at) : void 0
-  };
+  return { id: row.id, accountId: row.account_id, userId: row.user_id, asset: row.asset, direction: row.direction, strikePrice: Number(row.strike_price), currentPrice: Number(row.close_price || row.strike_price), closePrice: row.close_price ? Number(row.close_price) : void 0, investment: Number(row.investment), payoutPercentage: Number(row.payout_percentage), potentialPayout: Number(row.potential_payout), pnl: Number(row.pnl || 0), creditedAmount: Number(row.credited_amount || 0), startTime: Number(row.start_time), endTime: Number(row.end_time), durationSeconds: Number(row.duration_seconds), status: row.status, accountTier: row.account_tier, createdAt: Number(row.created_at), settledAt: row.settled_at ? Number(row.settled_at) : void 0 };
 }
+__name(mapTradeRow, "mapTradeRow");
 function cancelWithdrawalRequest(userId, withdrawalId) {
   const withdrawal = db.prepare("SELECT * FROM withdrawals WHERE id = ? AND user_id = ?").get(withdrawalId, userId);
   if (!withdrawal) throw new Error("Withdrawal record not found.");
@@ -17672,6 +16788,49 @@ function cancelWithdrawalRequest(userId, withdrawalId) {
     throw error;
   }
 }
+__name(cancelWithdrawalRequest, "cancelWithdrawalRequest");
+function declineWithdrawalRequest(adminUserId, userId, withdrawalId, reason) {
+  const withdrawal = db.prepare("SELECT * FROM withdrawals WHERE id = ? AND user_id = ?").get(withdrawalId, userId);
+  if (!withdrawal) throw new Error("Withdrawal record not found.");
+  if (withdrawal.status !== "pending") throw new Error(`Withdrawal cannot be declined from status: ${withdrawal.status}`);
+  const now = Date.now();
+  try {
+    db.exec("BEGIN TRANSACTION");
+    const info = db.prepare(`
+      UPDATE withdrawals SET
+        status = 'rejected',
+        rejection_reason = ?,
+        processed_at = ?
+      WHERE id = ? AND status = 'pending'
+    `).run(reason, now, withdrawalId);
+    if (info.changes === 0) {
+      throw new Error("Withdrawal request is no longer pending or already processed.");
+    }
+    const account = getAccountById(withdrawal.account_id);
+    if (account) {
+      const newBalance = Number((account.currentBalance + withdrawal.gross_amount).toFixed(2));
+      const newEquity = Number((account.equity + withdrawal.gross_amount).toFixed(2));
+      db.prepare(`
+        UPDATE accounts SET
+          current_balance = ?,
+          equity = ?,
+          updated_at = ?
+        WHERE id = ?
+      `).run(newBalance, newEquity, now, account.id);
+      if (account.tier === "personal" || account.account_category === "personal_live" || String(withdrawal.account_id).includes("PERS")) {
+        db.prepare(`UPDATE users SET self_balance = ? WHERE id = ?`).run(newBalance, userId);
+      } else if (account.phase === "funded") {
+        db.prepare(`UPDATE users SET funded_balance = ? WHERE id = ?`).run(newBalance, userId);
+      }
+    }
+    db.exec("COMMIT");
+    return { ok: true, withdrawal: db.prepare("SELECT * FROM withdrawals WHERE id = ?").get(withdrawalId) };
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+__name(declineWithdrawalRequest, "declineWithdrawalRequest");
 
 // src/utils/otcAssetsCatalog.ts
 var OTC_ASSETS_CATALOG = [
@@ -19550,10 +18709,15 @@ function groupActiveSubscriptionsByProvider(subscriptions) {
 }
 
 // src/server/copyTradingEngine.ts
+var __defProp3 = Object.defineProperty;
+var __name2 = (target, value) => __defProp3(target, "name", { value, configurable: true });
 var CopyTradingEngine = class _CopyTradingEngine {
   constructor() {
     this.updateInterval = null;
     this.customProviders = /* @__PURE__ */ new Map();
+  }
+  static {
+    __name2(this, "CopyTradingEngine");
   }
   static getInstance() {
     if (!_CopyTradingEngine.instance) {
@@ -19571,9 +18735,7 @@ var CopyTradingEngine = class _CopyTradingEngine {
   }
   seedInitialTraders() {
     try {
-      const count = Number(
-        db.prepare("SELECT COUNT(*) as c FROM copy_trading_profiles").get().c
-      );
+      const count = Number(db.prepare("SELECT COUNT(*) as c FROM copy_trading_profiles").get().c);
       if (count >= 200) return;
       const now = Date.now();
       const pool = generate200TraderPool(now);
@@ -19588,34 +18750,7 @@ var CopyTradingEngine = class _CopyTradingEngine {
       if (typeof db.transaction === "function") {
         const tx = db.transaction((items) => {
           for (const t of items) {
-            insert.run(
-              t.id,
-              t.user_id || `usr_${t.numeric_id}`,
-              t.provider_name,
-              t.country,
-              t.flag,
-              t.avatar_url,
-              t.account_category,
-              t.strategy_title,
-              t.vip_level,
-              t.starting_balance,
-              t.current_balance,
-              t.all_time_withdrawals,
-              t.daily_profit,
-              t.weekly_profit_pct,
-              t.monthly_profit_pct,
-              t.win_rate_3m,
-              t.total_trades,
-              t.starting_balance * 18,
-              t.current_copiers,
-              MAX_COPIERS_PER_TRADER,
-              t.win_rate_3m,
-              t.profit_factor,
-              t.max_drawdown,
-              t.sharpe_ratio,
-              t.avg_holding_time,
-              now
-            );
+            insert.run(t.id, t.user_id || `usr_${t.numeric_id}`, t.provider_name, t.country, t.flag, t.avatar_url, t.account_category, t.strategy_title, t.vip_level, t.starting_balance, t.current_balance, t.all_time_withdrawals, t.daily_profit, t.weekly_profit_pct, t.monthly_profit_pct, t.win_rate_3m, t.total_trades, t.starting_balance * 18, t.current_copiers, MAX_COPIERS_PER_TRADER, t.win_rate_3m, t.profit_factor, t.max_drawdown, t.sharpe_ratio, t.avg_holding_time, now);
           }
         });
         tx(pool);
@@ -19623,34 +18758,7 @@ var CopyTradingEngine = class _CopyTradingEngine {
         db.exec("BEGIN TRANSACTION;");
         try {
           for (const t of pool) {
-            insert.run(
-              t.id,
-              t.user_id || `usr_${t.numeric_id}`,
-              t.provider_name,
-              t.country,
-              t.flag,
-              t.avatar_url,
-              t.account_category,
-              t.strategy_title,
-              t.vip_level,
-              t.starting_balance,
-              t.current_balance,
-              t.all_time_withdrawals,
-              t.daily_profit,
-              t.weekly_profit_pct,
-              t.monthly_profit_pct,
-              t.win_rate_3m,
-              t.total_trades,
-              t.starting_balance * 18,
-              t.current_copiers,
-              MAX_COPIERS_PER_TRADER,
-              t.win_rate_3m,
-              t.profit_factor,
-              t.max_drawdown,
-              t.sharpe_ratio,
-              t.avg_holding_time,
-              now
-            );
+            insert.run(t.id, t.user_id || `usr_${t.numeric_id}`, t.provider_name, t.country, t.flag, t.avatar_url, t.account_category, t.strategy_title, t.vip_level, t.starting_balance, t.current_balance, t.all_time_withdrawals, t.daily_profit, t.weekly_profit_pct, t.monthly_profit_pct, t.win_rate_3m, t.total_trades, t.starting_balance * 18, t.current_copiers, MAX_COPIERS_PER_TRADER, t.win_rate_3m, t.profit_factor, t.max_drawdown, t.sharpe_ratio, t.avg_holding_time, now);
           }
           db.exec("COMMIT;");
         } catch (e) {
@@ -19675,23 +18783,7 @@ var CopyTradingEngine = class _CopyTradingEngine {
     try {
       const row = db.prepare(`SELECT * FROM master_trader_bot_state WHERE provider_id = ?`).get(providerId);
       if (row) {
-        const mapped = {
-          providerId: String(row.provider_id),
-          status: row.status || "active",
-          pauseReason: row.pause_reason || "NONE",
-          lastTradeExecutedAt: Number(row.last_trade_executed_at || 0),
-          lastCooldownDurationMs: Number(row.last_cooldown_duration_ms || 0),
-          nextEligibleTradeAt: Number(row.next_eligible_trade_at || 0),
-          pausedUntilMs: Number(row.paused_until_ms || 0),
-          hourWindowStartMs: Number(row.hour_window_start_ms || 0),
-          maxTradesThisHour: Number(row.max_trades_this_hour || 4),
-          tradesExecutedThisHour: Number(row.trades_executed_this_hour || 0),
-          consecutiveWins: Number(row.consecutive_wins || 0),
-          consecutiveLosses: Number(row.consecutive_losses || 0),
-          totalSignalsGenerated: Number(row.total_signals_generated || 0),
-          lastSignalId: row.last_signal_id ? String(row.last_signal_id) : void 0,
-          updatedAt: Number(row.updated_at || now)
-        };
+        const mapped = { providerId: String(row.provider_id), status: row.status || "active", pauseReason: row.pause_reason || "NONE", lastTradeExecutedAt: Number(row.last_trade_executed_at || 0), lastCooldownDurationMs: Number(row.last_cooldown_duration_ms || 0), nextEligibleTradeAt: Number(row.next_eligible_trade_at || 0), pausedUntilMs: Number(row.paused_until_ms || 0), hourWindowStartMs: Number(row.hour_window_start_ms || 0), maxTradesThisHour: Number(row.max_trades_this_hour || 4), tradesExecutedThisHour: Number(row.trades_executed_this_hour || 0), consecutiveWins: Number(row.consecutive_wins || 0), consecutiveLosses: Number(row.consecutive_losses || 0), totalSignalsGenerated: Number(row.total_signals_generated || 0), lastSignalId: row.last_signal_id ? String(row.last_signal_id) : void 0, updatedAt: Number(row.updated_at || now) };
         return syncMasterBotHourWindow(mapped, now);
       }
     } catch {
@@ -19709,23 +18801,7 @@ var CopyTradingEngine = class _CopyTradingEngine {
           trades_executed_this_hour, consecutive_wins, consecutive_losses, total_signals_generated,
           last_signal_id, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        state.providerId,
-        state.status,
-        state.pauseReason,
-        state.lastTradeExecutedAt,
-        state.lastCooldownDurationMs,
-        state.nextEligibleTradeAt,
-        state.pausedUntilMs,
-        state.hourWindowStartMs,
-        state.maxTradesThisHour,
-        state.tradesExecutedThisHour,
-        state.consecutiveWins,
-        state.consecutiveLosses,
-        state.totalSignalsGenerated,
-        state.lastSignalId || null,
-        state.updatedAt
-      );
+      `).run(state.providerId, state.status, state.pauseReason, state.lastTradeExecutedAt, state.lastCooldownDurationMs, state.nextEligibleTradeAt, state.pausedUntilMs, state.hourWindowStartMs, state.maxTradesThisHour, state.tradesExecutedThisHour, state.consecutiveWins, state.consecutiveLosses, state.totalSignalsGenerated, state.lastSignalId || null, state.updatedAt);
     } catch {
     }
   }
@@ -19748,31 +18824,13 @@ var CopyTradingEngine = class _CopyTradingEngine {
           trades_settled_count = COALESCE(trades_settled_count, 0) + 1,
           updated_at = ?
         WHERE id = 'HOUSE_POOL_MAIN'
-      `).run(
-        platformCredit,
-        params.outcome === "LOSS" ? amt : 0,
-        params.outcome === "WIN" ? winPayout : 0,
-        spreadRetained,
-        params.outcome === "LOSS" && isCutoff ? amt : 0,
-        params.now
-      );
+      `).run(platformCredit, params.outcome === "LOSS" ? amt : 0, params.outcome === "WIN" ? winPayout : 0, spreadRetained, params.outcome === "LOSS" && isCutoff ? amt : 0, params.now);
       db.prepare(`
         INSERT OR REPLACE INTO platform_revenue_ledger (
           id, trade_id, subscription_id, copier_user_id, copier_account_id,
           investment_amount, platform_credit, house_spread_retained, settlement_reason, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        `PRL-${params.tradeId}`,
-        params.tradeId,
-        params.subscriptionId,
-        params.copierUserId,
-        params.copierAccountId,
-        amt,
-        platformCredit,
-        spreadRetained,
-        params.settlementReason,
-        params.now
-      );
+      `).run(`PRL-${params.tradeId}`, params.tradeId, params.subscriptionId, params.copierUserId, params.copierAccountId, amt, platformCredit, spreadRetained, params.settlementReason, params.now);
       if (params.copierAccountId) {
         db.prepare(`
           UPDATE trading_accounts
@@ -19804,19 +18862,12 @@ var CopyTradingEngine = class _CopyTradingEngine {
         const takeProfit = Number(sub.take_profit ?? sub.take_profit_limit ?? 0);
         const maxDrawdownPct = Number(sub.max_drawdown ?? 5);
         const currentRealizedPnl = Number(sub.current_pnl ?? 0);
-        const openTrades = db.prepare(
-          `SELECT * FROM copy_executed_trades WHERE subscription_id = ? AND status = 'OPEN'`
-        ).all(subId);
-        const openExposure = openTrades.reduce(
-          (sum, tr) => sum + Math.max(0, Number(tr.amount || sub.trade_amount || 100)),
-          0
-        );
+        const openTrades = db.prepare(`SELECT * FROM copy_executed_trades WHERE subscription_id = ? AND status = 'OPEN'`).all(subId);
+        const openExposure = openTrades.reduce((sum, tr) => sum + Math.max(0, Number(tr.amount || sub.trade_amount || 100)), 0);
         const worstCasePnl = Number((currentRealizedPnl - openExposure).toFixed(2));
         let startingBal = 5e4;
         if (sub.copier_account_id) {
-          const accRow = db.prepare(
-            `SELECT initial_balance, current_balance FROM trading_accounts WHERE id = ?`
-          ).get(String(sub.copier_account_id));
+          const accRow = db.prepare(`SELECT initial_balance, current_balance FROM trading_accounts WHERE id = ?`).get(String(sub.copier_account_id));
           if (accRow && Number(accRow.initial_balance || accRow.current_balance || 0) > 0) {
             startingBal = Number(accRow.initial_balance || accRow.current_balance || 5e4);
           }
@@ -19831,38 +18882,15 @@ var CopyTradingEngine = class _CopyTradingEngine {
             const amt = Math.max(0, Number(openTr.amount || sub.trade_amount || 100));
             const entry = Number(openTr.entry_price || 1.085);
             const isCall = String(openTr.trade_type || "CALL").toUpperCase() !== "PUT";
-            const adverseExitPrice = Number(
-              (entry * (isCall ? 0.9991 : 1.0009)).toFixed(5)
-            );
+            const adverseExitPrice = Number((entry * (isCall ? 0.9991 : 1.0009)).toFixed(5));
             const lossPnl = -amt;
-            db.prepare(
-              `UPDATE copy_executed_trades SET exit_price = ?, status = 'LOSS', pnl = ? WHERE id = ?`
-            ).run(adverseExitPrice, lossPnl, openTr.id);
-            db.prepare(
-              `UPDATE copy_trading_subscriptions SET current_pnl = ROUND(COALESCE(current_pnl, 0) + ?, 2) WHERE id = ?`
-            ).run(lossPnl, subId);
-            this.recordBackendPlatformRevenue({
-              tradeId: String(openTr.id),
-              subscriptionId: subId,
-              copierUserId: String(
-                openTr.copier_user_id || sub.copier_user_id || sub.user_id || "usr_bft_001"
-              ),
-              copierAccountId: String(
-                openTr.copier_account_id || sub.copier_account_id || "BFT-LIVE"
-              ),
-              investmentAmount: amt,
-              outcome: "LOSS",
-              settlementReason: cutoffReason,
-              now
-            });
+            db.prepare(`UPDATE copy_executed_trades SET exit_price = ?, status = 'LOSS', pnl = ? WHERE id = ?`).run(adverseExitPrice, lossPnl, openTr.id);
+            db.prepare(`UPDATE copy_trading_subscriptions SET current_pnl = ROUND(COALESCE(current_pnl, 0) + ?, 2) WHERE id = ?`).run(lossPnl, subId);
+            this.recordBackendPlatformRevenue({ tradeId: String(openTr.id), subscriptionId: subId, copierUserId: String(openTr.copier_user_id || sub.copier_user_id || sub.user_id || "usr_bft_001"), copierAccountId: String(openTr.copier_account_id || sub.copier_account_id || "BFT-LIVE"), investmentAmount: amt, outcome: "LOSS", settlementReason: cutoffReason, now });
           }
-          db.prepare(
-            `UPDATE copy_trading_subscriptions SET status = 'cancelled' WHERE id = ?`
-          ).run(subId);
+          db.prepare(`UPDATE copy_trading_subscriptions SET status = 'cancelled' WHERE id = ?`).run(subId);
         } else if (hitTakeProfit) {
-          db.prepare(
-            `UPDATE copy_trading_subscriptions SET status = 'cancelled' WHERE id = ?`
-          ).run(subId);
+          db.prepare(`UPDATE copy_trading_subscriptions SET status = 'cancelled' WHERE id = ?`).run(subId);
         }
       }
     } catch {
@@ -19895,29 +18923,12 @@ var CopyTradingEngine = class _CopyTradingEngine {
           const exitPrice = Number((entry + (isCall ? delta : -delta)).toFixed(5));
           const amt = Number(row.amount || 100);
           const pnl = isWin ? Number((amt * _CopyTradingEngine.HOUSE_PAYOUT_MULTIPLIER).toFixed(2)) : -amt;
-          db.prepare(
-            `UPDATE copy_executed_trades SET exit_price = ?, status = ?, pnl = ? WHERE id = ?`
-          ).run(exitPrice, finalStatus, pnl, row.id);
-          db.prepare(
-            `UPDATE copy_trading_subscriptions SET current_pnl = ROUND(COALESCE(current_pnl, 0) + ?, 2) WHERE id = ?`
-          ).run(pnl, row.subscription_id);
-          this.recordBackendPlatformRevenue({
-            tradeId: String(row.id),
-            subscriptionId: String(row.subscription_id),
-            copierUserId: String(row.copier_user_id || "usr_bft_001"),
-            copierAccountId: String(row.copier_account_id || "BFT-LIVE"),
-            investmentAmount: amt,
-            outcome: finalStatus,
-            settlementReason: isWin ? "EXPIRATION_WIN" : "EXPIRATION_LOSS",
-            now
-          });
+          db.prepare(`UPDATE copy_executed_trades SET exit_price = ?, status = ?, pnl = ? WHERE id = ?`).run(exitPrice, finalStatus, pnl, row.id);
+          db.prepare(`UPDATE copy_trading_subscriptions SET current_pnl = ROUND(COALESCE(current_pnl, 0) + ?, 2) WHERE id = ?`).run(pnl, row.subscription_id);
+          this.recordBackendPlatformRevenue({ tradeId: String(row.id), subscriptionId: String(row.subscription_id), copierUserId: String(row.copier_user_id || "usr_bft_001"), copierAccountId: String(row.copier_account_id || "BFT-LIVE"), investmentAmount: amt, outcome: finalStatus, settlementReason: isWin ? "EXPIRATION_WIN" : "EXPIRATION_LOSS", now });
         }
         const currentBotState = this.loadBackendMasterBotState(providerId, now);
-        const outcomeResult = recordMasterSignalOutcome({
-          state: currentBotState,
-          outcome: finalStatus,
-          nowMs: now
-        });
+        const outcomeResult = recordMasterSignalOutcome({ state: currentBotState, outcome: finalStatus, nowMs: now });
         this.persistBackendMasterBotState(outcomeResult.updatedState);
       }
       const windowCheck = evaluateActiveTradingWindow(now);
@@ -19928,14 +18939,7 @@ var CopyTradingEngine = class _CopyTradingEngine {
       const subsByProvider = groupActiveSubscriptionsByProvider(activeSubs);
       if (subsByProvider.size === 0) return;
       const assets = ["EUR/USD", "GBP/USD", "USD/JPY", "BTC/USDT", "ETH/USDT", "XAU/USD"];
-      const basePrices = {
-        "EUR/USD": 1.08542,
-        "GBP/USD": 1.26815,
-        "USD/JPY": 154.62,
-        "BTC/USDT": 89420.5,
-        "ETH/USDT": 3125.4,
-        "XAU/USD": 2685.3
-      };
+      const basePrices = { "EUR/USD": 1.08542, "GBP/USD": 1.26815, "USD/JPY": 154.62, "BTC/USDT": 89420.5, "ETH/USDT": 3125.4, "XAU/USD": 2685.3 };
       const insertStmt = db.prepare(`
         INSERT INTO copy_executed_trades (
           id, subscription_id, copier_user_id, copier_account_id, provider_id,
@@ -19945,11 +18949,7 @@ var CopyTradingEngine = class _CopyTradingEngine {
       for (const [providerId, providerSubs] of subsByProvider.entries()) {
         if (providerSubs.length === 0) continue;
         const botState = this.loadBackendMasterBotState(providerId, now);
-        const eligibility = evaluateMasterSignalEligibility({
-          state: botState,
-          nowMs: now,
-          hasOpenBatchTrade: stillOpenProviders.has(providerId)
-        });
+        const eligibility = evaluateMasterSignalEligibility({ state: botState, nowMs: now, hasOpenBatchTrade: stillOpenProviders.has(providerId) });
         this.persistBackendMasterBotState(eligibility.state);
         if (!eligibility.canExecute) {
           continue;
@@ -19960,29 +18960,11 @@ var CopyTradingEngine = class _CopyTradingEngine {
         const signalId = `SIG-${providerId.slice(0, 8)}-${now.toString(36)}`;
         for (const sub of providerSubs) {
           const subId = String(sub.id);
-          const tradeAmount = Math.max(
-            1,
-            Number(sub.trade_amount ?? sub.allocated_capital ?? 100)
-          );
+          const tradeAmount = Math.max(1, Number(sub.trade_amount ?? sub.allocated_capital ?? 100));
           const execId = `CET-${subId.slice(0, 8)}-${now.toString(36)}`;
-          insertStmt.run(
-            execId,
-            subId,
-            String(sub.copier_user_id || sub.user_id || "usr_bft_001"),
-            String(sub.copier_account_id || "BFT-LIVE"),
-            String(providerId),
-            assetSymbol,
-            tradeType,
-            tradeAmount,
-            entryPrice,
-            now
-          );
+          insertStmt.run(execId, subId, String(sub.copier_user_id || sub.user_id || "usr_bft_001"), String(sub.copier_account_id || "BFT-LIVE"), String(providerId), assetSymbol, tradeType, tradeAmount, entryPrice, now);
         }
-        const postExecState = recordMasterSignalExecution({
-          state: eligibility.state,
-          signalId,
-          nowMs: now
-        });
+        const postExecState = recordMasterSignalExecution({ state: eligibility.state, signalId, nowMs: now });
         this.persistBackendMasterBotState(postExecState);
       }
     } catch {
@@ -19997,29 +18979,14 @@ var CopyTradingEngine = class _CopyTradingEngine {
   getLeaderboard(category = "instant_funded", searchQuery = "", limit = LEADERBOARD_TOP_LIMIT) {
     const now = Date.now();
     const pool = this.getFullPool(now);
-    const result = queryCopyTradersPool({
-      pool,
-      category,
-      searchQuery,
-      limit
-    });
+    const result = queryCopyTradersPool({ pool, category, searchQuery, limit });
     const rotation = getRotationWindowInfo(now);
-    return {
-      traders: result.traders,
-      totalPoolCount: result.totalPoolCount,
-      isSearchActive: result.isSearchActive,
-      rotation
-    };
+    return { traders: result.traders, totalPoolCount: result.totalPoolCount, isSearchActive: result.isSearchActive, rotation };
   }
   registerCustomProvider(params) {
-    const eligibility = evaluateProviderEligibility({
-      explicitWinRate90d: params.winRate3m
-    });
+    const eligibility = evaluateProviderEligibility({ explicitWinRate90d: params.winRate3m });
     if (!eligibility.eligible) {
-      return {
-        ok: false,
-        error: eligibility.message
-      };
+      return { ok: false, error: eligibility.message };
     }
     const numericId = String(100301 + this.customProviders.size);
     const id = params.category === "instant_funded" ? `trd_if_${numericId}` : `trd_sc_${numericId}`;
@@ -20028,54 +18995,16 @@ var CopyTradingEngine = class _CopyTradingEngine {
     const weeklyProfit = Number((startBal * 0.21).toFixed(2));
     const monthlyProfit = Number((startBal * 0.58).toFixed(2));
     const threeMonthProfit = Number((startBal * 1.45).toFixed(2));
-    const newProvider = {
-      id,
-      numeric_id: numericId,
-      user_id: params.userId,
-      provider_name: params.providerName,
-      country_code: params.countryCode || "US",
-      country: params.country || "United States",
-      flag: params.flag || "\u{1F1FA}\u{1F1F8}",
-      avatar_url: params.flag || "\u{1F1FA}\u{1F1F8}",
-      account_category: params.category,
-      account_type_label: params.category === "instant_funded" ? `Instant Funded ($${(startBal / 1e3).toFixed(0)}K)` : "Self-Capital Live",
-      strategy_title: params.strategyTitle || "Verified Master Strategy",
-      tier_name: params.category === "instant_funded" ? `$${(startBal / 1e3).toFixed(0)}K Instant Funded` : "Self-Capital Account",
-      vip_level: "Master Trader",
-      starting_balance: startBal,
-      current_balance: Number((startBal + dailyProfit).toFixed(2)),
-      all_time_withdrawals: Number((threeMonthProfit * 0.75).toFixed(2)),
-      lifetime_earnings: Number((threeMonthProfit * 0.75).toFixed(2)),
-      daily_profit: dailyProfit,
-      daily_profit_pct: 6.5,
-      weekly_profit: weeklyProfit,
-      weekly_profit_pct: 21,
-      monthly_profit: monthlyProfit,
-      monthly_profit_pct: 58,
-      three_month_profit: threeMonthProfit,
-      three_month_profit_pct: 145,
-      win_rate_3m: Number(params.winRate3m.toFixed(1)),
-      profit_factor: 2.4,
-      max_drawdown: 3.1,
-      sharpe_ratio: 2.05,
-      avg_holding_time: "2m 30s",
-      total_trades: 310,
-      current_copiers: 1,
-      max_copiers: MAX_COPIERS_PER_TRADER,
-      commission_pct: MASTER_COMMISSION_PERCENT,
-      follower_profit_keep_pct: FOLLOWER_PROFIT_SHARE_PERCENT,
-      is_custom_provider: true
-    };
+    const newProvider = { id, numeric_id: numericId, user_id: params.userId, provider_name: params.providerName, country_code: params.countryCode || "US", country: params.country || "United States", flag: params.flag || "\u{1F1FA}\u{1F1F8}", avatar_url: params.flag || "\u{1F1FA}\u{1F1F8}", account_category: params.category, account_type_label: params.category === "instant_funded" ? `Instant Funded ($${(startBal / 1e3).toFixed(0)}K)` : "Self-Capital Live", strategy_title: params.strategyTitle || "Verified Master Strategy", tier_name: params.category === "instant_funded" ? `$${(startBal / 1e3).toFixed(0)}K Instant Funded` : "Self-Capital Account", vip_level: "Master Trader", starting_balance: startBal, current_balance: Number((startBal + dailyProfit).toFixed(2)), all_time_withdrawals: Number((threeMonthProfit * 0.75).toFixed(2)), lifetime_earnings: Number((threeMonthProfit * 0.75).toFixed(2)), daily_profit: dailyProfit, daily_profit_pct: 6.5, weekly_profit: weeklyProfit, weekly_profit_pct: 21, monthly_profit: monthlyProfit, monthly_profit_pct: 58, three_month_profit: threeMonthProfit, three_month_profit_pct: 145, win_rate_3m: Number(params.winRate3m.toFixed(1)), profit_factor: 2.4, max_drawdown: 3.1, sharpe_ratio: 2.05, avg_holding_time: "2m 30s", total_trades: 310, current_copiers: 1, max_copiers: MAX_COPIERS_PER_TRADER, commission_pct: MASTER_COMMISSION_PERCENT, follower_profit_keep_pct: FOLLOWER_PROFIT_SHARE_PERCENT, is_custom_provider: true };
     this.customProviders.set(id, newProvider);
-    return {
-      ok: true,
-      provider: newProvider
-    };
+    return { ok: true, provider: newProvider };
   }
 };
 
 // src/server/aiChatService.ts
 import { GoogleGenAI } from "@google/genai";
+var __defProp4 = Object.defineProperty;
+var __name3 = (target, value) => __defProp4(target, "name", { value, configurable: true });
 var BFT_SUPPORT_SYSTEM_INSTRUCTION = `
 You are the official 24/7 AI Trader Concierge & Institutional Risk Specialist for Binary Funded Trader (BFT Prime Prop Capital).
 Your duty is to assist binary options prop traders with instant, accurate, highly professional, and encouraging support.
@@ -20161,6 +19090,7 @@ You can customize your Demo Account simulator balance to any amount between **$1
   }
   return `Welcome to BFT Prime Prop Capital support! I can help you with prop trading rules (1-Step, 2-Step, Instant Funded), drawdown limits, our 3-minute TRC-20 payout SLA, active discount codes (SPOOKY40 / SPOOKY20), and account setup. How can I assist your trading today?`;
 }
+__name3(generateLocalFallbackReply, "generateLocalFallbackReply");
 async function generateSupportChatReply(input, optionalHistory = []) {
   const userMessage = typeof input === "string" ? input : input.message;
   const chatHistory = typeof input === "string" ? optionalHistory || [] : input.history || [];
@@ -20172,24 +19102,10 @@ async function generateSupportChatReply(input, optionalHistory = []) {
     const ai = new GoogleGenAI({ apiKey });
     const contents = [];
     for (const msg of chatHistory.slice(-6)) {
-      contents.push({
-        role: msg.role === "model" ? "model" : "user",
-        parts: [{ text: msg.text }]
-      });
+      contents.push({ role: msg.role === "model" ? "model" : "user", parts: [{ text: msg.text }] });
     }
-    contents.push({
-      role: "user",
-      parts: [{ text: userMessage }]
-    });
-    const response = await ai.models.generateContent({
-      model: "gemini-3.8-flash",
-      contents,
-      config: {
-        systemInstruction: BFT_SUPPORT_SYSTEM_INSTRUCTION,
-        temperature: 0.6,
-        maxOutputTokens: 600
-      }
-    });
+    contents.push({ role: "user", parts: [{ text: userMessage }] });
+    const response = await ai.models.generateContent({ model: "gemini-3.8-flash", contents, config: { systemInstruction: BFT_SUPPORT_SYSTEM_INSTRUCTION, temperature: 0.6, maxOutputTokens: 600 } });
     const reply = response.text?.trim();
     if (reply && reply.length > 0) {
       return reply;
@@ -20200,6 +19116,7 @@ async function generateSupportChatReply(input, optionalHistory = []) {
     return generateLocalFallbackReply(userMessage);
   }
 }
+__name3(generateSupportChatReply, "generateSupportChatReply");
 
 // node_modules/@supabase/supabase-js/dist/index.mjs
 var dist_exports = {};
@@ -29224,6 +28141,8 @@ function validateDemoBalance(rawInput) {
 }
 
 // server.ts
+var __defProp5 = Object.defineProperty;
+var __name4 = (target, value) => __defProp5(target, "name", { value, configurable: true });
 dotenv.config({ override: true });
 var __filename = fileURLToPath(import.meta.url);
 var __dirname = path2.dirname(__filename);
@@ -29232,10 +28151,8 @@ console.log(`Starting server on port ${PORT}...`);
 var DIRECT_USDT_WALLET_ADDRESS = process.env.DIRECT_USDT_TRC20_WALLET_ADDRESS || DIRECT_USDT_TRC20_CONFIG.walletAddress;
 var ACTIVE_TRONGRID_API_KEY = process.env.TRONGRID_API_KEY || TRONGRID_API_KEY;
 var creditedBalancesByAccount = /* @__PURE__ */ new Map();
-var isValidUuid2 = (val) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-  String(val || "").trim()
-);
-var toValidUuid = (str) => {
+var isValidUuid2 = __name4((val) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(val || "").trim()), "isValidUuid");
+var toValidUuid = __name4((str) => {
   if (!str) return "00000000-0000-4000-8000-000000000001";
   const clean = String(str).trim();
   if (isValidUuid2(clean)) return clean.toLowerCase();
@@ -29254,20 +28171,12 @@ var toValidUuid = (str) => {
   const h4 = Math.abs(hash1 * 31 + hash2).toString(16).padStart(8, "0");
   const raw = (h1 + h2 + h3 + h4).slice(0, 32);
   return `${raw.slice(0, 8)}-${raw.slice(8, 12)}-4${raw.slice(13, 16)}-a${raw.slice(17, 20)}-${raw.slice(20, 32)}`;
-};
+}, "toValidUuid");
 async function ensureSupabaseProfileInRest(supabaseUrl, supabaseAnonKey, user) {
   let targetUuid = isValidUuid2(user.id) ? user.id : null;
   if (!targetUuid && user.email) {
     try {
-      const pRes = await fetch(
-        `${supabaseUrl}/rest/v1/profiles?email=eq.${encodeURIComponent(user.email)}&select=id`,
-        {
-          headers: {
-            apikey: supabaseAnonKey,
-            Authorization: `Bearer ${supabaseAnonKey}`
-          }
-        }
-      );
+      const pRes = await fetch(`${supabaseUrl}/rest/v1/profiles?email=eq.${encodeURIComponent(user.email)}&select=id`, { headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}` } });
       if (pRes.ok) {
         const text = await pRes.text();
         if (text && text.trim()) {
@@ -29284,46 +28193,25 @@ async function ensureSupabaseProfileInRest(supabaseUrl, supabaseAnonKey, user) {
     targetUuid = toValidUuid(user.id || user.email || "usr_bft_001");
   }
   try {
-    fetch(`${supabaseUrl}/rest/v1/profiles`, {
-      method: "POST",
-      headers: {
-        apikey: supabaseAnonKey,
-        Authorization: `Bearer ${supabaseAnonKey}`,
-        "Content-Type": "application/json",
-        Prefer: "resolution=merge-duplicates"
-      },
-      body: JSON.stringify({
-        id: targetUuid,
-        email: (user.email || `${targetUuid.slice(0, 8)}@client-bft.com`).toLowerCase(),
-        full_name: user.full_name || "Trader User"
-      })
-    }).catch(() => {
+    fetch(`${supabaseUrl}/rest/v1/profiles`, { method: "POST", headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json", Prefer: "resolution=merge-duplicates" }, body: JSON.stringify({ id: targetUuid, email: (user.email || `${targetUuid.slice(0, 8)}@client-bft.com`).toLowerCase(), full_name: user.full_name || "Trader User" }) }).catch(() => {
     });
   } catch {
   }
   return targetUuid;
 }
+__name4(ensureSupabaseProfileInRest, "ensureSupabaseProfileInRest");
 async function startServer() {
   const app = express();
   app.use((req, res, next) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS");
-    res.setHeader(
-      "Access-Control-Allow-Headers",
-      "authorization, x-client-info, apikey, content-type, x-admin-key, prefer"
-    );
+    res.setHeader("Access-Control-Allow-Headers", "authorization, x-client-info, apikey, content-type, x-admin-key, prefer");
     if (req.method === "OPTIONS") {
       return res.status(200).end();
     }
     next();
   });
-  app.use(cors({
-    origin: "*",
-    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "x-admin-key", "apikey", "prefer", "x-client-info"],
-    preflightContinue: false,
-    optionsSuccessStatus: 200
-  }));
+  app.use(cors({ origin: "*", methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"], allowedHeaders: ["Content-Type", "Authorization", "x-admin-key", "apikey", "prefer", "x-client-info"], preflightContinue: false, optionsSuccessStatus: 200 }));
   app.options("*", cors());
   app.use(express.json({ limit: "20mb" }));
   app.use(express.urlencoded({ extended: true, limit: "20mb" }));
@@ -29332,7 +28220,7 @@ async function startServer() {
   const copyTradingEngine = CopyTradingEngine.getInstance();
   const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "https://kwmjonjcwdwvaijcrtjw.supabase.co";
   const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || "sb_publishable_G151L79Inh_SPks_HrujZQ_fmaGh-_6";
-  const safeParseFetchJson = async (res, fallback = null) => {
+  const safeParseFetchJson = __name4(async (res, fallback = null) => {
     try {
       const text = await res.text();
       if (!text || !text.trim()) return fallback;
@@ -29340,8 +28228,8 @@ async function startServer() {
     } catch {
       return fallback;
     }
-  };
-  const verifyPendingCryptoDepositsWithTronGrid = async (options) => {
+  }, "safeParseFetchJson");
+  const verifyPendingCryptoDepositsWithTronGrid = __name4(async (options) => {
     const nowMs = options?.nowMs ?? Date.now();
     const localExpirySweep = expireStalePendingDepositsInDb(nowMs, DEPOSIT_EXPIRY_MS);
     const localPending = getPendingCryptoDeposits(options?.userId);
@@ -29349,15 +28237,7 @@ async function startServer() {
     let supaExpiredCount = 0;
     if (supabaseUrl && supabaseAnonKey) {
       try {
-        const supaRes = await fetch(
-          `${supabaseUrl}/rest/v1/crypto_deposits?status=eq.pending&select=*`,
-          {
-            headers: {
-              apikey: supabaseAnonKey,
-              Authorization: `Bearer ${supabaseAnonKey}`
-            }
-          }
-        );
+        const supaRes = await fetch(`${supabaseUrl}/rest/v1/crypto_deposits?status=eq.pending&select=*`, { headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}` } });
         if (supaRes.ok) {
           const rows = await safeParseFetchJson(supaRes, []);
           if (Array.isArray(rows)) {
@@ -29365,49 +28245,12 @@ async function startServer() {
             for (const sRow of rows) {
               if (isCryptoDepositExpired(sRow, nowMs, DEPOSIT_EXPIRY_MS)) {
                 supaExpiredCount += 1;
-                fetch(
-                  `${supabaseUrl}/rest/v1/crypto_deposits?id=eq.${encodeURIComponent(String(sRow.id))}`,
-                  {
-                    method: "PATCH",
-                    headers: {
-                      apikey: supabaseAnonKey,
-                      Authorization: `Bearer ${supabaseAnonKey}`,
-                      "Content-Type": "application/json"
-                    },
-                    body: JSON.stringify({ status: "failed" })
-                  }
-                ).catch(() => {
+                fetch(`${supabaseUrl}/rest/v1/crypto_deposits?id=eq.${encodeURIComponent(String(sRow.id))}`, { method: "PATCH", headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ status: "failed" }) }).catch(() => {
                 });
                 if (sRow.user_id) {
-                  fetch(
-                    `${supabaseUrl}/rest/v1/user_purchases?user_id=eq.${encodeURIComponent(
-                      String(sRow.user_id)
-                    )}&amount=eq.${encodeURIComponent(String(sRow.amount))}&status=eq.pending`,
-                    {
-                      method: "PATCH",
-                      headers: {
-                        apikey: supabaseAnonKey,
-                        Authorization: `Bearer ${supabaseAnonKey}`,
-                        "Content-Type": "application/json"
-                      },
-                      body: JSON.stringify({ status: "failed" })
-                    }
-                  ).catch(() => {
+                  fetch(`${supabaseUrl}/rest/v1/user_purchases?user_id=eq.${encodeURIComponent(String(sRow.user_id))}&amount=eq.${encodeURIComponent(String(sRow.amount))}&status=eq.pending`, { method: "PATCH", headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ status: "failed" }) }).catch(() => {
                   });
-                  fetch(
-                    `${supabaseUrl}/rest/v1/transactions?user_id=eq.${encodeURIComponent(
-                      String(sRow.user_id)
-                    )}&amount=eq.${encodeURIComponent(String(sRow.amount))}&status=eq.pending`,
-                    {
-                      method: "PATCH",
-                      headers: {
-                        apikey: supabaseAnonKey,
-                        Authorization: `Bearer ${supabaseAnonKey}`,
-                        "Content-Type": "application/json"
-                      },
-                      body: JSON.stringify({ status: "failed" })
-                    }
-                  ).catch(() => {
+                  fetch(`${supabaseUrl}/rest/v1/transactions?user_id=eq.${encodeURIComponent(String(sRow.user_id))}&amount=eq.${encodeURIComponent(String(sRow.amount))}&status=eq.pending`, { method: "PATCH", headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ status: "failed" }) }).catch(() => {
                   });
                 }
               } else {
@@ -29421,90 +28264,30 @@ async function startServer() {
       }
     }
     if (localPending.length === 0 && supaPending.length === 0 && !options?.forceFetch && !options?.overrideTransactions) {
-      return {
-        ok: true,
-        walletAddress: DIRECT_USDT_WALLET_ADDRESS,
-        tronGridEndpoint: TRONGRID_TRC20_ENDPOINT,
-        checkedCount: 0,
-        matchedCount: 0,
-        expiredCount: localExpirySweep.expiredCount + supaExpiredCount,
-        completedDeposits: [],
-        remainingPendingCount: 0,
-        transactionsFetched: 0
-      };
+      return { ok: true, walletAddress: DIRECT_USDT_WALLET_ADDRESS, tronGridEndpoint: TRONGRID_TRC20_ENDPOINT, checkedCount: 0, matchedCount: 0, expiredCount: localExpirySweep.expiredCount + supaExpiredCount, completedDeposits: [], remainingPendingCount: 0, transactionsFetched: 0 };
     }
     let transactions = [];
     let tronGridError;
     if (Array.isArray(options?.overrideTransactions)) {
       transactions = options.overrideTransactions;
     } else {
-      const fetched = await fetchTronGridTrc20Transfers({
-        walletAddress: DIRECT_USDT_WALLET_ADDRESS,
-        apiKey: ACTIVE_TRONGRID_API_KEY,
-        limit: 50,
-        onlyConfirmed: true
-      });
+      const fetched = await fetchTronGridTrc20Transfers({ walletAddress: DIRECT_USDT_WALLET_ADDRESS, apiKey: ACTIVE_TRONGRID_API_KEY, limit: 50, onlyConfirmed: true });
       transactions = fetched.transactions;
       if (!fetched.ok) {
         tronGridError = fetched.error;
       }
     }
-    const localResult = verifyAndCompletePendingCryptoDepositsInDb(transactions, {
-      userId: options?.userId,
-      nowMs
-    });
+    const localResult = verifyAndCompletePendingCryptoDepositsInDb(transactions, { userId: options?.userId, nowMs });
     if (supabaseUrl && supabaseAnonKey && localResult.completedDeposits.length > 0) {
       for (const comp of localResult.completedDeposits) {
         const dep = comp.deposit;
         if (dep) {
           const targetUuid = isValidUuid2(dep.user_id) ? dep.user_id : toValidUuid(dep.user_id);
-          fetch(
-            `${supabaseUrl}/rest/v1/crypto_deposits?user_id=eq.${encodeURIComponent(
-              targetUuid
-            )}&amount=eq.${encodeURIComponent(String(dep.amount))}&status=eq.pending`,
-            {
-              method: "PATCH",
-              headers: {
-                apikey: supabaseAnonKey,
-                Authorization: `Bearer ${supabaseAnonKey}`,
-                "Content-Type": "application/json"
-              },
-              body: JSON.stringify({ status: "completed", tx_hash: comp.txHash })
-            }
-          ).catch(() => {
+          fetch(`${supabaseUrl}/rest/v1/crypto_deposits?user_id=eq.${encodeURIComponent(targetUuid)}&amount=eq.${encodeURIComponent(String(dep.amount))}&status=eq.pending`, { method: "PATCH", headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ status: "completed", tx_hash: comp.txHash }) }).catch(() => {
           });
-          fetch(
-            `${supabaseUrl}/rest/v1/user_purchases?user_id=eq.${encodeURIComponent(
-              targetUuid
-            )}&amount=eq.${encodeURIComponent(String(dep.amount))}&status=eq.pending`,
-            {
-              method: "PATCH",
-              headers: {
-                apikey: supabaseAnonKey,
-                Authorization: `Bearer ${supabaseAnonKey}`,
-                "Content-Type": "application/json"
-              },
-              body: JSON.stringify({
-                status: comp.accountType === "challenge" ? "active" : "completed",
-                tx_hash: comp.txHash
-              })
-            }
-          ).catch(() => {
+          fetch(`${supabaseUrl}/rest/v1/user_purchases?user_id=eq.${encodeURIComponent(targetUuid)}&amount=eq.${encodeURIComponent(String(dep.amount))}&status=eq.pending`, { method: "PATCH", headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ status: comp.accountType === "challenge" ? "active" : "completed", tx_hash: comp.txHash }) }).catch(() => {
           });
-          fetch(
-            `${supabaseUrl}/rest/v1/transactions?user_id=eq.${encodeURIComponent(
-              targetUuid
-            )}&amount=eq.${encodeURIComponent(String(dep.amount))}&status=eq.pending`,
-            {
-              method: "PATCH",
-              headers: {
-                apikey: supabaseAnonKey,
-                Authorization: `Bearer ${supabaseAnonKey}`,
-                "Content-Type": "application/json"
-              },
-              body: JSON.stringify({ status: "completed", tx_hash: comp.txHash })
-            }
-          ).catch(() => {
+          fetch(`${supabaseUrl}/rest/v1/transactions?user_id=eq.${encodeURIComponent(targetUuid)}&amount=eq.${encodeURIComponent(String(dep.amount))}&status=eq.pending`, { method: "PATCH", headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ status: "completed", tx_hash: comp.txHash }) }).catch(() => {
           });
         }
       }
@@ -29513,75 +28296,24 @@ async function startServer() {
     const supabaseCompleted = [];
     if (supabaseUrl && supabaseAnonKey && supaPending.length > 0 && transactions.length > 0) {
       for (const sRow of supaPending) {
-        const matchedTx = matchPendingDepositToTronGridTx(
-          {
-            id: String(sRow.id),
-            user_id: sRow.user_id,
-            wallet_address: sRow.wallet_address || DIRECT_USDT_WALLET_ADDRESS,
-            amount: Number(sRow.amount),
-            package_name: sRow.package_name,
-            sku: sRow.package_sku || sRow.sku,
-            package_sku: sRow.package_sku || sRow.sku,
-            account_type: sRow.account_type,
-            tx_hash: sRow.tx_hash,
-            status: sRow.status || "pending",
-            created_at: sRow.created_at
-          },
-          transactions,
-          claimedTxIds,
-          nowMs,
-          DEPOSIT_EXPIRY_MS
-        );
+        const matchedTx = matchPendingDepositToTronGridTx({ id: String(sRow.id), user_id: sRow.user_id, wallet_address: sRow.wallet_address || DIRECT_USDT_WALLET_ADDRESS, amount: Number(sRow.amount), package_name: sRow.package_name, sku: sRow.package_sku || sRow.sku, package_sku: sRow.package_sku || sRow.sku, account_type: sRow.account_type, tx_hash: sRow.tx_hash, status: sRow.status || "pending", created_at: sRow.created_at }, transactions, claimedTxIds, nowMs, DEPOSIT_EXPIRY_MS);
         if (matchedTx) {
           claimedTxIds.add(matchedTx.transaction_id);
           try {
-            await fetch(`${supabaseUrl}/rest/v1/crypto_deposits?id=eq.${sRow.id}`, {
-              method: "PATCH",
-              headers: {
-                apikey: supabaseAnonKey,
-                Authorization: `Bearer ${supabaseAnonKey}`,
-                "Content-Type": "application/json"
-              },
-              body: JSON.stringify({ status: "completed", tx_hash: matchedTx.transaction_id })
-            });
+            await fetch(`${supabaseUrl}/rest/v1/crypto_deposits?id=eq.${sRow.id}`, { method: "PATCH", headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ status: "completed", tx_hash: matchedTx.transaction_id }) });
             const sUserId = String(sRow.user_id || "usr_bft_001");
             const sAccountType = resolveDepositAccountType(sRow.account_type);
             const sAmount = Number(sRow.amount || 0);
-            ensureUserInDb({
-              id: sUserId,
-              email: `${sUserId.toLowerCase().replace(/[^a-z0-9]/g, "")}@client-bft.com`,
-              fullName: `Trader ${sUserId.slice(-4)}`
-            });
+            ensureUserInDb({ id: sUserId, email: `${sUserId.toLowerCase().replace(/[^a-z0-9]/g, "")}@client-bft.com`, fullName: `Trader ${sUserId.slice(-4)}` });
             let activatedOrCreditedAccount = null;
             if (sAccountType === "challenge") {
-              const parsedPkg = parseChallengePackageFromDeposit({
-                sku: sRow.package_sku || sRow.sku,
-                package_sku: sRow.package_sku || sRow.sku,
-                package_name: sRow.package_name,
-                amount: sAmount
-              });
-              activatedOrCreditedAccount = createAccount({
-                userId: sUserId,
-                tier: parsedPkg.tier,
-                tierName: parsedPkg.tierName,
-                size: parsedPkg.size,
-                dailyWithdrawalsUnlocked: false
-              });
+              const parsedPkg = parseChallengePackageFromDeposit({ sku: sRow.package_sku || sRow.sku, package_sku: sRow.package_sku || sRow.sku, package_name: sRow.package_name, amount: sAmount });
+              activatedOrCreditedAccount = createAccount({ userId: sUserId, tier: parsedPkg.tier, tierName: parsedPkg.tierName, size: parsedPkg.size, dailyWithdrawalsUnlocked: false });
             } else {
               ensurePersonalLiveAccountForUser(sUserId);
-              activatedOrCreditedAccount = creditPersonalAccountDepositInDb({
-                userId: sUserId,
-                amountUsdt: sAmount
-              });
+              activatedOrCreditedAccount = creditPersonalAccountDepositInDb({ userId: sUserId, amountUsdt: sAmount });
             }
-            supabaseCompleted.push({
-              ok: true,
-              deposit: { ...sRow, status: "completed", tx_hash: matchedTx.transaction_id },
-              account: activatedOrCreditedAccount,
-              accountType: sAccountType,
-              amount: sAmount,
-              txHash: matchedTx.transaction_id
-            });
+            supabaseCompleted.push({ ok: true, deposit: { ...sRow, status: "completed", tx_hash: matchedTx.transaction_id }, account: activatedOrCreditedAccount, accountType: sAccountType, amount: sAmount, txHash: matchedTx.transaction_id });
           } catch (supaErr) {
             console.warn("Supabase crypto_deposits completion warning:", supaErr);
           }
@@ -29589,19 +28321,8 @@ async function startServer() {
       }
     }
     const allCompleted = [...localResult.completedDeposits, ...supabaseCompleted];
-    return {
-      ok: true,
-      walletAddress: DIRECT_USDT_WALLET_ADDRESS,
-      tronGridEndpoint: TRONGRID_TRC20_ENDPOINT,
-      checkedCount: localResult.checkedCount + supaPending.length,
-      matchedCount: allCompleted.length,
-      expiredCount: localExpirySweep.expiredCount + localResult.expiredCount + supaExpiredCount,
-      completedDeposits: allCompleted,
-      remainingPendingCount: localResult.remainingPendingCount,
-      transactionsFetched: transactions.length,
-      ...tronGridError ? { tronGridNotice: tronGridError } : {}
-    };
-  };
+    return { ok: true, walletAddress: DIRECT_USDT_WALLET_ADDRESS, tronGridEndpoint: TRONGRID_TRC20_ENDPOINT, checkedCount: localResult.checkedCount + supaPending.length, matchedCount: allCompleted.length, expiredCount: localExpirySweep.expiredCount + localResult.expiredCount + supaExpiredCount, completedDeposits: allCompleted, remainingPendingCount: localResult.remainingPendingCount, transactionsFetched: transactions.length, ...tronGridError ? { tronGridNotice: tronGridError } : {} };
+  }, "verifyPendingCryptoDepositsWithTronGrid");
   setInterval(() => {
     verifyPendingCryptoDepositsWithTronGrid().catch((err) => {
       console.warn("Background TronGrid TRC-20 verification error:", err);
@@ -29611,12 +28332,7 @@ async function startServer() {
   if (supabaseUrl && supabaseAnonKey) {
     setInterval(async () => {
       try {
-        let res = await fetch(`${supabaseUrl}/rest/v1/user_purchases?select=*&order=created_at.desc&limit=25`, {
-          headers: {
-            apikey: supabaseAnonKey,
-            Authorization: `Bearer ${supabaseAnonKey}`
-          }
-        });
+        let res = await fetch(`${supabaseUrl}/rest/v1/user_purchases?select=*&order=created_at.desc&limit=25`, { headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}` } });
         if (!res.ok) return;
         const purchases = await safeParseFetchJson(res, []);
         if (!Array.isArray(purchases)) return;
@@ -29625,15 +28341,7 @@ async function startServer() {
           const pid = String(p?.id || "");
           if (!pid) continue;
           if (isCryptoDepositExpired(p, nowMs, DEPOSIT_EXPIRY_MS)) {
-            await fetch(`${supabaseUrl}/rest/v1/user_purchases?id=eq.${encodeURIComponent(pid)}`, {
-              method: "PATCH",
-              headers: {
-                apikey: supabaseAnonKey,
-                Authorization: `Bearer ${supabaseAnonKey}`,
-                "Content-Type": "application/json"
-              },
-              body: JSON.stringify({ status: "failed" })
-            }).catch(() => {
+            await fetch(`${supabaseUrl}/rest/v1/user_purchases?id=eq.${encodeURIComponent(pid)}`, { method: "PATCH", headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ status: "failed" }) }).catch(() => {
             });
             continue;
           }
@@ -29644,37 +28352,14 @@ async function startServer() {
           }
           if (provisionedSupaPurchaseIds.has(pid) || p?.is_provisioned === true) continue;
           provisionedSupaPurchaseIds.add(pid);
-          const parsedPkg = parseChallengePackageFromDeposit({
-            sku: p.package_sku || p.package_id,
-            package_sku: p.package_sku || p.package_id,
-            package_name: p.package_name,
-            amount: Number(p.package_amount || p.amount || 0)
-          });
-          ensureUserInDb({
-            id: String(p.user_id || "usr_bft_001"),
-            email: `${String(p.user_id || "trader").slice(0, 8)}@client-bft.com`,
-            fullName: `Trader ${String(p.user_id || "0001").slice(-4)}`
-          });
+          const parsedPkg = parseChallengePackageFromDeposit({ sku: p.package_sku || p.package_id, package_sku: p.package_sku || p.package_id, package_name: p.package_name, amount: Number(p.package_amount || p.amount || 0) });
+          ensureUserInDb({ id: String(p.user_id || "usr_bft_001"), email: `${String(p.user_id || "trader").slice(0, 8)}@client-bft.com`, fullName: `Trader ${String(p.user_id || "0001").slice(-4)}` });
           const existingAccounts = getAccountsForUser(String(p.user_id || "usr_bft_001"));
           if (existingAccounts.length <= 1) {
-            createAccount({
-              userId: String(p.user_id || "usr_bft_001"),
-              tier: parsedPkg.tier,
-              tierName: parsedPkg.tierName,
-              size: parsedPkg.size,
-              dailyWithdrawalsUnlocked: false
-            });
+            createAccount({ userId: String(p.user_id || "usr_bft_001"), tier: parsedPkg.tier, tierName: parsedPkg.tierName, size: parsedPkg.size, dailyWithdrawalsUnlocked: false });
           }
           if (p.is_provisioned === false) {
-            await fetch(`${supabaseUrl}/rest/v1/user_purchases?id=eq.${encodeURIComponent(pid)}`, {
-              method: "PATCH",
-              headers: {
-                apikey: supabaseAnonKey,
-                Authorization: `Bearer ${supabaseAnonKey}`,
-                "Content-Type": "application/json"
-              },
-              body: JSON.stringify({ is_provisioned: true })
-            }).catch(() => {
+            await fetch(`${supabaseUrl}/rest/v1/user_purchases?id=eq.${encodeURIComponent(pid)}`, { method: "PATCH", headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ is_provisioned: true }) }).catch(() => {
             });
           }
         }
@@ -29732,7 +28417,7 @@ Disallow: /admin/
 
 Sitemap: https://binaryfundedtrader.com/sitemap.xml`);
   });
-  const parseCookies = (req) => {
+  const parseCookies = __name4((req) => {
     const list = {};
     const rc = req.headers.cookie;
     if (!rc) return list;
@@ -29744,8 +28429,8 @@ Sitemap: https://binaryfundedtrader.com/sitemap.xml`);
       }
     });
     return list;
-  };
-  const getAuthenticatedUser = (req) => {
+  }, "parseCookies");
+  const getAuthenticatedUser = __name4((req) => {
     const authHeader = req.headers.authorization;
     let token = authHeader && authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : null;
     if (!token) {
@@ -29760,12 +28445,7 @@ Sitemap: https://binaryfundedtrader.com/sitemap.xml`);
           const payloadB64 = token.split(".")[1];
           const decoded = JSON.parse(Buffer.from(payloadB64, "base64url").toString("utf8"));
           if (decoded?.sub || decoded?.email) {
-            const ensured = ensureUserInDb({
-              id: String(decoded.sub || ""),
-              email: String(decoded.email || ""),
-              fullName: decoded.user_metadata?.full_name || decoded.name || void 0,
-              referralCode: decoded.ref || decoded.user_metadata?.referral_code || void 0
-            });
+            const ensured = ensureUserInDb({ id: String(decoded.sub || ""), email: String(decoded.email || ""), fullName: decoded.user_metadata?.full_name || decoded.name || void 0, referralCode: decoded.ref || decoded.user_metadata?.referral_code || void 0 });
             if (ensured) return ensured;
           }
         } catch {
@@ -29775,76 +28455,31 @@ Sitemap: https://binaryfundedtrader.com/sitemap.xml`);
     const fallbackId = String(req.body?.userId || req.query?.userId || "").trim();
     const fallbackEmail = String(req.body?.email || req.query?.email || "").trim();
     if (fallbackId || fallbackEmail) {
-      return ensureUserInDb({
-        id: fallbackId,
-        email: fallbackEmail,
-        fullName: req.body?.fullName ? String(req.body.fullName) : void 0
-      });
+      return ensureUserInDb({ id: fallbackId, email: fallbackEmail, fullName: req.body?.fullName ? String(req.body.fullName) : void 0 });
     }
     return null;
-  };
-  const isUserAdmin = (user, req) => {
+  }, "getAuthenticatedUser");
+  const isUserAdmin = __name4((user, req) => {
     const adminKey = req?.headers["x-admin-key"] || (req?.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7).trim() : null);
     if (adminKey === "bft_admin_master_key_2026") return true;
     if (!user) return false;
     if (user.role === "admin") return true;
-    const adminEmails = [
-      "shankavee44@gmail.com",
-      "admin@bft.io",
-      "viktor.v@quant-prop.io",
-      "superadmin@bft.io"
-    ];
+    const adminEmails = ["shankavee44@gmail.com", "admin@bft.io", "viktor.v@quant-prop.io", "superadmin@bft.io"];
     return adminEmails.includes(String(user.email || "").toLowerCase().trim());
-  };
-  const requireAdmin = (req, res, next) => {
+  }, "isUserAdmin");
+  const requireAdmin = __name4((req, res, next) => {
     const user = getAuthenticatedUser(req);
     if (!isUserAdmin(user, req)) {
-      return res.status(403).json({
-        ok: false,
-        error: "Access Denied: Admin authorization required.",
-        code: "FORBIDDEN_NOT_ADMIN"
-      });
+      return res.status(403).json({ ok: false, error: "Access Denied: Admin authorization required.", code: "FORBIDDEN_NOT_ADMIN" });
     }
-    req.adminUser = user || {
-      id: "usr_admin_master",
-      email: "admin@bft.io",
-      full_name: "BFT Super Administrator",
-      role: "admin"
-    };
+    req.adminUser = user || { id: "usr_admin_master", email: "admin@bft.io", full_name: "BFT Super Administrator", role: "admin" };
     next();
-  };
-  const formatUserResponse = (user) => {
+  }, "requireAdmin");
+  const formatUserResponse = __name4((user) => {
     const sub = user?.id ? getKycSubmissionForUser(user.id) : null;
     const isAdmin = isUserAdmin(user);
-    return {
-      id: user.id,
-      email: user.email,
-      fullName: user.full_name || sub?.full_name || "",
-      role: isAdmin ? "admin" : user.role || "trader",
-      isAdmin,
-      avatarUrl: user.avatar_url,
-      referralCode: user.referral_code,
-      referredBy: user.referred_by,
-      kycStatus: user.kyc_status || "unverified",
-      kycDocType: user.kyc_doc_type || sub?.doc_type || "ID Card",
-      kycDocumentNumber: user.kyc_doc_number || sub?.document_number || "",
-      kycFrontDocumentUrl: user.kyc_front_url || sub?.front_document_url || "",
-      kycBackDocumentUrl: user.kyc_back_url || sub?.back_document_url || "",
-      kycDocumentFileName: user.kyc_front_filename || sub?.front_file_name || "",
-      kycBackDocumentFileName: user.kyc_back_filename || sub?.back_file_name || "",
-      kycSubmittedAt: user.kyc_submitted_at || "",
-      profileLocked: Boolean(user.profile_locked || sub?.profile_locked),
-      is2faEnabled: Boolean(user.is_2fa_enabled),
-      address: user.address || sub?.address || "",
-      dateOfBirth: user.date_of_birth || sub?.date_of_birth || "",
-      country: user.country || sub?.country || "United States",
-      flag: getCountryFlag(user.country || sub?.country),
-      telegramHandle: user.telegram_handle || "",
-      selfBalance: user.self_balance ?? 0,
-      demoBalance: user.demo_balance ?? 1e4,
-      fundedBalance: user.funded_balance ?? 0
-    };
-  };
+    return { id: user.id, email: user.email, fullName: user.full_name || sub?.full_name || "", role: isAdmin ? "admin" : user.role || "trader", isAdmin, avatarUrl: user.avatar_url, referralCode: user.referral_code, referredBy: user.referred_by, kycStatus: user.kyc_status || "unverified", kycDocType: user.kyc_doc_type || sub?.doc_type || "ID Card", kycDocumentNumber: user.kyc_doc_number || sub?.document_number || "", kycFrontDocumentUrl: user.kyc_front_url || sub?.front_document_url || "", kycBackDocumentUrl: user.kyc_back_url || sub?.back_document_url || "", kycDocumentFileName: user.kyc_front_filename || sub?.front_file_name || "", kycBackDocumentFileName: user.kyc_back_filename || sub?.back_file_name || "", kycSubmittedAt: user.kyc_submitted_at || "", profileLocked: Boolean(user.profile_locked || sub?.profile_locked), is2faEnabled: Boolean(user.is_2fa_enabled), address: user.address || sub?.address || "", dateOfBirth: user.date_of_birth || sub?.date_of_birth || "", country: user.country || sub?.country || "United States", flag: getCountryFlag(user.country || sub?.country), telegramHandle: user.telegram_handle || "", selfBalance: user.self_balance ?? 0, demoBalance: user.demo_balance ?? 1e4, fundedBalance: user.funded_balance ?? 0 };
+  }, "formatUserResponse");
   app.post("/api/auth/session", async (req, res) => {
     try {
       const email = String(req.body?.email || "").trim().toLowerCase();
@@ -29858,21 +28493,11 @@ Sitemap: https://binaryfundedtrader.com/sitemap.xml`);
       if (!fullName) {
         fullName = email.split("@")[0].replace(/[._-]+/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
       }
-      const user = createOrUpdateGoogleUser({
-        email,
-        fullName,
-        googleId: userIdInput || `usr_${Buffer.from(email).toString("hex").slice(0, 16)}`,
-        referralCodeInput: referralCode
-      });
+      const user = createOrUpdateGoogleUser({ email, fullName, googleId: userIdInput || `usr_${Buffer.from(email).toString("hex").slice(0, 16)}`, referralCodeInput: referralCode });
       if (supabaseUrl && supabaseAnonKey) {
         try {
           const checkUrl = `${supabaseUrl}/rest/v1/profiles?email=eq.${encodeURIComponent(email)}&select=id,is_2fa_enabled,totp_secret`;
-          const sRes = await fetch(checkUrl, {
-            headers: {
-              apikey: supabaseAnonKey,
-              Authorization: `Bearer ${supabaseAnonKey}`
-            }
-          });
+          const sRes = await fetch(checkUrl, { headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}` } });
           const profiles = await safeParseFetchJson(sRes, []);
           if (Array.isArray(profiles) && profiles.length > 0) {
             const p = profiles[0];
@@ -29893,27 +28518,14 @@ Sitemap: https://binaryfundedtrader.com/sitemap.xml`);
         }
       }
       if (user.is_2fa_enabled) {
-        return res.json({
-          ok: true,
-          is2faRequired: true,
-          userId: user.id,
-          email: user.email
-        });
+        return res.json({ ok: true, is2faRequired: true, userId: user.id, email: user.email });
       }
       const { token, expiresAt } = createSessionToken(user.id, rememberMe);
       const maxAgeMs = expiresAt - Date.now();
       const isHttps = req.secure || req.headers["x-forwarded-proto"] === "https";
-      res.setHeader(
-        "Set-Cookie",
-        `bft_session=${token}; Path=/; Max-Age=${Math.floor(maxAgeMs / 1e3)}; HttpOnly; ${isHttps ? "SameSite=None; Secure" : "SameSite=Lax"}`
-      );
+      res.setHeader("Set-Cookie", `bft_session=${token}; Path=/; Max-Age=${Math.floor(maxAgeMs / 1e3)}; HttpOnly; ${isHttps ? "SameSite=None; Secure" : "SameSite=Lax"}`);
       const accounts = getAccountsForUser(user.id);
-      return res.json({
-        ok: true,
-        token,
-        user: formatUserResponse(user),
-        accounts
-      });
+      return res.json({ ok: true, token, user: formatUserResponse(user), accounts });
     } catch (err) {
       return res.status(500).json({ ok: false, error: err?.message || "Authentication error." });
     }
@@ -29936,15 +28548,7 @@ Sitemap: https://binaryfundedtrader.com/sitemap.xml`);
       if ((!secret || !user) && supabaseUrl && supabaseAnonKey) {
         try {
           const queryParam = email ? `email=eq.${encodeURIComponent(email)}` : `id=eq.${encodeURIComponent(userId)}`;
-          const sRes = await fetch(
-            `${supabaseUrl}/rest/v1/profiles?${queryParam}&select=id,email,full_name,is_2fa_enabled,totp_secret`,
-            {
-              headers: {
-                apikey: supabaseAnonKey,
-                Authorization: `Bearer ${supabaseAnonKey}`
-              }
-            }
-          );
+          const sRes = await fetch(`${supabaseUrl}/rest/v1/profiles?${queryParam}&select=id,email,full_name,is_2fa_enabled,totp_secret`, { headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}` } });
           const profiles = await safeParseFetchJson(sRes, []);
           if (Array.isArray(profiles) && profiles.length > 0) {
             const p = profiles[0];
@@ -29952,11 +28556,7 @@ Sitemap: https://binaryfundedtrader.com/sitemap.xml`);
               secret = p.totp_secret;
             }
             if (!user && p.email) {
-              user = createOrUpdateGoogleUser({
-                email: p.email,
-                fullName: p.full_name || p.email.split("@")[0],
-                googleId: p.id
-              });
+              user = createOrUpdateGoogleUser({ email: p.email, fullName: p.full_name || p.email.split("@")[0], googleId: p.id });
             }
             if (user && p.totp_secret) {
               updateUser2faSecret(user.id, p.totp_secret);
@@ -29968,32 +28568,18 @@ Sitemap: https://binaryfundedtrader.com/sitemap.xml`);
         }
       }
       if (!user || !secret) {
-        return res.status(400).json({
-          ok: false,
-          error: "Two-Factor Authentication is not configured or secret not found for this account."
-        });
+        return res.status(400).json({ ok: false, error: "Two-Factor Authentication is not configured or secret not found for this account." });
       }
       const isValid = (await verify({ token: code, secret })).valid;
       if (!isValid) {
-        return res.status(400).json({
-          ok: false,
-          error: "Invalid 6-digit verification code. Please check your Google Authenticator app."
-        });
+        return res.status(400).json({ ok: false, error: "Invalid 6-digit verification code. Please check your Google Authenticator app." });
       }
       const { token, expiresAt } = createSessionToken(user.id, rememberMe);
       const maxAgeMs = expiresAt - Date.now();
       const isHttps = req.secure || req.headers["x-forwarded-proto"] === "https";
-      res.setHeader(
-        "Set-Cookie",
-        `bft_session=${token}; Path=/; Max-Age=${Math.floor(maxAgeMs / 1e3)}; HttpOnly; ${isHttps ? "SameSite=None; Secure" : "SameSite=Lax"}`
-      );
+      res.setHeader("Set-Cookie", `bft_session=${token}; Path=/; Max-Age=${Math.floor(maxAgeMs / 1e3)}; HttpOnly; ${isHttps ? "SameSite=None; Secure" : "SameSite=Lax"}`);
       const accounts = getAccountsForUser(user.id);
-      return res.json({
-        ok: true,
-        token,
-        user: formatUserResponse(user),
-        accounts
-      });
+      return res.json({ ok: true, token, user: formatUserResponse(user), accounts });
     } catch (err) {
       return res.status(500).json({ ok: false, error: err?.message || "2FA verification error." });
     }
@@ -30004,12 +28590,7 @@ Sitemap: https://binaryfundedtrader.com/sitemap.xml`);
       return res.json({ ok: false, authenticated: false, user: null, accounts: [] });
     }
     const accounts = getAccountsForUser(user.id);
-    return res.json({
-      ok: true,
-      authenticated: true,
-      user: formatUserResponse(user),
-      accounts
-    });
+    return res.json({ ok: true, authenticated: true, user: formatUserResponse(user), accounts });
   });
   app.post("/api/auth/logout", (req, res) => {
     const authHeader = req.headers.authorization;
@@ -30032,19 +28613,9 @@ Sitemap: https://binaryfundedtrader.com/sitemap.xml`);
       if (!fullName || !address || !dateOfBirth) {
         return res.status(400).json({ ok: false, error: "Full Name, Address, Date of Birth, and Country are mandatory to lock profile." });
       }
-      const updated = lockUserProfile(user.id, {
-        fullName: String(fullName),
-        address: String(address),
-        dateOfBirth: String(dateOfBirth),
-        country: country ? String(country) : "United States",
-        telegramHandle: telegramHandle ? String(telegramHandle) : void 0
-      });
+      const updated = lockUserProfile(user.id, { fullName: String(fullName), address: String(address), dateOfBirth: String(dateOfBirth), country: country ? String(country) : "United States", telegramHandle: telegramHandle ? String(telegramHandle) : void 0 });
       const submission = getKycSubmissionForUser(user.id);
-      return res.json({
-        ok: true,
-        user: formatUserResponse(updated),
-        kycSubmission: submission || null
-      });
+      return res.json({ ok: true, user: formatUserResponse(updated), kycSubmission: submission || null });
     } catch (err) {
       return res.status(400).json({ ok: false, error: err?.message || "Failed to lock personal details." });
     }
@@ -30065,25 +28636,9 @@ Sitemap: https://binaryfundedtrader.com/sitemap.xml`);
           avatar_url = COALESCE(?, avatar_url),
           updated_at = ?
         WHERE id = ?
-      `).run(
-        isLocked ? 1 : 0,
-        fullName ? String(fullName).trim() : null,
-        isLocked ? 1 : 0,
-        address ? String(address).trim() : null,
-        isLocked ? 1 : 0,
-        dateOfBirth ? String(dateOfBirth).trim() : null,
-        isLocked ? 1 : 0,
-        country ? String(country).trim() : null,
-        telegramHandle !== void 0 ? String(telegramHandle).trim() : null,
-        avatarUrl ? String(avatarUrl) : null,
-        Date.now(),
-        user.id
-      );
+      `).run(isLocked ? 1 : 0, fullName ? String(fullName).trim() : null, isLocked ? 1 : 0, address ? String(address).trim() : null, isLocked ? 1 : 0, dateOfBirth ? String(dateOfBirth).trim() : null, isLocked ? 1 : 0, country ? String(country).trim() : null, telegramHandle !== void 0 ? String(telegramHandle).trim() : null, avatarUrl ? String(avatarUrl) : null, Date.now(), user.id);
       const updated = getUserById(user.id);
-      return res.json({
-        ok: true,
-        user: formatUserResponse(updated)
-      });
+      return res.json({ ok: true, user: formatUserResponse(updated) });
     } catch (err) {
       return res.status(400).json({ ok: false, error: err?.message || "Failed to update profile." });
     }
@@ -30103,11 +28658,7 @@ Sitemap: https://binaryfundedtrader.com/sitemap.xml`);
         try {
           const user = targetUserId ? getUserById(targetUserId) : targetEmail ? getUserByEmail(targetEmail) : null;
           if (user) {
-            db.prepare("UPDATE users SET demo_balance = ?, updated_at = ? WHERE id = ?").run(
-              balance,
-              Date.now(),
-              user.id
-            );
+            db.prepare("UPDATE users SET demo_balance = ?, updated_at = ? WHERE id = ?").run(balance, Date.now(), user.id);
             db.prepare(`
               UPDATE accounts SET
                 current_balance = ?,
@@ -30130,67 +28681,26 @@ Sitemap: https://binaryfundedtrader.com/sitemap.xml`);
       if (!message || typeof message !== "string" || !message.trim()) {
         return res.status(400).json({ ok: false, error: "Message cannot be empty." });
       }
-      const reply = await generateSupportChatReply({
-        message: message.trim(),
-        history: Array.isArray(history) ? history : []
-      });
-      return res.json({
-        ok: true,
-        reply,
-        timestamp: (/* @__PURE__ */ new Date()).toISOString()
-      });
+      const reply = await generateSupportChatReply({ message: message.trim(), history: Array.isArray(history) ? history : [] });
+      return res.json({ ok: true, reply, timestamp: (/* @__PURE__ */ new Date()).toISOString() });
     } catch (err) {
       console.error("AI chat endpoint error:", err);
-      return res.json({
-        ok: true,
-        reply: "Our AI Risk Desk is reviewing your request. For immediate assistance with promo codes, use SPOOKY40 for 40% OFF or SPOOKY20 for 20% OFF!",
-        timestamp: (/* @__PURE__ */ new Date()).toISOString()
-      });
+      return res.json({ ok: true, reply: "Our AI Risk Desk is reviewing your request. For immediate assistance with promo codes, use SPOOKY40 for 40% OFF or SPOOKY20 for 20% OFF!", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
     }
   });
   app.post("/api/kyc/submit", (req, res) => {
     try {
       const user = getAuthenticatedUser(req);
       if (!user) return res.status(401).json({ ok: false, error: "Unauthenticated" });
-      const {
-        docType,
-        documentNumber,
-        frontDocumentUrl,
-        backDocumentUrl,
-        frontFileName,
-        backFileName,
-        fullName,
-        address,
-        dateOfBirth,
-        country,
-        status
-      } = req.body || {};
+      const { docType, documentNumber, frontDocumentUrl, backDocumentUrl, frontFileName, backFileName, fullName, address, dateOfBirth, country, status } = req.body || {};
       if (!user.profile_locked && (fullName || user.full_name)) {
-        lockUserProfile(user.id, {
-          fullName: String(fullName || user.full_name || "Verified Trader"),
-          address: String(address || user.address || "Verified Institutional Address"),
-          dateOfBirth: String(dateOfBirth || user.date_of_birth || "1995-01-01"),
-          country: country ? String(country) : user.country || "United States"
-        });
+        lockUserProfile(user.id, { fullName: String(fullName || user.full_name || "Verified Trader"), address: String(address || user.address || "Verified Institutional Address"), dateOfBirth: String(dateOfBirth || user.date_of_birth || "1995-01-01"), country: country ? String(country) : user.country || "United States" });
       }
       const cleanDocType = String(docType || "ID Card").trim();
       const targetStatus = status === "verified" || status === "approved" ? "verified" : "pending";
-      const updated = updateUserKycStatus(user.id, {
-        status: targetStatus,
-        docType: cleanDocType,
-        documentNumber: documentNumber ? String(documentNumber).trim() : void 0,
-        frontDocumentUrl: frontDocumentUrl ? String(frontDocumentUrl).trim() : void 0,
-        backDocumentUrl: backDocumentUrl ? String(backDocumentUrl).trim() : void 0,
-        frontFileName: frontFileName ? String(frontFileName).trim() : void 0,
-        backFileName: backFileName ? String(backFileName).trim() : void 0
-      });
+      const updated = updateUserKycStatus(user.id, { status: targetStatus, docType: cleanDocType, documentNumber: documentNumber ? String(documentNumber).trim() : void 0, frontDocumentUrl: frontDocumentUrl ? String(frontDocumentUrl).trim() : void 0, backDocumentUrl: backDocumentUrl ? String(backDocumentUrl).trim() : void 0, frontFileName: frontFileName ? String(frontFileName).trim() : void 0, backFileName: backFileName ? String(backFileName).trim() : void 0 });
       const submission = getKycSubmissionForUser(user.id);
-      return res.json({
-        ok: true,
-        user: formatUserResponse(updated),
-        kycSubmission: submission || null,
-        message: "KYC Documents submitted! Status updated to Pending Verification."
-      });
+      return res.json({ ok: true, user: formatUserResponse(updated), kycSubmission: submission || null, message: "KYC Documents submitted! Status updated to Pending Verification." });
     } catch (err) {
       return res.status(500).json({ ok: false, error: err?.message || "KYC submission error." });
     }
@@ -30200,11 +28710,7 @@ Sitemap: https://binaryfundedtrader.com/sitemap.xml`);
       const user = getAuthenticatedUser(req);
       if (!user) return res.status(401).json({ ok: false, error: "Unauthenticated" });
       const submission = getKycSubmissionForUser(user.id);
-      return res.json({
-        ok: true,
-        user: formatUserResponse(user),
-        kycSubmission: submission || null
-      });
+      return res.json({ ok: true, user: formatUserResponse(user), kycSubmission: submission || null });
     } catch (err) {
       return res.status(500).json({ ok: false, error: err?.message || "Failed to fetch KYC status." });
     }
@@ -30226,25 +28732,18 @@ Sitemap: https://binaryfundedtrader.com/sitemap.xml`);
       return res.status(400).json({ ok: false, error: err?.message || "Failed to update account state." });
     }
   });
-  const setNoCacheMarketHeaders = (res) => {
+  const setNoCacheMarketHeaders = __name4((res) => {
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
-  };
+  }, "setNoCacheMarketHeaders");
   app.get("/api/market/live-prices", (_req, res) => {
     try {
       setNoCacheMarketHeaders(res);
       const now = Date.now();
       const prices = marketEngine.getAllPrices();
       const forexRates = marketEngine.getForexRates();
-      return res.json({
-        ok: true,
-        timestamp: now,
-        serverTime: now,
-        source: marketEngine.getFeedSource(),
-        prices,
-        forexRates
-      });
+      return res.json({ ok: true, timestamp: now, serverTime: now, source: marketEngine.getFeedSource(), prices, forexRates });
     } catch (err) {
       return res.status(500).json({ ok: false, error: err?.message || "Failed to get live prices." });
     }
@@ -30255,16 +28754,7 @@ Sitemap: https://binaryfundedtrader.com/sitemap.xml`);
       const symbol = String(req.query.symbol || "EUR/USD (OTC)").trim();
       const tfSec = Number(req.query.timeframe) || 60;
       const snap = marketEngine.getMarketSnapshot(symbol, tfSec, 10);
-      return res.json({
-        ok: true,
-        symbol: snap.symbol,
-        price: snap.price,
-        prevPrice: snap.prevPrice,
-        activeCandle: snap.activeCandle,
-        timestamp: snap.serverTime,
-        serverTime: snap.serverTime,
-        source: snap.source
-      });
+      return res.json({ ok: true, symbol: snap.symbol, price: snap.price, prevPrice: snap.prevPrice, activeCandle: snap.activeCandle, timestamp: snap.serverTime, serverTime: snap.serverTime, source: snap.source });
     } catch (err) {
       return res.status(500).json({ ok: false, error: err?.message || "Failed to get ticker price." });
     }
@@ -30313,14 +28803,7 @@ data: ${JSON.stringify(initSnap)}
       lastSentMs = serverTime;
       try {
         const snap = marketEngine.getMarketSnapshot(symbol, tfSec, 2);
-        const payload = {
-          serverTime,
-          symbol: snap.symbol,
-          price: snap.price,
-          prevPrice: snap.prevPrice,
-          activeCandle: snap.activeCandle,
-          prices
-        };
+        const payload = { serverTime, symbol: snap.symbol, price: snap.price, prevPrice: snap.prevPrice, activeCandle: snap.activeCandle, prices };
         res.write(`event: tick
 data: ${JSON.stringify(payload)}
 
@@ -30331,17 +28814,10 @@ data: ${JSON.stringify(payload)}
     const heartbeatTimer = setInterval(() => {
       try {
         const snap = marketEngine.getMarketSnapshot(symbol, tfSec, 2);
-        res.write(
-          `event: heartbeat
-data: ${JSON.stringify({
-            serverTime: Date.now(),
-            symbol: snap.symbol,
-            price: snap.price,
-            activeCandle: snap.activeCandle
-          })}
+        res.write(`event: heartbeat
+data: ${JSON.stringify({ serverTime: Date.now(), symbol: snap.symbol, price: snap.price, activeCandle: snap.activeCandle })}
 
-`
-        );
+`);
       } catch {
       }
     }, 3e3);
@@ -30354,43 +28830,14 @@ data: ${JSON.stringify({
     try {
       const user = getAuthenticatedUser(req);
       if (!user) return res.status(401).json({ ok: false, error: "Unauthenticated" });
-      const {
-        id,
-        accountId,
-        asset,
-        direction,
-        strikePrice,
-        investment,
-        payoutPercentage,
-        durationSeconds,
-        startTime,
-        endTime,
-        accountTier
-      } = req.body || {};
+      const { id, accountId, asset, direction, strikePrice, investment, payoutPercentage, durationSeconds, startTime, endTime, accountTier } = req.body || {};
       if (!accountId || !asset || !direction || !investment) {
         return res.status(400).json({ ok: false, error: "Missing required trade execution parameters." });
       }
       const serverPrice = marketEngine.getPrice(asset);
       const executionPrice = Number(strikePrice) || serverPrice || 1;
-      const result = recordTradeInDb(user.id, {
-        id: id ? String(id) : void 0,
-        accountId: String(accountId),
-        asset: String(asset),
-        direction: direction === "CALL" ? "CALL" : "PUT",
-        strikePrice: executionPrice,
-        investment: Number(investment),
-        payoutPercentage: Number(payoutPercentage) || 92,
-        durationSeconds: Number(durationSeconds) || 30,
-        startTime: startTime ? Number(startTime) : void 0,
-        endTime: endTime ? Number(endTime) : void 0,
-        accountTier: accountTier ? String(accountTier) : void 0
-      });
-      return res.json({
-        ok: true,
-        trade: result.trade,
-        account: result.account,
-        message: "Trade placed successfully. Balance updated in database."
-      });
+      const result = recordTradeInDb(user.id, { id: id ? String(id) : void 0, accountId: String(accountId), asset: String(asset), direction: direction === "CALL" ? "CALL" : "PUT", strikePrice: executionPrice, investment: Number(investment), payoutPercentage: Number(payoutPercentage) || 92, durationSeconds: Number(durationSeconds) || 30, startTime: startTime ? Number(startTime) : void 0, endTime: endTime ? Number(endTime) : void 0, accountTier: accountTier ? String(accountTier) : void 0 });
+      return res.json({ ok: true, trade: result.trade, account: result.account, message: "Trade placed successfully. Balance updated in database." });
     } catch (err) {
       return res.status(400).json({ ok: false, error: err?.message || "Failed to place trade." });
     }
@@ -30405,16 +28852,8 @@ data: ${JSON.stringify({
       if (!tradeId) {
         return res.status(400).json({ ok: false, error: "Trade ID is required for settlement." });
       }
-      const result = settleTradeInDb(
-        user.id,
-        tradeId,
-        clientClosePrice ?? 1,
-        statusOverride
-      );
-      return res.json({
-        ok: true,
-        ...result
-      });
+      const result = settleTradeInDb(user.id, tradeId, clientClosePrice ?? 1, statusOverride);
+      return res.json({ ok: true, ...result });
     } catch (err) {
       return res.status(400).json({ ok: false, error: err?.message || "Failed to settle trade." });
     }
@@ -30444,15 +28883,7 @@ data: ${JSON.stringify({
         let targetSupaUuid = isValidUuid2(user.id) ? user.id : null;
         if (!targetSupaUuid && user.email) {
           try {
-            const pRes = await fetch(
-              `${supabaseUrl}/rest/v1/profiles?email=eq.${encodeURIComponent(user.email)}&select=id`,
-              {
-                headers: {
-                  apikey: supabaseAnonKey,
-                  Authorization: `Bearer ${supabaseAnonKey}`
-                }
-              }
-            );
+            const pRes = await fetch(`${supabaseUrl}/rest/v1/profiles?email=eq.${encodeURIComponent(user.email)}&select=id`, { headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}` } });
             if (pRes.ok) {
               const rows = await safeParseFetchJson(pRes, []);
               if (Array.isArray(rows) && rows.length > 0 && rows[0].id) {
@@ -30464,328 +28895,121 @@ data: ${JSON.stringify({
         }
         if (targetSupaUuid) {
           const lockedStatus = result.lockedAccount?.status || "passed";
-          fetch(
-            `${supabaseUrl}/rest/v1/trading_accounts?user_id=eq.${encodeURIComponent(
-              targetSupaUuid
-            )}&id=eq.${encodeURIComponent(accountId)}`,
-            {
-              method: "PATCH",
-              headers: {
-                apikey: supabaseAnonKey,
-                Authorization: `Bearer ${supabaseAnonKey}`,
-                "Content-Type": "application/json"
-              },
-              body: JSON.stringify({
-                status: lockedStatus,
-                certificate_id: result.certificateId
-              })
-            }
-          ).catch(() => {
+          fetch(`${supabaseUrl}/rest/v1/trading_accounts?user_id=eq.${encodeURIComponent(targetSupaUuid)}&id=eq.${encodeURIComponent(accountId)}`, { method: "PATCH", headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ status: lockedStatus, certificate_id: result.certificateId }) }).catch(() => {
           });
           if (result.deployedAccount) {
             const depAcc = result.deployedAccount;
             const limits = getDynamicAccountLimits(depAcc.tier, depAcc.phase);
-            const supaAccountPayload = {
-              user_id: targetSupaUuid,
-              account_type: limits.accountType,
-              starting_balance: depAcc.size || depAcc.initialBalance,
-              current_balance: depAcc.currentBalance,
-              equity: depAcc.equity,
-              daily_drawdown: limits.dailyLossLimitPercent,
-              max_drawdown: limits.maxOverallLossPercent,
-              profit_target: limits.profitTargetPercent,
-              challenge_phase: depAcc.phase,
-              status: "active"
-            };
-            fetch(`${supabaseUrl}/rest/v1/trading_accounts`, {
-              method: "POST",
-              headers: {
-                apikey: supabaseAnonKey,
-                Authorization: `Bearer ${supabaseAnonKey}`,
-                "Content-Type": "application/json",
-                Prefer: "return=minimal"
-              },
-              body: JSON.stringify(supaAccountPayload)
-            }).catch(() => {
+            const supaAccountPayload = { user_id: targetSupaUuid, account_type: limits.accountType, starting_balance: depAcc.size || depAcc.initialBalance, current_balance: depAcc.currentBalance, equity: depAcc.equity, daily_drawdown: limits.dailyLossLimitPercent, max_drawdown: limits.maxOverallLossPercent, profit_target: limits.profitTargetPercent, challenge_phase: depAcc.phase, status: "active" };
+            fetch(`${supabaseUrl}/rest/v1/trading_accounts`, { method: "POST", headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify(supaAccountPayload) }).catch(() => {
             });
           }
         }
       }
       const accounts = getAccountsForUser(user.id);
-      return res.json({
-        ok: true,
-        ...result,
-        accounts
-      });
+      return res.json({ ok: true, ...result, accounts });
     } catch (err) {
       return res.status(400).json({ ok: false, error: err?.message || "Failed to advance challenge phase." });
     }
   });
-  app.all(
-    ["/api/accounts/purchase", "/functions/v1/accounts-purchase", "/functions/v1/purchase-account", "/purchase-package", "/functions/v1/purchase-package"],
-    async (req, res) => {
-      try {
-        const reqUserId = String(req.body?.userId || "").trim();
-        const reqEmail = String(req.body?.email || "").trim();
-        const reqFullName = String(req.body?.fullName || "").trim();
-        if (supabaseUrl && supabaseAnonKey) {
-          try {
-            const profRes = await fetch(`${supabaseUrl}/rest/v1/profiles?select=id,email,full_name,referral_code,referred_by`, {
-              headers: {
-                apikey: supabaseAnonKey,
-                Authorization: `Bearer ${supabaseAnonKey}`
-              }
-            });
-            if (profRes.ok) {
-              const profList = await profRes.json();
-              if (Array.isArray(profList)) {
-                syncSupabaseProfilesToAffiliateTree(profList);
-              }
-            }
-          } catch {
-          }
-        }
-        let user = getAuthenticatedUser(req) || (reqUserId ? getUserById(reqUserId) : null) || (reqEmail ? getUserByEmail(reqEmail) : null);
-        if (!user && (reqUserId || reqEmail)) {
-          user = ensureUserInDb({
-            id: reqUserId || `usr_${Date.now().toString(36)}`,
-            email: reqEmail || `${reqUserId}@bft.io`,
-            fullName: reqFullName || void 0
-          });
-        }
-        if (!user) {
-          user = getUserById("usr_bft_001");
-        }
-        if (!user) return res.status(401).json({ ok: false, error: "Unauthenticated" });
-        const tier = String(req.body?.tier || "two-step");
-        const tierName = String(req.body?.tierName || "$10,000 Challenge");
-        const size = Number(req.body?.size || 1e4);
-        const price = Number(req.body?.price || 99);
-        const referralCode = req.body?.referralCode ? String(req.body.referralCode).trim() : null;
-        const txHash = req.body?.txHash ? String(req.body.txHash).trim() : void 0;
-        const accountType = resolveDepositAccountType(req.body?.accountType || "challenge");
-        const packageName = String(
-          req.body?.packageName || `${tierName} ($${size.toLocaleString()})`
-        ).trim();
-        const sku = buildPackageSku({
-          accountType,
-          tier,
-          sizeOrAmount: size,
-          customSku: req.body?.sku ? String(req.body.sku) : void 0
-        });
-        const limits = getDynamicAccountLimits(tier, "phase_1");
-        const now = Date.now();
-        let cryptoDeposit = null;
+  app.all(["/api/accounts/purchase", "/functions/v1/accounts-purchase", "/functions/v1/purchase-account", "/purchase-package", "/functions/v1/purchase-package"], async (req, res) => {
+    try {
+      const reqUserId = String(req.body?.userId || "").trim();
+      const reqEmail = String(req.body?.email || "").trim();
+      const reqFullName = String(req.body?.fullName || "").trim();
+      if (supabaseUrl && supabaseAnonKey) {
         try {
-          cryptoDeposit = createCryptoDepositRecord({
-            userId: user.id,
-            walletAddress: DIRECT_USDT_WALLET_ADDRESS,
-            amount: price,
-            packageName,
-            sku,
-            accountType,
-            txHash: txHash || void 0,
-            createdAtMs: now
-          });
-        } catch (depErr) {
-          console.warn("Purchase crypto_deposits record warning:", depErr);
-        }
-        let purchaseRecord = null;
-        try {
-          purchaseRecord = createUserPurchaseRecord({
-            id: cryptoDeposit?.id || `PUR-${now.toString(36).toUpperCase()}`,
-            userId: user.id,
-            accountId: null,
-            packageId: sku,
-            packageName,
-            packageSku: sku,
-            amount: price,
-            packageAmount: price,
-            accountType,
-            status: "pending",
-            txHash: txHash || null,
-            createdAtMs: now
-          });
-        } catch (purErr) {
-          console.warn("Purchase user_purchases record warning:", purErr);
-        }
-        let targetSupaUuid = null;
-        if (supabaseUrl && supabaseAnonKey) {
-          targetSupaUuid = await ensureSupabaseProfileInRest(supabaseUrl, supabaseAnonKey, {
-            id: user.id,
-            email: user.email,
-            full_name: user.full_name
-          });
-          const supaPendingDepositPayload = buildSupabaseCryptoDepositRow({
-            userId: targetSupaUuid,
-            walletAddress: DIRECT_USDT_WALLET_ADDRESS,
-            amount: price,
-            packageName,
-            sku,
-            accountType,
-            status: "pending",
-            txHash: txHash || void 0
-          });
-          fetch(`${supabaseUrl}/rest/v1/crypto_deposits`, {
-            method: "POST",
-            headers: {
-              apikey: supabaseAnonKey,
-              Authorization: `Bearer ${supabaseAnonKey}`,
-              "Content-Type": "application/json",
-              Prefer: "return=minimal"
-            },
-            body: JSON.stringify(supaPendingDepositPayload)
-          }).catch(() => {
-          });
-          fetch(`${supabaseUrl}/rest/v1/transactions`, {
-            method: "POST",
-            headers: {
-              apikey: supabaseAnonKey,
-              Authorization: `Bearer ${supabaseAnonKey}`,
-              "Content-Type": "application/json",
-              Prefer: "return=minimal"
-            },
-            body: JSON.stringify(supaPendingDepositPayload)
-          }).catch(() => {
-          });
-          const { fullPayload, corePayload } = buildSupabaseUserPurchasePayload({
-            userId: targetSupaUuid,
-            packageId: sku,
-            packageName,
-            packageSku: sku,
-            amount: price,
-            packageAmount: price,
-            accountType,
-            status: "pending",
-            txHash: txHash || null
-          });
-          fetch(`${supabaseUrl}/rest/v1/user_purchases`, {
-            method: "POST",
-            headers: {
-              apikey: supabaseAnonKey,
-              Authorization: `Bearer ${supabaseAnonKey}`,
-              "Content-Type": "application/json",
-              Prefer: "return=minimal"
-            },
-            body: JSON.stringify(fullPayload)
-          }).then((r) => {
-            if (!r.ok) {
-              return fetch(`${supabaseUrl}/rest/v1/user_purchases`, {
-                method: "POST",
-                headers: {
-                  apikey: supabaseAnonKey,
-                  Authorization: `Bearer ${supabaseAnonKey}`,
-                  "Content-Type": "application/json",
-                  Prefer: "return=minimal"
-                },
-                body: JSON.stringify(corePayload)
-              });
-            }
-          }).catch(() => {
-          });
-        }
-        let verificationResult = null;
-        try {
-          verificationResult = await verifyPendingCryptoDepositsWithTronGrid({
-            userId: user.id,
-            nowMs: now
-          });
-        } catch (verifyErr) {
-          console.warn("Purchase TronGrid verification warning:", verifyErr);
-        }
-        if (cryptoDeposit?.id) {
-          cryptoDeposit = db.prepare("SELECT * FROM crypto_deposits WHERE id = ?").get(cryptoDeposit.id) || cryptoDeposit;
-          purchaseRecord = db.prepare("SELECT * FROM user_purchases WHERE id = ?").get(cryptoDeposit.id) || purchaseRecord;
-        }
-        const isVerifiedOnChain = cryptoDeposit?.status === "completed" || cryptoDeposit?.status === "active";
-        let provisionedAccount = null;
-        let commissions = [];
-        if (isVerifiedOnChain) {
-          provisionedAccount = cryptoDeposit?.account_id ? getAccountById(cryptoDeposit.account_id) : null;
-          commissions = creditPurchaseCommissions(user.id, packageName, price, referralCode);
-          if (supabaseUrl && supabaseAnonKey && targetSupaUuid) {
-            const supaAccountPayload = {
-              user_id: targetSupaUuid,
-              account_type: limits.accountType,
-              starting_balance: size,
-              current_balance: size,
-              equity: size,
-              daily_drawdown: limits.dailyLossLimitPercent,
-              max_drawdown: limits.maxOverallLossPercent,
-              profit_target: limits.profitTargetPercent,
-              challenge_phase: limits.initialPhase,
-              status: "active"
-            };
-            fetch(`${supabaseUrl}/rest/v1/trading_accounts`, {
-              method: "POST",
-              headers: {
-                apikey: supabaseAnonKey,
-                Authorization: `Bearer ${supabaseAnonKey}`,
-                "Content-Type": "application/json",
-                Prefer: "return=minimal"
-              },
-              body: JSON.stringify(supaAccountPayload)
-            }).catch(() => {
-            });
-            for (const comm of commissions) {
-              const commRow = {
-                referrer_id: comm.sponsorId,
-                referred_user_id: comm.referredUserId || user.id,
-                level: comm.level,
-                package_name: packageName,
-                package_amount: price,
-                amount: comm.amount,
-                source_type: "package",
-                description: packageName
-              };
-              fetch(`${supabaseUrl}/rest/v1/referral_commissions`, {
-                method: "POST",
-                headers: {
-                  apikey: supabaseAnonKey,
-                  Authorization: `Bearer ${supabaseAnonKey}`,
-                  "Content-Type": "application/json",
-                  Prefer: "return=minimal"
-                },
-                body: JSON.stringify(commRow)
-              }).catch(() => {
-              });
+          const profRes = await fetch(`${supabaseUrl}/rest/v1/profiles?select=id,email,full_name,referral_code,referred_by`, { headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}` } });
+          if (profRes.ok) {
+            const profList = await profRes.json();
+            if (Array.isArray(profList)) {
+              syncSupabaseProfilesToAffiliateTree(profList);
             }
           }
+        } catch {
         }
-        const effectiveStatus = isVerifiedOnChain ? "completed" : cryptoDeposit?.status === "failed" ? "failed" : "pending";
-        const normalizedPurchase = mapPurchaseRecord(
-          purchaseRecord || {
-            id: cryptoDeposit?.id || `PUR-${now.toString(36).toUpperCase()}`,
-            user_id: user.id,
-            account_id: provisionedAccount?.id || null,
-            package_id: sku,
-            package_name: packageName,
-            package_sku: sku,
-            amount: price,
-            package_amount: price,
-            account_type: accountType,
-            status: effectiveStatus,
-            created_at: now
-          },
-          now
-        );
-        return res.json({
-          ok: true,
-          verified: isVerifiedOnChain,
-          account: provisionedAccount,
-          deposit: cryptoDeposit,
-          purchase: normalizedPurchase,
-          commissions,
-          verification: verificationResult,
-          status: effectiveStatus,
-          expiresAt: (cryptoDeposit?.created_at || now) + DEPOSIT_EXPIRY_MS,
-          message: isVerifiedOnChain ? "Blockchain payment confirmed! Your funded trading account has been provisioned." : "Order recorded in pending status. Your account will only be provisioned once the TRC-20 blockchain or Cryptomus gateway confirms your payment (expires in 60 minutes if unpaid)."
-        });
-      } catch (err) {
-        return res.status(500).json({ ok: false, error: err?.message || "Failed to record evaluation package order." });
       }
+      let user = getAuthenticatedUser(req) || (reqUserId ? getUserById(reqUserId) : null) || (reqEmail ? getUserByEmail(reqEmail) : null);
+      if (!user && (reqUserId || reqEmail)) {
+        user = ensureUserInDb({ id: reqUserId || `usr_${Date.now().toString(36)}`, email: reqEmail || `${reqUserId}@bft.io`, fullName: reqFullName || void 0 });
+      }
+      if (!user) {
+        user = getUserById("usr_bft_001");
+      }
+      if (!user) return res.status(401).json({ ok: false, error: "Unauthenticated" });
+      const tier = String(req.body?.tier || "two-step");
+      const tierName = String(req.body?.tierName || "$10,000 Challenge");
+      const size = Number(req.body?.size || 1e4);
+      const price = Number(req.body?.price || 99);
+      const referralCode = req.body?.referralCode ? String(req.body.referralCode).trim() : null;
+      const txHash = req.body?.txHash ? String(req.body.txHash).trim() : void 0;
+      const accountType = resolveDepositAccountType(req.body?.accountType || "challenge");
+      const packageName = String(req.body?.packageName || `${tierName} ($${size.toLocaleString()})`).trim();
+      const sku = buildPackageSku({ accountType, tier, sizeOrAmount: size, customSku: req.body?.sku ? String(req.body.sku) : void 0 });
+      const limits = getDynamicAccountLimits(tier, "phase_1");
+      const now = Date.now();
+      let cryptoDeposit = null;
+      try {
+        cryptoDeposit = createCryptoDepositRecord({ userId: user.id, walletAddress: DIRECT_USDT_WALLET_ADDRESS, amount: price, packageName, sku, accountType, txHash: txHash || void 0, createdAtMs: now });
+      } catch (depErr) {
+        console.warn("Purchase crypto_deposits record warning:", depErr);
+      }
+      let purchaseRecord = null;
+      try {
+        purchaseRecord = createUserPurchaseRecord({ id: cryptoDeposit?.id || `PUR-${now.toString(36).toUpperCase()}`, userId: user.id, accountId: null, packageId: sku, packageName, packageSku: sku, amount: price, packageAmount: price, accountType, status: "pending", txHash: txHash || null, createdAtMs: now });
+      } catch (purErr) {
+        console.warn("Purchase user_purchases record warning:", purErr);
+      }
+      let targetSupaUuid = null;
+      if (supabaseUrl && supabaseAnonKey) {
+        targetSupaUuid = await ensureSupabaseProfileInRest(supabaseUrl, supabaseAnonKey, { id: user.id, email: user.email, full_name: user.full_name });
+        const supaPendingDepositPayload = buildSupabaseCryptoDepositRow({ userId: targetSupaUuid, walletAddress: DIRECT_USDT_WALLET_ADDRESS, amount: price, packageName, sku, accountType, status: "pending", txHash: txHash || void 0 });
+        fetch(`${supabaseUrl}/rest/v1/crypto_deposits`, { method: "POST", headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify(supaPendingDepositPayload) }).catch(() => {
+        });
+        fetch(`${supabaseUrl}/rest/v1/transactions`, { method: "POST", headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify(supaPendingDepositPayload) }).catch(() => {
+        });
+        const { fullPayload, corePayload } = buildSupabaseUserPurchasePayload({ userId: targetSupaUuid, packageId: sku, packageName, packageSku: sku, amount: price, packageAmount: price, accountType, status: "pending", txHash: txHash || null });
+        fetch(`${supabaseUrl}/rest/v1/user_purchases`, { method: "POST", headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify(fullPayload) }).then((r) => {
+          if (!r.ok) {
+            return fetch(`${supabaseUrl}/rest/v1/user_purchases`, { method: "POST", headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify(corePayload) });
+          }
+        }).catch(() => {
+        });
+      }
+      let verificationResult = null;
+      try {
+        verificationResult = await verifyPendingCryptoDepositsWithTronGrid({ userId: user.id, nowMs: now });
+      } catch (verifyErr) {
+        console.warn("Purchase TronGrid verification warning:", verifyErr);
+      }
+      if (cryptoDeposit?.id) {
+        cryptoDeposit = db.prepare("SELECT * FROM crypto_deposits WHERE id = ?").get(cryptoDeposit.id) || cryptoDeposit;
+        purchaseRecord = db.prepare("SELECT * FROM user_purchases WHERE id = ?").get(cryptoDeposit.id) || purchaseRecord;
+      }
+      const isVerifiedOnChain = cryptoDeposit?.status === "completed" || cryptoDeposit?.status === "active";
+      let provisionedAccount = null;
+      let commissions = [];
+      if (isVerifiedOnChain) {
+        provisionedAccount = cryptoDeposit?.account_id ? getAccountById(cryptoDeposit.account_id) : null;
+        commissions = creditPurchaseCommissions(user.id, packageName, price, referralCode);
+        if (supabaseUrl && supabaseAnonKey && targetSupaUuid) {
+          const supaAccountPayload = { user_id: targetSupaUuid, account_type: limits.accountType, starting_balance: size, current_balance: size, equity: size, daily_drawdown: limits.dailyLossLimitPercent, max_drawdown: limits.maxOverallLossPercent, profit_target: limits.profitTargetPercent, challenge_phase: limits.initialPhase, status: "active" };
+          fetch(`${supabaseUrl}/rest/v1/trading_accounts`, { method: "POST", headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify(supaAccountPayload) }).catch(() => {
+          });
+          for (const comm of commissions) {
+            const commRow = { referrer_id: comm.sponsorId, referred_user_id: comm.referredUserId || user.id, level: comm.level, package_name: packageName, package_amount: price, amount: comm.amount, source_type: "package", description: packageName };
+            fetch(`${supabaseUrl}/rest/v1/referral_commissions`, { method: "POST", headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify(commRow) }).catch(() => {
+            });
+          }
+        }
+      }
+      const effectiveStatus = isVerifiedOnChain ? "completed" : cryptoDeposit?.status === "failed" ? "failed" : "pending";
+      const normalizedPurchase = mapPurchaseRecord(purchaseRecord || { id: cryptoDeposit?.id || `PUR-${now.toString(36).toUpperCase()}`, user_id: user.id, account_id: provisionedAccount?.id || null, package_id: sku, package_name: packageName, package_sku: sku, amount: price, package_amount: price, account_type: accountType, status: effectiveStatus, created_at: now }, now);
+      return res.json({ ok: true, verified: isVerifiedOnChain, account: provisionedAccount, deposit: cryptoDeposit, purchase: normalizedPurchase, commissions, verification: verificationResult, status: effectiveStatus, expiresAt: (cryptoDeposit?.created_at || now) + DEPOSIT_EXPIRY_MS, message: isVerifiedOnChain ? "Blockchain payment confirmed! Your funded trading account has been provisioned." : "Order recorded in pending status. Your account will only be provisioned once the TRC-20 blockchain or Cryptomus gateway confirms your payment (expires in 60 minutes if unpaid)." });
+    } catch (err) {
+      return res.status(500).json({ ok: false, error: err?.message || "Failed to record evaluation package order." });
     }
-  );
+  });
   app.get(["/api/purchases", "/api/orders"], (req, res) => {
     try {
       const user = getAuthenticatedUser(req);
@@ -30799,68 +29023,29 @@ data: ${JSON.stringify({
       for (const d of rawDeposits) {
         merged = mergeRealtimePurchase(merged, d, "INSERT");
       }
-      return res.json({
-        ok: true,
-        purchases: merged
-      });
+      return res.json({ ok: true, purchases: merged });
     } catch (err) {
-      return res.status(500).json({
-        ok: false,
-        error: err?.message || "Failed to load purchase history."
-      });
+      return res.status(500).json({ ok: false, error: err?.message || "Failed to load purchase history." });
     }
   });
-  app.all(
-    ["/api/purchases", "/api/orders", "/functions/v1/purchases", "/functions/v1/orders"],
-    async (req, res) => {
-      try {
-        const user = getAuthenticatedUser(req);
-        const userId = String(user?.id || req.body?.userId || req.body?.user_id || "usr_bft_001").trim();
-        const amount = Number(req.body?.amount ?? req.body?.package_amount ?? req.body?.price ?? 0);
-        const packageAmount = Number(req.body?.packageAmount ?? req.body?.package_amount ?? amount);
-        const accountType = resolveDepositAccountType(
-          req.body?.accountType || req.body?.account_type || "challenge"
-        );
-        const packageName = String(
-          req.body?.packageName || req.body?.package_name || "Challenge Package"
-        ).trim();
-        const packageSku = buildPackageSku({
-          accountType,
-          sizeOrAmount: packageAmount || amount,
-          customSku: req.body?.packageSku || req.body?.package_sku || req.body?.packageId || req.body?.package_id
-        });
-        const packageId = String(req.body?.packageId || req.body?.package_id || packageSku).trim();
-        const status = req.body?.status || "completed";
-        ensureUserInDb({
-          id: userId,
-          email: user?.email || `${userId.toLowerCase().replace(/[^a-z0-9]/g, "")}@client-bft.com`,
-          fullName: user?.full_name || `Trader ${userId.slice(-4)}`
-        });
-        const saved = createUserPurchaseRecord({
-          id: req.body?.id ? String(req.body.id) : void 0,
-          userId,
-          accountId: req.body?.accountId || req.body?.account_id || null,
-          packageId,
-          packageName,
-          packageSku,
-          amount: Math.max(0.01, amount),
-          packageAmount: Math.max(0.01, packageAmount),
-          accountType,
-          status,
-          txHash: req.body?.txHash || req.body?.tx_hash || null
-        });
-        return res.json({
-          ok: true,
-          purchase: mapPurchaseRecord(saved)
-        });
-      } catch (err) {
-        return res.status(400).json({
-          ok: false,
-          error: err?.message || "Failed to record purchase."
-        });
-      }
+  app.all(["/api/purchases", "/api/orders", "/functions/v1/purchases", "/functions/v1/orders"], async (req, res) => {
+    try {
+      const user = getAuthenticatedUser(req);
+      const userId = String(user?.id || req.body?.userId || req.body?.user_id || "usr_bft_001").trim();
+      const amount = Number(req.body?.amount ?? req.body?.package_amount ?? req.body?.price ?? 0);
+      const packageAmount = Number(req.body?.packageAmount ?? req.body?.package_amount ?? amount);
+      const accountType = resolveDepositAccountType(req.body?.accountType || req.body?.account_type || "challenge");
+      const packageName = String(req.body?.packageName || req.body?.package_name || "Challenge Package").trim();
+      const packageSku = buildPackageSku({ accountType, sizeOrAmount: packageAmount || amount, customSku: req.body?.packageSku || req.body?.package_sku || req.body?.packageId || req.body?.package_id });
+      const packageId = String(req.body?.packageId || req.body?.package_id || packageSku).trim();
+      const status = req.body?.status || "completed";
+      ensureUserInDb({ id: userId, email: user?.email || `${userId.toLowerCase().replace(/[^a-z0-9]/g, "")}@client-bft.com`, fullName: user?.full_name || `Trader ${userId.slice(-4)}` });
+      const saved = createUserPurchaseRecord({ id: req.body?.id ? String(req.body.id) : void 0, userId, accountId: req.body?.accountId || req.body?.account_id || null, packageId, packageName, packageSku, amount: Math.max(0.01, amount), packageAmount: Math.max(0.01, packageAmount), accountType, status, txHash: req.body?.txHash || req.body?.tx_hash || null });
+      return res.json({ ok: true, purchase: mapPurchaseRecord(saved) });
+    } catch (err) {
+      return res.status(400).json({ ok: false, error: err?.message || "Failed to record purchase." });
     }
-  );
+  });
   app.post("/api/accounts/deposit-personal", (req, res) => {
     try {
       const user = getAuthenticatedUser(req);
@@ -30868,27 +29053,13 @@ data: ${JSON.stringify({
       const amount = Number(req.body?.amount);
       const accountId = req.body?.accountId ? String(req.body.accountId).trim() : void 0;
       if (!Number.isFinite(amount) || amount < 10) {
-        return res.status(400).json({
-          ok: false,
-          error: "Minimum Personal Live deposit is $10.00 USDT."
-        });
+        return res.status(400).json({ ok: false, error: "Minimum Personal Live deposit is $10.00 USDT." });
       }
       ensurePersonalLiveAccountForUser(user.id);
-      const updatedAccount = creditPersonalAccountDepositInDb({
-        userId: user.id,
-        accountId,
-        amountUsdt: amount
-      });
-      return res.json({
-        ok: true,
-        account: updatedAccount,
-        creditedAmountUsdt: amount
-      });
+      const updatedAccount = creditPersonalAccountDepositInDb({ userId: user.id, accountId, amountUsdt: amount });
+      return res.json({ ok: true, account: updatedAccount, creditedAmountUsdt: amount });
     } catch (err) {
-      return res.status(400).json({
-        ok: false,
-        error: err?.message || "Failed to credit Personal Live account deposit."
-      });
+      return res.status(400).json({ ok: false, error: err?.message || "Failed to credit Personal Live account deposit." });
     }
   });
   app.post("/api/withdrawals", async (req, res) => {
@@ -30915,26 +29086,16 @@ data: ${JSON.stringify({
       } else {
         return res.status(403).json({ ok: false, error: "2FA is not enabled. Please enable 2FA in Security settings." });
       }
-      const result = processWithdrawalRequest({
-        userId: user.id,
-        accountId,
-        requestedAmount,
-        walletAddress,
-        network,
-        paymentMethod
-      });
+      const result = processWithdrawalRequest({ userId: user.id, accountId, requestedAmount, walletAddress, network, paymentMethod });
       return res.json(result);
     } catch (err) {
       return res.status(400).json({ ok: false, error: err?.message || "Withdrawal failed." });
     }
   });
-  const handleCancelWithdrawalRoute = (req, res) => {
+  const handleCancelWithdrawalRoute = __name4((req, res) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-    res.setHeader(
-      "Access-Control-Allow-Headers",
-      "authorization, x-client-info, apikey, content-type, x-admin-key"
-    );
+    res.setHeader("Access-Control-Allow-Headers", "authorization, x-client-info, apikey, content-type, x-admin-key");
     try {
       const user = getAuthenticatedUser(req);
       if (!user) return res.status(401).json({ ok: false, error: "Unauthenticated" });
@@ -30945,7 +29106,7 @@ data: ${JSON.stringify({
     } catch (err) {
       return res.status(400).json({ ok: false, error: err?.message || "Cancellation failed." });
     }
-  };
+  }, "handleCancelWithdrawalRoute");
   app.post("/api/withdrawals/cancel", handleCancelWithdrawalRoute);
   app.post("/functions/v1/api/withdrawals/cancel", handleCancelWithdrawalRoute);
   app.get("/api/withdrawals", (req, res) => {
@@ -30958,12 +29119,7 @@ data: ${JSON.stringify({
     try {
       if (supabaseUrl && supabaseAnonKey) {
         try {
-          const profRes = await fetch(`${supabaseUrl}/rest/v1/profiles?select=id,email,full_name,referral_code,referred_by`, {
-            headers: {
-              apikey: supabaseAnonKey,
-              Authorization: `Bearer ${supabaseAnonKey}`
-            }
-          });
+          const profRes = await fetch(`${supabaseUrl}/rest/v1/profiles?select=id,email,full_name,referral_code,referred_by`, { headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}` } });
           if (profRes.ok) {
             const profList = await profRes.json();
             if (Array.isArray(profList)) {
@@ -30978,54 +29134,19 @@ data: ${JSON.stringify({
       const user = (qUserId ? getUserById(qUserId) : null) || (qEmail ? getUserByEmail(qEmail) : null) || getAuthenticatedUser(req);
       const targetId = user?.id || qUserId;
       if (!targetId) {
-        return res.json({
-          ok: true,
-          stats: {
-            lifetimeEarnings: 0,
-            availableBalance: 0,
-            pendingCommission: 0,
-            totalReferralsCount: 0,
-            activeFundedCount: 0,
-            vipThreshold: 1e3,
-            vipProgressPercent: 0,
-            remainingToVip: 1e3,
-            affiliateTier: "basic",
-            isVipUnlocked: false,
-            milestoneRewardAmount: 1e4,
-            milestoneClaimed: false,
-            level1Count: 0,
-            level1Earnings: 0,
-            level2Count: 0,
-            level2Earnings: 0,
-            level3Count: 0,
-            level3Earnings: 0,
-            withdrawalEarnings: 0,
-            teamSize: 0,
-            recentCommissions: [],
-            networkTree: []
-          },
-          referralCode: user?.referral_code || ""
-        });
+        return res.json({ ok: true, stats: { lifetimeEarnings: 0, availableBalance: 0, pendingCommission: 0, totalReferralsCount: 0, activeFundedCount: 0, vipThreshold: 1e3, vipProgressPercent: 0, remainingToVip: 1e3, affiliateTier: "basic", isVipUnlocked: false, milestoneRewardAmount: 1e4, milestoneClaimed: false, level1Count: 0, level1Earnings: 0, level2Count: 0, level2Earnings: 0, level3Count: 0, level3Earnings: 0, withdrawalEarnings: 0, teamSize: 0, recentCommissions: [], networkTree: [] }, referralCode: user?.referral_code || "" });
       }
       const stats = getAffiliateDashboardStats(targetId);
-      return res.json({
-        ok: true,
-        stats,
-        referralCode: user?.referral_code || ""
-      });
+      return res.json({ ok: true, stats, referralCode: user?.referral_code || "" });
     } catch (err) {
       return res.status(500).json({ ok: false, error: err?.message || "Failed to load affiliate dashboard" });
     }
   });
   app.get("/api/leaderboard", (_req, res) => {
     const traders = getWeeklyLeaderboardQuery();
-    return res.json({
-      ok: true,
-      traders,
-      resetSchedule: "Resets Monday 00:00 UTC"
-    });
+    return res.json({ ok: true, traders, resetSchedule: "Resets Monday 00:00 UTC" });
   });
-  const setExplicitMimeHeaders = (res, filePath) => {
+  const setExplicitMimeHeaders = __name4((res, filePath) => {
     const ext = path2.extname(filePath).toLowerCase();
     if (ext === ".js" || ext === ".mjs" || ext === ".cjs") {
       res.setHeader("Content-Type", "application/javascript; charset=utf-8");
@@ -31044,249 +29165,100 @@ data: ${JSON.stringify({
     } else if (ext === ".html") {
       res.setHeader("Content-Type", "text/html; charset=utf-8");
     }
-  };
+  }, "setExplicitMimeHeaders");
   app.get("/api/deposit/config", (_req, res) => {
-    return res.json({
-      ok: true,
-      walletAddress: DIRECT_USDT_WALLET_ADDRESS,
-      tronGridEndpoint: TRONGRID_TRC20_ENDPOINT,
-      qrCodeImageUrl: DIRECT_USDT_TRC20_CONFIG.qrCodeImageUrl,
-      currency: DIRECT_USDT_TRC20_CONFIG.currency,
-      network: DIRECT_USDT_TRC20_CONFIG.network,
-      minDepositUsdt: DIRECT_USDT_TRC20_CONFIG.minDepositUsdt,
-      maxDepositUsdt: DIRECT_USDT_TRC20_CONFIG.maxDepositUsdt,
-      depositExpiryMs: DEPOSIT_EXPIRY_MS
-    });
+    return res.json({ ok: true, walletAddress: DIRECT_USDT_WALLET_ADDRESS, tronGridEndpoint: TRONGRID_TRC20_ENDPOINT, qrCodeImageUrl: DIRECT_USDT_TRC20_CONFIG.qrCodeImageUrl, currency: DIRECT_USDT_TRC20_CONFIG.currency, network: DIRECT_USDT_TRC20_CONFIG.network, minDepositUsdt: DIRECT_USDT_TRC20_CONFIG.minDepositUsdt, maxDepositUsdt: DIRECT_USDT_TRC20_CONFIG.maxDepositUsdt, depositExpiryMs: DEPOSIT_EXPIRY_MS });
   });
-  app.all(
-    ["/api/deposit/submit", "/api/crypto-deposits", "/functions/v1/deposit-submit", "/functions/v1/crypto-deposits", "/verify-deposit", "/functions/v1/verify-deposit", "/submit-deposit", "/functions/v1/submit-deposit"],
-    async (req, res, next) => {
-      if (req.method === "GET") {
-        return next();
-      }
-      try {
-        const user = getAuthenticatedUser(req);
-        const rawAmount = Number(req.body?.amount);
-        const accountId = req.body?.accountId ? String(req.body.accountId).trim() : void 0;
-        const userId = String(user?.id || req.body?.userId || "usr_bft_001").trim();
-        const txHash = req.body?.txHash ? String(req.body.txHash).trim() : void 0;
-        const accountType = resolveDepositAccountType(
-          req.body?.accountType || req.body?.account_type || "self_funded"
-        );
-        const validation = validateDirectDepositAmount(rawAmount);
-        if (!validation.valid) {
-          return res.status(400).json({
-            ok: false,
-            error: validation.error
-          });
-        }
-        const amount = Number(rawAmount.toFixed(2));
-        const packageName = String(
-          req.body?.packageName || req.body?.package_name || (accountType === "self_funded" ? `Self-Funded Live Deposit ($${amount.toFixed(2)} USDT)` : "Funded Challenge Evaluation")
-        ).trim();
-        const sku = buildPackageSku({
-          accountType,
-          tier: req.body?.tier,
-          sizeOrAmount: amount,
-          customSku: req.body?.sku || req.body?.package_sku
-        });
-        const deposit = createCryptoDepositRecord({
-          userId,
-          accountId: accountType === "self_funded" ? accountId || "BFT-PERS-001" : void 0,
-          walletAddress: DIRECT_USDT_WALLET_ADDRESS,
-          amount,
-          packageName,
-          sku,
-          accountType,
-          txHash: txHash || void 0
-        });
-        if (supabaseUrl && supabaseAnonKey) {
-          const targetSupaUuid = await ensureSupabaseProfileInRest(supabaseUrl, supabaseAnonKey, {
-            id: userId,
-            email: user?.email,
-            full_name: user?.full_name
-          });
-          const supaPayload = buildSupabaseCryptoDepositRow({
-            userId: targetSupaUuid,
-            walletAddress: DIRECT_USDT_WALLET_ADDRESS,
-            amount,
-            packageName,
-            sku,
-            accountType,
-            status: "pending",
-            txHash: txHash || void 0
-          });
-          fetch(`${supabaseUrl}/rest/v1/crypto_deposits`, {
-            method: "POST",
-            headers: {
-              apikey: supabaseAnonKey,
-              Authorization: `Bearer ${supabaseAnonKey}`,
-              "Content-Type": "application/json",
-              Prefer: "return=minimal"
-            },
-            body: JSON.stringify(supaPayload)
-          }).catch(() => {
-          });
-          fetch(`${supabaseUrl}/rest/v1/transactions`, {
-            method: "POST",
-            headers: {
-              apikey: supabaseAnonKey,
-              Authorization: `Bearer ${supabaseAnonKey}`,
-              "Content-Type": "application/json",
-              Prefer: "return=minimal"
-            },
-            body: JSON.stringify(supaPayload)
-          }).catch(() => {
-          });
-        }
-        let verificationResult = null;
-        try {
-          verificationResult = await verifyPendingCryptoDepositsWithTronGrid({ userId });
-        } catch (verifyErr) {
-          console.warn("Immediate TronGrid verification check warning:", verifyErr);
-        }
-        const latestDeposit = db.prepare("SELECT * FROM crypto_deposits WHERE id = ?").get(deposit.id) || deposit;
-        const isVerifiedCompleted = latestDeposit.status === "completed" || latestDeposit.status === "active";
-        let updatedAccount = null;
-        if (isVerifiedCompleted) {
-          const matchedEntry = verificationResult?.completedDeposits?.find(
-            (c) => c.deposit?.id === deposit.id
-          );
-          updatedAccount = matchedEntry?.account || (latestDeposit.account_id ? getAccountById(latestDeposit.account_id) : null);
-        } else {
-          updatedAccount = accountType === "self_funded" ? latestDeposit.account_id ? getAccountById(latestDeposit.account_id) : ensurePersonalLiveAccountForUser(userId) : null;
-        }
-        return res.json({
-          ok: true,
-          deposit: latestDeposit,
-          verified: isVerifiedCompleted,
-          status: latestDeposit.status || "pending",
-          expiresAt: (latestDeposit.created_at || Date.now()) + DEPOSIT_EXPIRY_MS,
-          creditedAmountUsdt: isVerifiedCompleted && accountType === "self_funded" ? amount : 0,
-          updatedAccount,
-          verification: verificationResult
-        });
-      } catch (err) {
-        return res.status(500).json({
-          ok: false,
-          error: err?.message || "Failed to process direct USDT (TRC-20) deposit."
-        });
-      }
+  app.all(["/api/deposit/submit", "/api/crypto-deposits", "/functions/v1/deposit-submit", "/functions/v1/crypto-deposits", "/verify-deposit", "/functions/v1/verify-deposit", "/submit-deposit", "/functions/v1/submit-deposit"], async (req, res, next) => {
+    if (req.method === "GET") {
+      return next();
     }
-  );
-  app.post(
-    ["/api/webhooks/cryptomus", "/api/crypto-deposits/webhook", "/api/payment/webhook"],
-    async (req, res) => {
-      try {
-        const payload = req.body || {};
-        const orderId = String(payload.order_id || payload.deposit_id || payload.id || "").trim();
-        if (!orderId) {
-          return res.status(400).json({
-            ok: false,
-            error: "Missing order_id / deposit_id in gateway webhook payload."
-          });
-        }
-        expireStalePendingDepositsInDb();
-        const deposit = db.prepare("SELECT * FROM crypto_deposits WHERE id = ?").get(orderId);
-        if (!deposit) {
-          return res.status(404).json({
-            ok: false,
-            error: `Deposit order ${orderId} not found.`
-          });
-        }
-        const claimedTxIds = getCompletedCryptoDepositTxHashes();
-        const evaluation = verifyGatewayOrBlockchainPayment({
-          deposit,
-          cryptomusPayload: payload,
-          claimedTxIds
+    try {
+      const user = getAuthenticatedUser(req);
+      const rawAmount = Number(req.body?.amount);
+      const accountId = req.body?.accountId ? String(req.body.accountId).trim() : void 0;
+      const userId = String(user?.id || req.body?.userId || "usr_bft_001").trim();
+      const txHash = req.body?.txHash ? String(req.body.txHash).trim() : void 0;
+      const accountType = resolveDepositAccountType(req.body?.accountType || req.body?.account_type || "self_funded");
+      const validation = validateDirectDepositAmount(rawAmount);
+      if (!validation.valid) {
+        return res.status(400).json({ ok: false, error: validation.error });
+      }
+      const amount = Number(rawAmount.toFixed(2));
+      const packageName = String(req.body?.packageName || req.body?.package_name || (accountType === "self_funded" ? `Self-Funded Live Deposit ($${amount.toFixed(2)} USDT)` : "Funded Challenge Evaluation")).trim();
+      const sku = buildPackageSku({ accountType, tier: req.body?.tier, sizeOrAmount: amount, customSku: req.body?.sku || req.body?.package_sku });
+      const deposit = createCryptoDepositRecord({ userId, accountId: accountType === "self_funded" ? accountId || "BFT-PERS-001" : void 0, walletAddress: DIRECT_USDT_WALLET_ADDRESS, amount, packageName, sku, accountType, txHash: txHash || void 0 });
+      if (supabaseUrl && supabaseAnonKey) {
+        const targetSupaUuid = await ensureSupabaseProfileInRest(supabaseUrl, supabaseAnonKey, { id: userId, email: user?.email, full_name: user?.full_name });
+        const supaPayload = buildSupabaseCryptoDepositRow({ userId: targetSupaUuid, walletAddress: DIRECT_USDT_WALLET_ADDRESS, amount, packageName, sku, accountType, status: "pending", txHash: txHash || void 0 });
+        fetch(`${supabaseUrl}/rest/v1/crypto_deposits`, { method: "POST", headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify(supaPayload) }).catch(() => {
         });
-        if (evaluation.status === "failed") {
-          const failedRow = failCryptoDepositInDb(deposit.id, evaluation.reason);
-          if (supabaseUrl && supabaseAnonKey && deposit.user_id) {
-            const targetUuid = isValidUuid2(deposit.user_id) ? deposit.user_id : toValidUuid(deposit.user_id);
-            fetch(
-              `${supabaseUrl}/rest/v1/crypto_deposits?user_id=eq.${encodeURIComponent(
-                targetUuid
-              )}&amount=eq.${encodeURIComponent(String(deposit.amount))}&status=eq.pending`,
-              {
-                method: "PATCH",
-                headers: {
-                  apikey: supabaseAnonKey,
-                  Authorization: `Bearer ${supabaseAnonKey}`,
-                  "Content-Type": "application/json"
-                },
-                body: JSON.stringify({ status: "failed" })
-              }
-            ).catch(() => {
-            });
-          }
-          return res.json({
-            ok: true,
-            verified: false,
-            status: "failed",
-            deposit: failedRow,
-            reason: evaluation.reason
-          });
-        }
-        if (evaluation.verified && evaluation.matchedTxHash) {
-          const completed = completeCryptoDepositInDb(deposit.id, evaluation.matchedTxHash);
-          if (supabaseUrl && supabaseAnonKey && deposit.user_id) {
-            const targetUuid = isValidUuid2(deposit.user_id) ? deposit.user_id : toValidUuid(deposit.user_id);
-            fetch(
-              `${supabaseUrl}/rest/v1/crypto_deposits?user_id=eq.${encodeURIComponent(
-                targetUuid
-              )}&amount=eq.${encodeURIComponent(String(deposit.amount))}&status=eq.pending`,
-              {
-                method: "PATCH",
-                headers: {
-                  apikey: supabaseAnonKey,
-                  Authorization: `Bearer ${supabaseAnonKey}`,
-                  "Content-Type": "application/json"
-                },
-                body: JSON.stringify({
-                  status: "completed",
-                  tx_hash: evaluation.matchedTxHash
-                })
-              }
-            ).catch(() => {
-            });
-          }
-          return res.json({
-            ok: true,
-            verified: true,
-            status: "completed",
-            deposit: completed.deposit,
-            account: completed.account,
-            txHash: evaluation.matchedTxHash
-          });
-        }
-        return res.json({
-          ok: true,
-          verified: false,
-          status: evaluation.status,
-          deposit,
-          reason: evaluation.reason
-        });
-      } catch (err) {
-        return res.status(400).json({
-          ok: false,
-          error: err?.message || "Gateway webhook verification failed."
+        fetch(`${supabaseUrl}/rest/v1/transactions`, { method: "POST", headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify(supaPayload) }).catch(() => {
         });
       }
+      let verificationResult = null;
+      try {
+        verificationResult = await verifyPendingCryptoDepositsWithTronGrid({ userId });
+      } catch (verifyErr) {
+        console.warn("Immediate TronGrid verification check warning:", verifyErr);
+      }
+      const latestDeposit = db.prepare("SELECT * FROM crypto_deposits WHERE id = ?").get(deposit.id) || deposit;
+      const isVerifiedCompleted = latestDeposit.status === "completed" || latestDeposit.status === "active";
+      let updatedAccount = null;
+      if (isVerifiedCompleted) {
+        const matchedEntry = verificationResult?.completedDeposits?.find((c) => c.deposit?.id === deposit.id);
+        updatedAccount = matchedEntry?.account || (latestDeposit.account_id ? getAccountById(latestDeposit.account_id) : null);
+      } else {
+        updatedAccount = accountType === "self_funded" ? latestDeposit.account_id ? getAccountById(latestDeposit.account_id) : ensurePersonalLiveAccountForUser(userId) : null;
+      }
+      return res.json({ ok: true, deposit: latestDeposit, verified: isVerifiedCompleted, status: latestDeposit.status || "pending", expiresAt: (latestDeposit.created_at || Date.now()) + DEPOSIT_EXPIRY_MS, creditedAmountUsdt: isVerifiedCompleted && accountType === "self_funded" ? amount : 0, updatedAccount, verification: verificationResult });
+    } catch (err) {
+      return res.status(500).json({ ok: false, error: err?.message || "Failed to process direct USDT (TRC-20) deposit." });
     }
-  );
+  });
+  app.post(["/api/webhooks/cryptomus", "/api/crypto-deposits/webhook", "/api/payment/webhook"], async (req, res) => {
+    try {
+      const payload = req.body || {};
+      const orderId = String(payload.order_id || payload.deposit_id || payload.id || "").trim();
+      if (!orderId) {
+        return res.status(400).json({ ok: false, error: "Missing order_id / deposit_id in gateway webhook payload." });
+      }
+      expireStalePendingDepositsInDb();
+      const deposit = db.prepare("SELECT * FROM crypto_deposits WHERE id = ?").get(orderId);
+      if (!deposit) {
+        return res.status(404).json({ ok: false, error: `Deposit order ${orderId} not found.` });
+      }
+      const claimedTxIds = getCompletedCryptoDepositTxHashes();
+      const evaluation = verifyGatewayOrBlockchainPayment({ deposit, cryptomusPayload: payload, claimedTxIds });
+      if (evaluation.status === "failed") {
+        const failedRow = failCryptoDepositInDb(deposit.id, evaluation.reason);
+        if (supabaseUrl && supabaseAnonKey && deposit.user_id) {
+          const targetUuid = isValidUuid2(deposit.user_id) ? deposit.user_id : toValidUuid(deposit.user_id);
+          fetch(`${supabaseUrl}/rest/v1/crypto_deposits?user_id=eq.${encodeURIComponent(targetUuid)}&amount=eq.${encodeURIComponent(String(deposit.amount))}&status=eq.pending`, { method: "PATCH", headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ status: "failed" }) }).catch(() => {
+          });
+        }
+        return res.json({ ok: true, verified: false, status: "failed", deposit: failedRow, reason: evaluation.reason });
+      }
+      if (evaluation.verified && evaluation.matchedTxHash) {
+        const completed = completeCryptoDepositInDb(deposit.id, evaluation.matchedTxHash);
+        if (supabaseUrl && supabaseAnonKey && deposit.user_id) {
+          const targetUuid = isValidUuid2(deposit.user_id) ? deposit.user_id : toValidUuid(deposit.user_id);
+          fetch(`${supabaseUrl}/rest/v1/crypto_deposits?user_id=eq.${encodeURIComponent(targetUuid)}&amount=eq.${encodeURIComponent(String(deposit.amount))}&status=eq.pending`, { method: "PATCH", headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ status: "completed", tx_hash: evaluation.matchedTxHash }) }).catch(() => {
+          });
+        }
+        return res.json({ ok: true, verified: true, status: "completed", deposit: completed.deposit, account: completed.account, txHash: evaluation.matchedTxHash });
+      }
+      return res.json({ ok: true, verified: false, status: evaluation.status, deposit, reason: evaluation.reason });
+    } catch (err) {
+      return res.status(400).json({ ok: false, error: err?.message || "Gateway webhook verification failed." });
+    }
+  });
   app.all(["/api/crypto-deposits/expire-stale", "/api/deposit/expire-stale"], async (_req, res) => {
     try {
       const sweep = expireStalePendingDepositsInDb();
-      return res.json({
-        ok: true,
-        ...sweep
-      });
+      return res.json({ ok: true, ...sweep });
     } catch (err) {
-      return res.status(500).json({
-        ok: false,
-        error: err?.message || "Failed to run 1-hour expiry sweep."
-      });
+      return res.status(500).json({ ok: false, error: err?.message || "Failed to run 1-hour expiry sweep." });
     }
   });
   app.all(["/api/crypto-deposits/verify", "/api/deposit/verify-trongrid"], async (req, res) => {
@@ -31294,25 +29266,13 @@ data: ${JSON.stringify({
       const user = getAuthenticatedUser(req);
       const overrideTransactions = Array.isArray(req.body?.transactions) ? req.body.transactions : void 0;
       const userIdFilter = typeof req.query.userId === "string" && req.query.userId.trim() ? req.query.userId.trim() : void 0;
-      const result = await verifyPendingCryptoDepositsWithTronGrid({
-        userId: userIdFilter,
-        overrideTransactions,
-        forceFetch: true
-      });
+      const result = await verifyPendingCryptoDepositsWithTronGrid({ userId: userIdFilter, overrideTransactions, forceFetch: true });
       const deposits = getCryptoDeposits({ userId: user?.id || userIdFilter });
       const transactions = getTransactions({ userId: user?.id || userIdFilter });
       const accounts = user?.id ? getAccountsForUser(user.id) : [];
-      return res.json({
-        ...result,
-        deposits,
-        transactions,
-        accounts
-      });
+      return res.json({ ...result, deposits, transactions, accounts });
     } catch (err) {
-      return res.status(500).json({
-        ok: false,
-        error: err?.message || "Failed to verify USDT (TRC-20) transactions via TronGrid."
-      });
+      return res.status(500).json({ ok: false, error: err?.message || "Failed to verify USDT (TRC-20) transactions via TronGrid." });
     }
   });
   app.get(["/api/deposit/history", "/api/crypto-deposits", "/api/transactions"], (req, res) => {
@@ -31320,265 +29280,141 @@ data: ${JSON.stringify({
       const user = getAuthenticatedUser(req);
       const queryUserId = typeof req.query.userId === "string" && req.query.userId.trim() ? req.query.userId.trim() : void 0;
       const accountId = typeof req.query.accountId === "string" ? req.query.accountId.trim() : "";
-      const cryptoDeposits = getCryptoDeposits({
-        userId: user?.id || queryUserId,
-        accountId: accountId || void 0
-      });
-      const transactions = getTransactions({
-        userId: user?.id || queryUserId
-      });
-      return res.json({
-        ok: true,
-        deposits: cryptoDeposits,
-        cryptoDeposits,
-        transactions,
-        totalCreditedUsdt: accountId ? creditedBalancesByAccount.get(accountId) || 0 : 0
-      });
+      const cryptoDeposits = getCryptoDeposits({ userId: user?.id || queryUserId, accountId: accountId || void 0 });
+      const transactions = getTransactions({ userId: user?.id || queryUserId });
+      return res.json({ ok: true, deposits: cryptoDeposits, cryptoDeposits, transactions, totalCreditedUsdt: accountId ? creditedBalancesByAccount.get(accountId) || 0 : 0 });
     } catch (err) {
-      return res.status(500).json({
-        ok: false,
-        error: err?.message || "Failed to load deposit history."
-      });
+      return res.status(500).json({ ok: false, error: err?.message || "Failed to load deposit history." });
     }
   });
-  const resolveUserFor2faOrProfile = (req) => {
+  const resolveUserFor2faOrProfile = __name4((req) => {
     const authed = getAuthenticatedUser(req);
     if (authed) return authed;
     const fallbackId = String(req.body?.userId || req.query?.userId || "usr_bft_001").trim();
     const fallbackEmail = String(req.body?.email || req.query?.email || "trader@bft.io").trim().toLowerCase();
-    return ensureUserInDb({
-      id: fallbackId,
-      email: fallbackEmail,
-      fullName: req.body?.fullName ? String(req.body.fullName) : void 0
-    });
-  };
-  app.all(
-    [
-      "/api/2fa/setup",
-      "/api/2fa/generate",
-      "/api/2fa/reconfigure",
-      "/api/profile/2fa/generate",
-      "/api/profile/2fa/reconfigure",
-      "/functions/v1/2fa-setup",
-      "/functions/v1/2fa-generate",
-      "/functions/v1/2fa-reconfigure"
-    ],
-    async (req, res) => {
-      res.setHeader("Content-Type", "application/json; charset=utf-8");
+    return ensureUserInDb({ id: fallbackId, email: fallbackEmail, fullName: req.body?.fullName ? String(req.body.fullName) : void 0 });
+  }, "resolveUserFor2faOrProfile");
+  app.all(["/api/2fa/setup", "/api/2fa/generate", "/api/2fa/reconfigure", "/api/profile/2fa/generate", "/api/profile/2fa/reconfigure", "/functions/v1/2fa-setup", "/functions/v1/2fa-generate", "/functions/v1/2fa-reconfigure"], async (req, res) => {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    try {
+      const user = resolveUserFor2faOrProfile(req);
+      if (!user) {
+        return res.status(401).json({ ok: false, error: "Unauthenticated" });
+      }
+      const secret = generateSecret();
+      const emailLabel = user.email || "trader@bft.io";
+      const otpauthUrl = generateURI({ issuer: "BFT-Trading", label: emailLabel, secret });
+      let imageUrl = "";
       try {
-        const user = resolveUserFor2faOrProfile(req);
-        if (!user) {
-          return res.status(401).json({ ok: false, error: "Unauthenticated" });
-        }
-        const secret = generateSecret();
-        const emailLabel = user.email || "trader@bft.io";
-        const otpauthUrl = generateURI({ issuer: "BFT-Trading", label: emailLabel, secret });
-        let imageUrl = "";
+        imageUrl = await QRCode.toDataURL(otpauthUrl);
+      } catch (qrErr) {
+        console.warn("QRCode dataURL generation warning:", qrErr);
+      }
+      try {
+        db.prepare("UPDATE users SET totp_secret = ? WHERE id = ?").run(secret, user.id);
+      } catch (e) {
+        console.warn("Failed to update SQLite totp_secret:", e);
+      }
+      if (supabaseUrl && supabaseAnonKey) {
+        fetch(`${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(user.id)}`, { method: "PATCH", headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ totp_secret: secret }) }).catch(() => {
+        });
+      }
+      return res.status(200).json({ ok: true, secret, qrCode: imageUrl, otpauthUrl, otpauth_url: otpauthUrl, message: "2FA secret generated successfully." });
+    } catch (err) {
+      return res.status(500).json({ ok: false, error: err?.message || "Failed to generate 2FA credentials." });
+    }
+  });
+  app.all(["/api/2fa/verify", "/api/2fa/enable", "/api/profile/2fa/verify", "/api/profile/2fa/enable", "/functions/v1/2fa-verify", "/functions/v1/2fa-enable"], async (req, res) => {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    try {
+      const user = resolveUserFor2faOrProfile(req);
+      if (!user) {
+        return res.status(401).json({ ok: false, error: "Unauthenticated" });
+      }
+      const code = String(req.body?.code || "").replace(/\D/g, "").trim();
+      const secret = String(req.body?.secret || user.totp_secret || "").trim();
+      if (!secret) {
+        return res.status(400).json({ ok: false, error: "2FA not initialized. Please click Enable 2FA to generate a secret key." });
+      }
+      if (!code || code.length !== 6) {
+        return res.status(400).json({ ok: false, error: "Please enter a valid 6-digit verification code." });
+      }
+      const verifyResult = await verify({ token: code, secret });
+      const isValid = Boolean(verifyResult && verifyResult.valid);
+      if (isValid) {
         try {
-          imageUrl = await QRCode.toDataURL(otpauthUrl);
-        } catch (qrErr) {
-          console.warn("QRCode dataURL generation warning:", qrErr);
-        }
-        try {
-          db.prepare("UPDATE users SET totp_secret = ? WHERE id = ?").run(secret, user.id);
+          db.prepare("UPDATE users SET is_2fa_enabled = 1, totp_secret = ? WHERE id = ?").run(secret, user.id);
         } catch (e) {
-          console.warn("Failed to update SQLite totp_secret:", e);
+          console.warn("Failed to update SQLite is_2fa_enabled:", e);
         }
         if (supabaseUrl && supabaseAnonKey) {
-          fetch(`${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(user.id)}`, {
-            method: "PATCH",
-            headers: {
-              apikey: supabaseAnonKey,
-              Authorization: `Bearer ${supabaseAnonKey}`,
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify({ totp_secret: secret })
-          }).catch(() => {
+          fetch(`${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(user.id)}`, { method: "PATCH", headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ is_2fa_enabled: true, totp_secret: secret }) }).catch(() => {
           });
         }
-        return res.status(200).json({
-          ok: true,
-          secret,
-          qrCode: imageUrl,
-          otpauthUrl,
-          otpauth_url: otpauthUrl,
-          message: "2FA secret generated successfully."
-        });
-      } catch (err) {
-        return res.status(500).json({
-          ok: false,
-          error: err?.message || "Failed to generate 2FA credentials."
-        });
+        return res.status(200).json({ ok: true, message: "2FA enabled successfully", is2faEnabled: true });
       }
+      return res.status(400).json({ ok: false, error: "Invalid 6-digit verification code. Please check your authenticator app." });
+    } catch (err) {
+      return res.status(400).json({ ok: false, error: err?.message || "Invalid 6-digit verification code." });
     }
-  );
-  app.all(
-    [
-      "/api/2fa/verify",
-      "/api/2fa/enable",
-      "/api/profile/2fa/verify",
-      "/api/profile/2fa/enable",
-      "/functions/v1/2fa-verify",
-      "/functions/v1/2fa-enable"
-    ],
-    async (req, res) => {
-      res.setHeader("Content-Type", "application/json; charset=utf-8");
+  });
+  app.all(["/api/2fa/disable", "/api/profile/2fa/disable", "/functions/v1/2fa-disable"], (req, res) => {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    try {
+      const user = resolveUserFor2faOrProfile(req);
+      if (!user) {
+        return res.status(401).json({ ok: false, error: "Unauthenticated" });
+      }
       try {
-        const user = resolveUserFor2faOrProfile(req);
-        if (!user) {
-          return res.status(401).json({ ok: false, error: "Unauthenticated" });
-        }
-        const code = String(req.body?.code || "").replace(/\D/g, "").trim();
-        const secret = String(req.body?.secret || user.totp_secret || "").trim();
-        if (!secret) {
-          return res.status(400).json({
-            ok: false,
-            error: "2FA not initialized. Please click Enable 2FA to generate a secret key."
-          });
-        }
-        if (!code || code.length !== 6) {
-          return res.status(400).json({
-            ok: false,
-            error: "Please enter a valid 6-digit verification code."
-          });
-        }
-        const verifyResult = await verify({ token: code, secret });
-        const isValid = Boolean(verifyResult && verifyResult.valid);
-        if (isValid) {
-          try {
-            db.prepare("UPDATE users SET is_2fa_enabled = 1, totp_secret = ? WHERE id = ?").run(
-              secret,
-              user.id
-            );
-          } catch (e) {
-            console.warn("Failed to update SQLite is_2fa_enabled:", e);
-          }
-          if (supabaseUrl && supabaseAnonKey) {
-            fetch(`${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(user.id)}`, {
-              method: "PATCH",
-              headers: {
-                apikey: supabaseAnonKey,
-                Authorization: `Bearer ${supabaseAnonKey}`,
-                "Content-Type": "application/json"
-              },
-              body: JSON.stringify({ is_2fa_enabled: true, totp_secret: secret })
-            }).catch(() => {
-            });
-          }
-          return res.status(200).json({
-            ok: true,
-            message: "2FA enabled successfully",
-            is2faEnabled: true
-          });
-        }
-        return res.status(400).json({
-          ok: false,
-          error: "Invalid 6-digit verification code. Please check your authenticator app."
-        });
-      } catch (err) {
-        return res.status(400).json({
-          ok: false,
-          error: err?.message || "Invalid 6-digit verification code."
+        db.prepare("UPDATE users SET is_2fa_enabled = 0, totp_secret = NULL WHERE id = ?").run(user.id);
+      } catch (e) {
+        console.warn("Failed to disable 2FA in SQLite:", e);
+      }
+      if (supabaseUrl && supabaseAnonKey) {
+        fetch(`${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(user.id)}`, { method: "PATCH", headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ is_2fa_enabled: false, totp_secret: null }) }).catch(() => {
         });
       }
+      return res.status(200).json({ ok: true, message: "2FA disabled successfully", is2faEnabled: false });
+    } catch (err) {
+      return res.status(500).json({ ok: false, error: err?.message || "Failed to disable 2FA." });
     }
-  );
-  app.all(
-    ["/api/2fa/disable", "/api/profile/2fa/disable", "/functions/v1/2fa-disable"],
-    (req, res) => {
-      res.setHeader("Content-Type", "application/json; charset=utf-8");
-      try {
-        const user = resolveUserFor2faOrProfile(req);
-        if (!user) {
-          return res.status(401).json({ ok: false, error: "Unauthenticated" });
-        }
-        try {
-          db.prepare("UPDATE users SET is_2fa_enabled = 0, totp_secret = NULL WHERE id = ?").run(
-            user.id
-          );
-        } catch (e) {
-          console.warn("Failed to disable 2FA in SQLite:", e);
-        }
-        if (supabaseUrl && supabaseAnonKey) {
-          fetch(`${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(user.id)}`, {
-            method: "PATCH",
-            headers: {
-              apikey: supabaseAnonKey,
-              Authorization: `Bearer ${supabaseAnonKey}`,
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify({ is_2fa_enabled: false, totp_secret: null })
-          }).catch(() => {
-          });
-        }
-        return res.status(200).json({
-          ok: true,
-          message: "2FA disabled successfully",
-          is2faEnabled: false
-        });
-      } catch (err) {
-        return res.status(500).json({
-          ok: false,
-          error: err?.message || "Failed to disable 2FA."
-        });
+  });
+  app.all(["/api/2fa/validate", "/api/2fa/check", "/functions/v1/2fa-validate", "/functions/v1/2fa-check"], async (req, res) => {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    try {
+      const user = resolveUserFor2faOrProfile(req);
+      if (!user) {
+        return res.status(401).json({ ok: false, isValid: false, error: "Unauthenticated" });
       }
-    }
-  );
-  app.all(
-    ["/api/2fa/validate", "/api/2fa/check", "/functions/v1/2fa-validate", "/functions/v1/2fa-check"],
-    async (req, res) => {
-      res.setHeader("Content-Type", "application/json; charset=utf-8");
-      try {
-        const user = resolveUserFor2faOrProfile(req);
-        if (!user) {
-          return res.status(401).json({ ok: false, isValid: false, error: "Unauthenticated" });
-        }
-        const code = String(req.body?.code || "").replace(/\D/g, "").trim();
-        const secret = String(req.body?.secret || user.totp_secret || "").trim();
-        if (!user.is_2fa_enabled && !secret) {
-          return res.status(200).json({ ok: true, isValid: true });
-        }
-        if (!secret) {
-          return res.status(400).json({ ok: false, isValid: false, error: "2FA not initialized" });
-        }
-        const verifyResult = await verify({ token: code, secret });
-        const isValid = Boolean(verifyResult && verifyResult.valid);
-        return res.status(200).json({ ok: true, isValid });
-      } catch {
-        return res.status(200).json({ ok: false, isValid: false, error: "Verification failed" });
+      const code = String(req.body?.code || "").replace(/\D/g, "").trim();
+      const secret = String(req.body?.secret || user.totp_secret || "").trim();
+      if (!user.is_2fa_enabled && !secret) {
+        return res.status(200).json({ ok: true, isValid: true });
       }
+      if (!secret) {
+        return res.status(400).json({ ok: false, isValid: false, error: "2FA not initialized" });
+      }
+      const verifyResult = await verify({ token: code, secret });
+      const isValid = Boolean(verifyResult && verifyResult.valid);
+      return res.status(200).json({ ok: true, isValid });
+    } catch {
+      return res.status(200).json({ ok: false, isValid: false, error: "Verification failed" });
     }
-  );
+  });
   app.get("/api/admin/check-access", (req, res) => {
     const user = getAuthenticatedUser(req);
     const isAdmin = isUserAdmin(user, req);
     if (!isAdmin) {
-      return res.status(403).json({
-        ok: false,
-        isAdmin: false,
-        error: "Access Denied: Admin authorization required."
-      });
+      return res.status(403).json({ ok: false, isAdmin: false, error: "Access Denied: Admin authorization required." });
     }
-    return res.json({
-      ok: true,
-      isAdmin: true,
-      adminUser: user ? formatUserResponse(user) : { id: "admin_sys", email: "admin@bft.io", role: "admin" }
-    });
+    return res.json({ ok: true, isAdmin: true, adminUser: user ? formatUserResponse(user) : { id: "admin_sys", email: "admin@bft.io", role: "admin" } });
   });
   app.post("/api/admin/auth/verify-key", (req, res) => {
     const key = String(req.body?.adminKey || "").trim();
     if (key === "bft_admin_master_key_2026") {
-      return res.json({
-        ok: true,
-        message: "Admin authorization granted.",
-        adminKey: "bft_admin_master_key_2026",
-        role: "admin"
-      });
+      return res.json({ ok: true, message: "Admin authorization granted.", adminKey: "bft_admin_master_key_2026", role: "admin" });
     }
-    return res.status(401).json({
-      ok: false,
-      error: "Invalid Admin Security Key."
-    });
+    return res.status(401).json({ ok: false, error: "Invalid Admin Security Key." });
   });
   app.get("/api/admin/metrics", requireAdmin, (_req, res) => {
     try {
@@ -31605,17 +29441,8 @@ data: ${JSON.stringify({
       if (!Number.isFinite(newBalance) || newBalance < 0) {
         return res.status(400).json({ ok: false, error: "New balance must be a non-negative number." });
       }
-      const updatedAccount = adminUpdateAccountBalance({
-        accountId,
-        newBalance,
-        reason,
-        adminUserId
-      });
-      return res.json({
-        ok: true,
-        account: updatedAccount,
-        message: `Account ${accountId} balance updated to $${newBalance.toFixed(2)}.`
-      });
+      const updatedAccount = adminUpdateAccountBalance({ accountId, newBalance, reason, adminUserId });
+      return res.json({ ok: true, account: updatedAccount, message: `Account ${accountId} balance updated to $${newBalance.toFixed(2)}.` });
     } catch (err) {
       return res.status(400).json({ ok: false, error: err?.message || "Failed to update balance." });
     }
@@ -31645,10 +29472,7 @@ data: ${JSON.stringify({
       const depositId = String(req.params.depositId || "").trim();
       const adminUserId = req.adminUser?.id || "admin_sys";
       const result = adminApproveDeposit(depositId, adminUserId);
-      return res.json({
-        ...result,
-        message: "Deposit approved! User balance credited and 3-level commissions distributed."
-      });
+      return res.json({ ...result, message: "Deposit approved! User balance credited and 3-level commissions distributed." });
     } catch (err) {
       return res.status(400).json({ ok: false, error: err?.message || "Failed to approve deposit." });
     }
@@ -31659,10 +29483,7 @@ data: ${JSON.stringify({
       const reason = String(req.body?.reason || "Transaction could not be verified on-chain.").trim();
       const adminUserId = req.adminUser?.id || "admin_sys";
       const result = adminDeclineDeposit(depositId, reason, adminUserId);
-      return res.json({
-        ...result,
-        message: "Deposit request declined."
-      });
+      return res.json({ ...result, message: "Deposit request declined." });
     } catch (err) {
       return res.status(400).json({ ok: false, error: err?.message || "Failed to decline deposit." });
     }
@@ -31673,14 +29494,7 @@ data: ${JSON.stringify({
       if (!userId || !amount) {
         return res.status(400).json({ ok: false, error: "User ID and Amount are required." });
       }
-      const deposit = createDepositRequest({
-        userId: String(userId),
-        accountId: accountId ? String(accountId) : void 0,
-        amount: Number(amount),
-        paymentMethod: paymentMethod ? String(paymentMethod) : "USDT (TRC-20)",
-        txHash: txHash ? String(txHash) : void 0,
-        depositSlipUrl: depositSlipUrl ? String(depositSlipUrl) : void 0
-      });
+      const deposit = createDepositRequest({ userId: String(userId), accountId: accountId ? String(accountId) : void 0, amount: Number(amount), paymentMethod: paymentMethod ? String(paymentMethod) : "USDT (TRC-20)", txHash: txHash ? String(txHash) : void 0, depositSlipUrl: depositSlipUrl ? String(depositSlipUrl) : void 0 });
       return res.json({ ok: true, deposit });
     } catch (err) {
       return res.status(400).json({ ok: false, error: err?.message || "Failed to create deposit record." });
@@ -31700,10 +29514,7 @@ data: ${JSON.stringify({
       const withdrawalId = String(req.params.withdrawalId || "").trim();
       const adminUserId = req.adminUser?.id || "admin_sys";
       const result = adminApproveWithdrawal(withdrawalId, adminUserId);
-      return res.json({
-        ...result,
-        message: "Withdrawal approved! Account balance debited and payout processed."
-      });
+      return res.json({ ...result, message: "Withdrawal approved! Account balance debited and payout processed." });
     } catch (err) {
       return res.status(400).json({ ok: false, error: err?.message || "Failed to approve withdrawal." });
     }
@@ -31714,10 +29525,7 @@ data: ${JSON.stringify({
       const reason = String(req.body?.reason || "Security review required / Invalid payout destination.").trim();
       const adminUserId = req.adminUser?.id || "admin_sys";
       const result = adminDeclineWithdrawal(withdrawalId, reason, adminUserId);
-      return res.json({
-        ...result,
-        message: "Withdrawal request declined."
-      });
+      return res.json({ ...result, message: "Withdrawal request declined." });
     } catch (err) {
       return res.status(400).json({ ok: false, error: err?.message || "Failed to decline withdrawal." });
     }
@@ -31736,11 +29544,7 @@ data: ${JSON.stringify({
       const userId = String(req.params.userId || "").trim();
       const adminUserId = req.adminUser?.id || "admin_sys";
       const updatedUser = adminApproveKyc(userId, adminUserId);
-      return res.json({
-        ok: true,
-        user: formatUserResponse(updatedUser),
-        message: `KYC for ${updatedUser.full_name || userId} approved successfully!`
-      });
+      return res.json({ ok: true, user: formatUserResponse(updatedUser), message: `KYC for ${updatedUser.full_name || userId} approved successfully!` });
     } catch (err) {
       return res.status(400).json({ ok: false, error: err?.message || "Failed to approve KYC." });
     }
@@ -31751,11 +29555,7 @@ data: ${JSON.stringify({
       const reason = String(req.body?.reason || "Document unreadable or invalid address proof.").trim();
       const adminUserId = req.adminUser?.id || "admin_sys";
       const updatedUser = adminRejectKyc(userId, reason, adminUserId);
-      return res.json({
-        ok: true,
-        user: formatUserResponse(updatedUser),
-        message: `KYC for ${updatedUser.full_name || userId} rejected.`
-      });
+      return res.json({ ok: true, user: formatUserResponse(updatedUser), message: `KYC for ${updatedUser.full_name || userId} rejected.` });
     } catch (err) {
       return res.status(400).json({ ok: false, error: err?.message || "Failed to reject KYC." });
     }
@@ -31787,22 +29587,13 @@ data: ${JSON.stringify({
       if (cleanAmount <= 0) {
         return res.status(400).json({ ok: false, error: "Amount must be greater than $0." });
       }
-      const commissions = distribute3TierCommissions(
-        String(userId),
-        cleanAmount,
-        sourceType === "trade_activity" ? "trade_activity" : "deposit",
-        details ? String(details) : void 0
-      );
-      return res.json({
-        ok: true,
-        commissions,
-        message: `Successfully distributed ${commissions.length} referral commissions across 3 levels.`
-      });
+      const commissions = distribute3TierCommissions(String(userId), cleanAmount, sourceType === "trade_activity" ? "trade_activity" : "deposit", details ? String(details) : void 0);
+      return res.json({ ok: true, commissions, message: `Successfully distributed ${commissions.length} referral commissions across 3 levels.` });
     } catch (err) {
       return res.status(400).json({ ok: false, error: err?.message || "Failed to distribute referral commissions." });
     }
   });
-  const ensureGitOriginRemote = () => {
+  const ensureGitOriginRemote = __name4(() => {
     const defaultRepo = "https://github.com/shankavee44/bft-trading-platform.git";
     try {
       execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf-8", cwd: __dirname });
@@ -31828,7 +29619,7 @@ data: ${JSON.stringify({
         return defaultRepo;
       }
     }
-  };
+  }, "ensureGitOriginRemote");
   app.get("/api/github/status", (_req, res) => {
     try {
       let branch = "main";
@@ -31846,29 +29637,9 @@ data: ${JSON.stringify({
         modifiedFiles = [];
       }
       const repoName = repoUrl.replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "") || "shankavee44/bft-trading-platform";
-      return res.json({
-        ok: true,
-        connected: true,
-        repoUrl: repoUrl || "https://github.com/shankavee44/bft-trading-platform",
-        repoName,
-        branch,
-        lastSyncedAt: (/* @__PURE__ */ new Date()).toISOString(),
-        modifiedFiles,
-        uncommittedCount: modifiedFiles.length,
-        syncState: "ready"
-      });
+      return res.json({ ok: true, connected: true, repoUrl: repoUrl || "https://github.com/shankavee44/bft-trading-platform", repoName, branch, lastSyncedAt: (/* @__PURE__ */ new Date()).toISOString(), modifiedFiles, uncommittedCount: modifiedFiles.length, syncState: "ready" });
     } catch (err) {
-      return res.json({
-        ok: true,
-        connected: false,
-        repoUrl: "https://github.com/shankavee44/bft-trading-platform",
-        repoName: "shankavee44/bft-trading-platform",
-        branch: "main",
-        lastSyncedAt: (/* @__PURE__ */ new Date()).toISOString(),
-        modifiedFiles: [],
-        syncState: "error",
-        error: err?.message || "Failed to query git status."
-      });
+      return res.json({ ok: true, connected: false, repoUrl: "https://github.com/shankavee44/bft-trading-platform", repoName: "shankavee44/bft-trading-platform", branch: "main", lastSyncedAt: (/* @__PURE__ */ new Date()).toISOString(), modifiedFiles: [], syncState: "error", error: err?.message || "Failed to query git status." });
     }
   });
   app.post("/api/github/push", (req, res) => {
@@ -31923,18 +29694,7 @@ data: ${JSON.stringify({
       } catch (pushErr) {
         pushOutput = pushErr?.stderr?.toString() || pushErr?.stdout?.toString() || pushErr?.message || "Push failed";
       }
-      return res.json({
-        ok: true,
-        success: true,
-        commitHash,
-        branch: targetBranch,
-        repoUrl: targetRepo || "https://github.com/shankavee44/bft-trading-platform",
-        pushedAt: (/* @__PURE__ */ new Date()).toISOString(),
-        pushed,
-        pushOutput,
-        message: pushed ? `Successfully pushed commit [${commitHash}] to origin/${targetBranch} on GitHub.` : `Local commit [${commitHash}] created. ${pushOutput ? "Remote push message: " + pushOutput : "Provide GitHub PAT to push to remote."}`,
-        uncommittedChangesCount: 0
-      });
+      return res.json({ ok: true, success: true, commitHash, branch: targetBranch, repoUrl: targetRepo || "https://github.com/shankavee44/bft-trading-platform", pushedAt: (/* @__PURE__ */ new Date()).toISOString(), pushed, pushOutput, message: pushed ? `Successfully pushed commit [${commitHash}] to origin/${targetBranch} on GitHub.` : `Local commit [${commitHash}] created. ${pushOutput ? "Remote push message: " + pushOutput : "Provide GitHub PAT to push to remote."}`, uncommittedChangesCount: 0 });
     } catch (err) {
       return res.status(500).json({ ok: false, error: err?.message || "Failed to process git push." });
     }
@@ -31945,13 +29705,7 @@ data: ${JSON.stringify({
       const searchQuery = typeof req.query.search === "string" ? req.query.search.trim() : "";
       const limit = Number(req.query.limit) || 10;
       const result = copyTradingEngine.getLeaderboard(category, searchQuery, limit);
-      return res.json({
-        ok: true,
-        traders: result.traders,
-        totalPoolCount: result.totalPoolCount,
-        isSearchActive: result.isSearchActive,
-        rotation: result.rotation
-      });
+      return res.json({ ok: true, traders: result.traders, totalPoolCount: result.totalPoolCount, isSearchActive: result.isSearchActive, rotation: result.rotation });
     } catch (err) {
       return res.status(500).json({ ok: false, error: err?.message || "Failed to fetch copy traders." });
     }
@@ -31960,72 +29714,27 @@ data: ${JSON.stringify({
     try {
       const user = getAuthenticatedUser(req);
       const userId = String(user?.id || req.body?.userId || "usr_bft_001").trim();
-      const providerName = String(
-        req.body?.providerName || user?.full_name || "Verified BFT Master"
-      ).trim();
+      const providerName = String(req.body?.providerName || user?.full_name || "Verified BFT Master").trim();
       const category = req.body?.category === "self_capital" ? "self_capital" : "instant_funded";
-      const strategyTitle = String(
-        req.body?.strategyTitle || "Institutional OTC Alpha"
-      ).trim();
+      const strategyTitle = String(req.body?.strategyTitle || "Institutional OTC Alpha").trim();
       const winRate3m = Number(req.body?.winRate3m ?? 0);
-      const startingBalance = Number(
-        req.body?.startingBalance || (category === "instant_funded" ? 5e4 : 5e3)
-      );
-      const regResult = copyTradingEngine.registerCustomProvider({
-        userId,
-        providerName,
-        countryCode: req.body?.countryCode ? String(req.body.countryCode) : "US",
-        country: user?.country || req.body?.country || "United States",
-        flag: getCountryFlag(user?.country || req.body?.country || "United States"),
-        category,
-        strategyTitle,
-        startingBalance,
-        winRate3m
-      });
+      const startingBalance = Number(req.body?.startingBalance || (category === "instant_funded" ? 5e4 : 5e3));
+      const regResult = copyTradingEngine.registerCustomProvider({ userId, providerName, countryCode: req.body?.countryCode ? String(req.body.countryCode) : "US", country: user?.country || req.body?.country || "United States", flag: getCountryFlag(user?.country || req.body?.country || "United States"), category, strategyTitle, startingBalance, winRate3m });
       if (!regResult.ok) {
-        return res.status(400).json({
-          ok: false,
-          error: regResult.error,
-          code: "WIN_RATE_BELOW_60"
-        });
+        return res.status(400).json({ ok: false, error: regResult.error, code: "WIN_RATE_BELOW_60" });
       }
-      return res.json({
-        ok: true,
-        provider: regResult.provider,
-        message: "Successfully registered as a Copy Master / Provider."
-      });
+      return res.json({ ok: true, provider: regResult.provider, message: "Successfully registered as a Copy Master / Provider." });
     } catch (err) {
-      return res.status(500).json({
-        ok: false,
-        error: err?.message || "Failed to register Copy Master."
-      });
+      return res.status(500).json({ ok: false, error: err?.message || "Failed to register Copy Master." });
     }
   });
   app.post("/api/copy-trading/copy", (req, res) => {
     try {
       const user = getAuthenticatedUser(req);
       const userId = String(user?.id || req.body?.userId || "usr_bft_001").trim();
-      const {
-        providerId,
-        copierAccountId,
-        allocatedCapital,
-        tradeAmount,
-        perTradeAllocationType,
-        perTradeAllocationValue,
-        maxLossLimit,
-        stopLoss,
-        takeProfitLimit,
-        takeProfit,
-        maxDrawdown,
-        tradeSizingType,
-        sizingMultiplier
-      } = req.body || {};
+      const { providerId, copierAccountId, allocatedCapital, tradeAmount, perTradeAllocationType, perTradeAllocationValue, maxLossLimit, stopLoss, takeProfitLimit, takeProfit, maxDrawdown, tradeSizingType, sizingMultiplier } = req.body || {};
       if (!providerId) return res.status(400).json({ ok: false, error: "Provider ID required." });
-      ensureUserInDb({
-        id: userId,
-        email: user?.email || `${userId.toLowerCase().replace(/[^a-z0-9]/g, "")}@client-bft.com`,
-        fullName: user?.full_name || "Pro Funded Trader"
-      });
+      ensureUserInDb({ id: userId, email: user?.email || `${userId.toLowerCase().replace(/[^a-z0-9]/g, "")}@client-bft.com`, fullName: user?.full_name || "Pro Funded Trader" });
       const id = `SUB-${userId}-${providerId}-${Date.now().toString(36)}`;
       const cleanAllocated = Math.max(1, Number(tradeAmount || allocatedCapital || perTradeAllocationValue || 100));
       const cleanMaxLoss = Math.max(0, Number(stopLoss ?? maxLossLimit ?? 50));
@@ -32049,20 +29758,7 @@ data: ${JSON.stringify({
             status = 'active',
             created_at = ?
           WHERE id = ?
-        `).run(
-          cleanAllocated,
-          cleanAllocated,
-          cleanMaxLoss,
-          cleanMaxLoss,
-          cleanTakeProfit,
-          cleanTakeProfit,
-          cleanMaxDrawdown,
-          cleanAccountId,
-          tradeSizingType || (perTradeAllocationType === "percentage" ? "proportionate" : "fixed"),
-          Number(sizingMultiplier || 1),
-          Date.now(),
-          existing.id
-        );
+        `).run(cleanAllocated, cleanAllocated, cleanMaxLoss, cleanMaxLoss, cleanTakeProfit, cleanTakeProfit, cleanMaxDrawdown, cleanAccountId, tradeSizingType || (perTradeAllocationType === "percentage" ? "proportionate" : "fixed"), Number(sizingMultiplier || 1), Date.now(), existing.id);
       } else {
         db.prepare(`
           INSERT INTO copy_trading_subscriptions (
@@ -32070,23 +29766,7 @@ data: ${JSON.stringify({
             max_loss_limit, stop_loss, take_profit_limit, take_profit, max_drawdown,
             trade_sizing_type, sizing_multiplier, status, created_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
-        `).run(
-          id,
-          userId,
-          userId,
-          cleanAccountId,
-          providerId,
-          cleanAllocated,
-          cleanAllocated,
-          cleanMaxLoss,
-          cleanMaxLoss,
-          cleanTakeProfit,
-          cleanTakeProfit,
-          cleanMaxDrawdown,
-          tradeSizingType || (perTradeAllocationType === "percentage" ? "proportionate" : "fixed"),
-          Number(sizingMultiplier || 1),
-          Date.now()
-        );
+        `).run(id, userId, userId, cleanAccountId, providerId, cleanAllocated, cleanAllocated, cleanMaxLoss, cleanMaxLoss, cleanTakeProfit, cleanTakeProfit, cleanMaxDrawdown, tradeSizingType || (perTradeAllocationType === "percentage" ? "proportionate" : "fixed"), Number(sizingMultiplier || 1), Date.now());
       }
       const updatedSub = db.prepare(`
           SELECT 
@@ -32103,16 +29783,7 @@ data: ${JSON.stringify({
           FROM copy_trading_subscriptions 
           WHERE user_id = ? AND provider_id = ?
         `).get(userId, providerId);
-      return res.json({
-        ok: true,
-        message: "Successfully subscribed to copy trader with risk settings (100% Profit Keep / 0% Commission).",
-        subscription: {
-          ...updatedSub,
-          per_trade_allocation_type: perTradeAllocationType || "amount",
-          per_trade_allocation_value: Number(perTradeAllocationValue || cleanAllocated),
-          commission_pct: 0
-        }
-      });
+      return res.json({ ok: true, message: "Successfully subscribed to copy trader with risk settings (100% Profit Keep / 0% Commission).", subscription: { ...updatedSub, per_trade_allocation_type: perTradeAllocationType || "amount", per_trade_allocation_value: Number(perTradeAllocationValue || cleanAllocated), commission_pct: 0 } });
     } catch (err) {
       return res.status(500).json({ ok: false, error: err?.message || "Failed to copy trader." });
     }
@@ -32172,22 +29843,7 @@ data: ${JSON.stringify({
           FROM copy_trading_subscriptions 
           WHERE (user_id = ? OR copier_user_id = ?) AND status = 'active'
         `).all(userId, userId);
-      return res.json({
-        ok: true,
-        subscriptions: subs.map((s) => ({
-          id: s.id,
-          provider_id: s.provider_id,
-          allocated_capital: s.allocated_capital,
-          max_loss_limit: s.max_loss_limit,
-          take_profit_limit: s.take_profit_limit,
-          trade_sizing_type: s.trade_sizing_type,
-          sizing_multiplier: s.sizing_multiplier,
-          current_pnl: s.current_pnl,
-          status: s.status,
-          commission_pct: 0,
-          created_at: s.created_at
-        }))
-      });
+      return res.json({ ok: true, subscriptions: subs.map((s) => ({ id: s.id, provider_id: s.provider_id, allocated_capital: s.allocated_capital, max_loss_limit: s.max_loss_limit, take_profit_limit: s.take_profit_limit, trade_sizing_type: s.trade_sizing_type, sizing_multiplier: s.sizing_multiplier, current_pnl: s.current_pnl, status: s.status, commission_pct: 0, created_at: s.created_at })) });
     } catch (err) {
       return res.status(500).json({ ok: false, error: err?.message || "Failed to fetch subscriptions." });
     }
@@ -32195,11 +29851,7 @@ data: ${JSON.stringify({
   app.all(["/api/*", "/functions/v1/*"], (req, res) => {
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     console.warn(`[API 404] ${req.method} ${req.url}`);
-    res.status(404).json({
-      ok: false,
-      error: `API endpoint not found: ${req.method} ${req.url}`,
-      code: "NOT_FOUND"
-    });
+    res.status(404).json({ ok: false, error: `API endpoint not found: ${req.method} ${req.url}`, code: "NOT_FOUND" });
   });
   app.use("/api", (req, res, next) => {
     next();
@@ -32208,10 +29860,7 @@ data: ${JSON.stringify({
     if (req.url.startsWith("/api/") || req.url.startsWith("/functions/v1/")) {
       res.setHeader("Content-Type", "application/json; charset=utf-8");
       const status = typeof err?.status === "number" ? err.status : 500;
-      return res.status(status).json({
-        ok: false,
-        error: err?.message || "Internal server error."
-      });
+      return res.status(status).json({ ok: false, error: err?.message || "Internal server error." });
     }
     next(err);
   });
@@ -32220,14 +29869,11 @@ data: ${JSON.stringify({
   const isProduction = process.env.NODE_ENV === "production";
   const isDev = !isProduction;
   if (isDev) {
-    const { createServer: createViteServer } = await import("vite");
-    const vite = await createViteServer({
-      server: {
-        middlewareMode: true,
-        hmr: false
-      },
-      appType: "spa"
+    const { createServer: createViteServer } = await import("vite").then((s) => {
+      const e = "default";
+      return s[e] && typeof s[e] == "object" && "__esModule" in s[e] ? s[e] : s;
     });
+    const vite = await createViteServer({ server: { middlewareMode: true, hmr: false }, appType: "spa" });
     app.use(vite.middlewares);
     app.all("/api/*", (req, res) => {
       res.status(404).json({ ok: false, error: `API endpoint not found: ${req.method} ${req.url}` });
@@ -32244,13 +29890,9 @@ data: ${JSON.stringify({
       }
     });
   } else {
-    app.use(
-      express.static(distPath, {
-        setHeaders: (res, filePath) => {
-          setExplicitMimeHeaders(res, filePath);
-        }
-      })
-    );
+    app.use(express.static(distPath, { setHeaders: __name4((res, filePath) => {
+      setExplicitMimeHeaders(res, filePath);
+    }, "setHeaders") }));
     app.all("/api/*", (req, res) => {
       res.status(404).json({ ok: false, error: `API endpoint not found: ${req.method} ${req.url}` });
     });
@@ -32273,4 +29915,5 @@ data: ${JSON.stringify({
     });
   });
 }
+__name4(startServer, "startServer");
 startServer();

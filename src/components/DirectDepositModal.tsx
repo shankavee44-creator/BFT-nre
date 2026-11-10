@@ -23,6 +23,13 @@ import {
   CryptoDepositAccountType,
   NormalizedPurchaseRecord,
 } from '../config/directDeposit';
+import {
+  BFT100_BONUS_CODE,
+  validateBft100BonusCode,
+  extractProfileBonusState,
+  fetchProfileBonusStateFromSupabase,
+  activateBft100BonusInSupabase,
+} from '../utils/depositBonus';
 import { apiSubmitCryptoDeposit } from '../utils/apiClient';
 import { PaymentIcon } from './icons/PaymentLogos';
 
@@ -194,6 +201,7 @@ interface DirectDepositModalProps {
   activeAccount: TradingAccount | null;
   accounts: TradingAccount[];
   userProfile?: UserProfile | null;
+  onUpdateProfile?: (profile: UserProfile) => void;
   onSelectAccount: (accountId: string) => void;
   onCreditAccountDeposit: (accountId: string, amountUsdt: number, details?: any) => void;
   onPurchaseRecorded?: (purchase: NormalizedPurchaseRecord) => void;
@@ -204,6 +212,7 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
   onClose,
   activeAccount,
   userProfile,
+  onUpdateProfile,
 }) => {
   const [selectedCategory, setSelectedCategory] = useState<DepositCategoryType>('popular');
   const [activeMethod, setActiveMethod] = useState<DepositMethodItem | null>(null);
@@ -213,6 +222,10 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
   const [showBonusInput, setShowBonusInput] = useState<boolean>(false);
   const [bonusCode, setBonusCode] = useState<string>('');
   const [bonusApplied, setBonusApplied] = useState<boolean>(false);
+  const [bonusError, setBonusError] = useState<string | null>(null);
+  const [hasUsedBft100State, setHasUsedBft100State] = useState<boolean>(() =>
+    extractProfileBonusState(userProfile).has_used_bft100
+  );
 
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [copyToastMessage, setCopyToastMessage] = useState<string | null>(null);
@@ -224,6 +237,25 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [submissionSuccess, setSubmissionSuccess] = useState<string | null>(null);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const localState = extractProfileBonusState(userProfile);
+    setHasUsedBft100State(localState.has_used_bft100);
+    if (isOpen && (userProfile?.id || userProfile?.email)) {
+      fetchProfileBonusStateFromSupabase({
+        userId: userProfile.id,
+        userEmail: userProfile.email,
+        fallbackProfile: userProfile,
+      })
+        .then((remoteState) => {
+          setHasUsedBft100State(remoteState.has_used_bft100);
+          if (remoteState.has_used_bft100 && bonusApplied) {
+            setBonusApplied(false);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [isOpen, userProfile?.id, userProfile?.email, userProfile?.has_used_bft100, userProfile?.hasUsedBft100]);
 
   const contentRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
   const rightScrollContainerRef = useRef<HTMLDivElement | null>(null);
@@ -329,12 +361,19 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
           ? `${activeMethod.bankDetails.bankName} - ${activeMethod.bankDetails.accountNumber} (${activeMethod.bankDetails.accountName})`
           : '');
 
+      const bonusAmountGranted = bonusApplied ? numericAmount : 0;
+      const requiredTurnoverAmount = bonusApplied ? numericAmount * 100 : 0;
+
       await apiSubmitCryptoDeposit({
         userId: userProfile?.id,
         email: userProfile?.email,
         amount: numericAmount,
-        packageName: `Self-Funded Deposit via ${activeMethod.name} ($${numericAmount.toFixed(2)})`,
-        sku: `DEPOSIT_${activeMethod.id.toUpperCase()}`,
+        packageName: bonusApplied
+          ? `Self-Funded Deposit via ${activeMethod.name} ($${numericAmount.toFixed(2)} + $${bonusAmountGranted.toFixed(2)} BFT100 Bonus)`
+          : `Self-Funded Deposit via ${activeMethod.name} ($${numericAmount.toFixed(2)})`,
+        sku: bonusApplied
+          ? `DEPOSIT_${activeMethod.id.toUpperCase()}_BFT100`
+          : `DEPOSIT_${activeMethod.id.toUpperCase()}`,
         accountType,
         accountId: activeAccount?.id,
         walletAddress: targetAddress,
@@ -344,8 +383,27 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
         status: 'pending',
       });
 
+      if (bonusApplied) {
+        const activationResult = await activateBft100BonusInSupabase({
+          userProfile,
+          userId: userProfile?.id,
+          userEmail: userProfile?.email,
+          depositAmount: numericAmount,
+          creditSelfBalance: false,
+        });
+
+        if (activationResult.ok) {
+          setHasUsedBft100State(true);
+          if (activationResult.updatedProfile && onUpdateProfile) {
+            onUpdateProfile(activationResult.updatedProfile);
+          }
+        }
+      }
+
       setSubmissionSuccess(
-        `Deposit request for $${numericAmount.toFixed(2)} via ${activeMethod.name} submitted! Our finance team will verify and credit your account shortly.`
+        bonusApplied
+          ? `Deposit request for $${numericAmount.toFixed(2)} via ${activeMethod.name} submitted with 100% First Deposit Bonus (+$${bonusAmountGranted.toFixed(2)} using code ${BFT100_BONUS_CODE})! Required bonus turnover: $${requiredTurnoverAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (100x).`
+          : `Deposit request for $${numericAmount.toFixed(2)} via ${activeMethod.name} submitted! Our finance team will verify and credit your account shortly.`
       );
     } catch (err: any) {
       setSubmissionError(err?.message || 'Failed to submit deposit proof. Please try again.');
@@ -666,8 +724,16 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
                       <Ticket className="w-4 h-4 text-rose-400 shrink-0" />
                       <span className="text-xs font-bold text-white">Bonus Code</span>
                       {bonusApplied && (
-                        <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-[10px] font-bold">
-                          APPLIED
+                        <span
+                          data-testid="bft100-applied-badge"
+                          className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-[10px] font-bold"
+                        >
+                          {BFT100_BONUS_CODE} (+100%)
+                        </span>
+                      )}
+                      {hasUsedBft100State && !bonusApplied && (
+                        <span className="px-2 py-0.5 rounded bg-slate-700/70 text-slate-400 text-[10px] font-semibold">
+                          BFT100 USED
                         </span>
                       )}
                     </div>
@@ -675,10 +741,14 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
                     <div className="flex items-center gap-1.5">
                       <button
                         type="button"
-                        onClick={() => setShowBonusInput(!showBonusInput)}
+                        data-testid="toggle-bonus-code-btn"
+                        onClick={() => {
+                          setShowBonusInput(!showBonusInput);
+                          setBonusError(null);
+                        }}
                         className="px-2.5 py-1 rounded bg-[#1b2d48] hover:bg-[#22385a] text-[#1d8cf8] font-bold text-[11px] uppercase tracking-wider cursor-pointer transition-colors"
                       >
-                        ACTIVATE
+                        {bonusApplied ? 'CHANGE' : 'ACTIVATE'}
                       </button>
                       <ChevronRight
                         className={`w-4 h-4 text-[#1d8cf8] transition-transform ${
@@ -689,34 +759,115 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
                   </div>
 
                   {showBonusInput && (
-                    <div className="mt-3 pt-2.5 border-t border-[#2e3548] flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={bonusCode}
-                        onChange={(e) => setBonusCode(e.target.value.toUpperCase())}
-                        placeholder="Enter promo code (e.g. WELCOME50)"
-                        className="flex-1 bg-[#151924] border border-[#343b4f] rounded px-3 py-1.5 text-xs text-white outline-none focus:border-[#0d84ff]"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (bonusCode.trim()) setBonusApplied(true);
-                        }}
-                        className="px-3 py-1.5 rounded bg-[#0d84ff] text-white font-bold text-xs cursor-pointer"
-                      >
-                        Apply
-                      </button>
+                    <div className="mt-3 pt-2.5 border-t border-[#2e3548] space-y-2">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          data-testid="bonus-code-input"
+                          value={bonusCode}
+                          onChange={(e) => {
+                            setBonusCode(e.target.value.toUpperCase());
+                            setBonusError(null);
+                          }}
+                          placeholder="Enter 100% First Deposit code (BFT100)"
+                          className="flex-1 bg-[#151924] border border-[#343b4f] rounded px-3 py-1.5 text-xs text-white font-mono outline-none focus:border-[#0d84ff]"
+                        />
+                        {bonusApplied ? (
+                          <button
+                            type="button"
+                            data-testid="remove-bonus-code-btn"
+                            onClick={() => {
+                              setBonusApplied(false);
+                              setBonusCode('');
+                              setBonusError(null);
+                            }}
+                            className="px-3 py-1.5 rounded bg-rose-500/20 border border-rose-500/40 text-rose-300 font-bold text-xs cursor-pointer"
+                          >
+                            Remove
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            data-testid="apply-bonus-code-btn"
+                            onClick={() => {
+                              const check = validateBft100BonusCode({
+                                code: bonusCode,
+                                depositAmount: numericAmount,
+                                userProfile: {
+                                  ...(userProfile || {}),
+                                  has_used_bft100: hasUsedBft100State,
+                                  hasUsedBft100: hasUsedBft100State,
+                                },
+                                accountType: 'self_funded',
+                              });
+                              if (!check.valid) {
+                                setBonusApplied(false);
+                                setBonusError(check.reason || 'Invalid bonus code.');
+                                return;
+                              }
+                              setBonusCode(BFT100_BONUS_CODE);
+                              setBonusApplied(true);
+                              setBonusError(null);
+                            }}
+                            className="px-3 py-1.5 rounded bg-[#0d84ff] hover:bg-[#0070e6] text-white font-bold text-xs cursor-pointer"
+                          >
+                            Apply
+                          </button>
+                        )}
+                      </div>
+
+                      {bonusError && (
+                        <p
+                          data-testid="bonus-code-error"
+                          className="text-[11px] text-rose-400 font-medium leading-snug"
+                        >
+                          {bonusError}
+                        </p>
+                      )}
+
+                      {bonusApplied && (
+                        <div
+                          data-testid="bft100-bonus-summary"
+                          className="p-2.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-[11px] text-emerald-300 space-y-1"
+                        >
+                          <div className="flex items-center justify-between font-bold">
+                            <span>100% First Deposit Bonus ({BFT100_BONUS_CODE}):</span>
+                            <span>+${numericAmount.toFixed(2)} USD</span>
+                          </div>
+                          <div className="flex items-center justify-between text-slate-300">
+                            <span>Required Turnover (100x Bonus):</span>
+                            <span className="font-mono font-bold text-amber-300">
+                              ${(numericAmount * 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-slate-400 leading-relaxed pt-0.5">
+                            Real balance is deducted first on trading losses. Bonus funds unlock for withdrawal after completing 100x bonus turnover, or are forfeited if you withdraw early.
+                          </p>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
 
                 {/* You Will Receive Summary Row */}
-                <div className="flex items-baseline justify-between pt-1">
-                  <span className="text-xs text-slate-400">You will receive</span>
-                  <div className="flex-1 border-b border-dotted border-slate-600 mx-2" />
-                  <span className="text-[15px] font-bold text-white">
-                    ${numericAmount.toFixed(2)}
-                  </span>
+                <div className="space-y-1.5 pt-1">
+                  {bonusApplied && (
+                    <div className="flex items-baseline justify-between text-xs text-emerald-400">
+                      <span>100% Bonus ({BFT100_BONUS_CODE})</span>
+                      <div className="flex-1 border-b border-dotted border-emerald-500/30 mx-2" />
+                      <span className="font-bold font-mono">+${numericAmount.toFixed(2)}</span>
+                    </div>
+                  )}
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-xs text-slate-400">You will receive</span>
+                    <div className="flex-1 border-b border-dotted border-slate-600 mx-2" />
+                    <span
+                      data-testid="deposit-total-receive-amount"
+                      className="text-[15px] font-bold text-white"
+                    >
+                      ${(bonusApplied ? numericAmount * 2 : numericAmount).toFixed(2)}
+                    </span>
+                  </div>
                 </div>
 
                 {submissionError && (

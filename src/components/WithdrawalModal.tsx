@@ -59,6 +59,11 @@ import { soundEngine } from '../utils/soundEffects';
 import { apiCancelWithdrawal, apiValidate2fa, safeJsonResponse } from '../utils/apiClient';
 import { supabase } from '../utils/supabase';
 import {
+  extractProfileBonusState,
+  interceptWithdrawalForBonusTurnover,
+  syncProfileBonusColumnsToSupabase,
+} from '../utils/depositBonus';
+import {
   insertSupabaseWithdrawal,
   fetchSupabaseWithdrawalsForUser,
   fetchSupabasePurchasesForUser,
@@ -614,7 +619,20 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
       };
 
       // 2. Immediately deduct requested amount from active account balance in local UI and database
+      let bonusForfeitNote = '';
       if (userProfile) {
+        const preBonusCheck = isPersonalAcc
+          ? interceptWithdrawalForBonusTurnover({
+              userProfile,
+              account,
+              requestedAmount: grossVal,
+              deductWithdrawalNow: false,
+            })
+          : null;
+        if (preBonusCheck?.bonusForfeited && preBonusCheck.forfeitedBonusAmount > 0) {
+          bonusForfeitNote = ` Remaining BFT100 bonus ($${preBonusCheck.forfeitedBonusAmount.toFixed(2)} USD) was automatically forfeited due to incomplete 100x turnover.`;
+        }
+
         const deductionRes = computeWithdrawalDeduction({
           account,
           userProfile,
@@ -639,13 +657,14 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
           ...account,
           currentBalance: newBal,
           equity: newBal,
+          ...(isPersonalAcc ? { bonusBalance: 0, bonus_balance: 0 } : {}),
         });
       }
 
       onAddWithdrawal(newRequest);
       soundEngine.playWithdrawalSuccess();
       setSuccessBanner(
-        `Withdrawal Request Submitted! Status: Pending Approval. $${grossVal.toFixed(2)} USD deducted from your balance. Your payout of $${netVal.toFixed(2)} USD is recorded with a 1-hour settlement timer.`
+        `Withdrawal Request Submitted! Status: Pending Approval. $${grossVal.toFixed(2)} USD deducted from your balance.${bonusForfeitNote} Your payout of $${netVal.toFixed(2)} USD is recorded with a 1-hour settlement timer.`
       );
     } catch (err: any) {
       setError(err?.message || 'Failed to submit withdrawal request.');
@@ -734,7 +753,42 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
       return;
     }
 
-    const validation = validateWithdrawalRequest(account, amount, { enforceFirstWithdrawalLock: true });
+    // BFT100 Deposit Bonus Interception:
+    // Check if required 100x bonus turnover is completed. If NOT completed at the time of withdrawal request,
+    // automatically forfeit/remove the remaining bonus amount from the account before validating/processing withdrawal.
+    let accountAfterBonusInterception = account;
+    if (isPersonalLiveAccount(account)) {
+      const bonusInterception = interceptWithdrawalForBonusTurnover({
+        userProfile: userProfile || ({ selfBalance: account.currentBalance } as UserProfile),
+        account,
+        requestedAmount: amount,
+        deductWithdrawalNow: false,
+      });
+
+      if (bonusInterception.bonusForfeited || bonusInterception.turnoverCompleted) {
+        if (bonusInterception.updatedAccount) {
+          accountAfterBonusInterception = bonusInterception.updatedAccount;
+          onUpdateAccount(bonusInterception.updatedAccount);
+        }
+        if (userProfile && onUpdateProfile) {
+          onUpdateProfile(bonusInterception.updatedProfile);
+        }
+        if (userProfile?.id || userProfile?.email || account.ownerId) {
+          syncProfileBonusColumnsToSupabase({
+            userId: userProfile?.id || account.ownerId,
+            userEmail: userProfile?.email || account.ownerEmail,
+            self_balance: bonusInterception.newSelfBalance,
+            bonus_balance: bonusInterception.newBonusBalance,
+            total_turnover_required: bonusInterception.newTotalTurnoverRequired,
+            current_turnover: bonusInterception.newCurrentTurnover,
+          }).catch(() => {});
+        }
+      }
+    }
+
+    const validation = validateWithdrawalRequest(accountAfterBonusInterception, amount, {
+      enforceFirstWithdrawalLock: true,
+    });
     if (!validation.valid) {
       setError(validation.reason || 'Withdrawal validation failed.');
       soundEngine.playErrorAlert();
@@ -1355,6 +1409,48 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                         USD
                       </span>
                     </div>
+                    {isPersonalLiveAccount(account) && (() => {
+                      const bState = extractProfileBonusState(userProfile, account);
+                      if (bState.bonus_balance <= 0 && bState.total_turnover_required <= 0) return null;
+                      const isTurnoverDone =
+                        bState.total_turnover_required > 0 &&
+                        bState.current_turnover >= bState.total_turnover_required;
+                      return (
+                        <div
+                          data-testid="card-bft100-bonus-turnover"
+                          className="px-4 py-3 text-xs sm:text-sm bg-[#121622]/80 space-y-1.5"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-[#8c96a6] flex items-center gap-1.5">
+                              <span>Deposit Bonus (BFT100):</span>
+                              <span
+                                className={`text-[10px] font-mono px-1.5 py-0.2 rounded font-bold border ${
+                                  isTurnoverDone
+                                    ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                                    : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                                }`}
+                              >
+                                {isTurnoverDone ? 'Turnover Completed' : '100x Turnover Required'}
+                              </span>
+                            </span>
+                            <span className="font-bold font-mono tabular-nums text-emerald-400">
+                              ${bState.bonus_balance.toFixed(2)} USD
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="text-[#8c96a6]">Bonus Turnover Progress:</span>
+                            <span className="font-mono font-semibold text-slate-300">
+                              ${bState.current_turnover.toFixed(2)} / ${bState.total_turnover_required.toFixed(2)} USD
+                            </span>
+                          </div>
+                          {!isTurnoverDone && bState.bonus_balance > 0 && (
+                            <p className="text-[11px] text-amber-300/90 leading-snug pt-0.5">
+                              Note: Requesting a withdrawal before completing the 100x bonus turnover will automatically forfeit your remaining ${bState.bonus_balance.toFixed(2)} USD bonus balance.
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })()}
                     <div
                       data-testid="card-withdrawal-commission"
                       className="flex items-center justify-between px-4 py-3 text-xs sm:text-sm"

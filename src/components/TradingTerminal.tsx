@@ -106,6 +106,12 @@ import {
   updateSupabaseTradingAccountState,
 } from '../utils/supabaseRealtimeSync';
 import {
+  extractProfileBonusState,
+  calculateTradePlacementWithBonusPriority,
+  calculateTradeSettlementWithBonusAndTurnover,
+  syncProfileBonusColumnsToSupabase,
+} from '../utils/depositBonus';
+import {
   computeAssetActiveTradeBadge,
   normalizeTradeAssetKey,
   isTradeActiveOrOpen,
@@ -235,6 +241,7 @@ interface TradingTerminalProps {
   onOpenChallengeModal?: () => void;
   onNavigateTab?: (tab: string) => void;
   userProfile?: UserProfile;
+  onUpdateProfile?: (profile: UserProfile) => void;
   onPassChallengePhase?: (account: TradingAccount) => void;
   onNavigateToPricing?: () => void;
 }
@@ -320,6 +327,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   onOpenChallengeModal,
   onNavigateTab,
   userProfile,
+  onUpdateProfile,
   onPassChallengePhase,
   onNavigateToPricing,
 }) => {
@@ -442,18 +450,44 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     rawEffectiveAccount,
     userProfile
   );
-  const effectiveAccount: TradingAccount = React.useMemo(
-    () =>
+  const profileBonusState = extractProfileBonusState(userProfile, rawEffectiveAccount);
+  const effectiveAccount: TradingAccount = React.useMemo(() => {
+    const isPersonal = isPersonalLiveAccount(rawEffectiveAccount);
+    const nextBonusBal = isPersonal ? profileBonusState.bonus_balance : (rawEffectiveAccount.bonusBalance ?? 0);
+    const nextTurnoverReq = isPersonal
+      ? profileBonusState.total_turnover_required
+      : (rawEffectiveAccount.totalTurnoverRequired ?? 0);
+    const nextCurrTurnover = isPersonal
+      ? profileBonusState.current_turnover
+      : (rawEffectiveAccount.currentTurnover ?? 0);
+
+    if (
       rawEffectiveAccount.currentBalance === authoritativeEffectiveBalance &&
-      rawEffectiveAccount.equity === authoritativeEffectiveBalance
-        ? rawEffectiveAccount
-        : {
-            ...rawEffectiveAccount,
-            currentBalance: authoritativeEffectiveBalance,
-            equity: authoritativeEffectiveBalance,
-          },
-    [rawEffectiveAccount, authoritativeEffectiveBalance]
-  );
+      rawEffectiveAccount.equity === authoritativeEffectiveBalance &&
+      (rawEffectiveAccount.bonusBalance ?? 0) === nextBonusBal &&
+      (rawEffectiveAccount.totalTurnoverRequired ?? 0) === nextTurnoverReq &&
+      (rawEffectiveAccount.currentTurnover ?? 0) === nextCurrTurnover
+    ) {
+      return rawEffectiveAccount;
+    }
+    return {
+      ...rawEffectiveAccount,
+      currentBalance: authoritativeEffectiveBalance,
+      equity: authoritativeEffectiveBalance,
+      bonusBalance: nextBonusBal,
+      bonus_balance: nextBonusBal,
+      totalTurnoverRequired: nextTurnoverReq,
+      total_turnover_required: nextTurnoverReq,
+      currentTurnover: nextCurrTurnover,
+      current_turnover: nextCurrTurnover,
+    };
+  }, [
+    rawEffectiveAccount,
+    authoritativeEffectiveBalance,
+    profileBonusState.bonus_balance,
+    profileBonusState.total_turnover_required,
+    profileBonusState.current_turnover,
+  ]);
   const personalLiveAccount = accounts.find((a) => isPersonalLiveAccount(a));
   const demoModeAccount = accounts.find((a) => isDemoAccount(a));
   const personalLiveBalance =
@@ -1561,7 +1595,24 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             closePrice: finalPrice,
           });
 
-          const newBalance = settlement.finalBalance;
+          const isPersonalLive = isPersonalLiveAccount(runningAccount);
+          const curBonusInfo = extractProfileBonusState(userProfile, runningAccount);
+          const bonusSettlement = isPersonalLive
+            ? calculateTradeSettlementWithBonusAndTurnover({
+                status: settlement.status,
+                stake: trade.investment,
+                payoutPercentage: trade.payoutPercentage,
+                postPlacementSelfBalance: runningAccount.currentBalance,
+                postPlacementBonusBalance: runningAccount.bonusBalance ?? curBonusInfo.bonus_balance,
+                stakeFromSelf: trade.stakeFromSelf,
+                stakeFromBonus: trade.stakeFromBonus,
+                currentTurnover: runningAccount.currentTurnover ?? curBonusInfo.current_turnover,
+                totalTurnoverRequired:
+                  runningAccount.totalTurnoverRequired ?? curBonusInfo.total_turnover_required,
+              })
+            : null;
+
+          const newBalance = bonusSettlement ? bonusSettlement.finalSelfBalance : settlement.finalBalance;
           const balanceColumn = resolveAccountBalanceColumn(runningAccount);
           recordAtomicTradeSettlement({
             tradeId: trade.id,
@@ -1618,6 +1669,16 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             tradesCount: runningAccount.tradesCount + 1,
             winRate: newWinRate,
             equity: newBalance,
+            ...(bonusSettlement
+              ? {
+                  bonusBalance: bonusSettlement.finalBonusBalance,
+                  bonus_balance: bonusSettlement.finalBonusBalance,
+                  currentTurnover: bonusSettlement.newCurrentTurnover,
+                  current_turnover: bonusSettlement.newCurrentTurnover,
+                  totalTurnoverRequired: bonusSettlement.newTotalTurnoverRequired,
+                  total_turnover_required: bonusSettlement.newTotalTurnoverRequired,
+                }
+              : {}),
           };
 
           runningAccount = updatedAccount;
@@ -1628,6 +1689,20 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             setDemoPracticeAccount(updatedAccount);
           }
 
+          if (bonusSettlement && userProfile && onUpdateProfile) {
+            onUpdateProfile({
+              ...userProfile,
+              selfBalance: newBalance,
+              self_capital_balance: newBalance,
+              bonusBalance: bonusSettlement.finalBonusBalance,
+              bonus_balance: bonusSettlement.finalBonusBalance,
+              currentTurnover: bonusSettlement.newCurrentTurnover,
+              current_turnover: bonusSettlement.newCurrentTurnover,
+              totalTurnoverRequired: bonusSettlement.newTotalTurnoverRequired,
+              total_turnover_required: bonusSettlement.newTotalTurnoverRequired,
+            });
+          }
+
           if (balanceColumn && (userProfile?.id || userProfile?.email)) {
             commitProfileBalanceToSupabase({
               userId: userProfile.id,
@@ -1635,6 +1710,17 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               column: balanceColumn,
               newBalance,
             }).catch(() => {});
+
+            if (bonusSettlement) {
+              syncProfileBonusColumnsToSupabase({
+                userId: userProfile.id,
+                userEmail: userProfile.email,
+                self_balance: newBalance,
+                bonus_balance: bonusSettlement.finalBonusBalance,
+                current_turnover: bonusSettlement.newCurrentTurnover,
+                total_turnover_required: bonusSettlement.newTotalTurnoverRequired,
+              }).catch(() => {});
+            }
           }
 
           // Permanently persist current_balance and equity in Supabase trading_accounts on every closed trade
@@ -1817,12 +1903,24 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     const tradeId = `TRD-${startTimeMs.toString().slice(-6)}`;
     const currentAuthoritativeBal = accountRef.current?.currentBalance ?? activeAcc.currentBalance;
     const balanceColumn = resolveAccountBalanceColumn(activeAcc);
+    const isPersonalLive = isPersonalLiveAccount(activeAcc);
+    const currentBonusState = extractProfileBonusState(userProfile, accountRef.current || activeAcc);
+
+    const bonusPlacement = isPersonalLive
+      ? calculateTradePlacementWithBonusPriority({
+          stake: stakeToUse,
+          selfBalance: currentAuthoritativeBal,
+          bonusBalance: currentBonusState.bonus_balance,
+        })
+      : null;
+
+    const stakeDeductedFromMainBalance = bonusPlacement ? bonusPlacement.stakeFromSelf : stakeToUse;
 
     const { deductedBalance: newBalance } = recordAtomicTradePlacement({
       tradeId,
       accountId: activeAcc.id,
       column: balanceColumn,
-      stake: stakeToUse,
+      stake: stakeDeductedFromMainBalance,
       preTradeBalance: currentAuthoritativeBal,
       durationSeconds: durationToUse,
       endTime: endTimeMs,
@@ -1833,12 +1931,28 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       ...activeAcc,
       currentBalance: newBalance,
       equity: newBalance,
+      ...(bonusPlacement
+        ? {
+            bonusBalance: bonusPlacement.newBonusBalance,
+            bonus_balance: bonusPlacement.newBonusBalance,
+          }
+        : {}),
     };
     accountRef.current = deductedAcc;
 
     onUpdateAccount(deductedAcc);
     if (!account) {
       setDemoPracticeAccount(deductedAcc);
+    }
+
+    if (bonusPlacement && userProfile && onUpdateProfile) {
+      onUpdateProfile({
+        ...userProfile,
+        selfBalance: newBalance,
+        self_capital_balance: newBalance,
+        bonusBalance: bonusPlacement.newBonusBalance,
+        bonus_balance: bonusPlacement.newBonusBalance,
+      });
     }
 
     if (balanceColumn && (userProfile?.id || userProfile?.email)) {
@@ -1848,6 +1962,15 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         column: balanceColumn,
         newBalance,
       }).catch(() => {});
+
+      if (bonusPlacement && bonusPlacement.stakeFromBonus > 0) {
+        syncProfileBonusColumnsToSupabase({
+          userId: userProfile.id,
+          userEmail: userProfile.email,
+          self_balance: newBalance,
+          bonus_balance: bonusPlacement.newBonusBalance,
+        }).catch(() => {});
+      }
     }
 
     // Accurately determine trade strike price from synchronized live feed or isolated market state
@@ -1867,6 +1990,8 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       strikePrice: assetLivePrice,
       currentPrice: assetLivePrice,
       investment: stakeToUse,
+      stakeFromSelf: bonusPlacement ? bonusPlacement.stakeFromSelf : stakeToUse,
+      stakeFromBonus: bonusPlacement ? bonusPlacement.stakeFromBonus : 0,
       payoutPercentage: assetToTrade.payout,
       potentialPayout: Number((stakeToUse + (stakeToUse * assetToTrade.payout) / 100).toFixed(2)),
       startTime: startTimeMs,

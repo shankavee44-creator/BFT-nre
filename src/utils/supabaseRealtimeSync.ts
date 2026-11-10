@@ -15,6 +15,11 @@ import {
   normalizeDatabaseAccountStatus,
 } from './propRules.ts';
 import {
+  extractProfileBonusState,
+  interceptWithdrawalForBonusTurnover,
+  syncProfileBonusColumnsToSupabase,
+} from './depositBonus.ts';
+import {
   DIRECT_USDT_TRC20_CONFIG,
   DEPOSIT_EXPIRY_MS,
   type UserPurchaseRecordInput,
@@ -509,13 +514,53 @@ export function computeWithdrawalDeduction(params: {
   const isPersonal = isPersonalLiveAccount(params.account);
   const column: ProfileBalanceColumn = isPersonal ? 'self_balance' : 'funded_balance';
   const grossAmount = Math.max(0, Number(params.amount));
+  const nowMs = params.nowMs ?? Date.now();
 
-  const preWithdrawalBalance = isPersonal
-    ? (params.userProfile.selfBalance !== undefined ? params.userProfile.selfBalance : params.account.currentBalance)
-    : (params.userProfile.fundedBalance !== undefined ? params.userProfile.fundedBalance : params.account.currentBalance);
+  if (isPersonal) {
+    const interception = interceptWithdrawalForBonusTurnover({
+      userProfile: params.userProfile,
+      account: params.account,
+      requestedAmount: grossAmount,
+      deductWithdrawalNow: true,
+    });
+
+    recordDirectBalanceCommit(column, interception.newSelfBalance, nowMs);
+
+    if (
+      (interception.bonusForfeited || interception.turnoverCompleted) &&
+      (params.userProfile.id || params.userProfile.email || params.account.ownerId)
+    ) {
+      syncProfileBonusColumnsToSupabase({
+        userId: params.userProfile.id || params.account.ownerId,
+        userEmail: params.userProfile.email || params.account.ownerEmail,
+        bonus_balance: interception.newBonusBalance,
+        total_turnover_required: interception.newTotalTurnoverRequired,
+        current_turnover: interception.newCurrentTurnover,
+      }).catch(() => {});
+    }
+
+    return {
+      column,
+      preWithdrawalBalance: interception.preWithdrawalSelfBalance,
+      newBalance: interception.newSelfBalance,
+      deductedAmount: grossAmount,
+      updatedAccount: interception.updatedAccount || {
+        ...params.account,
+        currentBalance: interception.newSelfBalance,
+        equity: interception.newSelfBalance,
+        bonusBalance: interception.newBonusBalance,
+        bonus_balance: interception.newBonusBalance,
+      },
+      updatedProfile: interception.updatedProfile,
+    };
+  }
+
+  const preWithdrawalBalance =
+    params.userProfile.fundedBalance !== undefined
+      ? params.userProfile.fundedBalance
+      : params.account.currentBalance;
 
   const newBalance = Math.max(0, Number((preWithdrawalBalance - grossAmount).toFixed(2)));
-  const nowMs = params.nowMs ?? Date.now();
 
   recordDirectBalanceCommit(column, newBalance, nowMs);
 
@@ -527,8 +572,7 @@ export function computeWithdrawalDeduction(params: {
 
   const updatedProfile: UserProfile = {
     ...params.userProfile,
-    selfBalance: isPersonal ? newBalance : params.userProfile.selfBalance,
-    fundedBalance: !isPersonal ? newBalance : params.userProfile.fundedBalance,
+    fundedBalance: newBalance,
   };
 
   return {
@@ -1003,11 +1047,20 @@ export function applyRealtimeProfileUpdate(
       ? String(rawNumericId).trim()
       : prevProfile.numericId ?? prevProfile.numeric_id;
 
+  const bonusState = extractProfileBonusState(row, prevProfile);
+  const prevBonusState = extractProfileBonusState(prevProfile);
+  const bonusChanged =
+    bonusState.bonus_balance !== prevBonusState.bonus_balance ||
+    bonusState.total_turnover_required !== prevBonusState.total_turnover_required ||
+    bonusState.current_turnover !== prevBonusState.current_turnover ||
+    bonusState.has_used_bft100 !== prevBonusState.has_used_bft100;
+
   const profileChanged =
     nextSelf !== prevProfile.selfBalance ||
     nextSelf !== prevProfile.self_capital_balance ||
     nextDemo !== prevProfile.demoBalance ||
     nextFunded !== prevProfile.fundedBalance ||
+    bonusChanged ||
     resolvedKycStatus !== prevProfile.kycStatus ||
     nextFullName !== prevProfile.fullName ||
     nextReferralCode !== prevProfile.referralCode ||
@@ -1031,6 +1084,14 @@ export function applyRealtimeProfileUpdate(
         self_capital_balance: nextSelf,
         demoBalance: nextDemo,
         fundedBalance: nextFunded,
+        bonusBalance: bonusState.bonus_balance,
+        bonus_balance: bonusState.bonus_balance,
+        totalTurnoverRequired: bonusState.total_turnover_required,
+        total_turnover_required: bonusState.total_turnover_required,
+        currentTurnover: bonusState.current_turnover,
+        current_turnover: bonusState.current_turnover,
+        hasUsedBft100: bonusState.has_used_bft100,
+        has_used_bft100: bonusState.has_used_bft100,
         numericId: nextNumericId,
         numeric_id: nextNumericId,
       }
@@ -1039,12 +1100,24 @@ export function applyRealtimeProfileUpdate(
   let accountsChanged = false;
   const updatedAccounts = prevAccounts.map((acc) => {
     if (isPersonalLiveAccount(acc) && newSelf !== undefined) {
-      if (acc.currentBalance !== newSelf || acc.equity !== newSelf) {
+      if (
+        acc.currentBalance !== newSelf ||
+        acc.equity !== newSelf ||
+        (acc.bonusBalance ?? 0) !== bonusState.bonus_balance ||
+        (acc.totalTurnoverRequired ?? 0) !== bonusState.total_turnover_required ||
+        (acc.currentTurnover ?? 0) !== bonusState.current_turnover
+      ) {
         accountsChanged = true;
         return {
           ...acc,
           currentBalance: newSelf,
           equity: newSelf,
+          bonusBalance: bonusState.bonus_balance,
+          bonus_balance: bonusState.bonus_balance,
+          totalTurnoverRequired: bonusState.total_turnover_required,
+          total_turnover_required: bonusState.total_turnover_required,
+          currentTurnover: bonusState.current_turnover,
+          current_turnover: bonusState.current_turnover,
           startingDayEquity: newSelf > 0 && acc.startingDayEquity === 0 ? newSelf : acc.startingDayEquity,
           initialBalance: newSelf > 0 && acc.initialBalance === 0 ? newSelf : acc.initialBalance,
         };

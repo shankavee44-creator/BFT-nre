@@ -1827,6 +1827,7 @@ export default function App() {
             onOpenChallengeModal={() => setSelectedPackageToBuy(PACKAGES[2])}
             onNavigateTab={handleNavigateTab}
             userProfile={userProfile}
+            onUpdateProfile={handleUpdateProfile}
             onPassChallengePhase={handlePassChallengePhase}
             onNavigateToPricing={() => {
               setCurrentTab('home');
@@ -1921,6 +1922,7 @@ export default function App() {
         isOpen={isDepositModalOpen}
         onClose={() => setIsDepositModalOpen(false)}
         userProfile={userProfile}
+        onUpdateProfile={handleUpdateProfile}
         activeAccount={activeAccount || null}
         accounts={userAccounts}
         onSelectAccount={handleSelectAccount}

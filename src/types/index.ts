@@ -58,6 +58,12 @@ export interface TradingAccount {
   monthsCompleted?: number;
   scalingActive?: boolean;
   certificateId?: string;
+  bonusBalance?: number;
+  bonus_balance?: number;
+  totalTurnoverRequired?: number;
+  total_turnover_required?: number;
+  currentTurnover?: number;
+  current_turnover?: number;
   createdDate: string;
   lastActiveDate: string;
   [key: string]: any;
@@ -95,6 +101,14 @@ export interface UserProfile {
   selfBalance?: number;
   self_balance?: number;
   self_capital_balance?: number;
+  bonusBalance?: number;
+  bonus_balance?: number;
+  totalTurnoverRequired?: number;
+  total_turnover_required?: number;
+  currentTurnover?: number;
+  current_turnover?: number;
+  hasUsedBft100?: boolean;
+  has_used_bft100?: boolean;
   demoBalance?: number;
   demo_balance?: number;
   fundedBalance?: number;
@@ -128,6 +142,8 @@ export interface BinaryTrade {
   strikePrice: number;
   closePrice?: number;
   investment: number;
+  stakeFromSelf?: number;
+  stakeFromBonus?: number;
   payoutPercentage: number;
   potentialPayout: number;
   pnl?: number;
