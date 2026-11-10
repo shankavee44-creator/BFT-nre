@@ -1253,6 +1253,77 @@ export async function apiDepositPersonalAccount(params: {
   }
 }
 
+export async function apiCreateNowPaymentsPayment(params: {
+  amount: number;
+  currency?: string;
+  userId?: string;
+  userEmail?: string;
+  accountId?: string;
+  bonusCode?: string | null;
+  packageName?: string;
+  sku?: string;
+  accountType?: string;
+  tier?: string;
+  size?: number;
+  referralCode?: string | null;
+  dailyWithdrawalsUnlocked?: boolean;
+}) {
+  try {
+    const res = await fetch(`${API_BASE}/api/nowpayments/create-payment`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(getAuthHeaders() as Record<string, string>),
+      },
+      body: JSON.stringify({
+        amount: params.amount,
+        currency: params.currency || 'usdttrc20',
+        userId: params.userId,
+        email: params.userEmail,
+        accountId: params.accountId,
+        bonusCode: params.bonusCode,
+        packageName: params.packageName,
+        sku: params.sku,
+        accountType: params.accountType,
+        tier: params.tier,
+        size: params.size,
+        referralCode: params.referralCode,
+        dailyWithdrawalsUnlocked: params.dailyWithdrawalsUnlocked,
+      }),
+    });
+    return await safeJsonResponse(res);
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Failed to contact NOWPayments API endpoint.' };
+  }
+}
+
+export async function apiGetNowPaymentsPaymentStatus(paymentId: string) {
+  try {
+    const res = await fetch(`${API_BASE}/api/nowpayments/payment-status/${encodeURIComponent(paymentId)}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+    return await safeJsonResponse(res);
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Failed to query payment status.' };
+  }
+}
+
+export async function apiGetDepositHistory(params?: { userId?: string; accountId?: string }) {
+  try {
+    const qs = new URLSearchParams();
+    if (params?.userId) qs.set('userId', params.userId);
+    if (params?.accountId) qs.set('accountId', params.accountId);
+    const res = await fetch(`${API_BASE}/api/deposit/history?${qs.toString()}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+    return await safeJsonResponse(res);
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Failed to fetch deposit history.', deposits: [], transactions: [] };
+  }
+}
+
 export async function apiPassChallenge(params: {
   accountId: string;
   provisionLiveDirectly?: boolean;

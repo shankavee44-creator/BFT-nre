@@ -6,7 +6,67 @@ export const PaymentIcon: React.FC<{
   compact?: boolean;
 }> = ({ id, className = 'w-9 h-9', compact = false }) => {
   switch (id) {
+    case 'nowpayments':
+    case 'NP':
+      return (
+        <div className={`relative inline-flex items-center justify-center shrink-0 ${className}`}>
+          <svg viewBox="0 0 36 36" className="w-full h-full">
+            <defs>
+              <linearGradient id="nowpayGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="#0B132B" />
+                <stop offset="100%" stopColor="#1C2541" />
+              </linearGradient>
+              <linearGradient id="nowpayAccent" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="#00E5FF" />
+                <stop offset="100%" stopColor="#0077B6" />
+              </linearGradient>
+            </defs>
+            <rect x="2" y="2" width="32" height="32" rx="8" fill="url(#nowpayGrad)" stroke="#00E5FF" strokeWidth="1.2" />
+            {/* NOWPayments N Brand Mark */}
+            <path
+              d="M10 25V11l10 14V11"
+              fill="none"
+              stroke="url(#nowpayAccent)"
+              strokeWidth="3.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            <circle cx="25" cy="14" r="2.8" fill="#00E5FF" />
+          </svg>
+        </div>
+      );
+
+    case 'cryptomus':
+      return (
+        <div className={`relative inline-flex items-center justify-center shrink-0 ${className}`}>
+          <svg viewBox="0 0 36 36" className="w-full h-full">
+            <defs>
+              <linearGradient id="cryptomusGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="#111827" />
+                <stop offset="100%" stopColor="#1E293B" />
+              </linearGradient>
+              <linearGradient id="cryptomusAccent" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="#10B981" />
+                <stop offset="100%" stopColor="#059669" />
+              </linearGradient>
+            </defs>
+            <rect x="2" y="2" width="32" height="32" rx="8" fill="url(#cryptomusGrad)" stroke="#10B981" strokeWidth="1.2" />
+            {/* Cryptomus Stylized C + Hexagon Node Mark */}
+            <path
+              d="M22.8 12.2a7.5 7.5 0 1 0 0 11.6"
+              fill="none"
+              stroke="#FFFFFF"
+              strokeWidth="3.2"
+              strokeLinecap="round"
+            />
+            <circle cx="23.2" cy="18" r="3.2" fill="url(#cryptomusAccent)" />
+          </svg>
+        </div>
+      );
+
     case 'usdt_trc20':
+    case 'usdttrc20':
+    case 'tron':
       return (
         <div className={`relative inline-flex items-center justify-center shrink-0 ${className}`}>
           <svg viewBox="0 0 40 32" className="w-full h-full overflow-visible">
@@ -20,6 +80,84 @@ export const PaymentIcon: React.FC<{
             <circle cx="27" cy="16" r="11" fill="#EF0027" stroke="#FFFFFF" strokeWidth="1.5" />
             <path
               d="M22.2 11.4l10.2 1.9-4.7 8.5-5.5-10.4zm2.1 1.7l2.9 5.7 1.6-3.7-4.5-2zm1.1 1.4l3.9 1.6 1.5-1.1-5.4-.5z"
+              fill="#FFFFFF"
+            />
+          </svg>
+        </div>
+      );
+
+    case 'usdtbsc':
+      return (
+        <div className={`relative inline-flex items-center justify-center shrink-0 ${className}`}>
+          <svg viewBox="0 0 40 32" className="w-full h-full overflow-visible">
+            <circle cx="13" cy="16" r="12" fill="#26A17B" />
+            <path
+              d="M14.3 14.3v-2.1h4.2V9.8H7.5v2.4h4.2v2.1c-3.4.2-6 .9-6 1.8s2.6 1.6 6 1.8v5.5h2.6v-5.5c3.4-.2 6-.9 6-1.8s-2.6-1.6-6-1.8z"
+              fill="#FFFFFF"
+            />
+            <circle cx="27" cy="16" r="11" fill="#F3BA2F" stroke="#FFFFFF" strokeWidth="1.5" />
+            <path
+              d="M27 10.5l2.4 2.4-2.4 2.4-2.4-2.4 2.4-2.4zm-5.3 5.3l2.4 2.4-2.4 2.4-2.4-2.4 2.4-2.4zm10.6 0l2.4 2.4-2.4 2.4-2.4-2.4 2.4-2.4zm-5.3 5.3l2.4 2.4-2.4 2.4-2.4-2.4 2.4-2.4z"
+              fill="#121212"
+            />
+          </svg>
+        </div>
+      );
+
+    case 'usdt_polygon':
+    case 'usdtmatic':
+      return (
+        <div className={`relative inline-flex items-center justify-center shrink-0 ${className}`}>
+          <svg viewBox="0 0 40 32" className="w-full h-full overflow-visible">
+            {/* Tether USDT Green Circle */}
+            <circle cx="13" cy="16" r="12" fill="#26A17B" />
+            <path
+              d="M14.3 14.3v-2.1h4.2V9.8H7.5v2.4h4.2v2.1c-3.4.2-6 .9-6 1.8s2.6 1.6 6 1.8v5.5h2.6v-5.5c3.4-.2 6-.9 6-1.8s-2.6-1.6-6-1.8z"
+              fill="#FFFFFF"
+            />
+            {/* Polygon Purple Circle */}
+            <circle cx="27" cy="16" r="11" fill="#8247E5" stroke="#FFFFFF" strokeWidth="1.5" />
+          </svg>
+        </div>
+      );
+
+    case 'usdterc20':
+      return (
+        <div className={`relative inline-flex items-center justify-center shrink-0 ${className}`}>
+          <svg viewBox="0 0 40 32" className="w-full h-full overflow-visible">
+            <circle cx="13" cy="16" r="12" fill="#26A17B" />
+            <path
+              d="M14.3 14.3v-2.1h4.2V9.8H7.5v2.4h4.2v2.1c-3.4.2-6 .9-6 1.8s2.6 1.6 6 1.8v5.5h2.6v-5.5c3.4-.2 6-.9 6-1.8s-2.6-1.6-6-1.8z"
+              fill="#FFFFFF"
+            />
+            <circle cx="27" cy="16" r="11" fill="#62688F" stroke="#FFFFFF" strokeWidth="1.5" />
+            <polygon points="27,9 21,18 27,21" fill="#FFFFFF" />
+            <polygon points="27,9 33,18 27,21" fill="#D2D6E6" />
+          </svg>
+        </div>
+      );
+
+    case 'btc':
+    case 'bitcoin':
+      return (
+        <div className={`inline-flex items-center justify-center shrink-0 ${className}`}>
+          <svg viewBox="0 0 36 36" className="w-full h-full">
+            <circle cx="18" cy="18" r="16" fill="#F7931A" />
+            <path
+              d="M23.2 14.5c.3-2.1-1.3-3.2-3.5-4l.7-2.9-1.8-.4-.7 2.8c-.5-.1-.9-.2-1.4-.3l.7-2.8-1.8-.4-.7 2.9c-.4-.1-.8-.2-1.2-.3l-2.4-.6-.5 1.9s1.3.3 1.3.3c.7.2.8.7.6 1.1l-.9 3.6c.1 0 .2 0 .3.1l-.3-.1-1.3 5.1c-.1.2-.4.6-1 .4 0 0-1.3-.3-1.3-.3l-.9 2.1 2.3.6c.4.1.9.2 1.3.3l-.7 2.9 1.8.4.7-2.9c.5.1 1 .2 1.4.3l-.7 2.9 1.8.4.7-2.9c2.4.5 4.2.3 4.9-1.9.6-1.8 0-2.8-1.3-3.5 1-.2 1.7-1 1.9-2.5zm-3.4 5.3c-.4 1.8-3.4.8-4.4.6l.8-3.1c1 .3 4.1.8 3.6 2.5zm.4-5.3c-.4 1.6-2.9.8-3.7.6l.7-2.8c.8.2 3.4.6 3 2.2z"
+              fill="#FFFFFF"
+            />
+          </svg>
+        </div>
+      );
+
+    case 'trx':
+      return (
+        <div className={`inline-flex items-center justify-center shrink-0 ${className}`}>
+          <svg viewBox="0 0 36 36" className="w-full h-full">
+            <circle cx="18" cy="18" r="16" fill="#EF0027" />
+            <path
+              d="M10 11.4l16 3-7.4 13.3-8.6-16.3zm3.3 2.7l4.6 9 2.5-5.8-7.1-3.2zm1.7 2.2l6.1 2.5 2.4-1.7-8.5-.8z"
               fill="#FFFFFF"
             />
           </svg>

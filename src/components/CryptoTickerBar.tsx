@@ -14,10 +14,18 @@ interface CryptoTickerBarProps {
 export const CryptoTickerBar: React.FC<CryptoTickerBarProps> = ({ onSelectPair }) => {
   const [traders, setTraders] = useState(() => normalizeWeeklyLeaderboard(WEEKLY_LEADERBOARD_TRADERS));
 
-  // Periodic leaderboard update simulation
+  // Periodic leaderboard update simulation (keeping Rank 1 Yohan Siriwardhana anchored)
   useEffect(() => {
     const interval = setInterval(() => {
-      setTraders((prev) => normalizeWeeklyLeaderboard(prev.map(t => ({ ...t, profit: t.profit + Math.random() * 50 }))));
+      setTraders((prev) =>
+        normalizeWeeklyLeaderboard(
+          prev.map((t) =>
+            t.rank === 1 || t.name === 'Yohan Siriwardhana'
+              ? t
+              : { ...t, profit: Number((t.profit + Math.random() * 18).toFixed(2)) }
+          )
+        )
+      );
     }, 5000);
     return () => clearInterval(interval);
   }, []);
@@ -31,7 +39,7 @@ export const CryptoTickerBar: React.FC<CryptoTickerBarProps> = ({ onSelectPair }
     >
       <div className="hidden sm:flex items-center gap-1.5 px-3 py-0.5 bg-[#121215] border-r border-white/10 text-[10px] font-mono font-bold text-[#ff8800] z-10 shrink-0">
         <Trophy className="w-3 h-3 text-[#ff8800]" />
-        <span>WEEKLY TOP FUNDED TRADERS</span>
+        <span>DAILY TOP TRADERS</span>
       </div>
 
       <div className="relative flex-1 overflow-hidden">

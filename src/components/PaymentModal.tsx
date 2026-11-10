@@ -16,6 +16,9 @@ import {
   ExternalLink,
   Clock,
   Ban,
+  Loader2,
+  Building2,
+  ChevronRight,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { EvaluationPackage, TradingAccount, PromoCodeType, UserProfile } from '../types';
@@ -33,11 +36,18 @@ import {
   evaluateDepositStatusWithExpiry,
   formatDepositCountdown,
 } from '../config/directDeposit';
-import { apiPurchaseAccount, apiVerifyCryptoDeposits } from '../utils/apiClient';
+import { apiPurchaseAccount, apiVerifyCryptoDeposits, apiCreateNowPaymentsPayment } from '../utils/apiClient';
 import { supabase } from '../utils/supabase';
 import {
   insertSupabaseTradingAccount,
 } from '../utils/supabaseRealtimeSync';
+import {
+  NowPaymentsCurrencyCode,
+  NowPaymentsPaymentResponse,
+  NOWPAYMENTS_CURRENCIES,
+} from '../utils/nowpaymentsGateway';
+import { NowPaymentsCheckout } from './NowPaymentsCheckout';
+import { PaymentIcon } from './icons/PaymentLogos';
 
 interface PaymentModalProps {
   packageToBuy: EvaluationPackage | null;
@@ -59,6 +69,72 @@ interface PaymentModalProps {
   applyBreachDiscount?: boolean;
 }
 
+const PACKAGE_PAYMENT_OPTIONS: Array<{
+  id: NowPaymentsCurrencyCode | 'commercial_bank';
+  name: string;
+  subtitle: string;
+  badge: string;
+  icon: string;
+  isNowPayments?: boolean;
+}> = [
+  {
+    id: 'usdttrc20',
+    name: 'USDT (TRC-20)',
+    subtitle: 'TRON Network · Instant Auto-Activation',
+    badge: 'AUTOMATED',
+    icon: 'usdttrc20',
+    isNowPayments: true,
+  },
+  {
+    id: 'usdtbsc',
+    name: 'USDT (BEP-20 / BSC)',
+    subtitle: 'BNB Smart Chain · Instant Auto-Activation',
+    badge: 'AUTOMATED',
+    icon: 'usdtbsc',
+    isNowPayments: true,
+  },
+  {
+    id: 'usdtmatic',
+    name: 'USDT (Polygon)',
+    subtitle: 'Polygon Network · Instant Auto-Activation',
+    badge: 'AUTOMATED',
+    icon: 'usdtmatic',
+    isNowPayments: true,
+  },
+  {
+    id: 'usdterc20',
+    name: 'USDT (ERC-20)',
+    subtitle: 'Ethereum Network · Instant Auto-Activation',
+    badge: 'AUTOMATED',
+    icon: 'usdterc20',
+    isNowPayments: true,
+  },
+  {
+    id: 'btc',
+    name: 'Bitcoin (BTC)',
+    subtitle: 'Bitcoin Network · Instant Auto-Activation',
+    badge: 'AUTOMATED',
+    icon: 'btc',
+    isNowPayments: true,
+  },
+  {
+    id: 'trx',
+    name: 'TRON (TRX)',
+    subtitle: 'TRON Network · Instant Auto-Activation',
+    badge: 'AUTOMATED',
+    icon: 'trx',
+    isNowPayments: true,
+  },
+  {
+    id: 'commercial_bank',
+    name: 'Commercial Bank (Manual Transfer)',
+    subtitle: 'Acc: 8174001908 · A.D.H.W Kumari (LKR $1 = 350.44)',
+    badge: 'BANK SLIP',
+    icon: 'commercial_bank',
+    isNowPayments: false,
+  },
+];
+
 export const PaymentModal: React.FC<PaymentModalProps> = ({
   packageToBuy,
   userProfile,
@@ -70,7 +146,14 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   onCommissionsProcessed,
   applyBreachDiscount = false,
 }) => {
-  const [step, setStep] = useState<'checkout' | 'verifying' | 'pending_verification' | 'completed'>('checkout');
+  const [step, setStep] = useState<
+    'checkout' | 'nowpayments_checkout' | 'verifying' | 'pending_verification' | 'completed'
+  >('checkout');
+  const [selectedPayCurrency, setSelectedPayCurrency] =
+    useState<NowPaymentsCurrencyCode | 'commercial_bank'>('usdttrc20');
+  const [nowPaymentsPayment, setNowPaymentsPayment] =
+    useState<NowPaymentsPaymentResponse | null>(null);
+  const [isGeneratingInvoice, setIsGeneratingInvoice] = useState<boolean>(false);
   const [promoCode, setPromoCode] = useState<PromoCodeType>(activePromoCode);
   const [unlockDailyWithdrawals, setUnlockDailyWithdrawals] = useState<boolean>(
     initialDailyWithdrawals
@@ -143,6 +226,72 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     setTimeout(() => setCopiedAmount(false), 2000);
   };
 
+  const handleProceedPackagePayment = async () => {
+    setPaymentError(null);
+
+    const selectedOption = PACKAGE_PAYMENT_OPTIONS.find((opt) => opt.id === selectedPayCurrency);
+
+    if (selectedOption?.isNowPayments) {
+      setIsGeneratingInvoice(true);
+      try {
+        const res = await apiCreateNowPaymentsPayment({
+          price_amount: finalPrice,
+          price_currency: 'usd',
+          pay_currency: selectedPayCurrency as NowPaymentsCurrencyCode,
+          order_id: `PKG-${Date.now().toString(36).toUpperCase()}`,
+          order_description: `${packageName} (${packageSku})`,
+          account_type: accountType,
+          packageName,
+          sku: packageSku,
+          tier: packageToBuy.tier,
+          size: packageToBuy.size,
+          userId: userProfile?.id,
+          referralCode: activeReferralCode,
+          dailyWithdrawalsUnlocked: unlockDailyWithdrawals,
+        });
+
+        if (!res.ok || !res.payment) {
+          throw new Error(res.error || 'Failed to generate NOWPayments crypto invoice.');
+        }
+
+        setNowPaymentsPayment(res.payment);
+        setStep('nowpayments_checkout');
+      } catch (err: any) {
+        setPaymentError(err?.message || 'Error initializing crypto payment invoice.');
+      } finally {
+        setIsGeneratingInvoice(false);
+      }
+      return;
+    }
+
+    // Commercial Bank Manual Transfer flow
+    handleExecutePayment();
+  };
+
+  const handleNowPaymentsPackageFinished = (statusRes: any) => {
+    const isFinished = statusRes?.status === 'finished' || statusRes?.status === 'confirmed';
+    if (isFinished && statusRes?.account) {
+      setGeneratedAccount(statusRes.account);
+      setSavedDepositRecord(statusRes.deposit || { id: statusRes.paymentId, status: 'completed' });
+      setStep('completed');
+      onSuccess(statusRes.account, statusRes.purchase);
+      onCommissionsProcessed?.({
+        buyerUserId: userProfile?.id || statusRes.account.ownerId || statusRes.account.id,
+        buyerName: userProfile?.fullName || `Trader ${statusRes.account.id.slice(-4)}`,
+        buyerEmail: userProfile?.email || `trader.${statusRes.account.id.toLowerCase()}@client-bft.com`,
+        packageTier: packageToBuy.tier,
+        packageName,
+        packagePrice: finalPrice,
+        referralCodeUsed: activeReferralCode,
+      });
+    } else {
+      setSavedDepositRecord(
+        statusRes?.deposit || { id: statusRes?.paymentId, status: statusRes?.status || 'pending' }
+      );
+      setStep('pending_verification');
+    }
+  };
+
   const handleExecutePayment = async () => {
     setPaymentError(null);
     setStep('verifying');
@@ -158,8 +307,6 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         txHash: txHashInput.trim() || undefined,
       });
 
-      // Record order in backend & Supabase (crypto_deposits, transactions, user_purchases) with 'pending' status.
-      // Account provisioning is strictly blocked until gateway/blockchain confirmation returns 'confirmed' or 'paid'.
       const res = await apiPurchaseAccount({
         userId: userProfile?.id,
         email: userProfile?.email,
@@ -254,14 +401,13 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         setStep('pending_verification');
         setTronGridStatusNote(
           res.message ||
-            'Order logged as PENDING in crypto_deposits & transactions. Account provisioning is locked until Cryptomus / TRC-20 blockchain verification returns confirmed/paid. Unpaid orders automatically expire to FAILED after 60 minutes.'
+            'Order logged as PENDING. Account provisioning will finalize automatically upon bank verification.'
         );
       }
     } catch (err: any) {
       setStep('checkout');
       setPaymentError(
-        err?.message ||
-          'Payment could not be recorded. Please ensure you have sent USDT (TRC-20) to the depository wallet.'
+        err?.message || 'Payment submission failed. Please try again.'
       );
     }
   };
@@ -277,13 +423,12 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       if (currentEval?.isExpired || currentEval?.effectiveStatus === 'failed') {
         setSavedDepositRecord((prev: any) => (prev ? { ...prev, status: 'failed' } : prev));
         setTronGridStatusNote(
-          'Payment window expired (> 60 minutes without blockchain confirmation). Order status has been updated to FAILED and reserved state released.'
+          'Payment window expired (> 60 minutes without blockchain confirmation). Order status has been updated to FAILED.'
         );
         setIsVerifyingTronGrid(false);
         return;
       }
 
-      // 1. Check backend TronGrid / Cryptomus verification endpoint
       const verifyRes = await apiVerifyCryptoDeposits({
         userId: userProfile?.id,
         email: userProfile?.email,
@@ -308,16 +453,13 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
               setGeneratedAccount(compEntry.account);
               setStep('completed');
             }
-            setTronGridStatusNote(
-              'Verified on TronGrid TRC-20! Deposit status updated to completed and account provisioned.'
-            );
+            setTronGridStatusNote('Verified! Account provisioned.');
             setIsVerifyingTronGrid(false);
             return;
           }
         }
       }
 
-      // 2. Also check TronGrid API directly
       const fetched = await fetchTronGridTrc20Transfers({
         walletAddress: trc20Address,
         apiKey: DIRECT_USDT_TRC20_CONFIG.tronGridApiKey,
@@ -360,20 +502,16 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
             }
           } catch {}
           setTronGridStatusNote(
-            `Confirmed on TronGrid (${matched.transaction_id.slice(0, 12)}...) · Status: completed`
+            `Confirmed on TronGrid (${matched.transaction_id.slice(0, 12)}...)`
           );
           setIsVerifyingTronGrid(false);
           return;
         }
       }
 
-      setTronGridStatusNote(
-        `Unverified: No confirmed $${finalPrice.toFixed(2)} USDT (TRC-20) blockchain transfer found yet for ${DIRECT_USDT_TRC20_CONFIG.walletAddress.slice(0, 8)}... Order remains in PENDING status and account is NOT provisioned.`
-      );
+      setTronGridStatusNote('Gateway verification check completed: payment still unconfirmed.');
     } catch {
-      setTronGridStatusNote(
-        'Gateway verification check completed: payment still unconfirmed. Order remains PENDING.'
-      );
+      setTronGridStatusNote('Gateway verification check completed: payment still unconfirmed.');
     } finally {
       setIsVerifyingTronGrid(false);
     }
@@ -391,7 +529,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Package Purchase USDT TRC-20 Modal"
+      aria-label="Package Purchase Modal"
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md overflow-y-auto"
     >
       <div className="relative w-full max-w-lg rounded-3xl bg-[#0a0a0a] border border-[#ff8800]/50 shadow-2xl p-6 sm:p-8 my-8 text-white">
@@ -403,6 +541,14 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
           <X className="w-5 h-5" />
         </button>
 
+        {step === 'nowpayments_checkout' && nowPaymentsPayment && (
+          <NowPaymentsCheckout
+            payment={nowPaymentsPayment}
+            onPaymentFinished={handleNowPaymentsPackageFinished}
+            onCancel={() => setStep('checkout')}
+          />
+        )}
+
         {step === 'checkout' && (
           <div>
             <div className="flex items-center gap-3 mb-5">
@@ -411,15 +557,15 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
               </div>
               <div>
                 <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400 font-mono">
-                  <span className="text-[#00e676] font-bold">USDT (TRC-20)</span>
+                  <span className="text-[#00e676] font-bold">AUTOMATED GATEWAY</span>
                   <span aria-hidden="true">·</span>
                   <span className="flex items-center gap-1 text-slate-300">
                     <ShieldCheck className="w-3.5 h-3.5 text-[#ff8800]" />
-                    TRON Network
+                    NOWPayments &amp; Commercial Bank
                   </span>
                 </div>
                 <h3 className="text-xl font-black text-white mt-0.5">
-                  Package Purchase & USDT Transfer
+                  Package Purchase Checkout
                 </h3>
               </div>
             </div>
@@ -434,8 +580,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
               </div>
             )}
 
-            {/* Package Metadata Summary: Package Name, SKU, Account Type, Exact Amount */}
-            <div className="p-4 rounded-2xl bg-[#141418] border border-white/10 mb-4 space-y-2.5 font-mono tabular-nums">
+            {/* Package Metadata Summary */}
+            <div className="p-4 rounded-2xl bg-[#141418] border border-white/10 mb-4 space-y-2 font-mono tabular-nums">
               <div className="flex items-center justify-between text-xs">
                 <span className="text-slate-400">Package Name</span>
                 <span
@@ -467,8 +613,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
               </div>
 
               <div className="flex items-center justify-between text-xs text-slate-400 pt-1 border-t border-white/5">
-                <span>Base Package Price</span>
-                <span className="text-white">${packageToBuy.price.toFixed(2)} USDT</span>
+                <span>Base Price</span>
+                <span className="text-white">${packageToBuy.price.toFixed(2)} USD</span>
               </div>
 
               {pricing.promoDiscountAmount > 0 && (
@@ -476,7 +622,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                   <span className="flex items-center gap-1">
                     <Tag className="w-3 h-3" /> Promo ({promoCode})
                   </span>
-                  <span>-${pricing.promoDiscountAmount.toFixed(2)} USDT</span>
+                  <span>-${pricing.promoDiscountAmount.toFixed(2)} USD</span>
                 </div>
               )}
 
@@ -485,7 +631,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                   <span className="flex items-center gap-1">
                     <Gift className="w-3 h-3" /> Retest Courtesy (10%)
                   </span>
-                  <span>-${courtesyAmount.toFixed(2)} USDT</span>
+                  <span>-${courtesyAmount.toFixed(2)} USD</span>
                 </div>
               )}
 
@@ -494,25 +640,25 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                   <span className="flex items-center gap-1">
                     <CalendarClock className="w-3 h-3" /> Daily Payouts Add-On (+15%)
                   </span>
-                  <span>+${pricing.dailyWithdrawalAddOnFee.toFixed(2)} USDT</span>
+                  <span>+${pricing.dailyWithdrawalAddOnFee.toFixed(2)} USD</span>
                 </div>
               )}
 
-              <div className="pt-2.5 border-t border-white/10 flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-200">Exact Amount to Transfer</span>
+              <div className="pt-2 border-t border-white/10 flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-200">Exact Package Total</span>
                 <div className="flex items-center gap-2">
                   <span
                     data-testid="purchase-exact-amount"
                     className="text-lg font-black text-[#00e676]"
                   >
-                    ${finalPrice.toFixed(2)} USDT
+                    ${finalPrice.toFixed(2)} USD
                   </span>
                   <button
                     type="button"
                     onClick={handleCopyAmount}
-                    aria-label="Copy exact USDT amount"
+                    aria-label="Copy exact amount"
                     className="p-1.5 rounded bg-white/10 hover:bg-white/20 text-slate-200 transition-colors cursor-pointer"
-                    title="Copy exact amount"
+                    title="Copy amount"
                   >
                     {copiedAmount ? (
                       <Check className="w-3.5 h-3.5 text-emerald-400" />
@@ -524,85 +670,80 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
               </div>
             </div>
 
-            {/* Static USDT TRC-20 Wallet Address & QR Code */}
-            <div className="p-4 rounded-2xl bg-[#12141c] border border-white/10 mb-4 flex flex-col sm:flex-row items-center gap-4">
-              <div className="w-32 h-32 shrink-0 rounded-xl bg-white p-2 flex items-center justify-center shadow-lg border border-white/20 overflow-hidden">
-                {!qrImgFailed ? (
-                  <img
-                    src={DIRECT_USDT_TRC20_CONFIG.qrCodeImageUrl}
-                    alt={`USDT TRC-20 QR Code for ${trc20Address}`}
-                    referrerPolicy="no-referrer"
-                    onError={() => setQrImgFailed(true)}
-                    className="w-full h-full object-contain rounded-lg"
-                  />
-                ) : (
-                  <QRCodeSVG
-                    value={trc20Address}
-                    size={112}
-                    level="M"
-                    includeMargin={false}
-                  />
-                )}
-              </div>
-
-              <div className="flex-1 w-full space-y-2">
-                <div className="flex items-center justify-between text-xs text-slate-400 font-mono">
-                  <span>Static USDT (TRC-20) Wallet Address</span>
-                  <a
-                    href={`${DIRECT_USDT_TRC20_CONFIG.explorerAddressUrl}${trc20Address}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-[#ff8800] hover:underline inline-flex items-center gap-1"
-                  >
-                    <span>TronScan</span>
-                    <ExternalLink className="w-3 h-3" />
-                  </a>
-                </div>
-                <div className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-[#0a0a0a] border border-white/15 font-mono text-xs text-[#ffaa00] font-bold">
-                  <span
-                    data-testid="static-trc20-wallet-address"
-                    className="break-all select-all"
-                  >
-                    {trc20Address}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={handleCopyAddress}
-                    aria-label="Copy USDT TRC-20 wallet address"
-                    className="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-[#ff8800] transition-colors shrink-0 cursor-pointer"
-                  >
-                    {copiedAddress ? (
-                      <Check className="w-4 h-4 text-emerald-400" />
-                    ) : (
-                      <Copy className="w-4 h-4" />
-                    )}
-                  </button>
-                </div>
-                <p className="text-[11px] text-slate-400 font-mono">
-                  Send only <strong className="text-white">USDT (TRC-20)</strong> of exactly{' '}
-                  <strong className="text-[#00e676]">${finalPrice.toFixed(2)} USDT</strong> to this
-                  address.
-                </p>
-              </div>
-            </div>
-
-            {/* Optional TxHash Input */}
+            {/* Selectable Payment Options */}
             <div className="mb-4">
-              <label
-                htmlFor="purchase-txhash-input"
-                className="block text-[11px] font-mono text-slate-400 mb-1"
-              >
-                TRON Transaction Hash (TxID) - Optional:
+              <label className="block text-xs font-mono font-bold text-slate-300 uppercase mb-2">
+                Select Payment Method
               </label>
-              <input
-                id="purchase-txhash-input"
-                type="text"
-                value={txHashInput}
-                onChange={(e) => setTxHashInput(e.target.value)}
-                placeholder="Paste TRON TxHash (e.g. 8f7d6a5e4c3b...)"
-                className="w-full px-3.5 py-2.5 bg-[#0a0a0a] border border-white/15 rounded-xl text-white font-mono text-xs focus:outline-none focus:border-[#ff8800]"
-              />
+              <div className="grid grid-cols-1 gap-2 max-h-56 overflow-y-auto pr-1">
+                {PACKAGE_PAYMENT_OPTIONS.map((method) => {
+                  const isSelected = selectedPayCurrency === method.id;
+                  return (
+                    <button
+                      key={method.id}
+                      type="button"
+                      onClick={() => setSelectedPayCurrency(method.id)}
+                      className={`flex items-center gap-3 p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                        isSelected
+                          ? 'bg-[#1a140a] border-[#ff8800] text-white shadow-lg shadow-[#ff8800]/10'
+                          : 'bg-[#121216] border-white/10 text-slate-300 hover:border-white/25 hover:bg-[#16161c]'
+                      }`}
+                    >
+                      <PaymentIcon type={method.icon as any} className="w-6 h-6 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-bold font-mono text-white truncate">
+                            {method.name}
+                          </span>
+                          <span
+                            className={`text-[9px] font-mono font-black px-1.5 py-0.5 rounded uppercase ${
+                              method.isNowPayments
+                                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                                : 'bg-blue-500/20 text-blue-400 border border-blue-500/40'
+                            }`}
+                          >
+                            {method.badge}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-slate-400 font-mono truncate">
+                          {method.subtitle}
+                        </p>
+                      </div>
+                      <ChevronRight
+                        className={`w-4 h-4 shrink-0 transition-transform ${
+                          isSelected ? 'text-[#ff8800] translate-x-0.5' : 'text-slate-600'
+                        }`}
+                      />
+                    </button>
+                  );
+                })}
+              </div>
             </div>
+
+            {/* If Commercial Bank is selected */}
+            {selectedPayCurrency === 'commercial_bank' && (
+              <div className="p-4 rounded-2xl bg-[#12141c] border border-white/10 mb-4 space-y-2 text-xs font-mono">
+                <div className="flex items-center gap-2 text-blue-400 font-bold mb-1">
+                  <Building2 className="w-4 h-4" /> Commercial Bank of Ceylon
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Account Name:</span>
+                  <span className="text-white font-bold">A.D.H.W Kumari</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Account Number:</span>
+                  <span className="text-[#ffaa00] font-bold">8174001908</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">LKR Deposit Rate:</span>
+                  <span className="text-white">$1 USD = 350.44 LKR</span>
+                </div>
+                <div className="flex justify-between pt-1 border-t border-white/10 text-emerald-400 font-bold">
+                  <span>Required LKR Amount:</span>
+                  <span>Rs. {(finalPrice * 350.44).toLocaleString('en-US', { maximumFractionDigits: 2 })} LKR</span>
+                </div>
+              </div>
+            )}
 
             {activeReferralCode && (
               <div className="mb-4 p-3 rounded-xl bg-[#16120c] border border-[#ff8800]/40 flex items-center justify-between text-xs">
@@ -622,11 +763,26 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
             <button
               type="button"
               data-testid="confirm-challenge-payment-btn"
-              onClick={handleExecutePayment}
-              className="w-full py-4 px-6 rounded-xl bg-[#00e676] hover:bg-[#00c853] text-slate-950 font-black text-sm flex items-center justify-center gap-2 cursor-pointer transition-colors font-mono whitespace-nowrap"
+              onClick={handleProceedPackagePayment}
+              disabled={isGeneratingInvoice}
+              className="w-full py-4 px-6 rounded-xl bg-[#00e676] hover:bg-[#00c853] disabled:opacity-60 text-slate-950 font-black text-sm flex items-center justify-center gap-2 cursor-pointer transition-colors font-mono whitespace-nowrap"
             >
-              <span>I have made the payment</span>
-              <ArrowRight className="w-4 h-4 stroke-[2.5]" />
+              {isGeneratingInvoice ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Generating NOWPayments Invoice...</span>
+                </>
+              ) : selectedPayCurrency === 'commercial_bank' ? (
+                <>
+                  <span>Submit Commercial Bank Transfer Order</span>
+                  <ArrowRight className="w-4 h-4 stroke-[2.5]" />
+                </>
+              ) : (
+                <>
+                  <span>Pay ${finalPrice.toFixed(2)} USD via NOWPayments</span>
+                  <ArrowRight className="w-4 h-4 stroke-[2.5]" />
+                </>
+              )}
             </button>
           </div>
         )}

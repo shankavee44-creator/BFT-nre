@@ -32,23 +32,18 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
   onOpenAuthModal,
   isLoggedIn = false,
 }) => {
-  const img1Url = '/assets/aistudio/1793209787676.jpg_5e442646.jpeg';
-  const img2Url = '/assets/aistudio/1793209776304.jpg_c5bccaaa.jpeg';
-
   return (
     <div className="relative overflow-hidden py-10 sm:py-16 md:py-24 border-b border-white/10 bg-[#0a0a0a] animate-bft-entry">
-      {/* Animated Spooky Dual Background Image Layers */}
+      {/* Animated Ambient Background Layers */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden select-none">
-        {/* Layer 1: Moonlit Jack-O'-Lantern & Tree */}
+        {/* Layer 1 */}
         <div
           className="absolute inset-0 mobile-spooky-bg-1 animate-bft-bg-1 will-change-transform"
-          style={{ backgroundImage: `url("${img1Url}")` }}
         />
 
-        {/* Layer 2: Spooky Haunted Mansion & Graveyard */}
+        {/* Layer 2 */}
         <div
           className="absolute inset-0 mobile-spooky-bg-2 animate-bft-bg-2 will-change-transform"
-          style={{ backgroundImage: `url("${img2Url}")` }}
         />
 
         {/* Dark Radial & Vertical Gradient Vignettes for High Contrast Text Legibility */}

@@ -56,20 +56,15 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
 
   const currentPackages = PACKAGES.filter((p) => p.tier === selectedTier);
 
-  const pricingImg1 = '/assets/aistudio/1793211282946.jpg_f6e12b47.jpeg';
-  const pricingImg2 = '/assets/aistudio/1793211061879.jpg_eb93d08e.jpeg';
-
   return (
     <section id="pricing" className="py-16 md:py-24 relative bg-[#0a0a0a] border-b border-white/10 overflow-hidden will-change-transform">
-      {/* Animated Spooky Pricing Background Layers */}
+      {/* Animated Ambient Pricing Background Layers */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden select-none z-0">
         <div
           className="absolute inset-0 bg-cover bg-center animate-pricing-bg-1"
-          style={{ backgroundImage: `url("${pricingImg1}")` }}
         />
         <div
           className="absolute inset-0 bg-cover bg-center animate-pricing-bg-2"
-          style={{ backgroundImage: `url("${pricingImg2}")` }}
         />
         <div className="absolute inset-0 bg-gradient-to-b from-[#0a0a0a]/95 via-[#0a0a0a]/85 to-[#0a0a0a]/95" />
         <div className="absolute inset-0 bg-gradient-to-r from-[#0a0a0a]/90 via-transparent to-[#0a0a0a]/90" />

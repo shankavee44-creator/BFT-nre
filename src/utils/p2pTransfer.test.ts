@@ -563,7 +563,7 @@ test('fetchP2PTransfersFromSupabase queries balance_transfers using sender_id an
 
   const records = await fetchP2PTransfersFromSupabase({
     userId: mockUserProfile.id,
-    userNumericId: mockUserProfile.numericId,
+    userNumericId: String(mockUserProfile.numericId || ''),
     supabaseClient: fakeSupabaseClient,
   });
 

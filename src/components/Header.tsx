@@ -33,6 +33,7 @@ import { isRouteProtected } from '../utils/authRouting';
 import { BUILTIN_AVATARS } from '../utils/storage';
 import { BftLogo } from './BftLogo';
 import { QuotexAccountSwitcher } from './QuotexAccountSwitcher';
+import { QuotexLeaderboardModal } from './QuotexLeaderboardModal';
 
 interface HeaderProps {
   currentTab: string;
@@ -79,6 +80,7 @@ export const Header: React.FC<HeaderProps> = ({
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [mobileProfileOpen, setMobileProfileOpen] = useState(false);
   const [soundActive, setSoundActive] = useState(soundEngine.isEnabled());
+  const [leaderboardOpen, setLeaderboardOpen] = useState(false);
 
   const ADMIN_EMAILS = ['shankavee44@gmail.com', 'admin@bft.io', 'viktor.v@quant-prop.io'];
   const isUserAdmin = Boolean(
@@ -128,7 +130,7 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <header className="sticky top-0 z-40 w-full max-w-[100vw] border-b border-white/10 bg-[#0a0a0a]/95 backdrop-blur-xl">
       {/* Live Institutional Payout Ticker Feed */}
-      <CryptoTickerBar onSelectPair={() => setCurrentTab('terminal')} />
+      <CryptoTickerBar onSelectPair={() => setLeaderboardOpen(true)} />
 
       {/* Main Navigation Bar */}
       <div className="max-w-[1440px] mx-auto px-3 sm:px-6 h-16 sm:h-18 flex items-center justify-between gap-2">
@@ -205,6 +207,18 @@ export const Header: React.FC<HeaderProps> = ({
             title={soundActive ? 'Mute Sound Effects' : 'Enable Sound Effects'}
           >
             {soundActive ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+          </button>
+
+          {/* Daily Top 15 Leaderboard Button */}
+          <button
+            type="button"
+            data-testid="header-leaderboard-btn"
+            onClick={() => setLeaderboardOpen(true)}
+            title="Open Daily Top 15 Leaderboard"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[#1a130a] hover:bg-[#ff8800]/20 border border-[#ff8800]/40 text-[#ff8800] text-xs font-bold transition-all cursor-pointer whitespace-nowrap"
+          >
+            <Award className="w-3.5 h-3.5 shrink-0" />
+            <span className="hidden sm:inline">Leaderboard</span>
           </button>
 
           {/* Direct USDT (TRC-20) Deposit Button */}
@@ -671,6 +685,22 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
         ))}
       </div>
+
+      {/* Global Leaderboard Modal (Funded & Self-Funded Tabs) */}
+      <QuotexLeaderboardModal
+        isOpen={leaderboardOpen}
+        onClose={() => setLeaderboardOpen(false)}
+        userProfit={
+          activeAccount
+            ? Number((activeAccount.currentBalance - activeAccount.initialBalance).toFixed(2))
+            : 0
+        }
+        userName={userProfile.fullName || userProfile.email || 'Trader'}
+        userCountry={userProfile.country || 'Sri Lanka'}
+        userAccountId={activeAccount?.id || 'ACTIVE'}
+        activeAccount={activeAccount}
+        accounts={accounts}
+      />
     </header>
   );
 };

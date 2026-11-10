@@ -6117,14 +6117,15 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       <QuotexLeaderboardModal
         isOpen={isLeaderboardOpen}
         onClose={() => setIsLeaderboardOpen(false)}
-        userProfit={Math.max(
-          0,
-          Number((effectiveAccount.currentBalance - effectiveAccount.initialBalance).toFixed(2))
+        userProfit={Number(
+          (effectiveAccount.currentBalance - effectiveAccount.initialBalance).toFixed(2)
         )}
         weeklyTradesCount={trades.filter((t) => t.status === 'won' || t.status === 'lost').length}
         userName={userProfile?.fullName || userProfile?.email || 'Trader'}
-        userAccountId={effectiveAccount.id || 'UNRANKED'}
+        userCountry={userProfile?.country || 'Sri Lanka'}
+        userAccountId={effectiveAccount.id || 'ACTIVE'}
         activeAccount={effectiveAccount}
+        trades={trades}
       />
 
       {/* Copy Trading Modal */}
