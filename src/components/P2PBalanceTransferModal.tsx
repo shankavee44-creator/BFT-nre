@@ -29,6 +29,7 @@ import {
   parseNumericAmount,
   type P2PTransferRecord,
 } from '../utils/p2pTransfer.ts';
+import { subscribeToRealtimeBalanceTransfers } from '../utils/userNotifications.ts';
 import { soundEngine } from '../utils/soundEffects.ts';
 
 export interface P2PBalanceTransferModalProps {
@@ -68,7 +69,7 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
   const { availableLiveBalance } = resolveTransferableLiveBalance(userProfile, accounts);
 
   const dedupedRecentTransfers = React.useMemo(() => {
-    return deduplicateP2PTransferRecords(recentTransfers).slice(0, 10);
+    return deduplicateP2PTransferRecords(recentTransfers);
   }, [recentTransfers]);
 
   useEffect(() => {
@@ -80,14 +81,42 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
       }).catch(() => loadLocalP2PTransferHistory(userProfile.id, ownNumericId));
 
       if (isMounted) {
-        setRecentTransfers(deduplicateP2PTransferRecords(records).slice(0, 10));
+        setRecentTransfers(deduplicateP2PTransferRecords(records));
       }
     };
     syncHistory();
     window.addEventListener('bft-p2p-history-updated', syncHistory);
+
+    const unsubscribeRealtime = subscribeToRealtimeBalanceTransfers({
+      userProfile,
+      accounts,
+      onIncomingTransfer: (res) => {
+        if (!isMounted) return;
+        soundEngine.playTradeWin();
+        onUpdateProfile(res.updatedProfile);
+        if (res.updatedAccount && onUpdateAccount) {
+          onUpdateAccount(res.updatedAccount);
+        }
+        const incomingToast = {
+          type: 'success' as const,
+          title: res.toastTitle,
+          message: res.toastMessage,
+        };
+        setModalToast(incomingToast);
+        if (onNotifyToast) onNotifyToast(incomingToast);
+        syncHistory();
+      },
+      onOutgoingTransfer: () => {
+        if (isMounted) {
+          syncHistory();
+        }
+      },
+    });
+
     return () => {
       isMounted = false;
       window.removeEventListener('bft-p2p-history-updated', syncHistory);
+      unsubscribeRealtime();
     };
   }, [userProfile.id, ownNumericId, isOpen]);
 
@@ -246,17 +275,11 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
         onUpdateAccount(result.updatedAccount);
       }
 
-      const refreshedList = loadLocalP2PTransferHistory(userProfile.id, ownNumericId);
-      const postSubmitById = new Map<string, P2PTransferRecord>();
-      for (const item of refreshedList) {
-        if (item && item.id) {
-          postSubmitById.set(item.id, item);
-        }
-      }
-      const dedupedPostSubmit = Array.from(postSubmitById.values()).sort(
-        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-      );
-      setRecentTransfers(dedupedPostSubmit.slice(0, 10));
+      const refreshedList = await fetchP2PTransfersFromSupabase({
+        userId: userProfile.id,
+        userNumericId: ownNumericId,
+      }).catch(() => loadLocalP2PTransferHistory(userProfile.id, ownNumericId));
+      setRecentTransfers(deduplicateP2PTransferRecords(refreshedList));
 
       const successToast = {
         type: 'success' as const,
@@ -658,13 +681,17 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
             </div>
           </form>
 
-          {/* P2P Payment History (Sent & Received Transfers) */}
-          <div className="pt-3 border-t border-white/10 space-y-2">
+          {/* P2P Transfer History (Sent & Received Transfers from balance_transfers) */}
+          <div
+            data-testid="p2p-modal-history-section"
+            className="pt-3 border-t border-white/10 space-y-2"
+          >
             <div className="flex items-center justify-between text-[11px] font-mono text-slate-400">
-              <span className="uppercase font-bold flex items-center gap-1.5">
-                <Clock className="w-3.5 h-3.5 text-[#ff8800]" /> P2P Payment History
+              <span className="uppercase font-bold flex items-center gap-1.5 text-slate-200">
+                <Clock className="w-3.5 h-3.5 text-[#ff8800]" /> P2P Transfer History (
+                {dedupedRecentTransfers.length})
               </span>
-              <span>Sent &amp; Received Ledger</span>
+              <span>Date/Time • Counterparty • Amount • Status</span>
             </div>
             {dedupedRecentTransfers.length === 0 ? (
               <div
@@ -674,9 +701,15 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
                 No P2P transfers recorded yet.
               </div>
             ) : (
-              <div className="space-y-1.5 max-h-44 overflow-y-auto pr-1">
+              <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
                 {dedupedRecentTransfers.map((item) => {
                   const isSent = item.direction === 'sent' || item.type === 'P2P Transfer Sent';
+                  const counterpartyName = isSent ? item.receiverName : item.senderName;
+                  const counterpartyId = isSent ? item.receiverNumericId : item.senderNumericId;
+                  const counterpartyDisplay = counterpartyName
+                    ? `${counterpartyName} (#${counterpartyId})`
+                    : `#${counterpartyId}`;
+                  const isFailed = item.status === 'failed';
                   return (
                     <div
                       key={`p2p-modal-${item.id}`}
@@ -698,15 +731,29 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
                           )}
                         </div>
                         <div className="min-w-0">
-                          <div className="text-white font-bold truncate">
-                            {isSent ? 'P2P Transfer Sent' : 'P2P Deposit Received'}
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-white font-bold truncate">
+                              {isSent ? 'P2P Transfer Sent' : 'P2P Deposit Received'}
+                            </span>
+                            <span
+                              data-testid={`p2p-history-status-${item.id}`}
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase border ${
+                                isFailed
+                                  ? 'bg-rose-500/15 text-rose-300 border-rose-500/35'
+                                  : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/35'
+                              }`}
+                            >
+                              {isFailed ? 'FAILED' : 'COMPLETED'}
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-slate-300 tabular-nums truncate mt-0.5">
+                            {isSent ? `Receiver: ${counterpartyDisplay}` : `Sender: ${counterpartyDisplay}`}
                           </div>
                           <div className="text-[10px] text-slate-400 tabular-nums truncate">
-                            {isSent
-                              ? `Receiver ID: #${item.receiverNumericId}`
-                              : `Sender ID: #${item.senderNumericId}`}{' '}
-                            •{' '}
-                            {new Date(item.createdAt).toLocaleTimeString([], {
+                            {new Date(item.createdAt).toLocaleString('en-US', {
+                              month: 'short',
+                              day: 'numeric',
+                              year: 'numeric',
                               hour: '2-digit',
                               minute: '2-digit',
                             })}

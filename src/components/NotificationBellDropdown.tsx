@@ -17,6 +17,7 @@ import {
   processIncomingP2PTransfer,
   formatP2PReceivedToastMessage,
   hasCreditedIncomingP2P,
+  subscribeToRealtimeBalanceTransfers,
   type UserNotificationItem,
 } from '../utils/userNotifications.ts';
 import { resolveUserNumericId } from '../utils/p2pTransfer.ts';
@@ -188,8 +189,33 @@ export const NotificationBellDropdown: React.FC<NotificationBellDropdownProps> =
       }
     }
 
+    const unsubscribeBalanceTransfers = subscribeToRealtimeBalanceTransfers({
+      userProfile,
+      accounts,
+      onIncomingTransfer: (res) => {
+        soundEngine.playTradeWin();
+        processedRealtimeIdsRef.current.add(res.notification.id);
+        setNotifications((prev) => [
+          res.notification,
+          ...prev.filter((n) => n.id !== res.notification.id),
+        ]);
+        onUpdateProfile(res.updatedProfile);
+        if (res.updatedAccount && onUpdateAccount) {
+          onUpdateAccount(res.updatedAccount);
+        }
+        if (onTriggerInstantToast) {
+          onTriggerInstantToast({
+            type: 'success',
+            title: res.toastTitle,
+            message: res.toastMessage,
+          });
+        }
+      },
+    });
+
     return () => {
       window.removeEventListener('bft-user-notification-received', handleCustomNotif);
+      unsubscribeBalanceTransfers();
       if (channel && typeof supabase?.removeChannel === 'function') {
         try {
           supabase.removeChannel(channel);

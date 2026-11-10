@@ -332,6 +332,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     let profileChannel: any = null;
     let notifChannel: any = null;
     let depositChannel: any = null;
+    let balanceTransfersChannel: any = null;
     if (userProfile.id && typeof supabase?.channel === 'function') {
       try {
         profileChannel = supabase
@@ -389,6 +390,40 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             }
           )
           .subscribe();
+
+        balanceTransfersChannel = supabase
+          .channel(`user-dashboard-balance-transfers-${userProfile.id}-${Date.now()}`)
+          .on(
+            'postgres_changes',
+            {
+              event: 'INSERT',
+              schema: 'public',
+              table: 'balance_transfers',
+              filter: `receiver_id=eq.${userProfile.id}`,
+            },
+            () => {
+              if (isMounted) {
+                handleRefreshBalanceAfterP2P();
+                syncP2PHistory();
+              }
+            }
+          )
+          .on(
+            'postgres_changes',
+            {
+              event: 'INSERT',
+              schema: 'public',
+              table: 'balance_transfers',
+              filter: `sender_id=eq.${userProfile.id}`,
+            },
+            () => {
+              if (isMounted) {
+                handleRefreshBalanceAfterP2P();
+                syncP2PHistory();
+              }
+            }
+          )
+          .subscribe();
       } catch {
         // ignore
       }
@@ -409,6 +444,9 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
       }
       if (depositChannel && typeof depositChannel.unsubscribe === 'function') {
         depositChannel.unsubscribe();
+      }
+      if (balanceTransfersChannel && typeof balanceTransfersChannel.unsubscribe === 'function') {
+        balanceTransfersChannel.unsubscribe();
       }
     };
   }, [userProfile.id, userNumericId]);
@@ -2878,6 +2916,12 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                 <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
                   {dedupedP2PTransfers.map((p2p) => {
                     const isSent = p2p.direction === 'sent' || p2p.type === 'P2P Transfer Sent';
+                    const counterpartyName = isSent ? p2p.receiverName : p2p.senderName;
+                    const counterpartyId = isSent ? p2p.receiverNumericId : p2p.senderNumericId;
+                    const counterpartyDisplay = counterpartyName
+                      ? `${counterpartyName} (#${counterpartyId})`
+                      : `#${counterpartyId}`;
+                    const isFailed = p2p.status === 'failed';
                     return (
                       <div
                         key={`p2p-ledger-${p2p.id}`}
@@ -2904,18 +2948,28 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                               }`}
                             >
                               {isSent
-                                ? `Receiver ID: #${p2p.receiverNumericId}`
-                                : `Sender ID: #${p2p.senderNumericId}`}
+                                ? `Receiver: ${counterpartyDisplay}`
+                                : `Sender: ${counterpartyDisplay}`}
+                            </span>
+                            <span
+                              className={`px-2 py-0.5 rounded text-[9px] font-black uppercase border ${
+                                isFailed
+                                  ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                                  : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                              }`}
+                            >
+                              {isFailed ? 'FAILED' : 'COMPLETED'}
                             </span>
                           </div>
                           <div className="text-[10px] text-slate-400 mt-1">
                             ID: {p2p.id} • Self-Capital Balance
                           </div>
                         </div>
-                        <div className="text-[10px] text-slate-500 shrink-0">
-                          {new Date(p2p.createdAt).toLocaleString([], {
+                        <div className="text-[10px] text-slate-400 shrink-0 tabular-nums">
+                          {new Date(p2p.createdAt).toLocaleString('en-US', {
                             month: 'short',
                             day: 'numeric',
+                            year: 'numeric',
                             hour: '2-digit',
                             minute: '2-digit',
                           })}

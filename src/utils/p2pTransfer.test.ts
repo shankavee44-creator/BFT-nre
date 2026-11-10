@@ -11,12 +11,15 @@ import {
   lookupRecipientByNumericId,
   createP2PTransferRecord,
   deduplicateP2PTransferRecords,
+  fetchP2PTransfersFromSupabase,
+  formatBalanceTransferToastMessage,
 } from './p2pTransfer.ts';
 import { getNumericTraderId } from './demoBalanceManager.ts';
 import {
   formatP2PReceivedToastMessage,
   normalizeUserNotificationRow,
   processIncomingP2PTransfer,
+  subscribeToRealtimeBalanceTransfers,
 } from './userNotifications.ts';
 import {
   mapP2PTransferToQuotexTransaction,
@@ -253,7 +256,8 @@ test('Sent and Received P2P transfers format accurately for Payment History / Tr
 
 test('Instant Notification: formatP2PReceivedToastMessage and processIncomingP2PTransfer update Self-Capital balance and create user_notifications entry', async () => {
   const toastMsg = formatP2PReceivedToastMessage(75.5, '100201');
-  assert.equal(toastMsg, 'You received $75.50 into your Self-Capital balance from User #100201.');
+  assert.equal(toastMsg, 'Received $75.50 P2P transfer successfully! (From User #100201)');
+  assert.equal(formatBalanceTransferToastMessage(75.5), 'Received $75.50 P2P transfer successfully!');
 
   const normalizedNotif = normalizeUserNotificationRow({
     id: 'notif-99',
@@ -284,7 +288,7 @@ test('Instant Notification: formatP2PReceivedToastMessage and processIncomingP2P
 
   assert.equal(
     incomingRes.toastMessage,
-    'You received $75.50 into your Self-Capital balance from User #100201.'
+    'Received $75.50 P2P transfer successfully! (From User #100201)'
   );
   assert.equal(incomingRes.updatedProfile.selfBalance, 326.0);
   assert.equal(incomingRes.updatedAccount?.currentBalance, 326.0);
@@ -483,5 +487,190 @@ test('Bug Fix 3: resolveTransferableLiveBalance and validateP2PTransferInput nev
   assert.equal(validation.valid, true);
   assert.equal(validation.exceedsSelfCapitalBalance, false);
 });
+
+test('fetchP2PTransfersFromSupabase queries balance_transfers using sender_id and receiver_id and enriches counterparty names from profiles', async () => {
+  const orFiltersUsed: Array<{ table: string; filter: string }> = [];
+  const fakeSupabaseClient: any = {
+    from: (table: string) => {
+      if (table === 'balance_transfers') {
+        return {
+          select: () => ({
+            or: (filter: string) => {
+              orFiltersUsed.push({ table, filter });
+              return {
+                order: () => ({
+                  limit: async () => ({
+                    data: [
+                      {
+                        id: 'b1111111-1111-4111-8111-111111111111',
+                        sender_id: mockUserProfile.id,
+                        receiver_id: '99991048-1111-4222-8333-444455556666',
+                        amount: 80.0,
+                        status: 'completed',
+                        created_at: '2026-11-10T01:30:00.000Z',
+                      },
+                      {
+                        id: 'b2222222-2222-4222-8222-222222222222',
+                        sender_id: '99991048-1111-4222-8333-444455556666',
+                        receiver_id: mockUserProfile.id,
+                        amount: 140.0,
+                        status: 'completed',
+                        created_at: '2026-11-10T01:40:00.000Z',
+                      },
+                    ],
+                    error: null,
+                  }),
+                }),
+              };
+            },
+          }),
+        };
+      }
+      if (table === 'profiles') {
+        return {
+          select: () => ({
+            in: async () => ({
+              data: [
+                {
+                  id: '99991048-1111-4222-8333-444455556666',
+                  numeric_id: '100201',
+                  full_name: 'Kasun Perera',
+                  email: 'kasun@example.com',
+                },
+                {
+                  id: mockUserProfile.id,
+                  numeric_id: mockUserProfile.numericId,
+                  full_name: mockUserProfile.fullName,
+                  email: mockUserProfile.email,
+                },
+              ],
+              error: null,
+            }),
+          }),
+        };
+      }
+      return {
+        select: () => ({
+          or: () => ({
+            order: () => ({
+              limit: async () => ({ data: [], error: null }),
+            }),
+          }),
+        }),
+      };
+    },
+  };
+
+  const records = await fetchP2PTransfersFromSupabase({
+    userId: mockUserProfile.id,
+    userNumericId: mockUserProfile.numericId,
+    supabaseClient: fakeSupabaseClient,
+  });
+
+  // Verify the primary query on balance_transfers targeted sender_id and receiver_id
+  assert.equal(
+    orFiltersUsed[0]?.filter,
+    `sender_id.eq.${mockUserProfile.id},receiver_id.eq.${mockUserProfile.id}`
+  );
+  assert.equal(records.length, 2);
+
+  // Most recent first (b222... is received +$140.00 from Kasun Perera #100201)
+  assert.equal(records[0].id, 'b2222222-2222-4222-8222-222222222222');
+  assert.equal(records[0].direction, 'received');
+  assert.equal(records[0].senderNumericId, '100201');
+  assert.equal(records[0].senderName, 'Kasun Perera');
+  assert.equal(records[0].amount, 140.0);
+  assert.equal(records[0].status, 'completed');
+
+  // Second record (b111... is sent -$80.00 to Kasun Perera #100201)
+  assert.equal(records[1].id, 'b1111111-1111-4111-8111-111111111111');
+  assert.equal(records[1].direction, 'sent');
+  assert.equal(records[1].receiverNumericId, '100201');
+  assert.equal(records[1].receiverName, 'Kasun Perera');
+  assert.equal(records[1].amount, 80.0);
+  assert.equal(records[1].status, 'completed');
+});
+
+test('subscribeToRealtimeBalanceTransfers listens to INSERT on balance_transfers where receiver_id = auth.uid(), triggers instant toast, and updates active balance', async () => {
+  const registeredHandlers: Array<{ config: any; callback: (payload: any) => Promise<void> }> = [];
+  let incomingCallbackResult: any = null;
+
+  const fakeSupabaseClient: any = {
+    channel: (_name: string) => {
+      const ch: any = {
+        on: (_type: string, config: any, cb: (payload: any) => Promise<void>) => {
+          registeredHandlers.push({ config, callback: cb });
+          return ch;
+        },
+        subscribe: () => ch,
+        unsubscribe: () => {},
+      };
+      return ch;
+    },
+    removeChannel: () => {},
+    from: (table: string) => {
+      if (table === 'profiles') {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({
+                data: {
+                  id: '99991048-1111-4222-8333-444455556666',
+                  numeric_id: '100201',
+                  full_name: 'Kasun Perera',
+                },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      return {
+        insert: async () => ({ data: null, error: null }),
+      };
+    },
+  };
+
+  const unsubscribe = subscribeToRealtimeBalanceTransfers({
+    userProfile: mockUserProfile,
+    accounts: [mockPersonalAccount],
+    supabaseClient: fakeSupabaseClient,
+    onIncomingTransfer: (res) => {
+      incomingCallbackResult = res;
+    },
+  });
+
+  const receiverHandler = registeredHandlers.find(
+    (h) =>
+      h.config.table === 'balance_transfers' &&
+      h.config.event === 'INSERT' &&
+      h.config.filter === `receiver_id=eq.${mockUserProfile.id}`
+  );
+  assert.ok(receiverHandler, 'Must register INSERT listener on balance_transfers with receiver_id filter');
+
+  await receiverHandler.callback({
+    new: {
+      id: 'c3333333-3333-4333-8333-333333333333',
+      sender_id: '99991048-1111-4222-8333-444455556666',
+      receiver_id: mockUserProfile.id,
+      amount: 125.0,
+      status: 'completed',
+      created_at: '2026-11-10T01:55:00.000Z',
+    },
+  });
+
+  assert.ok(incomingCallbackResult, 'onIncomingTransfer must be called when INSERT arrives');
+  assert.match(
+    incomingCallbackResult.toastMessage,
+    /Received \$125\.00 P2P transfer successfully!/
+  );
+  assert.equal(incomingCallbackResult.updatedProfile.selfBalance, 375.5);
+  assert.equal(incomingCallbackResult.updatedAccount?.currentBalance, 375.5);
+  assert.equal(incomingCallbackResult.transferRecord.id, 'c3333333-3333-4333-8333-333333333333');
+  assert.equal(incomingCallbackResult.transferRecord.senderName, 'Kasun Perera');
+
+  unsubscribe();
+});
+
 
 

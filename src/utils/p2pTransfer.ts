@@ -282,8 +282,22 @@ export function extractProfileSelfCapitalBalance(
 }
 
 /**
- * Fetches P2P transfer history from `balance_transfers` and `p2p_transfers` in Supabase,
- * merging with locally persisted P2P records and strictly deduplicating.
+ * Formats the real-time toast notification message when a P2P transfer arrives on `balance_transfers`:
+ * e.g. "Received $50.00 P2P transfer successfully!"
+ */
+export function formatBalanceTransferToastMessage(amount: number | string): string {
+  const safeAmt = Math.max(0, Number(Number(amount || 0).toFixed(2)));
+  const formattedAmt = safeAmt.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  return `Received $${formattedAmt} P2P transfer successfully!`;
+}
+
+/**
+ * Fetches all P2P transfer records from `balance_transfers` (and `p2p_transfers` fallback) in Supabase
+ * where the logged-in user is either the sender (`sender_id`) or the receiver (`receiver_id`),
+ * enriches counterparty names/IDs from `profiles` when needed, and merges with locally persisted records.
  */
 export async function fetchP2PTransfersFromSupabase(params: {
   userId?: string | null;
@@ -291,82 +305,166 @@ export async function fetchP2PTransfersFromSupabase(params: {
   supabaseClient?: typeof supabase;
 }): Promise<P2PTransferRecord[]> {
   const client = params.supabaseClient || supabase;
-  const userId = String(params.userId || '').trim();
+  let userId = String(params.userId || '').trim();
   const cleanNumId = String(params.userNumericId || '').trim().replace(/^#/, '');
-  const localList = loadLocalP2PTransferHistory(userId, params.userNumericId);
+
+  // If userId is not a UUID, attempt to resolve auth.uid() from Supabase auth session
+  if ((!userId || !UUID_REGEX.test(userId)) && typeof (client as any)?.auth?.getUser === 'function') {
+    try {
+      const { data: authData } = await (client as any).auth.getUser();
+      if (authData?.user?.id && UUID_REGEX.test(authData.user.id)) {
+        userId = authData.user.id;
+      }
+    } catch {
+      // ignore offline auth lookup
+    }
+  }
+
+  const storageUserId = String(params.userId || userId || 'default').trim();
+  const localList = loadLocalP2PTransferHistory(storageUserId, cleanNumId || undefined);
   const candidateList = [...localList];
 
   if (typeof client?.from === 'function') {
+    const rawRows: Array<Record<string, any>> = [];
     const tablesToQuery = ['balance_transfers', 'p2p_transfers'];
+
     for (const tableName of tablesToQuery) {
-      try {
-        const filters: string[] = [];
-        if (userId && UUID_REGEX.test(userId)) {
-          if (tableName === 'balance_transfers') {
-            filters.push(`sender_user_id.eq.${userId}`, `receiver_user_id.eq.${userId}`);
-          } else {
-            filters.push(`sender_id.eq.${userId}`, `receiver_id.eq.${userId}`);
+      const filterStrategies: string[] = [];
+      if (userId && UUID_REGEX.test(userId)) {
+        // Primary query: sender_id or receiver_id matches auth.uid()
+        filterStrategies.push(`sender_id.eq.${userId},receiver_id.eq.${userId}`);
+        // Secondary fallback if legacy columns sender_user_id / receiver_user_id are used
+        filterStrategies.push(`sender_user_id.eq.${userId},receiver_user_id.eq.${userId}`);
+      }
+      if (cleanNumId && /^\d+$/.test(cleanNumId)) {
+        filterStrategies.push(
+          `sender_numeric_id.eq.${cleanNumId},receiver_numeric_id.eq.${cleanNumId}`
+        );
+      }
+
+      for (const orFilter of filterStrategies) {
+        try {
+          const { data, error } = await (client.from(tableName) as any)
+            .select('*')
+            .or(orFilter)
+            .order('created_at', { ascending: false })
+            .limit(100);
+
+          if (!error && Array.isArray(data)) {
+            for (const r of data) {
+              if (r && typeof r === 'object') {
+                rawRows.push(r);
+              }
+            }
+            if (orFilter.startsWith('sender_id.eq.')) {
+              break;
+            }
           }
+        } catch {
+          // try next filter strategy
         }
-        if (cleanNumId && /^\d+$/.test(cleanNumId)) {
-          filters.push(
-            `sender_numeric_id.eq.${cleanNumId}`,
-            `receiver_numeric_id.eq.${cleanNumId}`
-          );
-        }
-        if (filters.length === 0) continue;
+      }
+    }
 
-        const { data, error } = await (client.from(tableName) as any)
+    // Batch-resolve counterparty profiles from `profiles` when `balance_transfers` only stores UUIDs (`sender_id`, `receiver_id`)
+    const profileMap = new Map<string, { numericId: string; name: string }>();
+    const missingProfileUids = new Set<string>();
+    for (const row of rawRows) {
+      const sUid = String(row.sender_id ?? row.sender_user_id ?? '').trim();
+      const rUid = String(row.receiver_id ?? row.receiver_user_id ?? '').trim();
+      if (sUid && UUID_REGEX.test(sUid) && (!row.sender_numeric_id || !row.sender_name)) {
+        missingProfileUids.add(sUid);
+      }
+      if (rUid && UUID_REGEX.test(rUid) && (!row.receiver_numeric_id || !row.receiver_name)) {
+        missingProfileUids.add(rUid);
+      }
+    }
+
+    if (missingProfileUids.size > 0) {
+      try {
+        const uidArray = Array.from(missingProfileUids);
+        const { data: profRows } = await (client.from('profiles') as any)
           .select('*')
-          .or(filters.join(','))
-          .order('created_at', { ascending: false })
-          .limit(50);
-
-        if (!error && Array.isArray(data)) {
-          for (const row of data) {
-            const rowSenderUid = String(row.sender_user_id ?? row.sender_id ?? '');
-            const rowSenderNum = String(row.sender_numeric_id ?? '').trim().replace(/^#/, '');
-            const isSent =
-              (userId && rowSenderUid === userId) ||
-              (cleanNumId && rowSenderNum === cleanNumId);
-            const direction: P2PTransferDirection = isSent ? 'sent' : 'received';
-            const amount = Number(row.amount ?? row.transfer_amount ?? 0);
-            if (!Number.isFinite(amount) || amount <= 0) continue;
-
-            const record = createP2PTransferRecord({
-              id: String(row.id),
-              direction,
-              senderNumericId:
-                row.sender_numeric_id || (isSent ? cleanNumId || '58021601' : '100201'),
-              receiverNumericId:
-                row.receiver_numeric_id || (!isSent ? cleanNumId || '58021601' : '100202'),
-              amount,
-              previousBalance: Number(
-                isSent
-                  ? row.sender_previous_balance ?? row.previous_balance ?? 0
-                  : row.receiver_previous_balance ?? row.previous_balance ?? 0
-              ),
-              newBalance: Number(
-                isSent
-                  ? row.sender_new_balance ?? row.new_balance ?? 0
-                  : row.receiver_new_balance ?? row.new_balance ?? 0
-              ),
-              createdAt: row.created_at || new Date().toISOString(),
-              status: row.status === 'failed' ? 'failed' : 'completed',
-            });
-            candidateList.push(record);
+          .in('id', uidArray);
+        if (Array.isArray(profRows)) {
+          for (const p of profRows) {
+            if (p && p.id) {
+              const numId = resolveUserNumericId(null, p);
+              const name = String(p.full_name || p.fullName || p.username || p.email || '').trim();
+              profileMap.set(String(p.id), { numericId: numId, name });
+            }
           }
         }
       } catch {
-        // ignore table / offline errors
+        // non-blocking
       }
+    }
+
+    for (const row of rawRows) {
+      const rowSenderUid = String(row.sender_id ?? row.sender_user_id ?? '').trim();
+      const rowReceiverUid = String(row.receiver_id ?? row.receiver_user_id ?? '').trim();
+      const rowSenderNum = String(row.sender_numeric_id ?? '').trim().replace(/^#/, '');
+      const rowReceiverNum = String(row.receiver_numeric_id ?? '').trim().replace(/^#/, '');
+
+      const isSent =
+        (userId && rowSenderUid === userId) ||
+        (cleanNumId && rowSenderNum && rowSenderNum === cleanNumId);
+      const direction: P2PTransferDirection = isSent ? 'sent' : 'received';
+      const amount = Number(row.amount ?? row.transfer_amount ?? 0);
+      if (!Number.isFinite(amount) || amount <= 0) continue;
+
+      const senderProfileInfo = profileMap.get(rowSenderUid);
+      const receiverProfileInfo = profileMap.get(rowReceiverUid);
+
+      const resolvedSenderNumericId =
+        rowSenderNum ||
+        senderProfileInfo?.numericId ||
+        (isSent ? cleanNumId || '58021601' : resolveUserNumericId({ id: rowSenderUid }));
+      const resolvedReceiverNumericId =
+        rowReceiverNum ||
+        receiverProfileInfo?.numericId ||
+        (!isSent ? cleanNumId || '58021601' : resolveUserNumericId({ id: rowReceiverUid }));
+
+      const resolvedSenderName =
+        String(row.sender_name ?? row.senderName ?? senderProfileInfo?.name ?? '').trim() || undefined;
+      const resolvedReceiverName =
+        String(row.receiver_name ?? row.receiverName ?? receiverProfileInfo?.name ?? '').trim() || undefined;
+
+      const rawStatus = String(row.status || 'completed').toLowerCase();
+      const status: 'completed' | 'failed' =
+        rawStatus === 'failed' || rawStatus === 'rejected' || rawStatus === 'cancelled'
+          ? 'failed'
+          : 'completed';
+
+      const record = createP2PTransferRecord({
+        id: String(row.id),
+        direction,
+        senderNumericId: resolvedSenderNumericId,
+        receiverNumericId: resolvedReceiverNumericId,
+        senderName: resolvedSenderName,
+        receiverName: resolvedReceiverName,
+        amount,
+        previousBalance: Number(
+          isSent
+            ? row.sender_previous_balance ?? row.previous_balance ?? 0
+            : row.receiver_previous_balance ?? row.previous_balance ?? 0
+        ),
+        newBalance: Number(
+          isSent
+            ? row.sender_new_balance ?? row.new_balance ?? 0
+            : row.receiver_new_balance ?? row.new_balance ?? 0
+        ),
+        createdAt: row.created_at || new Date().toISOString(),
+        status,
+      });
+      candidateList.push(record);
     }
   }
 
   const merged = deduplicateP2PTransferRecords(candidateList);
-  if (userId && typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+  if (storageUserId && typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
     try {
-      const key = `${P2P_HISTORY_STORAGE_KEY}_${userId || 'default'}`;
+      const key = `${P2P_HISTORY_STORAGE_KEY}_${storageUserId || 'default'}`;
       localStorage.setItem(key, JSON.stringify(merged));
     } catch {
       // ignore storage errors
@@ -1184,21 +1282,79 @@ export async function executeP2PBalanceTransfer(
 
           // Synchronize `balance_transfers` table without creating duplicate rows if RPC already inserted one
           try {
+            let senderUidForBt = String(params.userProfile.id || '').trim();
+            if (!UUID_REGEX.test(senderUidForBt) && typeof (client as any)?.auth?.getUser === 'function') {
+              try {
+                const { data: authData } = await (client as any).auth.getUser();
+                if (authData?.user?.id && UUID_REGEX.test(authData.user.id)) {
+                  senderUidForBt = authData.user.id;
+                }
+              } catch {
+                // ignore
+              }
+            }
+
             let alreadyInBalanceTransfers = false;
-            if (!shouldRunDirectFallback && UUID_REGEX.test(String(params.userProfile.id || ''))) {
-              const { data: existingBt } = await (client.from('balance_transfers') as any)
+            if (!shouldRunDirectFallback && UUID_REGEX.test(senderUidForBt)) {
+              const { data: existingBt, error: checkErr } = await (client.from('balance_transfers') as any)
                 .select('id')
-                .eq('sender_user_id', params.userProfile.id)
-                .eq('receiver_user_id', preLookupRecipient.id)
+                .eq('sender_id', senderUidForBt)
+                .eq('receiver_id', preLookupRecipient.id)
                 .eq('amount', validation.normalizedAmount)
                 .gte('created_at', recentCutoffIso)
                 .limit(1);
-              alreadyInBalanceTransfers = Array.isArray(existingBt) && existingBt.length > 0;
+              if (!checkErr && Array.isArray(existingBt) && existingBt.length > 0) {
+                alreadyInBalanceTransfers = true;
+              } else if (checkErr) {
+                const { data: existingBtLegacy } = await (client.from('balance_transfers') as any)
+                  .select('id')
+                  .eq('sender_user_id', senderUidForBt)
+                  .eq('receiver_user_id', preLookupRecipient.id)
+                  .eq('amount', validation.normalizedAmount)
+                  .gte('created_at', recentCutoffIso)
+                  .limit(1);
+                alreadyInBalanceTransfers = Array.isArray(existingBtLegacy) && existingBtLegacy.length > 0;
+              }
             }
+
             if (!alreadyInBalanceTransfers) {
-              await (client.from('balance_transfers') as any).insert([
+              // Insert into `balance_transfers` using `sender_id` and `receiver_id` first, with progressive fallback for optional columns
+              const btPayloads: Array<Record<string, any>> = [
                 {
-                  sender_user_id: params.userProfile.id,
+                  sender_id: senderUidForBt || params.userProfile.id,
+                  receiver_id: preLookupRecipient.id,
+                  sender_numeric_id: senderNumericId,
+                  receiver_numeric_id: validation.normalizedReceiverNumericId,
+                  sender_name: params.userProfile.fullName || params.userProfile.email || 'Trader',
+                  receiver_name: receiverName,
+                  amount: validation.normalizedAmount,
+                  status: 'completed',
+                  created_at: nowIso,
+                },
+                {
+                  sender_id: senderUidForBt || params.userProfile.id,
+                  receiver_id: preLookupRecipient.id,
+                  sender_numeric_id: senderNumericId,
+                  receiver_numeric_id: validation.normalizedReceiverNumericId,
+                  amount: validation.normalizedAmount,
+                  status: 'completed',
+                  created_at: nowIso,
+                },
+                {
+                  sender_id: senderUidForBt || params.userProfile.id,
+                  receiver_id: preLookupRecipient.id,
+                  amount: validation.normalizedAmount,
+                  status: 'completed',
+                  created_at: nowIso,
+                },
+                {
+                  sender_id: senderUidForBt || params.userProfile.id,
+                  receiver_id: preLookupRecipient.id,
+                  amount: validation.normalizedAmount,
+                  status: 'completed',
+                },
+                {
+                  sender_user_id: senderUidForBt || params.userProfile.id,
                   receiver_user_id: preLookupRecipient.id,
                   sender_numeric_id: senderNumericId,
                   receiver_numeric_id: validation.normalizedReceiverNumericId,
@@ -1206,7 +1362,14 @@ export async function executeP2PBalanceTransfer(
                   status: 'completed',
                   created_at: nowIso,
                 },
-              ]);
+              ];
+
+              for (const btRow of btPayloads) {
+                const { error: btInsErr } = await (client.from('balance_transfers') as any).insert([btRow]);
+                if (!btInsErr) {
+                  break;
+                }
+              }
             }
           } catch {
             // non-blocking

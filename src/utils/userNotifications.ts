@@ -77,19 +77,22 @@ export interface UserNotificationItem {
 
 /**
  * Formats the exact toast notification message when a user receives a P2P transfer:
- * e.g. "P2P Funds Received: +$50.00 from User #100201"
+ * e.g. "Received $50.00 P2P transfer successfully!"
  */
 export function formatP2PReceivedToastMessage(
   amount: number | string,
-  senderNumericId: string | number
+  senderNumericId?: string | number
 ): string {
   const safeAmt = Math.max(0, Number(Number(amount || 0).toFixed(2)));
-  const cleanSender = String(senderNumericId ?? '').trim().replace(/^#/, '') || '100201';
   const formattedAmt = safeAmt.toLocaleString('en-US', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
-  return `You received $${formattedAmt} into your Self-Capital balance from User #${cleanSender}.`;
+  const cleanSender = String(senderNumericId ?? '').trim().replace(/^#/, '');
+  if (cleanSender) {
+    return `Received $${formattedAmt} P2P transfer successfully! (From User #${cleanSender})`;
+  }
+  return `Received $${formattedAmt} P2P transfer successfully!`;
 }
 
 /**
@@ -331,6 +334,8 @@ export async function processIncomingP2PTransfer(params: {
   accounts?: TradingAccount[];
   amount: number;
   senderNumericId: string | number;
+  senderName?: string;
+  transferId?: string;
   notificationId?: string;
   createdAt?: string;
   skipBalanceIncrementIfAlreadySynced?: boolean;
@@ -352,9 +357,16 @@ export async function processIncomingP2PTransfer(params: {
 
   const notifId =
     params.notificationId ||
+    params.transferId ||
     `notif-p2p-rcv-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 
-  const alreadyCredited = hasCreditedIncomingP2P(params.userProfile.id, notifId);
+  const semanticTimeWindow = Math.floor((new Date(createdAt).getTime() || Date.now()) / 25000);
+  const semanticCreditKey = `sem-rcv-${cleanSenderId}-${safeAmount.toFixed(2)}-${semanticTimeWindow}`;
+
+  const alreadyCredited =
+    hasCreditedIncomingP2P(params.userProfile.id, notifId) ||
+    (params.transferId ? hasCreditedIncomingP2P(params.userProfile.id, params.transferId) : false) ||
+    hasCreditedIncomingP2P(params.userProfile.id, semanticCreditKey);
   const shouldSkipIncrement = Boolean(params.skipBalanceIncrementIfAlreadySynced || alreadyCredited);
 
   const { availableLiveBalance, targetAccount } = resolveTransferableLiveBalance(
@@ -400,6 +412,10 @@ export async function processIncomingP2PTransfer(params: {
   }
 
   markCreditedIncomingP2P(params.userProfile.id, notifId);
+  if (params.transferId) {
+    markCreditedIncomingP2P(params.userProfile.id, params.transferId);
+  }
+  markCreditedIncomingP2P(params.userProfile.id, semanticCreditKey);
 
   const updatedProfile: UserProfile = {
     ...params.userProfile,
@@ -461,10 +477,11 @@ export async function processIncomingP2PTransfer(params: {
   }
 
   const transferRecord = createP2PTransferRecord({
-    id: `P2P-RCV-${notifId}`,
+    id: params.transferId || `P2P-RCV-${notifId}`,
     direction: 'received',
     senderNumericId: cleanSenderId,
     receiverNumericId,
+    senderName: params.senderName,
     amount: safeAmount,
     previousBalance: availableLiveBalance,
     newBalance: nextSelfBalance,
@@ -511,3 +528,210 @@ export async function processIncomingP2PTransfer(params: {
     updatedAccount,
   };
 }
+
+const processedRealtimeBalanceTransferIds = new Set<string>();
+
+/**
+ * Sets up a Supabase Realtime subscription listening to `INSERT` events on the `balance_transfers` table
+ * where `receiver_id` matches the authenticated user (`auth.uid()`), plus outgoing transfers (`sender_id`).
+ * When a new incoming transfer arrives, immediately credits the recipient's Self-Capital balance,
+ * persists the transfer to P2P history, and triggers the toast notification ("Received $[amount] P2P transfer successfully!").
+ */
+export function subscribeToRealtimeBalanceTransfers(params: {
+  userProfile: UserProfile;
+  accounts?: TradingAccount[];
+  supabaseClient?: typeof supabase;
+  onIncomingTransfer?: (result: {
+    toastTitle: string;
+    toastMessage: string;
+    notification: UserNotificationItem;
+    transferRecord: P2PTransferRecord;
+    updatedProfile: UserProfile;
+    updatedAccount?: TradingAccount;
+  }) => void;
+  onOutgoingTransfer?: (transferRecord: P2PTransferRecord) => void;
+}): () => void {
+  const client = params.supabaseClient || supabase;
+  const uid = String(params.userProfile?.id || '').trim();
+  const ownNumericId = resolveUserNumericId(params.userProfile);
+
+  if (!uid || typeof (client as any)?.channel !== 'function') {
+    return () => {};
+  }
+
+  let channel: any = null;
+  try {
+    channel = (client as any)
+      .channel(`balance-transfers-realtime-${uid}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'balance_transfers',
+          filter: `receiver_id=eq.${uid}`,
+        },
+        async (payload: any) => {
+          const rawRow = payload?.new;
+          if (!rawRow) return;
+          const rowId = String(
+            rawRow.id || `bt-rcv-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+          );
+          if (processedRealtimeBalanceTransferIds.has(rowId)) return;
+          processedRealtimeBalanceTransferIds.add(rowId);
+
+          const amount = Number(rawRow.amount ?? rawRow.transfer_amount ?? 0);
+          if (!Number.isFinite(amount) || amount <= 0) return;
+
+          let senderNumericId = String(rawRow.sender_numeric_id ?? '').trim().replace(/^#/, '');
+          let senderName = String(rawRow.sender_name ?? rawRow.senderName ?? '').trim() || undefined;
+          const senderUid = String(rawRow.sender_id ?? rawRow.sender_user_id ?? '').trim();
+
+          if (
+            (!senderNumericId || !senderName) &&
+            senderUid &&
+            UUID_REGEX.test(senderUid) &&
+            typeof client?.from === 'function'
+          ) {
+            try {
+              const { data: senderProf } = await (client.from('profiles') as any)
+                .select('*')
+                .eq('id', senderUid)
+                .maybeSingle();
+              if (senderProf) {
+                if (!senderNumericId) {
+                  senderNumericId = resolveUserNumericId(null, senderProf);
+                }
+                if (!senderName) {
+                  senderName =
+                    String(
+                      senderProf.full_name ||
+                        senderProf.fullName ||
+                        senderProf.username ||
+                        senderProf.email ||
+                        ''
+                    ).trim() || undefined;
+                }
+              }
+            } catch {
+              // non-blocking
+            }
+          }
+
+          if (!senderNumericId) {
+            senderNumericId = senderUid ? resolveUserNumericId({ id: senderUid }) : '100201';
+          }
+
+          const alreadyHandled = hasCreditedIncomingP2P(uid, rowId);
+          const res = await processIncomingP2PTransfer({
+            userProfile: params.userProfile,
+            accounts: params.accounts,
+            amount,
+            senderNumericId,
+            senderName,
+            transferId: rowId,
+            notificationId: rowId,
+            createdAt: rawRow.created_at || new Date().toISOString(),
+            skipBalanceIncrementIfAlreadySynced: alreadyHandled,
+            supabaseClient: params.supabaseClient,
+          });
+
+          if (!alreadyHandled && params.onIncomingTransfer) {
+            params.onIncomingTransfer(res);
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'balance_transfers',
+          filter: `sender_id=eq.${uid}`,
+        },
+        async (payload: any) => {
+          const rawRow = payload?.new;
+          if (!rawRow) return;
+          const rowId = String(
+            rawRow.id || `bt-snt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+          );
+          const amount = Number(rawRow.amount ?? rawRow.transfer_amount ?? 0);
+          if (!Number.isFinite(amount) || amount <= 0) return;
+
+          let receiverNumericId = String(rawRow.receiver_numeric_id ?? '')
+            .trim()
+            .replace(/^#/, '');
+          let receiverName =
+            String(rawRow.receiver_name ?? rawRow.receiverName ?? '').trim() || undefined;
+          const receiverUid = String(rawRow.receiver_id ?? rawRow.receiver_user_id ?? '').trim();
+
+          if (
+            (!receiverNumericId || !receiverName) &&
+            receiverUid &&
+            UUID_REGEX.test(receiverUid) &&
+            typeof client?.from === 'function'
+          ) {
+            try {
+              const { data: recProf } = await (client.from('profiles') as any)
+                .select('*')
+                .eq('id', receiverUid)
+                .maybeSingle();
+              if (recProf) {
+                if (!receiverNumericId) {
+                  receiverNumericId = resolveUserNumericId(null, recProf);
+                }
+                if (!receiverName) {
+                  receiverName =
+                    String(
+                      recProf.full_name ||
+                        recProf.fullName ||
+                        recProf.username ||
+                        recProf.email ||
+                        ''
+                    ).trim() || undefined;
+                }
+              }
+            } catch {
+              // non-blocking
+            }
+          }
+
+          const record = createP2PTransferRecord({
+            id: rowId,
+            direction: 'sent',
+            senderNumericId: ownNumericId,
+            receiverNumericId:
+              receiverNumericId ||
+              (receiverUid ? resolveUserNumericId({ id: receiverUid }) : '100202'),
+            receiverName,
+            amount,
+            createdAt: rawRow.created_at || new Date().toISOString(),
+            status: rawRow.status === 'failed' ? 'failed' : 'completed',
+          });
+
+          saveLocalP2PTransferRecord(uid, record, ownNumericId);
+          if (params.onOutgoingTransfer) {
+            params.onOutgoingTransfer(record);
+          }
+        }
+      )
+      .subscribe();
+  } catch {
+    // ignore channel setup error
+  }
+
+  return () => {
+    if (channel) {
+      try {
+        if (typeof (client as any)?.removeChannel === 'function') {
+          (client as any).removeChannel(channel);
+        } else if (typeof channel.unsubscribe === 'function') {
+          channel.unsubscribe();
+        }
+      } catch {
+        // ignore cleanup error
+      }
+    }
+  };
+}
+
