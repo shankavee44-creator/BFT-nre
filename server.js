@@ -14053,7 +14053,8 @@ function buildCryptoDepositPayload(input) {
     account_type: accountType,
     currency: "USDT",
     network: input.network || "TRC-20",
-    receipt_url: input.receiptUrl || null,
+    receipt_url: input.receiptUrl || input.screenshotUrl || null,
+    screenshot_url: input.screenshotUrl || input.receiptUrl || null,
     tx_hash: input.txHash ? String(input.txHash).trim() : null,
     status
   };
@@ -14069,7 +14070,11 @@ function buildSupabaseCryptoDepositRow(input) {
     account_type: payload.account_type,
     status: payload.status,
     ...input.network ? { network: payload.network, network_type: payload.network } : {},
-    ...payload.receipt_url ? { receipt_url: payload.receipt_url, proof_url: payload.receipt_url } : {},
+    ...payload.receipt_url ? {
+      screenshot_url: payload.receipt_url,
+      receipt_url: payload.receipt_url,
+      proof_url: payload.receipt_url
+    } : {},
     ...payload.tx_hash ? { tx_hash: payload.tx_hash } : {}
   };
 }

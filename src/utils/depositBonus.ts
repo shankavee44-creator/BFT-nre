@@ -1073,3 +1073,540 @@ export async function activateBft100BonusInSupabase(params: {
     updatedProfile,
   };
 }
+
+export const DEPOSIT_RECEIPTS_BUCKET = 'deposit-receipts';
+const LOCAL_CRYPTO_DEPOSITS_MIRROR_KEY = 'bft_supabase_crypto_deposits_mirror_v1';
+
+export interface SupabaseCryptoDepositRow {
+  id: string;
+  supabase_id?: string;
+  user_id: string;
+  user_email?: string;
+  user_name?: string;
+  account_id?: string | null;
+  account_type?: string;
+  amount: number;
+  package_name?: string;
+  package_sku?: string;
+  sku?: string;
+  wallet_address?: string;
+  network?: string;
+  tx_hash?: string | null;
+  screenshot_url?: string | null;
+  receipt_url?: string | null;
+  bonus_code?: string | null;
+  status: string;
+  created_at: string | number;
+}
+
+function loadLocalCryptoDepositsMirror(): SupabaseCryptoDepositRow[] {
+  if (typeof window === 'undefined' || typeof localStorage === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(LOCAL_CRYPTO_DEPOSITS_MIRROR_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalCryptoDepositsMirror(rows: SupabaseCryptoDepositRow[]): void {
+  if (typeof window === 'undefined' || typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(LOCAL_CRYPTO_DEPOSITS_MIRROR_KEY, JSON.stringify(rows.slice(0, 50)));
+  } catch {
+    // ignore storage quota errors
+  }
+}
+
+/**
+ * Uploads a payment proof screenshot to Supabase Storage bucket `deposit-receipts`
+ * and returns its public URL (`screenshot_url` / `receipt_url`).
+ * Gracefully falls back to `previewDataUrl` if the bucket is unavailable or restricted by RLS.
+ */
+export async function uploadDepositReceiptToSupabaseStorage(params: {
+  file?: File | Blob | null;
+  previewDataUrl?: string | null;
+  userId?: string | null;
+  bucketName?: string;
+  supabaseClient?: typeof supabase;
+}): Promise<{
+  ok: boolean;
+  screenshotUrl: string | null;
+  storagePath?: string;
+  usedFallback?: boolean;
+}> {
+  const client = params.supabaseClient || supabase;
+  const bucket = params.bucketName || DEPOSIT_RECEIPTS_BUCKET;
+  const cleanUser = String(params.userId || 'anon')
+    .replace(/[^a-zA-Z0-9_-]/g, '')
+    .slice(0, 36) || 'anon';
+
+  if (params.file && typeof (client as any)?.storage?.from === 'function') {
+    try {
+      const rawName = (params.file as File).name || 'receipt.png';
+      const safeName = rawName.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const storagePath = `${cleanUser}/${Date.now()}_${safeName}`;
+      const storageBucket = (client as any).storage.from(bucket);
+
+      const uploadRes = await storageBucket.upload(storagePath, params.file, {
+        cacheControl: '3600',
+        upsert: true,
+      });
+
+      if (!uploadRes?.error) {
+        const pubRes = storageBucket.getPublicUrl(storagePath);
+        const publicUrl =
+          pubRes?.data?.publicUrl || pubRes?.publicURL || pubRes?.publicUrl || null;
+        if (publicUrl) {
+          return {
+            ok: true,
+            screenshotUrl: String(publicUrl),
+            storagePath,
+            usedFallback: false,
+          };
+        }
+      }
+    } catch {
+      // Fall back to data URL below
+    }
+  }
+
+  if (params.previewDataUrl) {
+    return {
+      ok: true,
+      screenshotUrl: params.previewDataUrl,
+      usedFallback: true,
+    };
+  }
+
+  return {
+    ok: false,
+    screenshotUrl: null,
+  };
+}
+
+/**
+ * Inserts a submitted crypto/bank deposit record (including `screenshot_url` and `receipt_url`)
+ * directly into the `crypto_deposits` table in Supabase with resilient column fallback.
+ */
+export async function submitCryptoDepositToSupabaseTable(params: {
+  userId?: string | null;
+  userEmail?: string | null;
+  userName?: string | null;
+  amount: number;
+  packageName?: string;
+  sku?: string;
+  accountType?: string;
+  accountId?: string | null;
+  walletAddress?: string;
+  network?: string;
+  receiptFile?: File | Blob | null;
+  receiptPreviewUrl?: string | null;
+  screenshotUrl?: string | null;
+  txHash?: string | null;
+  bonusCode?: string | null;
+  status?: string;
+  supabaseClient?: typeof supabase;
+}): Promise<{
+  ok: boolean;
+  row: SupabaseCryptoDepositRow;
+  screenshotUrl: string | null;
+}> {
+  const client = params.supabaseClient || supabase;
+  const amount = roundCurrency(params.amount);
+
+  let resolvedScreenshotUrl = params.screenshotUrl || null;
+  if (!resolvedScreenshotUrl && (params.receiptFile || params.receiptPreviewUrl)) {
+    const uploaded = await uploadDepositReceiptToSupabaseStorage({
+      file: params.receiptFile,
+      previewDataUrl: params.receiptPreviewUrl,
+      userId: params.userId,
+      supabaseClient: client,
+    });
+    resolvedScreenshotUrl = uploaded.screenshotUrl;
+  }
+
+  let resolvedUuid =
+    params.userId && UUID_REGEX.test(String(params.userId)) ? String(params.userId) : null;
+
+  if (!resolvedUuid && typeof (client as any)?.auth?.getUser === 'function') {
+    try {
+      const { data } = await (client as any).auth.getUser();
+      if (data?.user?.id && UUID_REGEX.test(data.user.id)) {
+        resolvedUuid = data.user.id;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  const nowIso = new Date().toISOString();
+  const packageName =
+    params.packageName || `Self-Funded Deposit via ${params.network || 'USDT'} ($${amount.toFixed(2)})`;
+  const sku = params.sku || 'DEPOSIT_SELF_FUNDED';
+  const accountType = params.accountType || 'self_funded';
+  const status = params.status || 'pending';
+  const cleanTxHash = params.txHash ? String(params.txHash).trim() : null;
+
+  const insertPayload: Record<string, any> = {
+    ...(resolvedUuid ? { user_id: resolvedUuid } : params.userId ? { user_id: params.userId } : {}),
+    ...(params.userEmail ? { user_email: params.userEmail, email: params.userEmail } : {}),
+    ...(params.userName ? { user_name: params.userName } : {}),
+    ...(params.accountId ? { account_id: params.accountId } : {}),
+    wallet_address: params.walletAddress || '',
+    amount,
+    package_name: packageName,
+    package_sku: sku,
+    sku,
+    account_type: accountType,
+    network: params.network || 'USDT (TRC-20)',
+    status,
+    ...(cleanTxHash ? { tx_hash: cleanTxHash } : {}),
+    ...(resolvedScreenshotUrl
+      ? {
+          screenshot_url: resolvedScreenshotUrl,
+          receipt_url: resolvedScreenshotUrl,
+        }
+      : {}),
+    ...(params.bonusCode ? { bonus_code: params.bonusCode } : {}),
+  };
+
+  let insertedRow: Record<string, any> | null = null;
+
+  if (typeof client?.from === 'function') {
+    const workingPayload = { ...insertPayload };
+    for (let attempt = 0; attempt < 10; attempt++) {
+      if (Object.keys(workingPayload).length === 0) break;
+      try {
+        const query = (client.from('crypto_deposits') as any).insert(workingPayload);
+        const res =
+          typeof query.select === 'function' ? await query.select('*') : await query;
+        const error = res?.error;
+        const data = res?.data;
+
+        if (!error) {
+          insertedRow = Array.isArray(data) && data.length > 0 ? data[0] : workingPayload;
+          break;
+        }
+
+        const msg = String(error.message || error.details || '');
+        const colMatch =
+          msg.match(/Could not find the '([^']+)' column/i) ||
+          msg.match(/column "?([a-zA-Z0-9_]+)"? of relation "?crypto_deposits"? does not exist/i) ||
+          msg.match(/column crypto_deposits\.([a-zA-Z0-9_]+) does not exist/i);
+
+        if (colMatch?.[1] && colMatch[1] in workingPayload) {
+          delete workingPayload[colMatch[1]];
+          continue;
+        }
+
+        // If user_id is non-UUID and table requires UUID, strip user_id and retry
+        if (/invalid input syntax for type uuid/i.test(msg) && 'user_id' in workingPayload) {
+          delete workingPayload.user_id;
+          continue;
+        }
+        break;
+      } catch {
+        break;
+      }
+    }
+  }
+
+  const normalizedRow: SupabaseCryptoDepositRow = {
+    id: String(insertedRow?.id || `DEP-${Date.now().toString().slice(-6)}`),
+    supabase_id: insertedRow?.id ? String(insertedRow.id) : undefined,
+    user_id: String(insertedRow?.user_id || params.userId || 'usr_bft_001'),
+    user_email: insertedRow?.user_email || insertedRow?.email || params.userEmail || undefined,
+    user_name: insertedRow?.user_name || params.userName || undefined,
+    account_id: insertedRow?.account_id || params.accountId || 'BFT-PERS-LIVE',
+    account_type: insertedRow?.account_type || accountType,
+    amount: roundCurrency(insertedRow?.amount ?? amount),
+    package_name: insertedRow?.package_name || packageName,
+    package_sku: insertedRow?.package_sku || sku,
+    sku: insertedRow?.sku || sku,
+    wallet_address: insertedRow?.wallet_address || params.walletAddress || '',
+    network: insertedRow?.network || params.network || 'USDT (TRC-20)',
+    tx_hash: insertedRow?.tx_hash ?? cleanTxHash,
+    screenshot_url:
+      insertedRow?.screenshot_url ||
+      insertedRow?.receipt_url ||
+      resolvedScreenshotUrl ||
+      null,
+    receipt_url:
+      insertedRow?.receipt_url ||
+      insertedRow?.screenshot_url ||
+      resolvedScreenshotUrl ||
+      null,
+    bonus_code: insertedRow?.bonus_code || params.bonusCode || null,
+    status: String(insertedRow?.status || status),
+    created_at: insertedRow?.created_at || nowIso,
+  };
+
+  const existingMirror = loadLocalCryptoDepositsMirror();
+  saveLocalCryptoDepositsMirror([
+    normalizedRow,
+    ...existingMirror.filter((r) => String(r.id) !== String(normalizedRow.id)),
+  ]);
+
+  return {
+    ok: true,
+    row: normalizedRow,
+    screenshotUrl: normalizedRow.screenshot_url || null,
+  };
+}
+
+/**
+ * Fetches all rows from the `crypto_deposits` table in Supabase for the Admin Portal
+ * and normalizes `screenshot_url` / `receipt_url` so payment screenshots display cleanly.
+ */
+export async function fetchAdminCryptoDepositsFromSupabase(params?: {
+  existingBackendDeposits?: any[];
+  usersList?: any[];
+  supabaseClient?: typeof supabase;
+}): Promise<SupabaseCryptoDepositRow[]> {
+  const client = params?.supabaseClient || supabase;
+  const backendRows = Array.isArray(params?.existingBackendDeposits)
+    ? params!.existingBackendDeposits
+    : [];
+  const usersSource = Array.isArray(params?.usersList) ? params!.usersList : [];
+  const userMap = new Map<string, any>(
+    usersSource.map((u: any) => [String(u.id), u])
+  );
+
+  let supaRows: any[] = [];
+  if (typeof client?.from === 'function') {
+    try {
+      const { data, error } = await (client.from('crypto_deposits') as any)
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (!error && Array.isArray(data)) {
+        supaRows = data;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  const mirrorRows = loadLocalCryptoDepositsMirror();
+
+  const normalizeRow = (row: any): SupabaseCryptoDepositRow => {
+    const matchedUser = row.user_id ? userMap.get(String(row.user_id)) : null;
+    const screenshot =
+      row.screenshot_url || row.receipt_url || row.proof_url || null;
+    const email =
+      matchedUser?.email ||
+      row.user_email ||
+      row.email ||
+      (row.user_id && String(row.user_id).length > 8
+        ? `trader-${String(row.user_id).slice(0, 6)}@bft.io`
+        : String(row.user_id || 'trader@bft.io'));
+    const name =
+      matchedUser?.full_name ||
+      row.user_name ||
+      matchedUser?.email ||
+      email;
+
+    return {
+      id: String(row.id || `DEP-${Date.now()}`),
+      supabase_id: row.supabase_id || (UUID_REGEX.test(String(row.id || '')) ? String(row.id) : undefined),
+      user_id: String(row.user_id || 'usr_bft_001'),
+      user_email: email,
+      user_name: name,
+      account_id: row.account_id || 'BFT-PERS-LIVE',
+      account_type: row.account_type || 'self_funded',
+      amount: roundCurrency(row.amount || 0),
+      package_name: row.package_name || '',
+      package_sku: row.package_sku || row.sku || '',
+      sku: row.sku || row.package_sku || '',
+      wallet_address: row.wallet_address || '',
+      network: row.network || row.network_type || row.payment_method || 'USDT (TRC-20)',
+      tx_hash: row.tx_hash || null,
+      screenshot_url: screenshot,
+      receipt_url: screenshot,
+      bonus_code:
+        row.bonus_code ||
+        (String(row.sku || row.package_sku || row.package_name || '')
+          .toUpperCase()
+          .includes('BFT100')
+          ? BFT100_BONUS_CODE
+          : null),
+      status:
+        row.status === 'completed' || row.status === 'active'
+          ? 'approved'
+          : row.status === 'declined' || row.status === 'failed'
+          ? 'rejected'
+          : String(row.status || 'pending'),
+      created_at: row.created_at || Date.now(),
+    };
+  };
+
+  const mappedSupa = supaRows.map(normalizeRow);
+  const mappedBackend = backendRows.map(normalizeRow);
+  const mappedMirror = mirrorRows.map(normalizeRow);
+
+  const merged: SupabaseCryptoDepositRow[] = [];
+  const seenKeys = new Set<string>();
+
+  for (const item of [...mappedSupa, ...mappedBackend, ...mappedMirror]) {
+    const idKey = String(item.id);
+    const compositeKey = `${item.user_id}_${item.amount.toFixed(2)}_${item.tx_hash || ''}_${item.network || ''}`;
+    if (seenKeys.has(idKey)) continue;
+    if (item.tx_hash && seenKeys.has(compositeKey)) {
+      // Enrich existing entry if this one has screenshot_url and existing didn't
+      const existing = merged.find(
+        (m) =>
+          `${m.user_id}_${m.amount.toFixed(2)}_${m.tx_hash || ''}_${m.network || ''}` ===
+          compositeKey
+      );
+      if (existing && !existing.screenshot_url && item.screenshot_url) {
+        existing.screenshot_url = item.screenshot_url;
+        existing.receipt_url = item.screenshot_url;
+      }
+      continue;
+    }
+    seenKeys.add(idKey);
+    if (item.tx_hash) seenKeys.add(compositeKey);
+    merged.push(item);
+  }
+
+  return merged;
+}
+
+/**
+ * Approves a pending deposit in the `crypto_deposits` table in Supabase
+ * and credits the user's `self_balance` (plus BFT100 bonus if applicable) in `profiles`.
+ */
+export async function approveAdminCryptoDepositInSupabase(params: {
+  deposit: SupabaseCryptoDepositRow | Record<string, any>;
+  supabaseClient?: typeof supabase;
+}): Promise<{ ok: boolean }> {
+  const client = params.supabaseClient || supabase;
+  const dep = params.deposit;
+  const depositId = String(dep.supabase_id || dep.id || '');
+  const amount = roundCurrency(dep.amount || 0);
+  const userId = dep.user_id ? String(dep.user_id) : null;
+  const userEmail = dep.user_email || dep.email || null;
+  const hasBft100 =
+    String(dep.bonus_code || '').toUpperCase() === BFT100_BONUS_CODE ||
+    String(dep.sku || dep.package_sku || dep.package_name || '')
+      .toUpperCase()
+      .includes(BFT100_BONUS_CODE);
+
+  if (typeof client?.from === 'function' && depositId) {
+    try {
+      const { error } = await (client.from('crypto_deposits') as any)
+        .update({ status: 'approved' })
+        .eq('id', depositId);
+      if (error) {
+        await (client.from('crypto_deposits') as any)
+          .update({ status: 'completed' })
+          .eq('id', depositId);
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  // Update local mirror status
+  const mirror = loadLocalCryptoDepositsMirror();
+  saveLocalCryptoDepositsMirror(
+    mirror.map((m) =>
+      String(m.id) === String(dep.id) || String(m.supabase_id) === depositId
+        ? { ...m, status: 'approved' }
+        : m
+    )
+  );
+
+  // Credit user's self_balance in Supabase profiles table
+  if (typeof client?.from === 'function' && amount > 0 && (userId || userEmail)) {
+    try {
+      let profRow: any = null;
+      if (userId && UUID_REGEX.test(userId)) {
+        const { data } = await (client.from('profiles') as any)
+          .select('*')
+          .eq('id', userId)
+          .maybeSingle();
+        profRow = data;
+      }
+      if (!profRow && userEmail) {
+        const q = (client.from('profiles') as any).select('*');
+        const { data } =
+          typeof q.ilike === 'function'
+            ? await q.ilike('email', String(userEmail).trim().toLowerCase()).maybeSingle()
+            : await q.eq('email', String(userEmail).trim().toLowerCase()).maybeSingle();
+        profRow = data;
+      }
+
+      if (profRow) {
+        const curSelf = roundCurrency(
+          profRow.self_balance ?? profRow.self_capital_balance ?? 0
+        );
+        const newSelf = roundCurrency(curSelf + amount);
+        const curBonus = extractProfileBonusState(profRow);
+
+        await syncProfileBonusColumnsToSupabase({
+          userId: profRow.id || userId,
+          userEmail: profRow.email || userEmail,
+          self_balance: newSelf,
+          bonus_balance:
+            hasBft100 && !curBonus.has_used_bft100
+              ? roundCurrency(curBonus.bonus_balance + amount)
+              : curBonus.bonus_balance,
+          total_turnover_required:
+            hasBft100 && !curBonus.has_used_bft100
+              ? roundCurrency(curBonus.total_turnover_required + amount * 100)
+              : curBonus.total_turnover_required,
+          current_turnover: curBonus.current_turnover,
+          has_used_bft100: hasBft100 ? true : curBonus.has_used_bft100,
+          supabaseClient: client,
+        });
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return { ok: true };
+}
+
+/**
+ * Rejects/declines a pending deposit in the `crypto_deposits` table in Supabase.
+ */
+export async function rejectAdminCryptoDepositInSupabase(params: {
+  deposit: SupabaseCryptoDepositRow | Record<string, any>;
+  reason?: string;
+  supabaseClient?: typeof supabase;
+}): Promise<{ ok: boolean }> {
+  const client = params.supabaseClient || supabase;
+  const dep = params.deposit;
+  const depositId = String(dep.supabase_id || dep.id || '');
+
+  if (typeof client?.from === 'function' && depositId) {
+    try {
+      const { error } = await (client.from('crypto_deposits') as any)
+        .update({ status: 'rejected' })
+        .eq('id', depositId);
+      if (error) {
+        await (client.from('crypto_deposits') as any)
+          .update({ status: 'declined' })
+          .eq('id', depositId);
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  const mirror = loadLocalCryptoDepositsMirror();
+  saveLocalCryptoDepositsMirror(
+    mirror.map((m) =>
+      String(m.id) === String(dep.id) || String(m.supabase_id) === depositId
+        ? { ...m, status: 'rejected' }
+        : m
+    )
+  );
+
+  return { ok: true };
+}
+

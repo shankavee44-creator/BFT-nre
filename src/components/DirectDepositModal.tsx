@@ -29,6 +29,7 @@ import {
   extractProfileBonusState,
   fetchProfileBonusStateFromSupabase,
   activateBft100BonusInSupabase,
+  submitCryptoDepositToSupabaseTable,
 } from '../utils/depositBonus';
 import { apiSubmitCryptoDeposit } from '../utils/apiClient';
 import { PaymentIcon } from './icons/PaymentLogos';
@@ -363,25 +364,50 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
 
       const bonusAmountGranted = bonusApplied ? numericAmount : 0;
       const requiredTurnoverAmount = bonusApplied ? numericAmount * 100 : 0;
+      const resolvedPackageName = bonusApplied
+        ? `Self-Funded Deposit via ${activeMethod.name} ($${numericAmount.toFixed(2)} + $${bonusAmountGranted.toFixed(2)} BFT100 Bonus)`
+        : `Self-Funded Deposit via ${activeMethod.name} ($${numericAmount.toFixed(2)})`;
+      const resolvedSku = bonusApplied
+        ? `DEPOSIT_${activeMethod.id.toUpperCase()}_BFT100`
+        : `DEPOSIT_${activeMethod.id.toUpperCase()}`;
+      const resolvedTxHash = txHashInput.trim() || (receiptFile ? `SLIP:${receiptFile.name}` : undefined);
 
+      // 1. Upload screenshot to Supabase Storage (`deposit-receipts`) and insert into `crypto_deposits` table
+      const supaDepositRes = await submitCryptoDepositToSupabaseTable({
+        userId: userProfile?.id,
+        userEmail: userProfile?.email,
+        userName: userProfile?.fullName,
+        amount: numericAmount,
+        packageName: resolvedPackageName,
+        sku: resolvedSku,
+        accountType,
+        accountId: activeAccount?.id || 'BFT-PERS-LIVE',
+        walletAddress: targetAddress,
+        network: activeMethod.name,
+        receiptFile,
+        receiptPreviewUrl: receiptPreviewUrl || undefined,
+        txHash: resolvedTxHash,
+        bonusCode: bonusApplied ? BFT100_BONUS_CODE : null,
+        status: 'pending',
+      });
+
+      const finalScreenshotUrl = supaDepositRes.screenshotUrl || receiptPreviewUrl || undefined;
+
+      // 2. Also record in backend API for full dual-store parity
       await apiSubmitCryptoDeposit({
         userId: userProfile?.id,
         email: userProfile?.email,
         amount: numericAmount,
-        packageName: bonusApplied
-          ? `Self-Funded Deposit via ${activeMethod.name} ($${numericAmount.toFixed(2)} + $${bonusAmountGranted.toFixed(2)} BFT100 Bonus)`
-          : `Self-Funded Deposit via ${activeMethod.name} ($${numericAmount.toFixed(2)})`,
-        sku: bonusApplied
-          ? `DEPOSIT_${activeMethod.id.toUpperCase()}_BFT100`
-          : `DEPOSIT_${activeMethod.id.toUpperCase()}`,
+        packageName: resolvedPackageName,
+        sku: resolvedSku,
         accountType,
         accountId: activeAccount?.id,
         walletAddress: targetAddress,
         network: activeMethod.name,
-        receiptUrl: receiptPreviewUrl || undefined,
-        txHash: txHashInput.trim() || (receiptFile ? `SLIP:${receiptFile.name}` : undefined),
+        receiptUrl: finalScreenshotUrl,
+        txHash: resolvedTxHash,
         status: 'pending',
-      });
+      }).catch(() => {});
 
       if (bonusApplied) {
         const activationResult = await activateBft100BonusInSupabase({

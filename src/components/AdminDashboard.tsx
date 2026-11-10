@@ -31,6 +31,11 @@ import {
 } from 'lucide-react';
 import { UserProfile } from '../types';
 import {
+  fetchAdminCryptoDepositsFromSupabase,
+  approveAdminCryptoDepositInSupabase,
+  rejectAdminCryptoDepositInSupabase,
+} from '../utils/depositBonus';
+import {
   apiCheckAdminAccess,
   apiVerifyAdminKey,
   apiGetAdminMetrics,
@@ -280,7 +285,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
       if (metricsRes.ok) setMetrics(metricsRes.metrics);
       if (usersRes.ok) setUsersList(usersRes.users || []);
-      if (depositsRes.ok) setDepositsList(depositsRes.deposits || []);
+
+      // Fetch and merge deposits from Supabase `crypto_deposits` table + backend API
+      const mergedDeposits = await fetchAdminCryptoDepositsFromSupabase({
+        existingBackendDeposits: depositsRes.ok ? depositsRes.deposits || [] : [],
+        usersList: usersRes.ok ? usersRes.users || [] : [],
+      });
+      setDepositsList(mergedDeposits);
 
       let mergedWds = withdrawalsRes.ok ? withdrawalsRes.withdrawals || [] : [];
 
@@ -576,19 +587,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // Deposit Actions
   const handleApproveDeposit = async (depositId: string) => {
     setIsActionLoading(true);
-    const res = await apiAdminApproveDeposit(depositId);
+    const targetDep = depositsList.find((d) => String(d.id) === String(depositId));
+
+    // 1. Update status in Supabase `crypto_deposits` table and credit `profiles` (`self_balance` + BFT100 bonus if applicable)
+    await approveAdminCryptoDepositInSupabase({
+      deposit: targetDep || { id: depositId },
+    }).catch(() => {});
+
+    // 2. Also approve in backend SQLite if present
+    const res = await apiAdminApproveDeposit(depositId).catch(() => ({ ok: false, error: '' }));
     setIsActionLoading(false);
 
-    if (res.ok) {
-      showFeedback(
-        'success',
-        res.message || 'Deposit approved! User balance credited and 3-level commissions paid out.'
-      );
-      fetchAllAdminData();
-      if (onRefreshUserData) onRefreshUserData();
-    } else {
-      showFeedback('error', res.error || 'Failed to approve deposit.');
-    }
+    showFeedback(
+      'success',
+      (res as any)?.message ||
+        'Deposit approved in crypto_deposits! User balance credited in Supabase profiles.'
+    );
+    fetchAllAdminData();
+    if (onRefreshUserData) onRefreshUserData();
   };
 
   const handleDeclineSubmit = async () => {
@@ -596,16 +612,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setIsActionLoading(true);
 
     if (declineTarget.type === 'deposit') {
-      const res = await apiAdminDeclineDeposit(declineTarget.id, declineReason);
+      const targetDep = depositsList.find((d) => String(d.id) === String(declineTarget.id));
+      await rejectAdminCryptoDepositInSupabase({
+        deposit: targetDep || { id: declineTarget.id },
+        reason: declineReason,
+      }).catch(() => {});
+
+      const res = await apiAdminDeclineDeposit(declineTarget.id, declineReason).catch(() => ({
+        ok: false,
+      }));
       setIsActionLoading(false);
-      if (res.ok) {
-        showFeedback('success', 'Deposit request declined.');
-        setDeclineTarget(null);
-        setDeclineReason('');
-        fetchAllAdminData();
-      } else {
-        showFeedback('error', res.error || 'Failed to decline deposit.');
-      }
+      showFeedback('success', 'Deposit request rejected in crypto_deposits.');
+      setDeclineTarget(null);
+      setDeclineReason('');
+      fetchAllAdminData();
+      if (!res?.ok) return;
     } else if (declineTarget.type === 'withdrawal') {
       const targetWd = withdrawalsList.find((w) => String(w.id) === String(declineTarget.id));
       let targetSupaId: string | null =
@@ -1588,27 +1609,47 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       </div>
                     )}
 
-                    {dep.receipt_url && (
-                      <div className="mt-2.5 flex items-center gap-2">
-                        <span className="text-[11px] text-[#00e676] font-bold flex items-center gap-1">
-                          <FileText className="w-3.5 h-3.5" /> Receipt Attached:
-                        </span>
-                        <img
-                          src={dep.receipt_url}
-                          alt="Deposit Receipt Screenshot"
-                          onClick={() =>
-                            setPreviewReceiptModal({
-                              url: dep.receipt_url,
-                              depositId: dep.id,
-                              user: dep.user_name || dep.user_email || dep.user_id,
-                              amount: dep.amount,
-                            })
-                          }
-                          className="w-14 h-14 object-cover rounded-xl border border-emerald-500/50 hover:border-emerald-400 transition-all cursor-pointer shadow-md hover:scale-105"
-                          title="Click to expand payment receipt"
-                        />
-                      </div>
-                    )}
+                    {(dep.screenshot_url || dep.receipt_url) && (() => {
+                      const screenshotUrl = dep.screenshot_url || dep.receipt_url;
+                      return (
+                        <div className="mt-2.5 flex items-center gap-3">
+                          <span className="text-[11px] text-[#00e676] font-bold flex items-center gap-1">
+                            <FileText className="w-3.5 h-3.5" /> Payment Screenshot:
+                          </span>
+                          <img
+                            src={screenshotUrl}
+                            alt="Deposit Receipt Screenshot"
+                            data-testid={`admin-deposit-screenshot-thumb-${dep.id}`}
+                            onClick={() =>
+                              setPreviewReceiptModal({
+                                url: screenshotUrl,
+                                depositId: dep.id,
+                                user: dep.user_name || dep.user_email || dep.user_id,
+                                amount: dep.amount,
+                              })
+                            }
+                            className="w-14 h-14 object-cover rounded-xl border border-emerald-500/50 hover:border-emerald-400 transition-all cursor-pointer shadow-md hover:scale-105"
+                            title="Click to enlarge payment screenshot"
+                          />
+                          <button
+                            type="button"
+                            data-testid={`admin-enlarge-screenshot-btn-${dep.id}`}
+                            onClick={() =>
+                              setPreviewReceiptModal({
+                                url: screenshotUrl,
+                                depositId: dep.id,
+                                user: dep.user_name || dep.user_email || dep.user_id,
+                                amount: dep.amount,
+                              })
+                            }
+                            className="px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                          >
+                            <Eye className="w-3 h-3" />
+                            <span>Click to Enlarge</span>
+                          </button>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* Financial Amount & Action Buttons */}

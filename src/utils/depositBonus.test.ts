@@ -12,6 +12,11 @@ import {
   activateBft100BonusInSupabase,
   syncProfileBonusColumnsToSupabase,
   fetchProfileBonusStateFromSupabase,
+  uploadDepositReceiptToSupabaseStorage,
+  submitCryptoDepositToSupabaseTable,
+  fetchAdminCryptoDepositsFromSupabase,
+  approveAdminCryptoDepositInSupabase,
+  DEPOSIT_RECEIPTS_BUCKET,
 } from './depositBonus.ts';
 
 const baseProfile: UserProfile = {
@@ -347,3 +352,153 @@ test('Rule 5 (Supabase profiles Table Integration): Fetches and updates bonus_ba
   assert.equal(fetchedState.has_used_bft100, true);
   assert.equal(fetchedState.isTurnoverCompleted, false);
 });
+
+test('Rule 6 (Crypto Deposits & Admin Portal Integration): Uploads screenshot to deposit-receipts bucket, inserts into crypto_deposits with screenshot_url, and fetches/approves in Admin Portal', async () => {
+  const cryptoDepositRows: any[] = [];
+  let dbProfileRow: Record<string, any> = {
+    id: baseProfile.id,
+    email: baseProfile.email,
+    self_balance: 50,
+    self_capital_balance: 50,
+    bonus_balance: 0,
+    total_turnover_required: 0,
+    current_turnover: 0,
+    has_used_bft100: false,
+  };
+
+  let uploadedBucketName = '';
+  let uploadedFilePath = '';
+
+  const fakeSupabase: any = {
+    storage: {
+      from: (bucket: string) => {
+        uploadedBucketName = bucket;
+        return {
+          upload: async (path: string, _file: any) => {
+            uploadedFilePath = path;
+            return { data: { path }, error: null };
+          },
+          getPublicUrl: (path: string) => ({
+            data: {
+              publicUrl: `https://example.supabase.co/storage/v1/object/public/${bucket}/${path}`,
+            },
+          }),
+        };
+      },
+    },
+    from: (table: string) => {
+      if (table === 'crypto_deposits') {
+        return {
+          insert: (payload: Record<string, any>) => ({
+            select: async () => {
+              const created = {
+                id: '88889999-1111-4222-8333-444455556666',
+                ...payload,
+                created_at: '2026-11-10T09:30:00.000Z',
+              };
+              cryptoDepositRows.unshift(created);
+              return { data: [created], error: null };
+            },
+          }),
+          select: () => ({
+            order: async () => ({
+              data: [...cryptoDepositRows],
+              error: null,
+            }),
+          }),
+          update: (payload: Record<string, any>) => ({
+            eq: async (_col: string, val: any) => {
+              const idx = cryptoDepositRows.findIndex((r) => String(r.id) === String(val));
+              if (idx >= 0) {
+                cryptoDepositRows[idx] = { ...cryptoDepositRows[idx], ...payload };
+              }
+              return { data: cryptoDepositRows[idx] ? [cryptoDepositRows[idx]] : [], error: null };
+            },
+          }),
+        };
+      }
+
+      if (table === 'profiles') {
+        return {
+          select: () => ({
+            eq: (_col: string, val: any) => ({
+              maybeSingle: async () => ({
+                data: String(val) === dbProfileRow.id ? { ...dbProfileRow } : null,
+                error: null,
+              }),
+            }),
+          }),
+          update: (payload: Record<string, any>) => ({
+            eq: (_col: string, val: any) => ({
+              select: async () => {
+                if (String(val) === dbProfileRow.id) {
+                  dbProfileRow = { ...dbProfileRow, ...payload };
+                }
+                return { data: [{ ...dbProfileRow }], error: null };
+              },
+            }),
+          }),
+        };
+      }
+
+      throw new Error(`Unexpected table: ${table}`);
+    },
+  };
+
+  const mockBlob = new Blob(['fake-image-bytes'], { type: 'image/png' });
+  (mockBlob as any).name = 'payment_proof.png';
+
+  // 1. Submit crypto deposit with screenshot and BFT100 bonus code
+  const submitRes = await submitCryptoDepositToSupabaseTable({
+    userId: baseProfile.id,
+    userEmail: baseProfile.email,
+    userName: baseProfile.fullName,
+    amount: 300,
+    packageName: 'Self-Funded Deposit via USDT (TRC-20) ($300.00 + $300.00 BFT100 Bonus)',
+    sku: 'DEPOSIT_USDT_TRC20_BFT100',
+    accountType: 'self_funded',
+    accountId: 'BFT-PERS-101',
+    walletAddress: 'TLLn2X85UrcgYa4Cn3CCfHnspUg5asBVDo',
+    network: 'USDT (TRC-20)',
+    receiptFile: mockBlob,
+    txHash: '0xabc123def456',
+    bonusCode: 'BFT100',
+    status: 'pending',
+    supabaseClient: fakeSupabase,
+  });
+
+  assert.equal(submitRes.ok, true);
+  assert.equal(uploadedBucketName, DEPOSIT_RECEIPTS_BUCKET);
+  assert.match(uploadedFilePath, /payment_proof\.png$/);
+  assert.match(
+    submitRes.screenshotUrl || '',
+    /https:\/\/example\.supabase\.co\/storage\/v1\/object\/public\/deposit-receipts\//
+  );
+  assert.equal(cryptoDepositRows.length, 1);
+  assert.equal(cryptoDepositRows[0].screenshot_url, submitRes.screenshotUrl);
+  assert.equal(cryptoDepositRows[0].receipt_url, submitRes.screenshotUrl);
+  assert.equal(cryptoDepositRows[0].status, 'pending');
+
+  // 2. Fetch pending deposits for Admin Portal from `crypto_deposits`
+  const adminList = await fetchAdminCryptoDepositsFromSupabase({
+    supabaseClient: fakeSupabase,
+  });
+  assert.equal(adminList.length, 1);
+  assert.equal(adminList[0].id, '88889999-1111-4222-8333-444455556666');
+  assert.equal(adminList[0].screenshot_url, submitRes.screenshotUrl);
+  assert.equal(adminList[0].receipt_url, submitRes.screenshotUrl);
+  assert.equal(adminList[0].amount, 300);
+
+  // 3. Approve deposit in Admin Portal -> updates crypto_deposits status to 'approved' and credits profiles
+  const approveRes = await approveAdminCryptoDepositInSupabase({
+    deposit: adminList[0],
+    supabaseClient: fakeSupabase,
+  });
+  assert.equal(approveRes.ok, true);
+  assert.equal(cryptoDepositRows[0].status, 'approved');
+  assert.equal(dbProfileRow.self_balance, 350); // $50 + $300 deposit
+  assert.equal(dbProfileRow.bonus_balance, 300); // 100% BFT100 bonus
+  assert.equal(dbProfileRow.total_turnover_required, 30000); // 100x bonus turnover
+  assert.equal(dbProfileRow.has_used_bft100, true);
+});
+

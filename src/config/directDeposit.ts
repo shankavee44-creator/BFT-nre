@@ -455,7 +455,8 @@ export function buildCryptoDepositPayload(input: CryptoDepositRecordInput) {
     account_type: accountType,
     currency: 'USDT',
     network: input.network || 'TRC-20',
-    receipt_url: input.receiptUrl || null,
+    receipt_url: input.receiptUrl || (input as any).screenshotUrl || null,
+    screenshot_url: (input as any).screenshotUrl || input.receiptUrl || null,
     tx_hash: input.txHash ? String(input.txHash).trim() : null,
     status,
   };
@@ -472,7 +473,13 @@ export function buildSupabaseCryptoDepositRow(input: CryptoDepositRecordInput) {
     account_type: payload.account_type,
     status: payload.status,
     ...(input.network ? { network: payload.network, network_type: payload.network } : {}),
-    ...(payload.receipt_url ? { receipt_url: payload.receipt_url, proof_url: payload.receipt_url } : {}),
+    ...(payload.receipt_url
+      ? {
+          screenshot_url: payload.receipt_url,
+          receipt_url: payload.receipt_url,
+          proof_url: payload.receipt_url,
+        }
+      : {}),
     ...(payload.tx_hash ? { tx_hash: payload.tx_hash } : {}),
   };
 }
@@ -488,7 +495,12 @@ export function buildSupabaseCryptoDepositCoreRow(input: CryptoDepositRecordInpu
     account_type: payload.account_type,
     status: payload.status,
     ...(payload.network ? { network: payload.network } : {}),
-    ...(payload.receipt_url ? { receipt_url: payload.receipt_url } : {}),
+    ...(payload.receipt_url
+      ? {
+          screenshot_url: payload.receipt_url,
+          receipt_url: payload.receipt_url,
+        }
+      : {}),
   };
 }
 
