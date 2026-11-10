@@ -98,7 +98,7 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
           <div className="flex items-center gap-2 text-xs font-mono">
             <Tag className="w-4 h-4 text-[#ff8800]" />
             <span className="text-slate-200 font-bold">
-              Active Promo Code ({(PROMO_CODES[activePromoCode] || PROMO_CODES.SPOOKY40).label}):
+              Active Promo Code ({((activePromoCode && PROMO_CODES[activePromoCode]) || PROMO_CODES.SPOOKY40).label}):
             </span>
           </div>
           <div className="flex items-center gap-2 font-mono">
@@ -300,15 +300,15 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
                       <div className="flex items-center justify-between py-1 border-b border-white/10">
                         <span className="text-slate-400">Daily Drawdown (Soft):</span>
                         <span className="text-[#ffaa00] font-bold">
-                          {pkg.maxDailyDrawdown}% (${((pkg.size * pkg.maxDailyDrawdown) / 100).toLocaleString()})
+                          {pkg.maxDailyDrawdown ?? 10}% (${((pkg.size * (pkg.maxDailyDrawdown ?? 10)) / 100).toLocaleString()})
                         </span>
                       </div>
 
                       <div className="flex items-center justify-between py-1 border-b border-white/10">
                         <span className="text-slate-400">Max Overall Drawdown:</span>
                         <span className="text-rose-400 font-bold">
-                          {pkg.maxOverallLoss}% ($
-                          {((pkg.size * pkg.maxOverallLoss) / 100).toLocaleString()})
+                          {pkg.maxOverallLoss ?? 15}% ($
+                          {((pkg.size * (pkg.maxOverallLoss ?? 15)) / 100).toLocaleString()})
                         </span>
                       </div>
 

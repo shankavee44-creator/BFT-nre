@@ -235,7 +235,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       setIsGeneratingInvoice(true);
       try {
         const res = await apiCreateNowPaymentsPayment({
-          price_amount: finalPrice,
+          amount: finalPrice,
           price_currency: 'usd',
           pay_currency: selectedPayCurrency as NowPaymentsCurrencyCode,
           order_id: `PKG-${Date.now().toString(36).toUpperCase()}`,
@@ -689,7 +689,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                           : 'bg-[#121216] border-white/10 text-slate-300 hover:border-white/25 hover:bg-[#16161c]'
                       }`}
                     >
-                      <PaymentIcon type={method.icon as any} className="w-6 h-6 shrink-0" />
+                      <PaymentIcon id={method.icon} className="w-6 h-6 shrink-0" />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-xs font-bold font-mono text-white truncate">

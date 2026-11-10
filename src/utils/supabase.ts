@@ -5,10 +5,11 @@ import { createClient } from '@supabase/supabase-js';
  */
 function resolveEnv(key: string, altKeys: string[] = [], fallback = ''): string {
   try {
-    if (typeof import.meta !== 'undefined' && import.meta.env) {
-      if (import.meta.env[key]) return String(import.meta.env[key]).trim();
+    const meta = import.meta as any;
+    if (typeof meta !== 'undefined' && meta.env) {
+      if (meta.env[key]) return String(meta.env[key]).trim();
       for (const alt of altKeys) {
-        if (import.meta.env[alt]) return String(import.meta.env[alt]).trim();
+        if (meta.env[alt]) return String(meta.env[alt]).trim();
       }
     }
   } catch {

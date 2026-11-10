@@ -4,23 +4,42 @@ export type PromoCodeType = '50OFF' | 'FREE100' | string | null;
 export type BinaryOptionDirection = 'CALL' | 'PUT';
 export type KYCDocumentType = 'id_card' | 'passport' | 'driving_license' | string;
 export type WithdrawalPaymentMethod = 'crypto_trc20' | 'crypto_bep20' | 'binance_pay' | 'bank_transfer' | string;
+export type RuleViolationLog = any;
+export type ReferralLevel = 1 | 2 | 3 | number;
+export type KYCStatus = 'unverified' | 'pending' | 'verified' | 'rejected' | string;
 
 export interface EvaluationPackage {
+  id?: string;
   tier: ChallengeTier;
   tierName: string;
   size: AccountSize;
   price: number;
   originalPrice?: number;
-  dailyLossLimitPercent: number;
-  maxOverallLossPercent: number;
-  profitTargetPhase1Percent: number;
+  dailyLossLimitPercent?: number;
+  maxOverallLossPercent?: number;
+  profitTargetPhase1Percent?: number;
   profitTargetPhase2Percent?: number;
-  profitSplitPercent: number;
-  minTradingDays: number;
+  profitSplitPercent?: number;
+  minTradingDays?: number;
   dailyWithdrawalsFee?: number;
   dailyWithdrawalsUnlocked?: boolean;
   promoCodeApplied?: PromoCodeType;
   sku?: string;
+  profitTarget?: number;
+  step2Target?: number;
+  maxDailyDrawdown?: number;
+  maxOverallLoss?: number;
+  maxRiskPerTradePercent?: number;
+  profitDaysRequirement?: number;
+  minProfitableDayPercent?: number;
+  minTradingDaysText?: string;
+  payoutSplit?: number;
+  upgradedPayoutSplit?: number;
+  leverage?: string;
+  unlimitedTime?: boolean;
+  refundOnFirstPayout?: boolean;
+  resetCourtesyDiscount?: number;
+  [key: string]: any;
 }
 
 export interface TradingAccount {
@@ -89,8 +108,10 @@ export interface UserProfile {
   kycTimerEndsAt?: number;
   kycFrontFileName?: string;
   kycBackFileName?: string;
+  kycSelfieFileName?: string;
   kycFrontUrl?: string;
   kycBackUrl?: string;
+  kycSelfieUrl?: string;
   profileLocked?: boolean;
   isLoggedIn?: boolean;
   isAdmin?: boolean;
@@ -121,14 +142,15 @@ export interface UserProfile {
 
 export interface UserAccount {
   id: string;
-  fullName: string;
-  email: string;
+  fullName?: string;
+  name?: string;
+  email?: string;
   passwordHash?: string;
   country?: string;
   referralCode?: string;
   referredBy?: string | null;
   affiliateTier?: 'basic' | 'vip' | string;
-  createdAt: string;
+  createdAt?: string;
   [key: string]: any;
 }
 
@@ -164,9 +186,9 @@ export interface AssetInfo {
   name: string;
   category: 'forex' | 'crypto' | 'commodities' | 'indices' | 'stocks' | string;
   basePrice: number;
-  payoutPercentage: number;
+  payoutPercentage?: number;
   volatility: number;
-  decimals: number;
+  decimals?: number;
   isOtc?: boolean;
   flag1?: string;
   flag2?: string;
@@ -187,12 +209,19 @@ export interface TradeResultOverlayData {
   asset: string;
   direction: BinaryOptionDirection;
   investment: number;
-  pnl: number;
-  creditedAmount: number;
-  status: 'won' | 'lost' | 'tie';
+  pnl?: number;
+  creditedAmount?: number;
+  status?: 'won' | 'lost' | 'tie';
   strikePrice: number;
   closePrice: number;
-  timestamp: number;
+  timestamp?: number;
+  isWin?: boolean;
+  isTie?: boolean;
+  profitAmount?: number;
+  payoutPercentage?: number;
+  startTime?: number;
+  endTime?: number;
+  [key: string]: any;
 }
 
 export interface WithdrawalRequest {
@@ -204,17 +233,19 @@ export interface WithdrawalRequest {
   feeAmount?: number;
   netPayout?: number;
   profitShareRate?: number;
-  method: WithdrawalPaymentMethod;
-  walletAddress: string;
+  method?: WithdrawalPaymentMethod;
+  walletAddress?: string;
   network?: string;
   bankDetails?: {
     bankName?: string;
     accountName?: string;
     accountNumber?: string;
     swiftCode?: string;
+    branchName?: string;
+    [key: string]: any;
   };
   status: 'pending' | 'processing' | 'completed' | 'approved' | 'rejected' | 'declined' | string;
-  requestedAt: string;
+  requestedAt: string | number;
   processedAt?: string;
   txHash?: string;
   referenceNumber?: string;
@@ -230,22 +261,22 @@ export interface ReferralRecord {
   referredUserEmail: string;
   level: 1 | 2 | 3 | number;
   sourceType?: 'purchase' | 'withdrawal' | 'deposit' | 'trade_activity' | string;
-  packagePurchased: string;
+  packagePurchased?: string;
   packagePrice: number;
   commissionRate: number;
   commissionAmount: number;
   status: 'paid' | 'pending' | string;
-  date: string;
+  date?: string;
   timestamp?: number;
   [key: string]: any;
 }
 
 export interface ReferredUser {
   id: string;
-  fullName: string;
-  email: string;
+  fullName?: string;
+  email?: string;
   country?: string;
-  joinedDate: string;
+  joinedDate?: string;
   level: 1 | 2 | 3 | number;
   hasPurchased?: boolean;
   totalVolume?: number;
@@ -256,29 +287,43 @@ export interface ReferredUser {
 
 export interface AffiliatePayout {
   id: string;
-  userId: string;
+  userId?: string;
   amount: number;
-  walletAddress: string;
-  network: string;
+  walletAddress?: string;
+  network?: string;
+  method?: string;
+  details?: any;
   status: 'completed' | 'pending' | 'processing' | 'rejected' | string;
   requestedAt: string;
   processedAt?: string;
   txHash?: string;
+  [key: string]: any;
 }
 
 export interface AffiliateStats {
   totalEarnings: number;
   availableBalance: number;
   withdrawnAmount: number;
+  lifetimeEarnings: number;
   level1Earnings: number;
   level2Earnings: number;
   level3Earnings: number;
   withdrawalBonusEarnings: number;
+  withdrawalEarnings: number;
+  pendingCommission: number;
   level1Count: number;
   level2Count: number;
   level3Count: number;
   activeTradersCount: number;
-  currentTier: 'basic' | 'vip';
+  activeFundedCount: number;
+  isVipUnlocked?: boolean;
+  vipThreshold: number;
+  vipProgressPercent: number;
+  remainingToVip: number;
+  milestoneClaimed?: boolean;
+  affiliateTier?: string;
+  currentTier: 'basic' | 'vip' | string;
   milestoneBonusEarned: number;
   milestoneProgressPercent: number;
+  [key: string]: any;
 }

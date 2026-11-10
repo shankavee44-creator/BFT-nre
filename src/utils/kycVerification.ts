@@ -175,8 +175,10 @@ export function evaluateKycDocumentUpload(
     documentNumber: string;
     frontFileName: string;
     backFileName?: string;
+    selfieFileName?: string;
     frontDocumentUrl?: string;
     backDocumentUrl?: string;
+    selfieUrl?: string;
     extractedFullName?: string;
     extractedDob?: string;
   },
@@ -207,6 +209,14 @@ export function evaluateKycDocumentUpload(
     return {
       matched: false,
       error: `Please upload a valid Back Side scan or photo of your ${doc.docType}. Both Front Side and Back Side are required.`,
+      updatedProfile: profile,
+    };
+  }
+
+  if (!doc.selfieFileName && !doc.selfieUrl) {
+    return {
+      matched: false,
+      error: `Please upload a clear Live Selfie Photo to verify your photo ID against your face.`,
       updatedProfile: profile,
     };
   }
@@ -255,8 +265,10 @@ export function evaluateKycDocumentUpload(
       kycDocumentNumber: cleanDocNumber,
       kycDocumentFileName: doc.frontFileName.trim(),
       kycBackDocumentFileName: doc.backFileName?.trim() || undefined,
+      kycSelfieFileName: doc.selfieFileName?.trim() || undefined,
       kycFrontDocumentUrl: doc.frontDocumentUrl?.trim() || profile.kycFrontDocumentUrl,
       kycBackDocumentUrl: doc.backDocumentUrl?.trim() || profile.kycBackDocumentUrl,
+      kycSelfieUrl: doc.selfieUrl?.trim() || profile.kycSelfieUrl,
       kycExtractedName: effectiveExtractedName.trim(),
       kycExtractedDob: effectiveExtractedDob.trim(),
       kycSubmittedAt: new Date(nowMs).toISOString().split('T')[0],

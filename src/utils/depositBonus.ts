@@ -1487,7 +1487,7 @@ export async function approveAdminCryptoDepositInSupabase(params: {
   const depositId = String(dep.supabase_id || dep.id || '');
   const amount = roundCurrency(dep.amount || 0);
   const userId = dep.user_id ? String(dep.user_id) : null;
-  const userEmail = dep.user_email || dep.email || null;
+  const userEmail = dep.user_email || (dep as any).email || null;
   const hasBft100 =
     String(dep.bonus_code || '').toUpperCase() === BFT100_BONUS_CODE ||
     String(dep.sku || dep.package_sku || dep.package_name || '')

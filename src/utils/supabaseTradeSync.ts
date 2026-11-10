@@ -2,7 +2,7 @@ import { supabase } from './supabase.ts';
 import type { BinaryTrade, BinaryOptionDirection } from '../types/index.ts';
 import { liveMarketFeed } from './liveMarketFeed.ts';
 import { getAssetMarketState } from './priceFeedEngine.ts';
-import { getIsCopyExecutedTradesTableAvailable, setIsCopyExecutedTradesTableAvailable } from './copyTradingSync.ts';
+import { getIsCopyExecutedTradesTableAvailable, setIsCopyExecutedTradesTableAvailable, resolveCopyExecutedTradesSchema } from './copyTradingSync.ts';
 
 /**
  * UUID validator utility (RFC 4122 standard).
@@ -775,30 +775,20 @@ export async function fetchUserTrades(
     try {
       const currentAccountType = accountOrType ? resolveSupabaseAccountType(accountOrType) : null;
       if ((!currentAccountType || currentAccountType !== 'DEMO') && getIsCopyExecutedTradesTableAvailable()) {
-        let { data: copyRows, error: copyErr } = await supabase
-          .from('copy_executed_trades')
-          .select('*')
-          .eq('user_id', effectiveUserId)
-          .order('created_at', { ascending: false });
+        const { available, userColumn } = await resolveCopyExecutedTradesSchema(supabase);
+        if (available) {
+          let { data: copyRows, error: copyErr } = await supabase
+            .from('copy_executed_trades')
+            .select('*')
+            .eq(userColumn, effectiveUserId)
+            .order('created_at', { ascending: false });
 
-        if (copyErr) {
-          const text = `${copyErr.message || ''} ${copyErr.code || ''}`;
-          if (copyErr.code === '42P01' || copyErr.code === 'PGRST204' || text.includes('does not exist') || text.includes('Could not find')) {
-            setIsCopyExecutedTradesTableAvailable(false);
-          } else {
-            const fallbackRes = await supabase
-              .from('copy_executed_trades')
-              .select('*')
-              .eq('copier_user_id', effectiveUserId);
-            copyRows = fallbackRes.data;
-            if (fallbackRes.error) {
-              const fbText = `${fallbackRes.error.message || ''} ${fallbackRes.error.code || ''}`;
-              if (fallbackRes.error.code === '42P01' || fallbackRes.error.code === 'PGRST204' || fbText.includes('does not exist')) {
-                setIsCopyExecutedTradesTableAvailable(false);
-              }
+          if (copyErr) {
+            const text = `${copyErr.message || ''} ${copyErr.code || ''}`;
+            if (copyErr.code === '42P01' || copyErr.code === 'PGRST204' || text.includes('does not exist') || text.includes('Could not find')) {
+              setIsCopyExecutedTradesTableAvailable(false);
             }
           }
-        }
 
         if (Array.isArray(copyRows) && copyRows.length > 0) {
           const seenIds = new Set(mapped.map((m) => ensureTradeUuid(m.id)));
@@ -817,6 +807,7 @@ export async function fetchUserTrades(
           }
         }
       }
+    }
     } catch {
       // ignore if copy_executed_trades is empty or unavailable
     }
@@ -877,32 +868,21 @@ export async function fetchActiveOpenTradesFromSupabase(
     try {
       const currentAccountType = activeAccount ? resolveSupabaseAccountType(activeAccount) : 'FUNDED';
       if (currentAccountType !== 'DEMO' && getIsCopyExecutedTradesTableAvailable()) {
-        let { data: openCopyRows, error: openCopyErr } = await supabase
-          .from('copy_executed_trades')
-          .select('*')
-          .eq('user_id', effectiveUserId)
-          .in('status', ['OPEN', 'ACTIVE'])
-          .order('created_at', { ascending: false });
+        const { available, userColumn } = await resolveCopyExecutedTradesSchema(supabase);
+        if (available) {
+          let { data: openCopyRows, error: openCopyErr } = await supabase
+            .from('copy_executed_trades')
+            .select('*')
+            .eq(userColumn, effectiveUserId)
+            .in('status', ['OPEN', 'ACTIVE'])
+            .order('created_at', { ascending: false });
 
-        if (openCopyErr) {
-          const text = `${openCopyErr.message || ''} ${openCopyErr.code || ''}`;
-          if (openCopyErr.code === '42P01' || openCopyErr.code === 'PGRST204' || text.includes('does not exist') || text.includes('Could not find')) {
-            setIsCopyExecutedTradesTableAvailable(false);
-          } else {
-            const fallbackRes = await supabase
-              .from('copy_executed_trades')
-              .select('*')
-              .eq('copier_user_id', effectiveUserId)
-              .in('status', ['OPEN', 'ACTIVE']);
-            openCopyRows = fallbackRes.data;
-            if (fallbackRes.error) {
-              const fbText = `${fallbackRes.error.message || ''} ${fallbackRes.error.code || ''}`;
-              if (fallbackRes.error.code === '42P01' || fallbackRes.error.code === 'PGRST204' || fbText.includes('does not exist')) {
-                setIsCopyExecutedTradesTableAvailable(false);
-              }
+          if (openCopyErr) {
+            const text = `${openCopyErr.message || ''} ${openCopyErr.code || ''}`;
+            if (openCopyErr.code === '42P01' || openCopyErr.code === 'PGRST204' || text.includes('does not exist') || text.includes('Could not find')) {
+              setIsCopyExecutedTradesTableAvailable(false);
             }
           }
-        }
 
         if (Array.isArray(openCopyRows) && openCopyRows.length > 0) {
           const seenIds = new Set(activeList.map((t) => ensureTradeUuid(t.id)));
@@ -921,6 +901,7 @@ export async function fetchActiveOpenTradesFromSupabase(
           }
         }
       }
+    }
     } catch {
       // ignore
     }

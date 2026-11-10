@@ -50,7 +50,75 @@ Sitemap: https://binaryfundedtrader.com/sitemap.xml`)});const parseCookies=__nam
                 current_balance = ?,
                 initial_balance = ?
               WHERE user_id = ? AND (tier = 'demo' OR id LIKE 'BFT-DEMO%')
-            `).run(balance,balance,user.id)}}catch(dbErr){console.warn("SQLite demo balance sync notice:",dbErr)}}return res.json({ok:true,demoBalance:balance})}catch(err){return res.status(500).json({ok:false,error:err?.message||"Failed to update demo balance."})}});app.post("/api/ai-chat",async(req,res)=>{try{const{message,history}=req.body||{};if(!message||typeof message!=="string"||!message.trim()){return res.status(400).json({ok:false,error:"Message cannot be empty."})}const reply=await generateSupportChatReply({message:message.trim(),history:Array.isArray(history)?history:[]});return res.json({ok:true,reply,timestamp:new Date().toISOString()})}catch(err){console.error("AI chat endpoint error:",err);return res.json({ok:true,reply:"Our AI Risk Desk is reviewing your request. For immediate assistance with promo codes, use SPOOKY40 for 40% OFF or SPOOKY20 for 20% OFF!",timestamp:new Date().toISOString()})}});app.post("/api/kyc/submit",(req,res)=>{try{const user=getAuthenticatedUser(req);if(!user)return res.status(401).json({ok:false,error:"Unauthenticated"});const{docType,documentNumber,frontDocumentUrl,backDocumentUrl,frontFileName,backFileName,fullName,address,dateOfBirth,country,status}=req.body||{};if(!user.profile_locked&&(fullName||user.full_name)){lockUserProfile(user.id,{fullName:String(fullName||user.full_name||"Verified Trader"),address:String(address||user.address||"Verified Institutional Address"),dateOfBirth:String(dateOfBirth||user.date_of_birth||"1995-01-01"),country:country?String(country):user.country||"United States"})}const cleanDocType=String(docType||"ID Card").trim();const targetStatus=status==="verified"||status==="approved"?"verified":"pending";const updated=updateUserKycStatus(user.id,{status:targetStatus,docType:cleanDocType,documentNumber:documentNumber?String(documentNumber).trim():void 0,frontDocumentUrl:frontDocumentUrl?String(frontDocumentUrl).trim():void 0,backDocumentUrl:backDocumentUrl?String(backDocumentUrl).trim():void 0,frontFileName:frontFileName?String(frontFileName).trim():void 0,backFileName:backFileName?String(backFileName).trim():void 0});const submission=getKycSubmissionForUser(user.id);return res.json({ok:true,user:formatUserResponse(updated),kycSubmission:submission||null,message:"KYC Documents submitted! Status updated to Pending Verification."})}catch(err){return res.status(500).json({ok:false,error:err?.message||"KYC submission error."})}});app.get("/api/kyc/status",(req,res)=>{try{const user=getAuthenticatedUser(req);if(!user)return res.status(401).json({ok:false,error:"Unauthenticated"});const submission=getKycSubmissionForUser(user.id);return res.json({ok:true,user:formatUserResponse(user),kycSubmission:submission||null})}catch(err){return res.status(500).json({ok:false,error:err?.message||"Failed to fetch KYC status."})}});app.get("/api/accounts",(req,res)=>{const user=getAuthenticatedUser(req);if(!user)return res.status(401).json({ok:false,error:"Unauthenticated"});const accounts=getAccountsForUser(user.id);return res.json({ok:true,accounts})});app.put("/api/accounts/:id",(req,res)=>{try{const user=getAuthenticatedUser(req);if(!user)return res.status(401).json({ok:false,error:"Unauthenticated"});const accountId=String(req.params.id||"").trim();const updated=updateAccountStateInDb(user.id,accountId,req.body||{});return res.json({ok:true,account:updated})}catch(err){return res.status(400).json({ok:false,error:err?.message||"Failed to update account state."})}});const setNoCacheMarketHeaders=__name(res=>{res.setHeader("Cache-Control","no-store, no-cache, must-revalidate, proxy-revalidate");res.setHeader("Pragma","no-cache");res.setHeader("Expires","0")},"setNoCacheMarketHeaders");app.get("/api/market/live-prices",(_req,res)=>{try{setNoCacheMarketHeaders(res);const now=Date.now();const prices=marketEngine.getAllPrices();const forexRates=marketEngine.getForexRates();return res.json({ok:true,timestamp:now,serverTime:now,source:marketEngine.getFeedSource(),prices,forexRates})}catch(err){return res.status(500).json({ok:false,error:err?.message||"Failed to get live prices."})}});app.get("/api/market/ticker",(req,res)=>{try{setNoCacheMarketHeaders(res);const symbol=String(req.query.symbol||"EUR/USD (OTC)").trim();const tfSec=Number(req.query.timeframe)||60;const snap=marketEngine.getMarketSnapshot(symbol,tfSec,10);return res.json({ok:true,symbol:snap.symbol,price:snap.price,prevPrice:snap.prevPrice,activeCandle:snap.activeCandle,timestamp:snap.serverTime,serverTime:snap.serverTime,source:snap.source})}catch(err){return res.status(500).json({ok:false,error:err?.message||"Failed to get ticker price."})}});app.get(["/api/market/snapshot","/api/market/candles"],(req,res)=>{try{setNoCacheMarketHeaders(res);const symbol=String(req.query.symbol||"EUR/USD (OTC)").trim();const rawTf=String(req.query.timeframe||"60").trim();let tfSec=Number(rawTf);if(Number.isNaN(tfSec)||tfSec<=0){if(rawTf.endsWith("s"))tfSec=parseInt(rawTf,10)||60;else if(rawTf.endsWith("m"))tfSec=(parseInt(rawTf,10)||1)*60;else if(rawTf.endsWith("h"))tfSec=(parseInt(rawTf,10)||1)*3600;else if(rawTf==="1D"||rawTf==="D")tfSec=86400;else tfSec=60}const count=Math.max(20,Math.min(1500,Number(req.query.count)||250));const snapshot=marketEngine.getMarketSnapshot(symbol,tfSec,count);return res.json(snapshot)}catch(err){return res.status(500).json({ok:false,error:err?.message||"Failed to get market snapshot."})}});app.get("/api/market/stream",(req,res)=>{setNoCacheMarketHeaders(res);res.setHeader("Content-Type","text/event-stream; charset=utf-8");res.setHeader("Connection","keep-alive");res.setHeader("X-Accel-Buffering","no");if(typeof res.flushHeaders==="function"){res.flushHeaders()}const symbol=String(req.query.symbol||"EUR/USD (OTC)").trim();const tfSec=Math.max(5,Number(req.query.timeframe)||60);try{const initSnap=marketEngine.getMarketSnapshot(symbol,tfSec,150);res.write(`event: init
+            `).run(balance,balance,user.id)}}catch(dbErr){console.warn("SQLite demo balance sync notice:",dbErr)}}return res.json({ok:true,demoBalance:balance})}catch(err){return res.status(500).json({ok:false,error:err?.message||"Failed to update demo balance."})}});app.post("/api/ai-chat",async(req,res)=>{try{const{message,history}=req.body||{};if(!message||typeof message!=="string"||!message.trim()){return res.status(400).json({ok:false,error:"Message cannot be empty."})}const reply=await generateSupportChatReply({message:message.trim(),history:Array.isArray(history)?history:[]});return res.json({ok:true,reply,timestamp:new Date().toISOString()})}catch(err){console.error("AI chat endpoint error:",err);return res.json({ok:true,reply:"Our AI Risk Desk is reviewing your request. For immediate assistance with promo codes, use SPOOKY40 for 40% OFF or SPOOKY20 for 20% OFF!",timestamp:new Date().toISOString()})}});app.post("/api/kyc/submit", (req, res) => {
+  try {
+    const user = getAuthenticatedUser(req);
+    if (!user) return res.status(401).json({ ok: false, error: "Unauthenticated" });
+    const { docType, documentNumber, frontDocumentUrl, backDocumentUrl, selfieUrl, frontFileName, backFileName, selfieFileName, fullName, address, dateOfBirth, country, status, autoVerify } = req.body || {};
+    if (!user.profile_locked && (fullName || user.full_name)) {
+      lockUserProfile(user.id, {
+        fullName: String(fullName || user.full_name || "Verified Trader"),
+        address: String(address || user.address || "Verified Institutional Address"),
+        dateOfBirth: String(dateOfBirth || user.date_of_birth || "1995-01-01"),
+        country: country ? String(country) : user.country || "United States"
+      });
+    }
+    const cleanDocType = String(docType || "ID Card").trim();
+    const isAutoVerified = autoVerify !== false;
+    const targetStatus = isAutoVerified ? "verified" : (status === "verified" || status === "approved" ? "verified" : "pending");
+    const updated = updateUserKycStatus(user.id, {
+      status: targetStatus,
+      docType: cleanDocType,
+      documentNumber: documentNumber ? String(documentNumber).trim() : undefined,
+      frontDocumentUrl: frontDocumentUrl ? String(frontDocumentUrl).trim() : undefined,
+      backDocumentUrl: backDocumentUrl ? String(backDocumentUrl).trim() : undefined,
+      selfieUrl: selfieUrl ? String(selfieUrl).trim() : undefined,
+      frontFileName: frontFileName ? String(frontFileName).trim() : undefined,
+      backFileName: backFileName ? String(backFileName).trim() : undefined,
+      selfieFileName: selfieFileName ? String(selfieFileName).trim() : undefined
+    });
+    const submission = getKycSubmissionForUser(user.id);
+    return res.json({
+      ok: true,
+      user: formatUserResponse(updated),
+      kycSubmission: submission || null,
+      message: targetStatus === "verified"
+        ? "KYC Verification Completed! Status updated to Verified and withdrawals unlocked."
+        : "KYC Documents submitted! Status updated to Pending Verification."
+    });
+  } catch (err: any) {
+    return res.status(500).json({ ok: false, error: err?.message || "KYC submission error." });
+  }
+});
+
+app.post("/api/kyc/auto-verify", (req, res) => {
+  try {
+    const user = getAuthenticatedUser(req);
+    if (!user) return res.status(401).json({ ok: false, error: "Unauthenticated" });
+    const { docType, documentNumber, frontDocumentUrl, backDocumentUrl, selfieUrl, frontFileName, backFileName, selfieFileName } = req.body || {};
+    const cleanDocType = String(docType || "ID Card").trim();
+    const updated = updateUserKycStatus(user.id, {
+      status: "verified",
+      docType: cleanDocType,
+      documentNumber: documentNumber ? String(documentNumber).trim() : undefined,
+      frontDocumentUrl: frontDocumentUrl ? String(frontDocumentUrl).trim() : undefined,
+      backDocumentUrl: backDocumentUrl ? String(backDocumentUrl).trim() : undefined,
+      selfieUrl: selfieUrl ? String(selfieUrl).trim() : undefined,
+      frontFileName: frontFileName ? String(frontFileName).trim() : undefined,
+      backFileName: backFileName ? String(backFileName).trim() : undefined,
+      selfieFileName: selfieFileName ? String(selfieFileName).trim() : undefined
+    });
+    const submission = getKycSubmissionForUser(user.id);
+    return res.json({
+      ok: true,
+      user: formatUserResponse(updated),
+      kycSubmission: submission || null,
+      message: "Automated KYC Verification complete! Account status is now Verified."
+    });
+  } catch (err: any) {
+    return res.status(500).json({ ok: false, error: err?.message || "Automated KYC verification error." });
+  }
+});app.get("/api/kyc/status",(req,res)=>{try{const user=getAuthenticatedUser(req);if(!user)return res.status(401).json({ok:false,error:"Unauthenticated"});const submission=getKycSubmissionForUser(user.id);return res.json({ok:true,user:formatUserResponse(user),kycSubmission:submission||null})}catch(err){return res.status(500).json({ok:false,error:err?.message||"Failed to fetch KYC status."})}});app.get("/api/accounts",(req,res)=>{const user=getAuthenticatedUser(req);if(!user)return res.status(401).json({ok:false,error:"Unauthenticated"});const accounts=getAccountsForUser(user.id);return res.json({ok:true,accounts})});app.put("/api/accounts/:id",(req,res)=>{try{const user=getAuthenticatedUser(req);if(!user)return res.status(401).json({ok:false,error:"Unauthenticated"});const accountId=String(req.params.id||"").trim();const updated=updateAccountStateInDb(user.id,accountId,req.body||{});return res.json({ok:true,account:updated})}catch(err){return res.status(400).json({ok:false,error:err?.message||"Failed to update account state."})}});const setNoCacheMarketHeaders=__name(res=>{res.setHeader("Cache-Control","no-store, no-cache, must-revalidate, proxy-revalidate");res.setHeader("Pragma","no-cache");res.setHeader("Expires","0")},"setNoCacheMarketHeaders");app.get("/api/market/live-prices",(_req,res)=>{try{setNoCacheMarketHeaders(res);const now=Date.now();const prices=marketEngine.getAllPrices();const forexRates=marketEngine.getForexRates();return res.json({ok:true,timestamp:now,serverTime:now,source:marketEngine.getFeedSource(),prices,forexRates})}catch(err){return res.status(500).json({ok:false,error:err?.message||"Failed to get live prices."})}});app.get("/api/market/ticker",(req,res)=>{try{setNoCacheMarketHeaders(res);const symbol=String(req.query.symbol||"EUR/USD (OTC)").trim();const tfSec=Number(req.query.timeframe)||60;const snap=marketEngine.getMarketSnapshot(symbol,tfSec,10);return res.json({ok:true,symbol:snap.symbol,price:snap.price,prevPrice:snap.prevPrice,activeCandle:snap.activeCandle,timestamp:snap.serverTime,serverTime:snap.serverTime,source:snap.source})}catch(err){return res.status(500).json({ok:false,error:err?.message||"Failed to get ticker price."})}});app.get(["/api/market/snapshot","/api/market/candles"],(req,res)=>{try{setNoCacheMarketHeaders(res);const symbol=String(req.query.symbol||"EUR/USD (OTC)").trim();const rawTf=String(req.query.timeframe||"60").trim();let tfSec=Number(rawTf);if(Number.isNaN(tfSec)||tfSec<=0){if(rawTf.endsWith("s"))tfSec=parseInt(rawTf,10)||60;else if(rawTf.endsWith("m"))tfSec=(parseInt(rawTf,10)||1)*60;else if(rawTf.endsWith("h"))tfSec=(parseInt(rawTf,10)||1)*3600;else if(rawTf==="1D"||rawTf==="D")tfSec=86400;else tfSec=60}const count=Math.max(20,Math.min(1500,Number(req.query.count)||250));const snapshot=marketEngine.getMarketSnapshot(symbol,tfSec,count);return res.json(snapshot)}catch(err){return res.status(500).json({ok:false,error:err?.message||"Failed to get market snapshot."})}});app.get("/api/market/stream",(req,res)=>{setNoCacheMarketHeaders(res);res.setHeader("Content-Type","text/event-stream; charset=utf-8");res.setHeader("Connection","keep-alive");res.setHeader("X-Accel-Buffering","no");if(typeof res.flushHeaders==="function"){res.flushHeaders()}const symbol=String(req.query.symbol||"EUR/USD (OTC)").trim();const tfSec=Math.max(5,Number(req.query.timeframe)||60);try{const initSnap=marketEngine.getMarketSnapshot(symbol,tfSec,150);res.write(`event: init
 data: ${JSON.stringify(initSnap)}
 
 `)}catch{}let lastSentMs=0;const unsubscribe=marketEngine.subscribe(({serverTime,prices})=>{if(serverTime-lastSentMs<450)return;lastSentMs=serverTime;try{const snap=marketEngine.getMarketSnapshot(symbol,tfSec,2);const payload={serverTime,symbol:snap.symbol,price:snap.price,prevPrice:snap.prevPrice,activeCandle:snap.activeCandle,prices};res.write(`event: tick
@@ -127,7 +195,17 @@ data: ${JSON.stringify({serverTime:Date.now(),symbol:snap.symbol,price:snap.pric
 // =========================================================================
 // NOWPAYMENTS AUTOMATED GATEWAY ENDPOINTS
 // =========================================================================
-app.post("/api/nowpayments/create-payment", async (req, res) => {
+const handleCreateNowPaymentsPayment = async (req: any, res: any) => {
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  if (req.method !== 'POST') {
+    return res.status(200).json({
+      ok: true,
+      message: 'NOWPayments create-payment endpoint active. Send a POST request with JSON payload to create an invoice.',
+    });
+  }
+
   try {
     const {
       amount,
@@ -257,7 +335,21 @@ app.post("/api/nowpayments/create-payment", async (req, res) => {
   } catch (err: any) {
     return res.status(500).json({ ok: false, error: err?.message || "Failed to create NOWPayments invoice." });
   }
-});
+};
+
+const nowPaymentsCreateRoutes = [
+  "/api/nowpayments/create-payment",
+  "/api/nowpayments/create-payment/",
+  "/api/nowpayments/payment",
+  "/api/nowpayments/payment/",
+  "/api/nowpayments/create_payment",
+  "/api/nowpayments/create",
+  "/api/payment",
+  "/api/payment/",
+];
+
+app.post(nowPaymentsCreateRoutes, handleCreateNowPaymentsPayment);
+app.all(nowPaymentsCreateRoutes, handleCreateNowPaymentsPayment);
 
 app.get("/api/nowpayments/payment-status/:paymentId", async (req, res) => {
   try {

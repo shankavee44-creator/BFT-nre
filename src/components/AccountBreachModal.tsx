@@ -248,7 +248,7 @@ export const AccountBreachModal: React.FC<AccountBreachModalProps> = ({
 
           <div className="max-h-24 overflow-y-auto space-y-2 pr-1 rounded-xl">
             {logs.length > 0 ? (
-              logs.map((log) => (
+              logs.map((log: any) => (
                 <div
                   key={log.id}
                   className="p-2.5 rounded-xl bg-[#0d1424] border border-slate-800 flex items-start justify-between gap-3 text-xs"

@@ -1516,11 +1516,65 @@ export function mapCopyExecutedTradeRowToBinaryTrade(
 }
 
 let isCopyExecutedTradesTableAvailable = true;
+let verifiedCopyExecutedUserColumn: 'user_id' | 'copier_user_id' | 'id' = 'user_id';
+let isCopyExecutedSchemaDiscovered = false;
+
 export function getIsCopyExecutedTradesTableAvailable(): boolean {
   return isCopyExecutedTradesTableAvailable;
 }
 export function setIsCopyExecutedTradesTableAvailable(available: boolean) {
   isCopyExecutedTradesTableAvailable = available;
+}
+
+export async function resolveCopyExecutedTradesSchema(client: typeof supabase = supabase): Promise<{
+  available: boolean;
+  userColumn: 'user_id' | 'copier_user_id' | 'id';
+}> {
+  if (!isCopyExecutedTradesTableAvailable) {
+    return { available: false, userColumn: verifiedCopyExecutedUserColumn };
+  }
+  if (isCopyExecutedSchemaDiscovered) {
+    return { available: isCopyExecutedTradesTableAvailable, userColumn: verifiedCopyExecutedUserColumn };
+  }
+
+  try {
+    // Probe using select('*').limit(1) - 100% safe query, no column filters, will NOT throw 400 Bad Request!
+    const { data, error } = await client.from('copy_executed_trades').select('*').limit(1);
+
+    if (error) {
+      const text = `${error.message || ''} ${error.code || ''} ${error.details || ''}`;
+      if (
+        error.code === '42P01' ||
+        error.code === 'PGRST204' ||
+        text.includes('does not exist') ||
+        text.includes('Could not find') ||
+        text.includes('relation')
+      ) {
+        isCopyExecutedTradesTableAvailable = false;
+        isCopyExecutedSchemaDiscovered = true;
+        return { available: false, userColumn: verifiedCopyExecutedUserColumn };
+      }
+    }
+
+    isCopyExecutedSchemaDiscovered = true;
+
+    if (Array.isArray(data) && data.length > 0 && data[0]) {
+      const row = data[0];
+      if ('user_id' in row) {
+        verifiedCopyExecutedUserColumn = 'user_id';
+      } else if ('copier_user_id' in row) {
+        verifiedCopyExecutedUserColumn = 'copier_user_id';
+      } else if ('id' in row) {
+        verifiedCopyExecutedUserColumn = 'id';
+      }
+    }
+
+    return { available: true, userColumn: verifiedCopyExecutedUserColumn };
+  } catch {
+    isCopyExecutedTradesTableAvailable = false;
+    isCopyExecutedSchemaDiscovered = true;
+    return { available: false, userColumn: verifiedCopyExecutedUserColumn };
+  }
 }
 
 const unsupportedCopyExecutedTradeColumns = new Set<string>(['copier_user_id']);
@@ -1680,9 +1734,11 @@ export async function fetchCopyExecutedTradesFromSupabase(
   userId?: string | null,
   supabaseClient?: typeof supabase
 ): Promise<CopyExecutedTradeRow[]> {
-  if (!isCopyExecutedTradesTableAvailable && !supabaseClient) return [];
+  const client = supabaseClient || supabase;
+  const { available, userColumn } = await resolveCopyExecutedTradesSchema(client);
+  if (!available) return [];
+
   try {
-    const client = supabaseClient || supabase;
     const copierUserId =
       userId && isValidUuid(userId) ? userId.trim() : await resolveAuthUserId(userId);
     if (!copierUserId || !isValidUuid(copierUserId)) return [];
@@ -1690,25 +1746,33 @@ export async function fetchCopyExecutedTradesFromSupabase(
     let { data, error } = await client
       .from('copy_executed_trades')
       .select('*')
-      .eq('user_id', copierUserId)
+      .eq(userColumn, copierUserId)
       .order('created_at', { ascending: false });
 
     if (error) {
       const text = `${error.message || ''} ${error.code || ''} ${error.details || ''}`;
-      if (error.code === '42P01' || error.code === 'PGRST204' || text.includes('does not exist') || text.includes('Could not find')) {
+      if (
+        error.code === '42P01' ||
+        error.code === 'PGRST204' ||
+        text.includes('does not exist') ||
+        text.includes('Could not find')
+      ) {
         isCopyExecutedTradesTableAvailable = false;
         return [];
       }
-      const fallbackRes = await client
-        .from('copy_executed_trades')
-        .select('*')
-        .eq('copier_user_id', copierUserId);
-      data = fallbackRes.data;
-      error = fallbackRes.error;
-      if (error) {
-        const fbText = `${error.message || ''} ${error.code || ''}`;
-        if (error.code === '42P01' || error.code === 'PGRST204' || fbText.includes('does not exist')) {
+      if (error.code === 'PGRST200' || text.includes('column') || text.includes('does not exist')) {
+        const altCol = userColumn === 'user_id' ? 'copier_user_id' : 'user_id';
+        const fallbackRes = await client
+          .from('copy_executed_trades')
+          .select('*')
+          .eq(altCol, copierUserId);
+        if (!fallbackRes.error && Array.isArray(fallbackRes.data)) {
+          verifiedCopyExecutedUserColumn = altCol;
+          data = fallbackRes.data;
+          error = null;
+        } else {
           isCopyExecutedTradesTableAvailable = false;
+          return [];
         }
       }
     }

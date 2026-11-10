@@ -251,10 +251,92 @@ var __defProp=Object.defineProperty;var __name=(target,value)=>__defProp(target,
       id, user_id, account_id, gross_amount, net_profit, max_allowed_profit, profit_share_rate, fee_amount, net_payout,
       wallet_address, network, payment_method, status, tx_hash, reference_number, requested_at, processed_at
     ) VALUES (?, ?, ?, ?, ?, ?, 0.80, ?, ?, ?, ?, 'crypto_trc20', 'completed', ?, ?, ?, ?)
-  `).run("WD-51940284910","usr_bft_001","BFT-91823",350,680,544,35,315,"0x71C94F8B92E1048A3B99D2E54C1A82F901D3E84A","BSC (BEP20)","0x9fb8c14d5e23a0781b4d0812eac92b8d4f0980598125cfb881329a1b9e21","REF-51940284910",now-864e5*1,now-864e5*1+92e3)}__name(seedInitialData,"seedInitialData");function syncLeaderboardData(){const now=Date.now();const leaderboardSeed=[{rank:1,name:"Rashid Al-Maktoum",country:"Dubai, UAE",flag:"\u{1F1E6}\u{1F1EA}",tier:"$100,000 Instant Funded",profit:66456.11,winRate:81.2,payout:"1m 14s"},{rank:2,name:"Arjun Malhotra",country:"India",flag:"\u{1F1EE}\u{1F1F3}",tier:"$100,000 Two-Step",profit:54120.8,winRate:79.5,payout:"1m 28s"},{rank:3,name:"Hamza Qureshi",country:"Pakistan",flag:"\u{1F1F5}\u{1F1F0}",tier:"$50,000 Instant Funded",profit:46890.4,winRate:77.8,payout:"1m 35s"},{rank:4,name:"Tanvir Hossain",country:"Bangladesh",flag:"\u{1F1E7}\u{1F1E9}",tier:"$50,000 One-Step",profit:39540,winRate:76.2,payout:"1m 22s"},{rank:5,name:"Tariq Al-Mansoor",country:"Dubai, UAE",flag:"\u{1F1E6}\u{1F1EA}",tier:"$50,000 One-Step",profit:34820.5,winRate:75.1,payout:"1m 31s"},{rank:6,name:"Vikramjit Singh",country:"India",flag:"\u{1F1EE}\u{1F1F3}",tier:"$25,000 Two-Step",profit:31250,winRate:74.3,payout:"1m 49s"},{rank:7,name:"Yohan Siriwardhana",country:"Sri Lanka",flag:"\u{1F1F1}\u{1F1F0}",tier:"$50,000 Instant Funded",profit:29456.71,winRate:78.4,payout:"1m 15s"},{rank:8,name:"Bilal Ahmed Khan",country:"Pakistan",flag:"\u{1F1F5}\u{1F1F0}",tier:"$25,000 Two-Step",profit:26840.2,winRate:72.9,payout:"1m 36s"},{rank:9,name:"Faizal Zulkifli",country:"Malaysia",flag:"\u{1F1F2}\u{1F1FE}",tier:"$25,000 Instant Funded",profit:23410,winRate:71.8,payout:"1m 18s"},{rank:10,name:"Ananya Sharma",country:"India",flag:"\u{1F1EE}\u{1F1F3}",tier:"$25,000 One-Step",profit:20780,winRate:70.4,payout:"1m 41s"},{rank:11,name:"Zainab Al-Hashemi",country:"Dubai, UAE",flag:"\u{1F1E6}\u{1F1EA}",tier:"$10,000 Instant Funded",profit:18650,winRate:69.2,payout:"1m 29s"},{rank:12,name:"Syed Usman Ali",country:"Pakistan",flag:"\u{1F1F5}\u{1F1F0}",tier:"$10,000 Two-Step",profit:16920.5,winRate:68.1,payout:"1m 52s"},{rank:13,name:"Shakib Rahman",country:"Bangladesh",flag:"\u{1F1E7}\u{1F1E9}",tier:"$10,000 One-Step",profit:15340,winRate:67.5,payout:"1m 38s"},{rank:14,name:"Rohan Deshmukh",country:"India",flag:"\u{1F1EE}\u{1F1F3}",tier:"$10,000 Instant Funded",profit:13890.1,winRate:66.3,payout:"1m 47s"},{rank:15,name:"Alexander Schmidt",country:"Germany",flag:"\u{1F1E9}\u{1F1EA}",tier:"$10,000 Two-Step",profit:12450,winRate:65.7,payout:"1m 30s"}];for(const lb of leaderboardSeed){db.prepare(`
+  `).run("WD-51940284910","usr_bft_001","BFT-91823",350,680,544,35,315,"0x71C94F8B92E1048A3B99D2E54C1A82F901D3E84A","BSC (BEP20)","0x9fb8c14d5e23a0781b4d0812eac92b8d4f0980598125cfb881329a1b9e21","REF-51940284910",now-864e5*1,now-864e5*1+92e3)}__name(seedInitialData,"seedInitialData");function syncLeaderboardData() {
+  const now = Date.now();
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS funded_leaderboard (
+      id TEXT PRIMARY KEY,
+      rank INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      country TEXT NOT NULL,
+      flag TEXT NOT NULL,
+      iso_code TEXT,
+      account_tier TEXT NOT NULL,
+      profit REAL NOT NULL,
+      win_rate REAL NOT NULL,
+      payout_time TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS self_funded_leaderboard (
+      id TEXT PRIMARY KEY,
+      rank INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      country TEXT NOT NULL,
+      flag TEXT NOT NULL,
+      iso_code TEXT,
+      account_tier TEXT NOT NULL,
+      profit REAL NOT NULL,
+      win_rate REAL NOT NULL,
+      payout_time TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+  `);
+
+  const fundedSeed = [
+    { rank: 1, name: "Yohan Siriwardhana", country: "Sri Lanka", flag: "🇱🇰", isoCode: "LK", tier: "$100,000 Instant Funded", profit: 72876.98, winRate: 84.2, payout: "1m 12s" },
+    { rank: 2, name: "Aarav Sharma", country: "India", flag: "🇮🇳", isoCode: "IN", tier: "$100,000 Two-Step", profit: 64280.45, winRate: 81.5, payout: "1m 24s" },
+    { rank: 3, name: "Tanvir Ahmed", country: "Bangladesh", flag: "🇧🇩", isoCode: "BD", tier: "$50,000 One-Step", profit: 54820.90, winRate: 78.7, payout: "1m 21s" },
+    { rank: 4, name: "Rohan Gupta", country: "India", flag: "🇮🇳", isoCode: "IN", tier: "$50,000 Instant Funded", profit: 50150.80, winRate: 77.6, payout: "1m 31s" },
+    { rank: 5, name: "Muhammad Hamza", country: "Pakistan", flag: "🇵🇰", isoCode: "PK", tier: "$100,000 Instant Funded", profit: 46890.65, winRate: 76.8, payout: "1m 29s" },
+    { rank: 6, name: "Tariq Al-Mansoor", country: "Dubai, UAE", flag: "🇦🇪", isoCode: "AE", tier: "$50,000 One-Step", profit: 43280.50, winRate: 76.3, payout: "1m 30s" },
+    { rank: 7, name: "Vikramjit Singh", country: "India", flag: "🇮🇳", isoCode: "IN", tier: "$50,000 Two-Step", profit: 40820.60, winRate: 75.9, payout: "1m 42s" },
+    { rank: 8, name: "Shakib Hasan", country: "Bangladesh", flag: "🇧🇩", isoCode: "BD", tier: "$25,000 Instant Funded", profit: 38420.55, winRate: 75.2, payout: "1m 34s" },
+    { rank: 9, name: "Usman Khan", country: "Pakistan", flag: "🇵🇰", isoCode: "PK", tier: "$50,000 Two-Step", profit: 36430.10, winRate: 74.6, payout: "1m 35s" },
+    { rank: 10, name: "Ananya Iyer", country: "India", flag: "🇮🇳", isoCode: "IN", tier: "$25,000 Instant Funded", profit: 34640.30, winRate: 74.1, payout: "1m 27s" },
+    { rank: 11, name: "Faizal Zulkifli", country: "Malaysia", flag: "🇲🇾", isoCode: "MY", tier: "$25,000 Instant Funded", profit: 32410.00, winRate: 73.0, payout: "1m 18s" },
+    { rank: 12, name: "Siddharth Nair", country: "India", flag: "🇮🇳", isoCode: "IN", tier: "$25,000 One-Step", profit: 30480.15, winRate: 72.5, payout: "1m 38s" },
+    { rank: 13, name: "Mahmudul Islam", country: "Bangladesh", flag: "🇧🇩", isoCode: "BD", tier: "$10,000 One-Step", profit: 28950.40, winRate: 71.8, payout: "1m 41s" },
+    { rank: 14, name: "Priya Patel", country: "India", flag: "🇮🇳", isoCode: "IN", tier: "$25,000 Two-Step", profit: 27890.00, winRate: 71.4, payout: "1m 20s" },
+    { rank: 15, name: "Karthik Reddy", country: "India", flag: "🇮🇳", isoCode: "IN", tier: "$10,000 Instant Funded", profit: 27321.11, winRate: 71.0, payout: "1m 45s" }
+  ];
+
+  for (const lb of fundedSeed) {
+    db.prepare(`
+      INSERT OR REPLACE INTO funded_leaderboard (id, rank, name, country, flag, iso_code, account_tier, profit, win_rate, payout_time, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(`FND-LB-${lb.rank}`, lb.rank, lb.name, lb.country, lb.flag, lb.isoCode, lb.tier, lb.profit, lb.winRate, lb.payout, now);
+    db.prepare(`
       INSERT OR REPLACE INTO leaderboard (id, rank, name, country, flag, account_tier, profit, win_rate, payout_time, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(`LB-${lb.rank}`,lb.rank,lb.name,lb.country,lb.flag,lb.tier,lb.profit,lb.winRate,lb.payout,now)}}__name(syncLeaderboardData,"syncLeaderboardData");seedInitialData();syncLeaderboardData();function getUserById(userId){return db.prepare("SELECT * FROM users WHERE id = ?").get(userId)}__name(getUserById,"getUserById");function getUserByEmail(email){return db.prepare("SELECT * FROM users WHERE email = ? COLLATE NOCASE").get(email)}__name(getUserByEmail,"getUserByEmail");function getUserByReferralCode(code){return db.prepare("SELECT * FROM users WHERE referral_code = ? COLLATE NOCASE").get(code)}__name(getUserByReferralCode,"getUserByReferralCode");function createOrUpdateGoogleUser(params){const existing=getUserByEmail(params.email);const now=Date.now();if(existing){db.prepare(`
+    `).run(`LB-${lb.rank}`, lb.rank, lb.name, lb.country, lb.flag, lb.tier, lb.profit, lb.winRate, lb.payout, now);
+  }
+
+  const selfFundedSeed = [
+    { rank: 1, name: "Yohan Siriwardhana", country: "Sri Lanka", flag: "🇱🇰", isoCode: "LK", tier: "Self-Funded VIP Live", profit: 37456.55, winRate: 83.1, payout: "0m 58s" },
+    { rank: 2, name: "Devansh Mehta", country: "India", flag: "🇮🇳", isoCode: "IN", tier: "Self-Funded Live", profit: 32650.20, winRate: 79.4, payout: "1m 05s" },
+    { rank: 3, name: "Faisal Mahmood", country: "Pakistan", flag: "🇵🇰", isoCode: "PK", tier: "Self-Funded Live", profit: 29890.10, winRate: 78.2, payout: "1m 11s" },
+    { rank: 4, name: "Zayed Al-Hashemi", country: "Dubai, UAE", flag: "🇦🇪", isoCode: "AE", tier: "Self-Funded VIP Live", profit: 27520.80, winRate: 77.4, payout: "1m 09s" },
+    { rank: 5, name: "Kavya Krishnan", country: "India", flag: "🇮🇳", isoCode: "IN", tier: "Self-Funded Live", profit: 25230.90, winRate: 76.2, payout: "1m 18s" },
+    { rank: 6, name: "Bilal Qureshi", country: "Pakistan", flag: "🇵🇰", isoCode: "PK", tier: "Self-Funded Live", profit: 23490.40, winRate: 75.1, payout: "1m 20s" },
+    { rank: 7, name: "Rashid Al-Maktoum", country: "Dubai, UAE", flag: "🇦🇪", isoCode: "AE", tier: "Self-Funded Live", profit: 21340.50, winRate: 74.5, payout: "1m 16s" },
+    { rank: 8, name: "Harshvardhan Rao", country: "India", flag: "🇮🇳", isoCode: "IN", tier: "Self-Funded Live", profit: 19840.60, winRate: 73.8, payout: "1m 25s" },
+    { rank: 9, name: "Nafis Rahman", country: "Bangladesh", flag: "🇧🇩", isoCode: "BD", tier: "Self-Funded Live", profit: 18120.75, winRate: 73.0, payout: "1m 24s" },
+    { rank: 10, name: "Ayesha Tariq", country: "Pakistan", flag: "🇵🇰", isoCode: "PK", tier: "Self-Funded Live", profit: 16430.50, winRate: 72.3, payout: "1m 29s" },
+    { rank: 11, name: "Pranav Kulkarni", country: "India", flag: "🇮🇳", isoCode: "IN", tier: "Self-Funded Live", profit: 14620.15, winRate: 71.0, payout: "1m 35s" },
+    { rank: 12, name: "Omar Al-Suwaidi", country: "Dubai, UAE", flag: "🇦🇪", isoCode: "AE", tier: "Self-Funded Live", profit: 13170.25, winRate: 70.2, payout: "1m 31s" },
+    { rank: 13, name: "Saad Afridi", country: "Pakistan", flag: "🇵🇰", isoCode: "PK", tier: "Self-Funded Live", profit: 11960.35, winRate: 69.4, payout: "1m 38s" },
+    { rank: 14, name: "Arjun Malhotra", country: "India", flag: "🇮🇳", isoCode: "IN", tier: "Self-Funded Live", profit: 10480.40, winRate: 68.5, payout: "1m 42s" },
+    { rank: 15, name: "Mehedi Hasan", country: "Bangladesh", flag: "🇧🇩", isoCode: "BD", tier: "Self-Funded Live", profit: 9210.45, winRate: 67.8, payout: "1m 45s" }
+  ];
+
+  for (const lb of selfFundedSeed) {
+    db.prepare(`
+      INSERT OR REPLACE INTO self_funded_leaderboard (id, rank, name, country, flag, iso_code, account_tier, profit, win_rate, payout_time, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(`SLF-LB-${lb.rank}`, lb.rank, lb.name, lb.country, lb.flag, lb.isoCode, lb.tier, lb.profit, lb.winRate, lb.payout, now);
+  }
+}__name(syncLeaderboardData,"syncLeaderboardData");seedInitialData();syncLeaderboardData();function getUserById(userId){return db.prepare("SELECT * FROM users WHERE id = ?").get(userId)}__name(getUserById,"getUserById");function getUserByEmail(email){return db.prepare("SELECT * FROM users WHERE email = ? COLLATE NOCASE").get(email)}__name(getUserByEmail,"getUserByEmail");function getUserByReferralCode(code){return db.prepare("SELECT * FROM users WHERE referral_code = ? COLLATE NOCASE").get(code)}__name(getUserByReferralCode,"getUserByReferralCode");function createOrUpdateGoogleUser(params){const existing=getUserByEmail(params.email);const now=Date.now();if(existing){db.prepare(`
       UPDATE users SET
         full_name = CASE WHEN profile_locked = 1 THEN full_name ELSE ? END,
         google_id = COALESCE(?, google_id),
@@ -276,7 +358,22 @@ var __defProp=Object.defineProperty;var __name=(target,value)=>__defProp(target,
       `).run(`REF-L3-${l3SponsorId}-${newUserId}`,l3SponsorId,newUserId,nowMs)}}}__name(linkUplineReferrals,"linkUplineReferrals");function createSessionToken(userId,rememberMe=true){const token=`bft_sess_${Math.random().toString(36).substring(2)}${Date.now().toString(36)}${Math.random().toString(36).substring(2)}`;const expiresAt=Date.now()+(rememberMe?30*86400*1e3:86400*1e3);db.prepare(`
     INSERT INTO sessions (token, user_id, expires_at, created_at)
     VALUES (?, ?, ?, ?)
-  `).run(token,userId,expiresAt,Date.now());return{token,expiresAt}}__name(createSessionToken,"createSessionToken");function validateSession(token){if(!token)return null;const session=db.prepare("SELECT * FROM sessions WHERE token = ?").get(token);if(!session)return null;if(session.expires_at<Date.now()){db.prepare("DELETE FROM sessions WHERE token = ?").run(token);return null}return getUserById(session.user_id)}__name(validateSession,"validateSession");function deleteSessionToken(token){db.prepare("DELETE FROM sessions WHERE token = ?").run(token)}__name(deleteSessionToken,"deleteSessionToken");function mapAccountRowToTradingAccount(row){if(!row)return null;const accountCategory=row.account_category||(row.tier==="personal"||row.phase==="personal_live"?"personal_live":row.tier==="demo"||row.phase==="demo"?"demo":"prop");return{...row,id:row.id,userId:row.user_id,user_id:row.user_id,loginId:row.id,passwordHash:"bft_live_"+String(row.id).replace(/[^a-zA-Z0-9]/g,"").toLowerCase(),tier:row.tier,tierName:row.tier_name,accountCategory,depositedCapital:Number(row.deposited_capital??(accountCategory==="personal_live"?row.initial_balance:0)),size:row.size,initialBalance:row.initial_balance,currentBalance:row.current_balance,startingDayEquity:row.starting_day_equity,equity:row.equity,dailyLossLimitPercent:row.daily_loss_limit_percent,maxOverallLossPercent:row.max_overall_loss_percent,maxRiskPerTradePercent:row.max_risk_per_trade_percent,status:row.status,phase:row.phase,tradingDaysCompleted:row.trading_days_completed,tradesCount:row.trades_count,winRate:row.win_rate,dailyWithdrawalsUnlocked:Boolean(row.daily_withdrawals_unlocked),firstWithdrawalCompleted:Boolean(row.first_withdrawal_completed),monthsCompleted:row.months_completed||1,scalingActive:Boolean(row.scaling_active),createdDate:row.created_date,lastActiveDate:row.last_active_date||row.created_date,certificateId:row.certificate_id||void 0}}__name(mapAccountRowToTradingAccount,"mapAccountRowToTradingAccount");const accountAlterColumns=[`ALTER TABLE accounts ADD COLUMN certificate_id TEXT;`,`ALTER TABLE accounts ADD COLUMN account_category TEXT DEFAULT 'prop';`,`ALTER TABLE accounts ADD COLUMN deposited_capital REAL DEFAULT 0;`];for(const stmt of accountAlterColumns){try{db.exec(stmt)}catch{}}const kycAlterColumns=[`ALTER TABLE users ADD COLUMN kyc_doc_number TEXT;`,`ALTER TABLE users ADD COLUMN kyc_front_url TEXT;`,`ALTER TABLE users ADD COLUMN kyc_back_url TEXT;`,`ALTER TABLE users ADD COLUMN kyc_front_filename TEXT;`,`ALTER TABLE users ADD COLUMN kyc_back_filename TEXT;`,`ALTER TABLE users ADD COLUMN kyc_submitted_at TEXT;`,`ALTER TABLE users ADD COLUMN is_2fa_enabled INTEGER DEFAULT 0;`,`ALTER TABLE users ADD COLUMN totp_secret TEXT;`,`ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'trader';`,`ALTER TABLE users ADD COLUMN self_balance REAL DEFAULT 0;`,`ALTER TABLE users ADD COLUMN demo_balance REAL DEFAULT 10000;`,`ALTER TABLE users ADD COLUMN funded_balance REAL DEFAULT 0;`,`ALTER TABLE withdrawals ADD COLUMN admin_notes TEXT;`];for(const stmt of kycAlterColumns){try{db.exec(stmt)}catch{}}db.exec(`
+  `).run(token,userId,expiresAt,Date.now());return{token,expiresAt}}__name(createSessionToken,"createSessionToken");function validateSession(token){if(!token)return null;const session=db.prepare("SELECT * FROM sessions WHERE token = ?").get(token);if(!session)return null;if(session.expires_at<Date.now()){db.prepare("DELETE FROM sessions WHERE token = ?").run(token);return null}return getUserById(session.user_id)}__name(validateSession,"validateSession");function deleteSessionToken(token){db.prepare("DELETE FROM sessions WHERE token = ?").run(token)}__name(deleteSessionToken,"deleteSessionToken");function mapAccountRowToTradingAccount(row){if(!row)return null;const accountCategory=row.account_category||(row.tier==="personal"||row.phase==="personal_live"?"personal_live":row.tier==="demo"||row.phase==="demo"?"demo":"prop");return{...row,id:row.id,userId:row.user_id,user_id:row.user_id,loginId:row.id,passwordHash:"bft_live_"+String(row.id).replace(/[^a-zA-Z0-9]/g,"").toLowerCase(),tier:row.tier,tierName:row.tier_name,accountCategory,depositedCapital:Number(row.deposited_capital??(accountCategory==="personal_live"?row.initial_balance:0)),size:row.size,initialBalance:row.initial_balance,currentBalance:row.current_balance,startingDayEquity:row.starting_day_equity,equity:row.equity,dailyLossLimitPercent:row.daily_loss_limit_percent,maxOverallLossPercent:row.max_overall_loss_percent,maxRiskPerTradePercent:row.max_risk_per_trade_percent,status:row.status,phase:row.phase,tradingDaysCompleted:row.trading_days_completed,tradesCount:row.trades_count,winRate:row.win_rate,dailyWithdrawalsUnlocked:Boolean(row.daily_withdrawals_unlocked),firstWithdrawalCompleted:Boolean(row.first_withdrawal_completed),monthsCompleted:row.months_completed||1,scalingActive:Boolean(row.scaling_active),createdDate:row.created_date,lastActiveDate:row.last_active_date||row.created_date,certificateId:row.certificate_id||void 0}}__name(mapAccountRowToTradingAccount,"mapAccountRowToTradingAccount");const accountAlterColumns=[`ALTER TABLE accounts ADD COLUMN certificate_id TEXT;`,`ALTER TABLE accounts ADD COLUMN account_category TEXT DEFAULT 'prop';`,`ALTER TABLE accounts ADD COLUMN deposited_capital REAL DEFAULT 0;`];for(const stmt of accountAlterColumns){try{db.exec(stmt)}catch{}}const kycAlterColumns=[`ALTER TABLE users ADD COLUMN kyc_doc_number TEXT;`,`ALTER TABLE users ADD COLUMN kyc_front_url TEXT;`,`ALTER TABLE users ADD COLUMN kyc_back_url TEXT;`,`ALTER TABLE users ADD COLUMN kyc_selfie_url TEXT;`,`ALTER TABLE users ADD COLUMN kyc_front_filename TEXT;`,`ALTER TABLE users ADD COLUMN kyc_back_filename TEXT;`,`ALTER TABLE users ADD COLUMN kyc_selfie_filename TEXT;`,`ALTER TABLE users ADD COLUMN kyc_submitted_at TEXT;`,`ALTER TABLE users ADD COLUMN is_2fa_enabled INTEGER DEFAULT 0;`,`ALTER TABLE users ADD COLUMN totp_secret TEXT;`,`ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'trader';`,`ALTER TABLE users ADD COLUMN self_balance REAL DEFAULT 0;`,`ALTER TABLE users ADD COLUMN demo_balance REAL DEFAULT 10000;`,`ALTER TABLE users ADD COLUMN funded_balance REAL DEFAULT 0;`,`ALTER TABLE withdrawals ADD COLUMN admin_notes TEXT;`];for(const stmt of kycAlterColumns){try{db.exec(stmt)}catch{}}db.exec(`
+  CREATE TABLE IF NOT EXISTS kyc_documents (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    doc_type TEXT,
+    document_number TEXT,
+    id_front_url TEXT,
+    id_back_url TEXT,
+    selfie_url TEXT,
+    extracted_name TEXT,
+    status TEXT DEFAULT 'pending',
+    rejection_reason TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS kyc_submissions (
     id TEXT PRIMARY KEY,
     user_id TEXT UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -289,8 +386,10 @@ var __defProp=Object.defineProperty;var __name=(target,value)=>__defProp(target,
     document_number TEXT,
     front_document_url TEXT,
     back_document_url TEXT,
+    selfie_url TEXT,
     front_file_name TEXT,
     back_file_name TEXT,
+    selfie_file_name TEXT,
     status TEXT NOT NULL DEFAULT 'unverified',
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
@@ -450,36 +549,83 @@ var __defProp=Object.defineProperty;var __name=(target,value)=>__defProp(target,
       INSERT INTO kyc_submissions (
         id, user_id, full_name, address, date_of_birth, country, profile_locked, status, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
-    `).run(`KYC-SUB-${userId}-${now.toString(36)}`,userId,cleanName,cleanAddress,cleanDob,cleanCountry,user.kyc_status||"unverified",now,now)}return getUserById(userId)}__name(lockUserProfile,"lockUserProfile");function updateUserKycStatus(userId,data){const now=Date.now();const submittedIso=data.submittedAt||new Date(now).toISOString().split("T")[0];db.prepare(`
+    `).run(`KYC-SUB-${userId}-${now.toString(36)}`,userId,cleanName,cleanAddress,cleanDob,cleanCountry,user.kyc_status||"unverified",now,now)}return getUserById(userId)}__name(lockUserProfile,"lockUserProfile");function createKycDocumentRecord(data: {
+  userId: string;
+  docType?: string;
+  documentNumber?: string;
+  idFrontUrl?: string;
+  idBackUrl?: string;
+  selfieUrl?: string;
+  extractedName?: string;
+  status?: string;
+  rejectionReason?: string;
+}) {
+  const now = Date.now();
+  const id = `KYC-DOC-${data.userId}-${now.toString(36)}`;
+  try {
+    db.prepare(`
+      INSERT INTO kyc_documents (
+        id, user_id, doc_type, document_number, id_front_url, id_back_url, selfie_url,
+        extracted_name, status, rejection_reason, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      data.userId,
+      data.docType || 'ID Card',
+      data.documentNumber || null,
+      data.idFrontUrl || null,
+      data.idBackUrl || null,
+      data.selfieUrl || null,
+      data.extractedName || null,
+      data.status || 'pending',
+      data.rejectionReason || null,
+      now,
+      now
+    );
+  } catch (err) {
+    console.warn('Failed to insert kyc_documents record:', err);
+  }
+  return db.prepare('SELECT * FROM kyc_documents WHERE id = ?').get(id);
+}
+__name(createKycDocumentRecord, "createKycDocumentRecord");
+
+function getKycDocumentsForUser(userId: string) {
+  return db.prepare('SELECT * FROM kyc_documents WHERE user_id = ? ORDER BY created_at DESC').all(userId);
+}
+__name(getKycDocumentsForUser, "getKycDocumentsForUser");
+
+function updateUserKycStatus(userId,data){const now=Date.now();const submittedIso=data.submittedAt||new Date(now).toISOString().split("T")[0];db.prepare(`
     UPDATE users SET
       kyc_status = ?,
       kyc_doc_type = COALESCE(?, kyc_doc_type),
       kyc_doc_number = COALESCE(?, kyc_doc_number),
       kyc_front_url = COALESCE(?, kyc_front_url),
       kyc_back_url = COALESCE(?, kyc_back_url),
+      kyc_selfie_url = COALESCE(?, kyc_selfie_url),
       kyc_front_filename = COALESCE(?, kyc_front_filename),
       kyc_back_filename = COALESCE(?, kyc_back_filename),
+      kyc_selfie_filename = COALESCE(?, kyc_selfie_filename),
       kyc_submitted_at = COALESCE(?, kyc_submitted_at),
       kyc_timer_ends_at = ?,
       kyc_verified_at = CASE WHEN ? = 'verified' THEN ? ELSE kyc_verified_at END,
       profile_locked = CASE WHEN ? IN ('pending', 'verified') THEN 1 ELSE profile_locked END,
       updated_at = ?
     WHERE id = ?
-  `).run(data.status,data.docType||null,data.documentNumber||null,data.frontDocumentUrl||null,data.backDocumentUrl||null,data.frontFileName||null,data.backFileName||null,submittedIso,data.timerEndsAt||null,data.status,now,data.status,now,userId);const user=getUserById(userId);if(user){const existingSub=getKycSubmissionForUser(userId);const subStatus=data.status==="pending"?"Pending Verification":data.status;if(existingSub){db.prepare(`
+  `).run(data.status,data.docType||null,data.documentNumber||null,data.frontDocumentUrl||null,data.backDocumentUrl||null,data.selfieUrl||null,data.frontFileName||null,data.backFileName||null,data.selfieFileName||null,submittedIso,data.timerEndsAt||null,data.status,now,data.status,now,userId);const user=getUserById(userId);if(user){const existingSub=getKycSubmissionForUser(userId);const subStatus=data.status==="pending"?"Pending Verification":data.status;if(existingSub){db.prepare(`
         INSERT OR REPLACE INTO kyc_submissions (
           id, user_id, full_name, address, date_of_birth, country, profile_locked,
-          doc_type, document_number, front_document_url, back_document_url, front_file_name, back_file_name,
+          doc_type, document_number, front_document_url, back_document_url, selfie_url, front_file_name, back_file_name, selfie_file_name,
           status, created_at, updated_at
         ) VALUES (
-          (SELECT id FROM kyc_submissions WHERE user_id = ?), ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, 'pending', (SELECT created_at FROM kyc_submissions WHERE user_id = ?), ?
+          (SELECT id FROM kyc_submissions WHERE user_id = ?), ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT created_at FROM kyc_submissions WHERE user_id = ?), ?
         )
-      `).run(userId,userId,user.full_name,user.address||"N/A",user.date_of_birth||"N/A",user.country||"United States",data.docType||null,data.documentNumber||null,data.frontDocumentUrl||null,data.backDocumentUrl||null,data.frontFileName||null,data.backFileName||null,userId,now)}else{db.prepare(`
+      `).run(userId,userId,user.full_name,user.address||"N/A",user.date_of_birth||"N/A",user.country||"United States",data.docType||null,data.documentNumber||null,data.frontDocumentUrl||null,data.backDocumentUrl||null,data.selfieUrl||null,data.frontFileName||null,data.backFileName||null,data.selfieFileName||null,subStatus,userId,now)}else{db.prepare(`
         INSERT INTO kyc_submissions (
           id, user_id, full_name, address, date_of_birth, country, profile_locked,
-          doc_type, document_number, front_document_url, back_document_url, front_file_name, back_file_name,
+          doc_type, document_number, front_document_url, back_document_url, selfie_url, front_file_name, back_file_name, selfie_file_name,
           status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(`KYC-SUB-${userId}-${now.toString(36)}`,userId,user.full_name||"Verified Trader",user.address||"",user.date_of_birth||"",user.country||"United States",data.docType||"ID Card",data.documentNumber||null,data.frontDocumentUrl||null,data.backDocumentUrl||null,data.frontFileName||null,data.backFileName||null,subStatus,now,now)}}return getUserById(userId)}__name(updateUserKycStatus,"updateUserKycStatus");function processWithdrawalRequest(params){const user=getUserById(params.userId);if(!user)throw new Error("User not found.");if(user.kyc_status!=="verified"){throw new Error("Please complete your KYC verification to unlock withdrawals.")}const account=getAccountById(params.accountId);if(!account||account.user_id!==params.userId){throw new Error("Trading account not found or unauthorized.")}const isPersonalLive=account.tier==="personal"||account.account_category==="personal_live"||account.accountCategory==="personal_live"||account.phase==="personal_live";if(isPersonalLive){if(account.status!=="active"){throw new Error("Account is not active.")}const availableBalance=Math.max(0,Number(account.current_balance.toFixed(2)));if(availableBalance<10){throw new Error(`Minimum withdrawal threshold is $10.00. Current Personal Live balance is $${availableBalance.toFixed(2)}.`)}if(params.requestedAmount<10){throw new Error("Minimum withdrawal amount is $10.00 USD.")}if(params.requestedAmount>availableBalance){throw new Error(`Cannot withdraw more than your available Personal Live balance ($${availableBalance.toFixed(2)}).`)}const feeAmount2=Number((params.requestedAmount*.03).toFixed(2));const netPayout2=Number((params.requestedAmount-feeAmount2).toFixed(2));const now2=Date.now();const withdrawalId2=`WD-${Math.floor(5194e7+Math.random()*99999999)}`;const refNumber2=`0x${Math.random().toString(16).slice(2,10)}${Math.random().toString(16).slice(2,10)}`;db.prepare(`
+        ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(`KYC-SUB-${userId}-${now.toString(36)}`,userId,user.full_name||"Verified Trader",user.address||"",user.date_of_birth||"",user.country||"United States",data.docType||"ID Card",data.documentNumber||null,data.frontDocumentUrl||null,data.backDocumentUrl||null,data.selfieUrl||null,data.frontFileName||null,data.backFileName||null,data.selfieFileName||null,subStatus,now,now)}createKycDocumentRecord({userId,docType:data.docType,documentNumber:data.documentNumber,idFrontUrl:data.frontDocumentUrl,idBackUrl:data.backDocumentUrl,selfieUrl:data.selfieUrl,extractedName:user.full_name,status:data.status,rejectionReason:data.rejectionReason})}return getUserById(userId)}__name(updateUserKycStatus,"updateUserKycStatus");function processWithdrawalRequest(params){const user=getUserById(params.userId);if(!user)throw new Error("User not found.");if(user.kyc_status!=="verified"){throw new Error("Please complete your KYC verification to unlock withdrawals.")}const account=getAccountById(params.accountId);if(!account||account.user_id!==params.userId){throw new Error("Trading account not found or unauthorized.")}const isPersonalLive=account.tier==="personal"||account.account_category==="personal_live"||account.accountCategory==="personal_live"||account.phase==="personal_live";if(isPersonalLive){if(account.status!=="active"){throw new Error("Account is not active.")}const availableBalance=Math.max(0,Number(account.current_balance.toFixed(2)));if(availableBalance<10){throw new Error(`Minimum withdrawal threshold is $10.00. Current Personal Live balance is $${availableBalance.toFixed(2)}.`)}if(params.requestedAmount<10){throw new Error("Minimum withdrawal amount is $10.00 USD.")}if(params.requestedAmount>availableBalance){throw new Error(`Cannot withdraw more than your available Personal Live balance ($${availableBalance.toFixed(2)}).`)}const feeAmount2=Number((params.requestedAmount*.03).toFixed(2));const netPayout2=Number((params.requestedAmount-feeAmount2).toFixed(2));const now2=Date.now();const withdrawalId2=`WD-${Math.floor(5194e7+Math.random()*99999999)}`;const refNumber2=`0x${Math.random().toString(16).slice(2,10)}${Math.random().toString(16).slice(2,10)}`;db.prepare(`
       INSERT INTO withdrawals (
         id, user_id, account_id, gross_amount, net_profit, max_allowed_profit, profit_share_rate, fee_amount, net_payout,
         wallet_address, network, payment_method, status, reference_number, tx_hash, requested_at, processed_at

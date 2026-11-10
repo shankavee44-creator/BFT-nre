@@ -1,6 +1,6 @@
 import type { EvaluationPackage, TradingAccount, BinaryTrade, WithdrawalRequest, RuleViolationLog, BinaryOptionDirection, PromoCodeType, ChallengeTier } from '../types/index.ts';
 
-export const PROMO_CODES: Record<PromoCodeType, { code: PromoCodeType; discountPercent: number; label: string; audience: string }> = {
+export const PROMO_CODES: Record<string, { code: string; discountPercent: number; label: string; audience: string }> = {
   SPOOKY40: {
     code: 'SPOOKY40',
     discountPercent: 40,
@@ -614,7 +614,7 @@ export function calculateDiscountedPrice(
       ? { dailyWithdrawalsAddon: optionsOrBoolean }
       : optionsOrBoolean;
 
-  const promoInfo = PROMO_CODES[promoCode] || PROMO_CODES.SPOOKY40;
+  const promoInfo = (promoCode && PROMO_CODES[promoCode]) || PROMO_CODES.SPOOKY40;
   const promoDiscountPercent = promoInfo.discountPercent;
   const discountedBasePrice = Math.round(basePrice * (1 - promoDiscountPercent / 100));
   const promoDiscountAmount = basePrice - discountedBasePrice;
@@ -2074,7 +2074,8 @@ export function evaluateWithdrawalGuarantee(
   request: WithdrawalRequest,
   currentTimestamp: number
 ): { isDoubled: boolean; payoutAmount: number } {
-  const elapsed = (currentTimestamp - request.requestedAt) / 1000;
+  const reqTime = typeof request.requestedAt === 'number' ? request.requestedAt : new Date(request.requestedAt).getTime();
+  const elapsed = (currentTimestamp - reqTime) / 1000;
   if (elapsed > GUARANTEED_WITHDRAWAL_SECONDS && request.status !== 'completed') {
     return {
       isDoubled: true,

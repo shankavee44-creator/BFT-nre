@@ -1,3 +1,5 @@
+import { supabase } from './supabase';
+
 export type LeaderboardTabCategory = 'funded' | 'self_funded';
 
 export interface LeaderboardTrader {
@@ -1065,5 +1067,99 @@ export function formatCleanLeaderboardRow(trader: LeaderboardTrader): {
     profitFormatted: pnl.formatted,
     isLoss: pnl.isLoss,
     isTopThree: trader.rank >= 1 && trader.rank <= 3,
+  };
+}
+
+export async function fetchFundedLeaderboardFromSupabase(): Promise<LeaderboardTrader[]> {
+  try {
+    const { data, error } = await supabase
+      .from('funded_leaderboard')
+      .select('*')
+      .order('rank', { ascending: true })
+      .limit(15);
+
+    if (error || !Array.isArray(data) || data.length === 0) {
+      return getDynamicLeaderboardTraders({ category: 'funded', useEveningPeak: true });
+    }
+
+    const mapped: LeaderboardTrader[] = data.map((r: any) => ({
+      id: String(r.id || `fnd_${r.rank}`),
+      rank: Number(r.rank),
+      name: String(r.name || 'Trader'),
+      country: String(r.country || 'Sri Lanka'),
+      flag: String(r.flag || '🇱🇰'),
+      isoCode: String(r.iso_code || r.isoCode || 'LK'),
+      category: 'funded',
+      accountTier: String(r.account_tier || r.accountTier || '$100,000 Instant Funded'),
+      profit: Number(r.profit),
+      winRate: Number(r.win_rate ?? r.winRate ?? 80.0),
+      payoutTime: String(r.payout_time || r.payoutTime || '1m 20s'),
+    }));
+
+    return normalizeFundedLeaderboard(mapped, true);
+  } catch {
+    return getDynamicLeaderboardTraders({ category: 'funded', useEveningPeak: true });
+  }
+}
+
+export async function fetchSelfFundedLeaderboardFromSupabase(): Promise<LeaderboardTrader[]> {
+  try {
+    const { data, error } = await supabase
+      .from('self_funded_leaderboard')
+      .select('*')
+      .order('rank', { ascending: true })
+      .limit(15);
+
+    if (error || !Array.isArray(data) || data.length === 0) {
+      return getDynamicLeaderboardTraders({ category: 'self_funded', useEveningPeak: true });
+    }
+
+    const mapped: LeaderboardTrader[] = data.map((r: any) => ({
+      id: String(r.id || `slf_${r.rank}`),
+      rank: Number(r.rank),
+      name: String(r.name || 'Trader'),
+      country: String(r.country || 'Sri Lanka'),
+      flag: String(r.flag || '🇱🇰'),
+      isoCode: String(r.iso_code || r.isoCode || 'LK'),
+      category: 'self_funded',
+      accountTier: String(r.account_tier || r.accountTier || 'Self-Funded Live'),
+      profit: Number(r.profit),
+      winRate: Number(r.win_rate ?? r.winRate ?? 80.0),
+      payoutTime: String(r.payout_time || r.payoutTime || '1m 20s'),
+    }));
+
+    return normalizeSelfFundedLeaderboard(mapped, true);
+  } catch {
+    return getDynamicLeaderboardTraders({ category: 'self_funded', useEveningPeak: true });
+  }
+}
+
+export function subscribeToLeaderboardsRealtime(
+  onFundedUpdate: (traders: LeaderboardTrader[]) => void,
+  onSelfFundedUpdate: (traders: LeaderboardTrader[]) => void
+) {
+  const channelKey = `realtime:leaderboards:${Date.now()}`;
+  const channel = supabase
+    .channel(channelKey)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'funded_leaderboard' },
+      async () => {
+        const updated = await fetchFundedLeaderboardFromSupabase();
+        onFundedUpdate(updated);
+      }
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'self_funded_leaderboard' },
+      async () => {
+        const updated = await fetchSelfFundedLeaderboardFromSupabase();
+        onSelfFundedUpdate(updated);
+      }
+    )
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
   };
 }

@@ -24,6 +24,9 @@ import {
   resolveUserLeaderboardPosition,
   normalizeWeeklyLeaderboard,
   formatCleanLeaderboardRow,
+  fetchFundedLeaderboardFromSupabase,
+  fetchSelfFundedLeaderboardFromSupabase,
+  subscribeToLeaderboardsRealtime,
 } from '../utils/leaderboardEngine';
 
 export type { LeaderboardTrader, LeaderboardTabCategory };
@@ -68,9 +71,30 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
   const [dailyResetInfo, setDailyResetInfo] = useState(() => getSriLankaDailyResetInfo());
   const [weeklyResetInfo, setWeeklyResetInfo] = useState(() => getSriLankaWeeklyResetInfo());
 
-  // Update schedule timers & live simulation steps when modal is open
+  // Fetch initial leaderboard rows from Supabase tables and subscribe to Realtime updates
   useEffect(() => {
     if (!isOpen) return;
+
+    fetchFundedLeaderboardFromSupabase().then((data) => {
+      if (data && data.length > 0) setFundedTraders(data);
+    });
+    fetchSelfFundedLeaderboardFromSupabase().then((data) => {
+      if (data && data.length > 0) setSelfFundedTraders(data);
+    });
+
+    const unsubscribeRealtime = subscribeToLeaderboardsRealtime(
+      (updatedFunded) => {
+        if (updatedFunded && updatedFunded.length > 0) {
+          setFundedTraders(updatedFunded);
+        }
+      },
+      (updatedSelfFunded) => {
+        if (updatedSelfFunded && updatedSelfFunded.length > 0) {
+          setSelfFundedTraders(updatedSelfFunded);
+        }
+      }
+    );
+
     setDailyResetInfo(getSriLankaDailyResetInfo());
     setWeeklyResetInfo(getSriLankaWeeklyResetInfo());
 
@@ -80,7 +104,6 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
 
       const applyRealisticStep = (prevList: LeaderboardTrader[]): LeaderboardTrader[] => {
         const next = prevList.map((t) => ({ ...t }));
-        // Select a trader in ranks 2..15 for an organic incremental step
         const eligibleIndices = next
           .map((t, idx) =>
             t.rank > 1 && t.name !== 'Yohan Siriwardhana' && !t.isCurrentUser ? idx : -1
@@ -114,7 +137,10 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
       }
     }, 5500);
 
-    return () => clearInterval(interval);
+    return () => {
+      unsubscribeRealtime();
+      clearInterval(interval);
+    };
   }, [isOpen, activeTab]);
 
   // Track the logged-in user's real performance according to the active tab timeframe:

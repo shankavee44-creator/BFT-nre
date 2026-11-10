@@ -243,12 +243,12 @@ export const DEFAULT_QUOTEX_PAYMENT_HISTORY: QuotexTransactionItem[] = [
   },
 ];
 
-export function formatQuotexDateAndTime(timestampMs: number): {
+export function formatQuotexDateAndTime(timestampMs: number | string): {
   dateFormatted: string;
   timeFormatted: string;
   combined: string;
 } {
-  const d = new Date(timestampMs);
+  const d = typeof timestampMs === 'number' ? new Date(timestampMs) : new Date(timestampMs);
   const day = String(d.getUTCDate()).padStart(2, '0');
   const month = String(d.getUTCMonth() + 1).padStart(2, '0');
   const year = d.getUTCFullYear();
@@ -288,10 +288,12 @@ export function mapWithdrawalRequestToQuotexTransaction(req: WithdrawalRequest):
     ? req.bankDetails?.branchName || req.bankDetails?.swiftCode || 'BANK TRANSFER'
     : req.networkType || (isBep20 ? 'BSC (BEP20)' : 'TRON (TRC-20)');
 
+  const numTimestamp = typeof req.requestedAt === 'number' ? req.requestedAt : new Date(req.requestedAt).getTime();
+
   return {
     id: req.id,
     orderNumber: req.id.replace(/^WD-/, '5194099').slice(0, 12),
-    timestamp: req.requestedAt,
+    timestamp: numTimestamp,
     dateFormatted: dt.dateFormatted,
     timeFormatted: dt.timeFormatted,
     status: statusMap[req.status] || 'Pending',

@@ -167,7 +167,7 @@ export function validateSponsorReferralCode(
     return { valid: false, normalizedCode };
   }
   const users = usersList || loadAffiliateUsers();
-  const sponsor = users.find((u) => u.referralCode.toUpperCase() === normalizedCode);
+  const sponsor = users.find((u) => String(u.referralCode || '').toUpperCase() === normalizedCode);
   if (sponsor) {
     return { valid: true, sponsor, normalizedCode };
   }
@@ -191,7 +191,7 @@ export function resolve3TierUplineChain(
   const normalizedCode = (code || '').trim().toUpperCase();
   if (!normalizedCode) return {};
   const users = usersList || loadAffiliateUsers();
-  const level1 = users.find((u) => u.referralCode.toUpperCase() === normalizedCode);
+  const level1 = users.find((u) => String(u.referralCode || '').toUpperCase() === normalizedCode);
   if (!level1) return {};
   const level2 = level1.referredBy ? users.find((u) => u.id === level1.referredBy) : undefined;
   const level3 = level2?.referredBy ? users.find((u) => u.id === level2.referredBy) : undefined;
@@ -206,7 +206,7 @@ export function isSelfReferral(referralCode: string, currentUserId: string, user
   const userList = users || INITIAL_USERS;
   const currentUser = userList.find((u) => u.id === currentUserId);
   if (!currentUser) return false;
-  return currentUser.referralCode.toUpperCase() === referralCode.toUpperCase();
+  return String(currentUser.referralCode || '').toUpperCase() === referralCode.toUpperCase();
 }
 
 // ==========================================
@@ -485,7 +485,7 @@ export function registerNewUserAccount(params: {
 
   let sponsor: UserAccount | undefined;
   if (effectiveRefCode) {
-    sponsor = users.find((u) => u.referralCode.toUpperCase() === effectiveRefCode);
+    sponsor = users.find((u) => String(u.referralCode || '').toUpperCase() === effectiveRefCode);
     // Ensure cookie is synced with the effective referral code
     storeReferralCode(effectiveRefCode);
   }
@@ -493,7 +493,7 @@ export function registerNewUserAccount(params: {
   const uplineChain = resolve3TierUplineChain(effectiveRefCode, users);
 
   // Check if user already exists by email
-  const existing = users.find((u) => u.email.toLowerCase() === params.email.trim().toLowerCase());
+  const existing = users.find((u) => String(u.email || '').toLowerCase() === params.email.trim().toLowerCase());
   if (existing) {
     if (!existing.referredBy && sponsor && sponsor.id !== existing.id) {
       existing.referredBy = sponsor.id;
@@ -789,14 +789,14 @@ export function process3TierCommissions(params: {
   // Ensure buyer user exists or is registered (match by ID or email)
   let buyer =
     users.find((u) => u.id === buyerUserId) ||
-    (buyerEmail ? users.find((u) => u.email.toLowerCase() === buyerEmail.trim().toLowerCase()) : undefined);
+    (buyerEmail ? users.find((u) => String(u.email || '').toLowerCase() === buyerEmail.trim().toLowerCase()) : undefined);
 
   if (!buyer) {
     // Check if referral code was used to find parent
     let parentId: string | undefined = undefined;
     if (referralCodeUsed) {
       const parent = users.find(
-        (u) => u.referralCode.toUpperCase() === referralCodeUsed.toUpperCase()
+        (u) => String(u.referralCode || '').toUpperCase() === referralCodeUsed.toUpperCase()
       );
       if (parent && parent.id !== buyerUserId) {
         parentId = parent.id;
@@ -814,7 +814,7 @@ export function process3TierCommissions(params: {
   } else if (!buyer.referredBy && referralCodeUsed) {
     // Assign parent if not already set and not self-referral
     const parent = users.find(
-      (u) => u.referralCode.toUpperCase() === referralCodeUsed.toUpperCase()
+      (u) => String(u.referralCode || '').toUpperCase() === referralCodeUsed.toUpperCase()
     );
     if (parent && parent.id !== buyer.id) {
       buyer.referredBy = parent.id;
@@ -847,8 +847,8 @@ export function process3TierCommissions(params: {
         id: `REF-${Date.now()}-L1`,
         referrerId: l1Referrer.id,
         referredUserId: buyer.id,
-        referredUserName: buyer.name,
-        referredUserEmail: maskEmail(buyer.email),
+        referredUserName: buyer.name || buyer.fullName || 'Trader',
+        referredUserEmail: maskEmail(buyer.email || ''),
         level: 1,
         commissionType: 'package',
         packageTier,
@@ -872,8 +872,8 @@ export function process3TierCommissions(params: {
             id: `REF-${Date.now()}-L2`,
             referrerId: l2Referrer.id,
             referredUserId: buyer.id,
-            referredUserName: buyer.name,
-            referredUserEmail: maskEmail(buyer.email),
+            referredUserName: buyer.name || buyer.fullName || 'Trader',
+            referredUserEmail: maskEmail(buyer.email || ''),
             level: 2,
             commissionType: 'package',
             packageTier,
@@ -897,8 +897,8 @@ export function process3TierCommissions(params: {
                 id: `REF-${Date.now()}-L3`,
                 referrerId: l3Referrer.id,
                 referredUserId: buyer.id,
-                referredUserName: buyer.name,
-                referredUserEmail: maskEmail(buyer.email),
+                referredUserName: buyer.name || buyer.fullName || 'Trader',
+                referredUserEmail: maskEmail(buyer.email || ''),
                 level: 3,
                 commissionType: 'package',
                 packageTier,
@@ -1294,17 +1294,23 @@ export function calculateAffiliateStats(
   });
 
   return {
-    lifetimeEarnings: Number(lifetimeEarnings.toFixed(2)),
+    totalEarnings: Number(lifetimeEarnings.toFixed(2)),
     availableBalance,
+    withdrawnAmount: Number(totalPaidOut.toFixed(2)),
+    lifetimeEarnings: Number(lifetimeEarnings.toFixed(2)),
     pendingCommission: Number(pendingCommission.toFixed(2)),
     totalReferralsCount: referrals.length,
+    activeTradersCount: tierInfo.activeFundedCount,
     activeFundedCount: tierInfo.activeFundedCount,
     vipThreshold: tierInfo.vipThreshold,
     vipProgressPercent: tierInfo.vipProgressPercent,
     remainingToVip: tierInfo.remainingToVip,
     affiliateTier: tierInfo.tier,
+    currentTier: String(tierInfo.tier || '').toUpperCase() === 'VIP' ? 'vip' : 'basic',
     isVipUnlocked: tierInfo.isVipUnlocked,
     milestoneRewardAmount: tierInfo.milestoneRewardAmount,
+    milestoneBonusEarned: tierInfo.milestoneRewardAmount,
+    milestoneProgressPercent: tierInfo.vipProgressPercent,
     milestoneClaimed: isMilestoneRewardClaimed(userId),
     level1Count: l1Count,
     level1Earnings: Number(l1Earnings.toFixed(2)),
@@ -1312,6 +1318,7 @@ export function calculateAffiliateStats(
     level2Earnings: Number(l2Earnings.toFixed(2)),
     level3Count: l3Count,
     level3Earnings: Number(l3Earnings.toFixed(2)),
+    withdrawalBonusEarnings: Number(withdrawalEarnings.toFixed(2)),
     withdrawalEarnings: Number(withdrawalEarnings.toFixed(2)),
   };
 }
@@ -1351,6 +1358,8 @@ export function requestAffiliatePayout(params: {
     userId,
     amount: Number(amount.toFixed(2)),
     method,
+    walletAddress: details.trim(),
+    network: method,
     details: details.trim(),
     status: 'completed', // Auto-completed via fast TRC-20 contract
     requestedAt: new Date().toISOString(),

@@ -1937,7 +1937,9 @@ export function mergeRealtimeWithdrawal(
       return true;
     }
 
-    const closeTimestamp = Math.abs(w.requestedAt - incoming.requestedAt) < 120000;
+    const wTime = typeof w.requestedAt === 'number' ? w.requestedAt : new Date(w.requestedAt).getTime();
+    const incTime = typeof incoming.requestedAt === 'number' ? incoming.requestedAt : new Date(incoming.requestedAt).getTime();
+    const closeTimestamp = Math.abs(wTime - incTime) < 120000;
     return Boolean(sameAccount && sameAmount && closeTimestamp);
   });
 

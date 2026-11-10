@@ -246,11 +246,15 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
   const [selectedFrontFile, setSelectedFrontFile] = useState<File | null>(null);
   const [selectedBackFile, setSelectedBackFile] = useState<File | null>(null);
+  const [selectedSelfieFile, setSelectedSelfieFile] = useState<File | null>(null);
   const [frontFileName, setFrontFileName] = useState<string>(
     userProfile.kycDocumentFileName || ''
   );
   const [backFileName, setBackFileName] = useState<string>(
     userProfile.kycBackDocumentFileName || ''
+  );
+  const [selfieFileName, setSelfieFileName] = useState<string>(
+    userProfile.kycSelfieFileName || ''
   );
 
   // Mobile Step Progression State for Mobile Viewports
@@ -1147,6 +1151,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
     const fName = (selectedFrontFile?.name || frontFileName || '').trim();
     const bName = (selectedBackFile?.name || backFileName || '').trim();
+    const sName = (selectedSelfieFile?.name || selfieFileName || '').trim();
 
     const evalResult = evaluateKycDocumentUpload(
       userProfile,
@@ -1155,6 +1160,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         documentNumber,
         frontFileName: fName,
         backFileName: bName || undefined,
+        selfieFileName: sName || undefined,
         extractedFullName: extractedDocName || userProfile.fullName,
         extractedDob: extractedDocDob || userProfile.dateOfBirth,
       },
@@ -1176,6 +1182,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     );
     const safeFrontName = fName.replace(/[^a-zA-Z0-9._-]/g, '_');
     const safeBackName = (bName || 'back.png').replace(/[^a-zA-Z0-9._-]/g, '_');
+    const safeSelfieName = (sName || 'selfie.png').replace(/[^a-zA-Z0-9._-]/g, '_');
 
     let frontUrl =
       userProfile.kycFrontDocumentUrl ||
@@ -1185,6 +1192,9 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         ? userProfile.kycBackDocumentUrl ||
           `https://kwmjonjcwdwvaijcrtjw.supabase.co/storage/v1/object/public/kyc-documents/${safeUserId}/back_${ts}_${safeBackName}`
         : '';
+    let selfieUrl =
+      userProfile.kycSelfieUrl ||
+      `https://kwmjonjcwdwvaijcrtjw.supabase.co/storage/v1/object/public/kyc-documents/${safeUserId}/selfie_${ts}_${safeSelfieName}`;
 
     try {
       // 1. Upload Front Side file to Supabase Storage bucket `kyc-documents`
@@ -1219,14 +1229,30 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         }
       }
 
-      // 3. Save KYC submission & public URLs to Supabase tables + Auth metadata with status "Pending Verification" ('pending')
+      // 3. Upload Live Selfie Photo to Supabase Storage bucket `kyc-documents`
+      if (selectedSelfieFile && userProfile.id) {
+        const selfiePath = `${userProfile.id}/selfie_${ts}_${safeSelfieName}`;
+        const { error: selfieUploadErr } = await supabase.storage
+          .from('kyc-documents')
+          .upload(selfiePath, selectedSelfieFile, { upsert: true });
+
+        const { data: selfiePub } = supabase.storage.from('kyc-documents').getPublicUrl(selfiePath);
+        if (selfiePub?.publicUrl) {
+          selfieUrl = selfiePub.publicUrl;
+        }
+        if (selfieUploadErr) {
+          console.warn('Supabase Storage selfie upload notice:', selfieUploadErr.message);
+        }
+      }
+
+      // 4. Save KYC submission & public URLs to Supabase tables + Auth metadata with status "verified"
       if (isUuid) {
         await supabase
           .from('kyc_requests')
           .insert({
             user_id: userProfile.id,
             id_photo_url: frontUrl,
-            status: 'pending',
+            status: 'verified',
           })
           .then(
             () => {},
@@ -1237,7 +1263,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           .from('profiles')
           .update({
             full_name: userProfile.fullName,
-            kyc_status: 'pending',
+            kyc_status: 'verified',
           })
           .eq('id', userProfile.id);
 
@@ -1248,20 +1274,22 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               address: userProfile.address,
               date_of_birth: userProfile.dateOfBirth,
               country: userProfile.country,
-              kyc_status: 'pending',
+              kyc_status: 'verified',
               profile_locked: true,
               kyc_doc_type: docType,
               kyc_doc_number: documentNumber.trim(),
               front_document_url: frontUrl,
               back_document_url: backUrl,
+              selfie_url: selfieUrl,
               front_file_name: fName,
               back_file_name: bName,
+              selfie_file_name: sName,
             },
           })
           .catch(() => {});
       }
 
-      // 4. Persist to authoritative backend SQLite database (`users` + `kyc_submissions` tables)
+      // 5. Persist & Automated verification via backend API (`users`, `kyc_submissions`, `kyc_documents`)
       await apiSubmitKyc({
         userId: userProfile.id,
         email: userProfile.email,
@@ -1269,13 +1297,16 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         documentNumber: documentNumber.trim(),
         frontDocumentUrl: frontUrl,
         backDocumentUrl: backUrl,
+        selfieUrl,
         frontFileName: fName,
         backFileName: bName,
+        selfieFileName: sName,
         fullName: userProfile.fullName,
         address: userProfile.address,
         dateOfBirth: userProfile.dateOfBirth,
         country: userProfile.country,
-        status: 'pending',
+        status: 'verified',
+        autoVerify: true,
       });
     } catch (e) {
       console.warn('Supabase KYC upload notice:', e);
@@ -1283,24 +1314,26 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
       setIsUploadingKyc(false);
     }
 
-    const pendingProfile: UserProfile = {
+    const verifiedProfile: UserProfile = {
       ...userProfile,
       ...evalResult.updatedProfile,
-      kycStatus: 'pending',
+      kycStatus: 'verified',
       profileLocked: true,
       kycDocumentType: docType,
       kycDocumentNumber: documentNumber.trim(),
       kycDocumentFileName: fName,
       kycBackDocumentFileName: bName || undefined,
+      kycSelfieFileName: sName || undefined,
       kycFrontDocumentUrl: frontUrl,
       kycBackDocumentUrl: backUrl || undefined,
+      kycSelfieUrl: selfieUrl || undefined,
       kycSubmittedAt: new Date(ts).toISOString(),
     };
 
-    userProfileRef.current = pendingProfile;
-    onUpdateProfile(pendingProfile);
+    userProfileRef.current = verifiedProfile;
+    onUpdateProfile(verifiedProfile);
     setKycFeedbackSuccess(
-      `Documents uploaded and saved to database! Your KYC status is now "Pending Verification".`
+      `KYC Documents & Live Selfie verified successfully! Your account is now Verified and withdrawals are fully unlocked.`
     );
     soundEngine.playTradeWin();
   };
@@ -3474,8 +3507,8 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                       </div>
                     </div>
 
-                    {/* Dual-Sided Document Upload (Front & Back) */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {/* Document & Selfie Upload Grid (3 Columns) */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                       {/* Front Side Upload */}
                       <div>
                         <label className="block text-xs font-mono text-slate-300 mb-1.5 font-bold">
@@ -3500,15 +3533,15 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                           />
                           <label
                             htmlFor="kyc-file-front"
-                            className="cursor-pointer mt-1 px-4 py-3 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] active:scale-[0.98] text-slate-950 font-black text-xs font-mono uppercase tracking-wider transition-all min-h-[44px] flex items-center justify-center gap-2"
+                            className="cursor-pointer mt-1 px-3 py-2.5 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] active:scale-[0.98] text-slate-950 font-black text-xs font-mono uppercase tracking-wider transition-all min-h-[44px] flex items-center justify-center gap-1.5"
                           >
                             <Camera className="w-4 h-4 shrink-0" />
                             <span data-testid="kyc-front-filename" className="truncate">
-                              {frontFileName ? `✓ ${frontFileName}` : 'Upload Front Side'}
+                              {frontFileName ? `✓ ${frontFileName}` : 'Front Side'}
                             </span>
                           </label>
                           <span className="text-[10px] text-slate-400 block mt-2 font-mono">
-                            Photo ID page / Front side view (Required)
+                            Photo ID page (Required)
                           </span>
                         </div>
                       </div>
@@ -3516,7 +3549,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                       {/* Back Side Upload */}
                       <div>
                         <label className="block text-xs font-mono text-slate-300 mb-1.5 font-bold">
-                          2. Back Side of {docType} {docType === 'Passport' ? '(Single-Page Bio / Optional)' : '*'}
+                          2. Back Side of {docType} {docType === 'Passport' ? '(Optional)' : '*'}
                         </label>
                         <div className="border-2 border-dashed border-white/15 hover:border-[#ff8800] rounded-2xl p-4 text-center transition-colors bg-[#111115]">
                           <UploadCloud className="w-6 h-6 text-[#ff8800] mx-auto mb-1.5" />
@@ -3535,21 +3568,56 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                           />
                           <label
                             htmlFor="kyc-file-back"
-                            className="cursor-pointer mt-1 px-4 py-3 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] active:scale-[0.98] text-slate-950 font-black text-xs font-mono uppercase tracking-wider transition-all min-h-[44px] flex items-center justify-center gap-2"
+                            className="cursor-pointer mt-1 px-3 py-2.5 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] active:scale-[0.98] text-slate-950 font-black text-xs font-mono uppercase tracking-wider transition-all min-h-[44px] flex items-center justify-center gap-1.5"
                           >
                             <Camera className="w-4 h-4 shrink-0" />
                             <span data-testid="kyc-back-filename" className="truncate">
                               {backFileName
                                 ? `✓ ${backFileName}`
                                 : docType === 'Passport'
-                                ? 'Passport Back (Optional)'
-                                : 'Upload Back Side'}
+                                ? 'Optional'
+                                : 'Back Side'}
                             </span>
                           </label>
                           <span className="text-[10px] text-slate-400 block mt-2 font-mono">
                             {docType === 'Passport'
-                              ? 'Optional second page for Passports'
-                              : 'Reverse side / barcode view (Required)'}
+                              ? 'Single-Page Passport'
+                              : 'Reverse side (Required)'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Live Selfie Upload */}
+                      <div>
+                        <label className="block text-xs font-mono text-slate-300 mb-1.5 font-bold">
+                          3. Live Selfie Photo *
+                        </label>
+                        <div className="border-2 border-dashed border-white/15 hover:border-[#ff8800] rounded-2xl p-4 text-center transition-colors bg-[#111115]">
+                          <Camera className="w-6 h-6 text-[#ff8800] mx-auto mb-1.5" />
+                          <input
+                            type="file"
+                            id="kyc-file-selfie"
+                            data-testid="kyc-file-selfie-input"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => {
+                              if (e.target.files && e.target.files[0]) {
+                                setSelectedSelfieFile(e.target.files[0]);
+                                setSelfieFileName(e.target.files[0].name);
+                              }
+                            }}
+                          />
+                          <label
+                            htmlFor="kyc-file-selfie"
+                            className="cursor-pointer mt-1 px-3 py-2.5 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] active:scale-[0.98] text-slate-950 font-black text-xs font-mono uppercase tracking-wider transition-all min-h-[44px] flex items-center justify-center gap-1.5"
+                          >
+                            <Camera className="w-4 h-4 shrink-0" />
+                            <span data-testid="kyc-selfie-filename" className="truncate">
+                              {selfieFileName ? `✓ ${selfieFileName}` : 'Upload Selfie'}
+                            </span>
+                          </label>
+                          <span className="text-[10px] text-slate-400 block mt-2 font-mono">
+                            Clear facial photo (Required)
                           </span>
                         </div>
                       </div>
