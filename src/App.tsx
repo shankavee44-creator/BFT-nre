@@ -1715,6 +1715,7 @@ export default function App() {
           onOpenChallengeModal={() => setSelectedPackageToBuy(PACKAGES[2])}
           onOpenAdminDashboard={() => setIsAdminDashboardOpen(true)}
           onOpenGitHubSync={() => setIsGitHubSyncOpen(true)}
+          trades={trades}
         />
       </div>
 

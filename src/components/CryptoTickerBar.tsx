@@ -20,7 +20,7 @@ export const CryptoTickerBar: React.FC<CryptoTickerBarProps> = ({ onSelectPair }
       setTraders((prev) =>
         normalizeWeeklyLeaderboard(
           prev.map((t) =>
-            t.rank === 1 || t.name === 'Mateus Domingos' || t.name === 'Yohan Siriwardhana'
+            t.rank === 1 || t.name === 'Mateus Domingos' || t.name === 'Aarav Sharma'
               ? t
               : { ...t, profit: Number((t.profit + Math.random() * 18).toFixed(2)) }
           )

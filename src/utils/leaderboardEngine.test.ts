@@ -3,12 +3,14 @@ import assert from 'node:assert/strict';
 import {
   MATEUS_FUNDED_PROFIT,
   FUNDED_RANK_15_PROFIT,
+  AARAV_SELF_FUNDED_PROFIT,
   YOHAN_SELF_FUNDED_PROFIT,
   getSriLankaDailyResetInfo,
   getSriLankaWeeklyResetInfo,
   getDynamicLeaderboardTraders,
   createFreshZeroSelfFundedLeaderboard,
   normalizeFundedLeaderboard,
+  normalizeSelfFundedLeaderboard,
   calculateUserDailyPnL,
   calculateUserWeeklyPnL,
   formatDailyProfitLoss,
@@ -71,7 +73,7 @@ test('Rule 1: Funded Traders Leaderboard removes Yohan Siriwardhana and anchors 
   assert.equal(fundedList.filter((t) => t.isoCode === 'AE' || t.isoCode === 'MY').length, 2);
 });
 
-test('Rule 2: Self-Funded Daily Leaderboard resets every day at 05:30 AM (UTC+5:30) starting fresh from $0.00 and scales throughout the day', () => {
+test('Rule 2: Self-Funded Daily Leaderboard resets every day at 05:30 AM (UTC+5:30) and anchors Aarav Sharma ($40,056.61) at Rank 1', () => {
   // Exact reset boundary: 00:00 UTC === 05:30 AM (UTC+5:30)
   const exactResetUtcMs = Date.UTC(2026, 10, 10, 0, 0, 0);
   const resetInfo = getSriLankaDailyResetInfo(exactResetUtcMs);
@@ -91,18 +93,31 @@ test('Rule 2: Self-Funded Daily Leaderboard resets every day at 05:30 AM (UTC+5:
   assert.equal(freshZeroList.length, 15);
   assert.ok(freshZeroList.every((t) => t.profit === 0));
 
-  // Evening peak check: Rank 1 is Yohan Siriwardhana ($37,456.55) with 1 LK, 5 IN, 4 PK, 3 AE, 2 BD
+  // Evening peak check: Rank 1 is Aarav Sharma ($40,056.61, India)
   const selfFundedList = getDynamicLeaderboardTraders({ category: 'self_funded', useEveningPeak: true });
   assert.equal(selfFundedList.length, 15);
 
   const rank1 = selfFundedList[0];
   assert.equal(rank1.rank, 1);
-  assert.equal(rank1.name, 'Yohan Siriwardhana');
-  assert.equal(rank1.country, 'Sri Lanka');
-  assert.equal(rank1.profit, YOHAN_SELF_FUNDED_PROFIT);
+  assert.equal(rank1.name, 'Aarav Sharma');
+  assert.equal(rank1.country, 'India');
+  assert.equal(rank1.isoCode, 'IN');
+  assert.equal(rank1.profit, 40056.61);
 
-  assert.equal(selfFundedList.filter((t) => t.isoCode === 'LK').length, 1);
-  assert.equal(selfFundedList.filter((t) => t.isoCode === 'IN').length, 5);
+  // Yohan must be completely absent
+  assert.equal(selfFundedList.some((t) => t.name.toLowerCase().includes('yohan')), false);
+
+  // Even if legacy data has Yohan, normalizeSelfFundedLeaderboard replaces him with Aarav Sharma at $40,056.61
+  const normalizedWithLegacy = normalizeSelfFundedLeaderboard([
+    { ...selfFundedList[0], rank: 1, name: 'Yohan Siriwardhana', country: 'Sri Lanka', flag: '🇱🇰', isoCode: 'LK', profit: 37456.55 },
+    ...selfFundedList.slice(1),
+  ]);
+  assert.equal(normalizedWithLegacy[0].name, 'Aarav Sharma');
+  assert.equal(normalizedWithLegacy[0].country, 'India');
+  assert.equal(normalizedWithLegacy[0].profit, 40056.61);
+  assert.equal(normalizedWithLegacy.some((t) => t.name.toLowerCase().includes('yohan')), false);
+
+  assert.equal(selfFundedList.filter((t) => t.isoCode === 'IN').length, 6);
   assert.equal(selfFundedList.filter((t) => t.isoCode === 'PK').length, 4);
   assert.equal(selfFundedList.filter((t) => t.isoCode === 'AE').length, 3);
   assert.equal(selfFundedList.filter((t) => t.isoCode === 'BD').length, 2);
@@ -193,5 +208,59 @@ test('Rule 4: KYC Verified Lock & 2FA OTP Verification prevent status flapping a
     userId: 'usr_test_kyc_1',
   });
   assert.equal(goodCheck, true);
+});
+
+test('Rule 5: Newly added or active traders are placed and visible on the Self-Funded Leaderboard', () => {
+  const basePool = getDynamicLeaderboardTraders({ category: 'self_funded', useEveningPeak: true });
+  
+  // Simulate active traders joined from Supabase profiles / accounts
+  const activeTrader1 = {
+    id: 'supa_prof_new_1',
+    rank: 2,
+    name: 'Vikram Malhotra',
+    country: 'India',
+    flag: '🇮🇳',
+    isoCode: 'IN',
+    category: 'self_funded' as const,
+    accountTier: 'Self-Funded VIP Live',
+    profit: 35420.50,
+    winRate: 81.2,
+    payoutTime: '1m 10s',
+  };
+
+  const activeTrader2 = {
+    id: 'supa_prof_new_2',
+    rank: 3,
+    name: 'Ananya Deshmukh',
+    country: 'India',
+    flag: '🇮🇳',
+    isoCode: 'IN',
+    category: 'self_funded' as const,
+    accountTier: 'Self-Funded Live',
+    profit: 31200.00,
+    winRate: 79.4,
+    payoutTime: '1m 20s',
+  };
+
+  const normalized = normalizeSelfFundedLeaderboard([
+    ...basePool,
+    activeTrader1,
+    activeTrader2,
+  ]);
+
+  // Rank 1 is always Aarav Sharma at $40,056.61
+  assert.equal(normalized[0].rank, 1);
+  assert.equal(normalized[0].name, 'Aarav Sharma');
+  assert.equal(normalized[0].profit, 40056.61);
+
+  // Active trader 1 should be Rank 2 because $35,420.50 is higher than Devansh Mehta's $32,650.20
+  assert.equal(normalized[1].name, 'Vikram Malhotra');
+  assert.equal(normalized[1].profit, 35420.50);
+  assert.equal(normalized[1].rank, 2);
+
+  // Active traders are visible
+  assert.ok(normalized.some((t) => t.name === 'Ananya Deshmukh'));
+  // Total 15 traders
+  assert.equal(normalized.length, 15);
 });
 

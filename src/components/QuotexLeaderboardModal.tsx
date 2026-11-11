@@ -16,6 +16,7 @@ import {
   LeaderboardTrader,
   LeaderboardTabCategory,
   MATEUS_DOMINGOS_ENTRY,
+  AARAV_SHARMA_SELF_ENTRY,
   YOHAN_SIRIWARDHANA_ENTRY,
   getDynamicLeaderboardTraders,
   getSriLankaDailyResetInfo,
@@ -129,7 +130,8 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
           .map((t, idx) =>
             t.rank > 1 &&
             t.name !== 'Mateus Domingos' &&
-            t.name !== 'Yohan Siriwardhana' &&
+            t.name !== 'Aarav Sharma' &&
+            !t.name.toLowerCase().includes('yohan') &&
             !t.isCurrentUser
               ? idx
               : -1
@@ -145,12 +147,12 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
             t.rank === 1 ||
             (tabCategory === 'funded'
               ? t.name === 'Mateus Domingos'
-              : t.name === 'Yohan Siriwardhana')
+              : t.name === 'Aarav Sharma')
         );
         const defaultCap =
           tabCategory === 'funded'
             ? MATEUS_DOMINGOS_ENTRY.profit
-            : YOHAN_SIRIWARDHANA_ENTRY.profit;
+            : AARAV_SHARMA_SELF_ENTRY.profit;
         const maxAllowedForOthers = Math.max(0, (rank1?.profit ?? defaultCap) - 150);
 
         // Realistic intraday increment (mostly positive gains with occasional small pullbacks on self_funded)

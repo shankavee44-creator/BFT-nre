@@ -54,6 +54,7 @@ interface HeaderProps {
   onOpenChallengeModal: () => void;
   onOpenAdminDashboard?: () => void;
   onOpenGitHubSync?: () => void;
+  trades?: any[];
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -75,6 +76,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenChallengeModal,
   onOpenAdminDashboard,
   onOpenGitHubSync,
+  trades = [],
 }) => {
   const [accountDropdownOpen, setAccountDropdownOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -700,6 +702,7 @@ export const Header: React.FC<HeaderProps> = ({
         userAccountId={activeAccount?.id || 'ACTIVE'}
         activeAccount={activeAccount}
         accounts={accounts}
+        trades={trades}
       />
     </header>
   );

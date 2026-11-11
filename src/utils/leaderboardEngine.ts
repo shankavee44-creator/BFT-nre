@@ -25,8 +25,10 @@ export const SRI_LANKA_OFFSET_MS = SRI_LANKA_OFFSET_MINUTES * 60 * 1000;
 export const MATEUS_FUNDED_PROFIT = 72876.98;
 export const YOHAN_FUNDED_PROFIT = MATEUS_FUNDED_PROFIT;
 export const FUNDED_RANK_15_PROFIT = 27321.11;
-export const YOHAN_SELF_FUNDED_PROFIT = 37456.55;
-export const YOHAN_EVENING_TARGET_PROFIT = MATEUS_FUNDED_PROFIT;
+export const AARAV_SELF_FUNDED_PROFIT = 40056.61;
+export const YOHAN_SELF_FUNDED_PROFIT = AARAV_SELF_FUNDED_PROFIT;
+export const AARAV_EVENING_TARGET_PROFIT = AARAV_SELF_FUNDED_PROFIT;
+export const YOHAN_EVENING_TARGET_PROFIT = AARAV_SELF_FUNDED_PROFIT;
 
 export const MATEUS_DOMINGOS_ENTRY: LeaderboardTrader = {
   id: 'fnd_ao_01',
@@ -43,20 +45,22 @@ export const MATEUS_DOMINGOS_ENTRY: LeaderboardTrader = {
   payoutTime: '1m 12s',
 };
 
-export const YOHAN_SIRIWARDHANA_ENTRY: LeaderboardTrader = {
-  id: 'slf_lk_01',
+export const AARAV_SHARMA_SELF_ENTRY: LeaderboardTrader = {
+  id: 'slf_in_01',
   rank: 1,
-  name: 'Yohan Siriwardhana',
-  country: 'Sri Lanka',
-  flag: '🇱🇰',
-  isoCode: 'LK',
+  name: 'Aarav Sharma',
+  country: 'India',
+  flag: '🇮🇳',
+  isoCode: 'IN',
   category: 'self_funded',
   accountTier: 'Self-Funded VIP Live',
-  profit: YOHAN_SELF_FUNDED_PROFIT,
-  targetEveningProfit: YOHAN_SELF_FUNDED_PROFIT,
+  profit: AARAV_SELF_FUNDED_PROFIT,
+  targetEveningProfit: AARAV_SELF_FUNDED_PROFIT,
   winRate: 83.1,
   payoutTime: '0m 58s',
 };
+
+export const YOHAN_SIRIWARDHANA_ENTRY: LeaderboardTrader = AARAV_SHARMA_SELF_ENTRY;
 
 export const KASUN_PERERA_ENTRY = MATEUS_DOMINGOS_ENTRY;
 
@@ -103,7 +107,7 @@ export const FUNDED_TRADER_POOL: SeedTraderConfig[] = [
   // 7 India
   {
     id: 'fnd_in_01',
-    name: 'Aarav Sharma',
+    name: 'Rajesh Kumar',
     country: 'India',
     flag: '🇮🇳',
     isoCode: 'IN',
@@ -266,8 +270,7 @@ export const FUNDED_TRADER_POOL: SeedTraderConfig[] = [
 /**
  * SELF-FUNDED TRADERS POOL (Daily Reset Timeframe - Daily Top 15 Traders):
  * Top 15 Regional Distribution:
- * - 1 Sri Lanka (Rank 1 fixed: Yohan Siriwardhana - Peak $37,456.55)
- * - 5 India
+ * - 6 India (Rank 1 fixed: Aarav Sharma - Peak $40,056.61)
  * - 4 Pakistan
  * - 3 UAE
  * - 2 Bangladesh
@@ -275,15 +278,15 @@ export const FUNDED_TRADER_POOL: SeedTraderConfig[] = [
  * Names are completely distinct from Funded Traders pool.
  */
 export const SELF_FUNDED_TRADER_POOL: SeedTraderConfig[] = [
-  // 1 Sri Lanka (Fixed Rank 1)
+  // 1 India (Fixed Rank 1 - Aarav Sharma $40,056.61)
   {
-    id: 'slf_lk_01',
-    name: 'Yohan Siriwardhana',
-    country: 'Sri Lanka',
-    flag: '🇱🇰',
-    isoCode: 'LK',
+    id: 'slf_in_01',
+    name: 'Aarav Sharma',
+    country: 'India',
+    flag: '🇮🇳',
+    isoCode: 'IN',
     accountTier: 'Self-Funded VIP Live',
-    eveningProfit: YOHAN_SELF_FUNDED_PROFIT,
+    eveningProfit: AARAV_SELF_FUNDED_PROFIT,
     winRate: 83.1,
     payoutTime: '0m 58s',
   },
@@ -637,9 +640,8 @@ export function normalizeFundedLeaderboard(
     .filter(
       (t) =>
         t.name !== 'Mateus Domingos' &&
-        t.name !== 'Yohan Siriwardhana' &&
+        !t.name.toLowerCase().includes('yohan') &&
         t.isoCode !== 'AO' &&
-        t.isoCode !== 'LK' &&
         t.country !== 'Angola'
     )
     .sort((a, b) => b.profit - a.profit);
@@ -671,7 +673,8 @@ export function normalizeFundedLeaderboard(
 
 /**
  * Normalizes Self-Funded Leaderboard traders:
- * Keeps Yohan Siriwardhana anchored at Rank 1 (Sri Lanka, LK).
+ * Keeps Aarav Sharma anchored at Rank 1 (India, IN, 🇮🇳) with exact profit $40,056.61.
+ * Completely strips any instances of Yohan Siriwardhana.
  * When `resetToZero` is true (at 05:30 AM UTC+5:30 daily reset), traders start fresh at $0.00.
  */
 export function normalizeSelfFundedLeaderboard(
@@ -679,45 +682,46 @@ export function normalizeSelfFundedLeaderboard(
   useEveningPeak?: boolean,
   resetToZero?: boolean
 ): LeaderboardTrader[] {
-  const yohan = traders.find((t) => t.name === 'Yohan Siriwardhana' || t.isoCode === 'LK') || {
-    id: 'slf_lk_01',
-    rank: 1,
-    name: 'Yohan Siriwardhana',
-    country: 'Sri Lanka',
-    flag: '🇱🇰',
-    isoCode: 'LK',
-    category: 'self_funded' as LeaderboardTabCategory,
-    accountTier: 'Self-Funded VIP Live',
-    profit: resetToZero ? 0 : YOHAN_SELF_FUNDED_PROFIT,
-    winRate: 83.1,
-    payoutTime: '0m 58s',
+  const aarav = traders.find(
+    (t) => t.name === 'Aarav Sharma' || (t.rank === 1 && (t.isoCode === 'IN' || t.country === 'India'))
+  ) || {
+    ...AARAV_SHARMA_SELF_ENTRY,
+    profit: resetToZero ? 0 : AARAV_SELF_FUNDED_PROFIT,
   };
 
   const rank1Profit = resetToZero
     ? 0
     : useEveningPeak
-    ? YOHAN_SELF_FUNDED_PROFIT
-    : yohan.profit === 0
+    ? AARAV_SELF_FUNDED_PROFIT
+    : aarav.profit === 0
     ? 0
-    : Math.max(yohan.profit, YOHAN_SELF_FUNDED_PROFIT);
+    : Math.max(aarav.profit, AARAV_SELF_FUNDED_PROFIT);
 
   const others = traders
-    .filter((t) => t.name !== 'Yohan Siriwardhana' && t.isoCode !== 'LK')
+    .filter(
+      (t) =>
+        t.name !== 'Aarav Sharma' &&
+        !t.name.toLowerCase().includes('yohan')
+    )
     .map((t) => (resetToZero ? { ...t, profit: 0 } : t))
     .sort((a, b) => b.profit - a.profit);
 
-  const yohanRank1: LeaderboardTrader = {
-    ...yohan,
+  const aaravRank1: LeaderboardTrader = {
+    ...aarav,
+    id: aarav.id && !aarav.id.includes('lk') ? aarav.id : 'slf_in_01',
     rank: 1,
-    name: 'Yohan Siriwardhana',
-    country: 'Sri Lanka',
-    flag: '🇱🇰',
-    isoCode: 'LK',
+    name: 'Aarav Sharma',
+    country: 'India',
+    flag: '🇮🇳',
+    isoCode: 'IN',
     category: 'self_funded',
+    accountTier: 'Self-Funded VIP Live',
     profit: rank1Profit,
+    winRate: 83.1,
+    payoutTime: '0m 58s',
   };
 
-  return [yohanRank1, ...others.slice(0, 14)].map((t, idx) => ({
+  return [aaravRank1, ...others.slice(0, 14)].map((t, idx) => ({
     ...t,
     category: 'self_funded' as LeaderboardTabCategory,
     rank: idx + 1,
@@ -809,10 +813,8 @@ export function getDynamicLeaderboardTraders(options?: {
 
   const rawList: LeaderboardTrader[] = SELF_FUNDED_TRADER_POOL.map((cfg, idx) => {
     let profit: number;
-    if (cfg.isoCode === 'LK' || cfg.name === 'Yohan Siriwardhana') {
-      profit = options?.useEveningPeak
-        ? YOHAN_SELF_FUNDED_PROFIT
-        : YOHAN_SELF_FUNDED_PROFIT;
+    if (idx === 0 || cfg.name === 'Aarav Sharma') {
+      profit = AARAV_SELF_FUNDED_PROFIT;
     } else {
       const minuteBucket = Math.floor(resetInfo.elapsedMsSinceReset / (60 * 1000));
       const waveSeed = Math.sin((minuteBucket + idx * 19) * 0.15) * 0.025;
@@ -1376,77 +1378,126 @@ export async function fetchSelfFundedLeaderboardFromSupabase(
     }
 
     const resetInfo = getSriLankaDailyResetInfo(nowMs);
-    const { data, error } = await supabase
-      .from('self_funded_leaderboard')
-      .select('*')
-      .order('rank', { ascending: true })
-      .limit(15);
 
-    if (error || !Array.isArray(data) || data.length === 0) {
-      const dynamic = getDynamicLeaderboardTraders({
-        category: 'self_funded',
-        nowMs,
-        useEveningPeak: false,
-      });
-      syncSelfFundedLeaderboardToSupabase(dynamic).catch(() => {});
-      return dynamic;
+    // 1. Fetch seed/persisted rows from self_funded_leaderboard table
+    let dbTraders: LeaderboardTrader[] = [];
+    try {
+      const { data, error } = await supabase
+        .from('self_funded_leaderboard')
+        .select('*')
+        .order('rank', { ascending: true })
+        .limit(15);
+
+      if (!error && Array.isArray(data) && data.length > 0) {
+        dbTraders = data.map((r: any) => {
+          const rawName = String(r.trader_name || r.name || 'Trader').trim();
+          const isYohan = rawName.toLowerCase().includes('yohan');
+          const name = isYohan ? 'Aarav Sharma' : rawName;
+          const country = isYohan ? 'India' : String(r.country || 'India');
+          const flag = isYohan ? '🇮🇳' : String(r.flag || '🇮🇳');
+          const isoCode = isYohan ? 'IN' : String(r.iso_code || r.isoCode || 'IN');
+          const rawProfit = isYohan
+            ? AARAV_SELF_FUNDED_PROFIT
+            : Number(r.daily_self_funded_profit ?? r.profit ?? 0);
+
+          return {
+            id: String(r.id || `slf_${r.rank}`),
+            rank: Number(r.rank),
+            name,
+            country,
+            flag,
+            isoCode,
+            category: 'self_funded' as LeaderboardTabCategory,
+            accountTier: String(r.account_tier || r.accountTier || 'Self-Funded Live'),
+            profit: rawProfit,
+            winRate: Number(r.win_rate ?? r.winRate ?? 80.0),
+            payoutTime: String(r.payout_time || r.payoutTime || '1m 20s'),
+          };
+        });
+      }
+    } catch {
+      // table might be empty
     }
 
-    // Check if the rows in Supabase are from before today's 05:30 AM (UTC+5:30) reset
-    const hasStalePreResetRows = data.some((r: any) => {
-      if (!r.updated_at) return false;
-      const updatedMs =
-        typeof r.updated_at === 'number' ? r.updated_at : Date.parse(String(r.updated_at));
-      return Number.isFinite(updatedMs) && updatedMs < resetInfo.dayStartUtcMs;
-    });
+    // 2. Fetch active traders from Supabase profiles (where self_balance > 0)
+    const activeProfileTraders: LeaderboardTrader[] = [];
+    try {
+      const { data: profileRows } = await supabase
+        .from('profiles')
+        .select('id, full_name, email, self_balance, balance')
+        .gt('self_balance', 0)
+        .order('self_balance', { ascending: false })
+        .limit(20);
 
-    if (hasStalePreResetRows) {
-      const freshIntraday = getDynamicLeaderboardTraders({
-        category: 'self_funded',
-        nowMs,
-        useEveningPeak: false,
-      });
-      syncSelfFundedLeaderboardToSupabase(freshIntraday).catch(() => {});
-      return freshIntraday;
+      if (Array.isArray(profileRows) && profileRows.length > 0) {
+        profileRows.forEach((p: any, idx: number) => {
+          const rawName = String(p.full_name || p.email?.split('@')[0] || `Trader ${idx + 1}`).trim();
+          if (rawName.toLowerCase() === 'loading' || rawName.toLowerCase() === 'null') return;
+          const isYohan = rawName.toLowerCase().includes('yohan');
+          const name = isYohan ? 'Aarav Sharma' : rawName;
+          const selfBal = Number(p.self_balance || 0);
+          const profit = isYohan
+            ? AARAV_SELF_FUNDED_PROFIT
+            : Math.min(38500.00, Number(selfBal.toFixed(2)));
+
+          activeProfileTraders.push({
+            id: `supa_prof_${p.id}`,
+            rank: 2,
+            name,
+            country: 'India',
+            flag: '🇮🇳',
+            isoCode: 'IN',
+            category: 'self_funded',
+            accountTier: profit > 20000 ? 'Self-Funded VIP Live' : 'Self-Funded Live',
+            profit,
+            winRate: Number((78.2 + (idx % 4) * 1.5).toFixed(1)),
+            payoutTime: '1m 15s',
+          });
+        });
+      }
+    } catch {
+      // Supabase profiles fetch fallback
     }
 
-    const dynamicIntraday = getDynamicLeaderboardTraders({
+    // 3. Fetch active traders from backend SQLite query (joins users + accounts + trades)
+    let backendActiveTraders: LeaderboardTrader[] = [];
+    try {
+      const apiRes = await fetch('/api/leaderboard?category=self_funded');
+      if (apiRes.ok) {
+        const json = await apiRes.json();
+        if (json.ok && Array.isArray(json.traders)) {
+          backendActiveTraders = json.traders;
+        }
+      }
+    } catch {}
+
+    // 4. Merge all sources
+    const dynamicBase = getDynamicLeaderboardTraders({
       category: 'self_funded',
       nowMs,
       useEveningPeak: false,
     });
-    const dynamicMap = new Map(dynamicIntraday.map((d) => [d.name, d]));
 
-    const mapped: LeaderboardTrader[] = data.map((r: any) => {
-      const name = String(r.trader_name || r.name || 'Trader');
-      const rawProfit = Number(r.daily_self_funded_profit ?? r.profit ?? 0);
-      const intradayTarget = dynamicMap.get(name);
-      // If DB holds static evening peak for non-Rank-1 traders during morning/afternoon, scale to current day's intraday progress
-      const isStaticEveningSeed =
-        intradayTarget &&
-        name !== 'Yohan Siriwardhana' &&
-        resetInfo.intradayScale < 0.92 &&
-        Math.abs(rawProfit - (intradayTarget.targetEveningProfit || rawProfit)) < 1;
+    const combinedPool: LeaderboardTrader[] = [
+      ...dbTraders,
+      ...activeProfileTraders,
+      ...backendActiveTraders,
+      ...dynamicBase,
+    ];
 
-      const resolvedProfit = isStaticEveningSeed ? intradayTarget.profit : rawProfit;
+    const deduplicated: LeaderboardTrader[] = [];
+    const seenNames = new Set<string>();
 
-      return {
-        id: String(r.id || `slf_${r.rank}`),
-        rank: Number(r.rank),
-        name,
-        country: String(r.country || intradayTarget?.country || 'Sri Lanka'),
-        flag: String(r.flag || intradayTarget?.flag || '🇱🇰'),
-        isoCode: String(r.iso_code || r.isoCode || intradayTarget?.isoCode || 'LK'),
-        category: 'self_funded',
-        accountTier: String(r.account_tier || r.accountTier || intradayTarget?.accountTier || 'Self-Funded Live'),
-        profit: resolvedProfit,
-        targetEveningProfit: intradayTarget?.targetEveningProfit,
-        winRate: Number(r.win_rate ?? r.winRate ?? intradayTarget?.winRate ?? 80.0),
-        payoutTime: String(r.payout_time || r.payoutTime || intradayTarget?.payoutTime || '1m 20s'),
-      };
-    });
+    for (const t of combinedPool) {
+      const cleanName = String(t.name || '').trim();
+      const lower = cleanName.toLowerCase();
+      if (lower.includes('yohan')) continue;
+      if (seenNames.has(lower)) continue;
+      seenNames.add(lower);
+      deduplicated.push(t);
+    }
 
-    return normalizeSelfFundedLeaderboard(mapped, false, false);
+    return normalizeSelfFundedLeaderboard(deduplicated, false, false);
   } catch {
     return getDynamicLeaderboardTraders({
       category: 'self_funded',
@@ -1474,6 +1525,14 @@ export function subscribeToLeaderboardsRealtime(
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'self_funded_leaderboard' },
+      async () => {
+        const updated = await fetchSelfFundedLeaderboardFromSupabase();
+        onSelfFundedUpdate(updated);
+      }
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'profiles' },
       async () => {
         const updated = await fetchSelfFundedLeaderboardFromSupabase();
         onSelfFundedUpdate(updated);
