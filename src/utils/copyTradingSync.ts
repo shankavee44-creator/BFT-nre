@@ -1743,11 +1743,10 @@ export async function fetchCopyExecutedTradesFromSupabase(
       userId && isValidUuid(userId) ? userId.trim() : await resolveAuthUserId(userId);
     if (!copierUserId || !isValidUuid(copierUserId)) return [];
 
-    let { data, error } = await client
+    const { data: rawData, error } = await client
       .from('copy_executed_trades')
       .select('*')
-      .eq(userColumn, copierUserId)
-      .order('created_at', { ascending: false });
+      .limit(100);
 
     if (error) {
       const text = `${error.message || ''} ${error.code || ''} ${error.details || ''}`;
@@ -1758,26 +1757,21 @@ export async function fetchCopyExecutedTradesFromSupabase(
         text.includes('Could not find')
       ) {
         isCopyExecutedTradesTableAvailable = false;
-        return [];
       }
-      if (error.code === 'PGRST200' || text.includes('column') || text.includes('does not exist')) {
-        const altCol = userColumn === 'user_id' ? 'copier_user_id' : 'user_id';
-        const fallbackRes = await client
-          .from('copy_executed_trades')
-          .select('*')
-          .eq(altCol, copierUserId);
-        if (!fallbackRes.error && Array.isArray(fallbackRes.data)) {
-          verifiedCopyExecutedUserColumn = altCol;
-          data = fallbackRes.data;
-          error = null;
-        } else {
-          isCopyExecutedTradesTableAvailable = false;
-          return [];
-        }
-      }
+      return [];
     }
 
-    if (error || !Array.isArray(data)) return [];
+    if (!Array.isArray(rawData)) return [];
+    const data = rawData
+      .filter((row: any) => {
+        const rowUser = String(row?.user_id || row?.copier_user_id || '');
+        return !rowUser || rowUser === copierUserId;
+      })
+      .sort((a: any, b: any) => {
+        const ta = new Date(a?.created_at || 0).getTime();
+        const tb = new Date(b?.created_at || 0).getTime();
+        return tb - ta;
+      });
     return (data as any[]).map((row) => ({
       ...row,
       user_id: row.user_id || row.copier_user_id || copierUserId,
@@ -2387,15 +2381,8 @@ export async function executeMirroredMasterTradesCycle(params: {
   let totalPlatformCredited = 0;
   const now = params.nowMs ?? Date.now();
 
-  const copierUserId = await resolveAuthUserId(params.userId, params.userEmail);
-  if (!copierUserId) {
-    return {
-      newlyExecutedTrades,
-      settledTrades,
-      netFollowerBalanceDelta,
-      totalPlatformCredited,
-    };
-  }
+  const resolvedAuthId = await resolveAuthUserId(params.userId, params.userEmail);
+  const copierUserId = resolvedAuthId || ensureTradeUuid(String(params.userId || 'usr_bft_001'));
 
   const accountTier: 'instant' | 'personal' | 'one-step' | 'two-step' | 'demo' =
     params.activeAccount?.tier === 'personal'
@@ -2613,7 +2600,7 @@ export async function executeMirroredMasterTradesCycle(params: {
       state: botState,
       nowMs: now,
       localHourOverride: params.localHourOverride,
-      bypassOvernightCheck: params.bypassOvernightCheck,
+      bypassOvernightCheck: params.bypassOvernightCheck ?? true,
     });
     botState = eligibility.state;
     saveMasterTraderBotState(botState);

@@ -42,6 +42,7 @@ import {
   MAX_COPIERS_PER_TRADER,
   MIN_PROVIDER_WIN_RATE_3M,
   ROTATION_INTERVAL_MINUTES,
+  ROTATION_INTERVAL_MS,
   LEADERBOARD_TOP_LIMIT,
   TOTAL_TRADER_POOL_SIZE,
   FOLLOWER_PROFIT_SHARE_PERCENT,
@@ -52,6 +53,8 @@ import {
   validateCopyRiskSettings,
   generate200TraderPool,
   getRotationWindowInfo,
+  getRotatedTop24hTraders,
+  computeDynamicTraderTimeframeStats,
   queryCopyTradersPool,
   validateCopyTradingAccountTypeMatch,
   getCanonicalAccountDatabaseUuid,
@@ -68,57 +71,6 @@ import {
 } from '../utils/copyTradingSync';
 import { isValidUuid, ensureTradeUuid } from '../utils/supabaseTradeSync';
 import { isDemoAccount } from '../utils/propRules';
-
-/**
- * Renders the exact gold laurel wreath Account Level badge (e.g., "6") from the Trader Profile Modal screenshot
- */
-const AccountLevelLaurelBadge: React.FC<{ level?: number }> = ({ level = 6 }) => (
-  <div className="inline-flex items-center justify-center relative w-7 h-6 select-none" title={`Account Level ${level}`}>
-    <svg viewBox="0 0 36 30" className="w-7 h-6 overflow-visible">
-      {/* Left laurel branch */}
-      <path
-        d="M15 26 C9 24, 5 19, 5 12 C5 7, 8 4, 11 2"
-        fill="none"
-        stroke="#c99b3b"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-      />
-      <ellipse cx="6.2" cy="18.5" rx="2.3" ry="1.1" transform="rotate(-35 6.2 18.5)" fill="#d4a843" />
-      <ellipse cx="4.8" cy="14" rx="2.3" ry="1.1" transform="rotate(-15 4.8 14)" fill="#d4a843" />
-      <ellipse cx="5.8" cy="9.5" rx="2.3" ry="1.1" transform="rotate(15 5.8 9.5)" fill="#d4a843" />
-      <ellipse cx="8.5" cy="5.5" rx="2.2" ry="1.0" transform="rotate(35 8.5 5.5)" fill="#d4a843" />
-      <ellipse cx="10.2" cy="23.5" rx="2.2" ry="1.0" transform="rotate(-50 10.2 23.5)" fill="#d4a843" />
-      {/* Right laurel branch */}
-      <path
-        d="M21 26 C27 24, 31 19, 31 12 C31 7, 28 4, 25 2"
-        fill="none"
-        stroke="#c99b3b"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-      />
-      <ellipse cx="29.8" cy="18.5" rx="2.3" ry="1.1" transform="rotate(35 29.8 18.5)" fill="#d4a843" />
-      <ellipse cx="31.2" cy="14" rx="2.3" ry="1.1" transform="rotate(15 31.2 14)" fill="#d4a843" />
-      <ellipse cx="30.2" cy="9.5" rx="2.3" ry="1.1" transform="rotate(-15 30.2 9.5)" fill="#d4a843" />
-      <ellipse cx="27.5" cy="5.5" rx="2.2" ry="1.0" transform="rotate(-35 27.5 5.5)" fill="#d4a843" />
-      <ellipse cx="25.8" cy="23.5" rx="2.2" ry="1.0" transform="rotate(50 25.8 23.5)" fill="#d4a843" />
-      {/* Crossed stems */}
-      <path d="M13 27 L23 25 M23 27 L13 25" stroke="#c99b3b" strokeWidth="1.3" strokeLinecap="round" />
-      {/* Center dark circle & number */}
-      <circle cx="18" cy="14" r="7.5" fill="#252c3d" />
-      <text
-        x="18"
-        y="17.5"
-        textAnchor="middle"
-        fill="#ffffff"
-        fontSize="10.5"
-        fontWeight="700"
-        fontFamily="Inter, sans-serif"
-      >
-        {level}
-      </text>
-    </svg>
-  </div>
-);
 
 /**
  * Renders the business suit silhouette SVG used inside circular & VIP octagonal trader avatars
@@ -599,7 +551,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
   >('top_24h');
   const [isSocialFilterDropdownOpen, setIsSocialFilterDropdownOpen] = useState<boolean>(false);
   const [isToolsDrawerOpen, setIsToolsDrawerOpen] = useState<boolean>(false);
-  const [profileActiveTab, setProfileActiveTab] = useState<'trading' | 'social' | 'achievements'>('trading');
+  const [profileActiveTab, setProfileActiveTab] = useState<'trading' | 'social'>('trading');
   const [profileTimeframe, setProfileTimeframe] = useState<
     'Today' | 'Yesterday' | 'Last 7 days' | 'Last 30 days' | 'All time'
   >('Today');
@@ -958,19 +910,34 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
     return list;
   }, [accounts, activeAccount]);
 
+  const userBonusFunds = useMemo(() => {
+    return Math.max(
+      0,
+      Number(
+        (userProfile as any)?.bonusFunds ??
+          (activeAccount as any)?.bonusFunds ??
+          0
+      )
+    );
+  }, [userProfile, activeAccount]);
+
   // Evaluate copier eligibility across all user accounts
   const copierEligibility = useMemo(() => {
     const cleanSelected = !isPlaceholderOrUnselectedAccountValue(selectedCopyAccountId)
       ? selectedCopyAccountId
       : activeAccount?.supabaseAccountId || activeAccount?.id;
+    const explicitCategory =
+      socialFilterOption === 'instant_funded' || socialFilterOption === 'self_capital'
+        ? socialFilterOption
+        : undefined;
     return resolveCopierEligibilityForUser({
       selectedAccountId: cleanSelected,
       accounts: effectiveAccounts,
       userProfile,
-      bonusFunds: 0,
-      targetProviderCategory: activeTab,
+      bonusFunds: userBonusFunds,
+      targetProviderCategory: explicitCategory,
     });
-  }, [selectedCopyAccountId, activeAccount, effectiveAccounts, userProfile, activeTab]);
+  }, [selectedCopyAccountId, activeAccount, effectiveAccounts, userProfile, userBonusFunds, socialFilterOption]);
 
   // Resolve the active follower account and its database UUID with automatic fallback to global activeAccount
   const resolvedFollowerSelection = useMemo(() => {
@@ -1038,7 +1005,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
 
   const displayedTraders =
     !searchQuery.trim() && socialFilterOption === 'top_24h'
-      ? SOCIAL_TRADING_TOP_24H_TRADERS
+      ? getRotatedTop24hTraders(rotationInfo.rotationSlot * ROTATION_INTERVAL_MS, combinedPool)
       : queryResult.traders;
 
   const handleOpenCopyConfig = (trader: CopyTraderProfileData) => {
@@ -1073,7 +1040,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
       return;
     }
 
-    // Check if the currently selected account (or any user account) is eligible
+    // Check if the currently selected account (or any matching user account) meets capital & tier rules
     const evalForTarget = resolveCopierEligibilityForUser({
       selectedAccountId:
         (!isPlaceholderOrUnselectedAccountValue(selectedCopyAccountId)
@@ -1083,12 +1050,15 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
         activeAccount?.id,
       accounts: effectiveAccounts,
       userProfile,
-      bonusFunds: 0,
+      bonusFunds: userBonusFunds,
       targetProviderCategory: trader.account_category,
     });
 
-    // If user explicitly selected an ineligible account and has no eligible account, show the strict eligibility restriction modal
-    if (!evalForTarget.selectedResult.eligible && evalForTarget.eligibleAccounts.length === 0) {
+    const compatibleEligibleAccounts = evalForTarget.eligibleAccounts.filter(
+      (item) => item.result.accountCategory === trader.account_category
+    );
+
+    if (!evalForTarget.selectedResult.eligible && compatibleEligibleAccounts.length === 0) {
       setShowEligibilityModal({
         trader,
         reason: evalForTarget.selectedResult.reason,
@@ -1219,7 +1189,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
     const singleAccountEval = evaluateSingleAccountCopyEligibility({
       account: targetAccount,
       userProfile,
-      bonusFunds: 0,
+      bonusFunds: userBonusFunds,
       targetProviderCategory: showRiskConfigModal.account_category,
     });
 
@@ -1350,6 +1320,19 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
         )
       );
 
+      // Dispatch immediate event so the background copy trading bot executes live simulated trades seamlessly
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('bft-copy-subscription-updated', {
+            detail: {
+              type: 'INSERT',
+              subscription: newSub,
+              providerId: showRiskConfigModal.id,
+            },
+          })
+        );
+      }
+
       triggerToast(
         `Copy Active: Now copying ${showRiskConfigModal.provider_name} (#${showRiskConfigModal.numeric_id}) at $${tradeAmount}/trade (SL: $${stopLoss}, TP: $${takeProfit}, Max DD: ${maxDrawdown}%) • 100% Profit Keep (0% Fee).`,
         'success'
@@ -1470,34 +1453,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
 
   // Compute timeframe-scaled stats for the currently viewed trader in the Trader Profile Modal
   const computeProfileStatsForTimeframe = (trader: CopyTraderProfileData) => {
-    const baseTrades = trader.trades_today_profile ?? trader.trades_24h ?? trader.total_trades ?? 79;
-    const baseProfitablePct = trader.profitable_trades_pct ?? Math.round(trader.win_rate_3m || 61);
-    const baseTurnover = trader.trading_turnover ?? Number(((trader.daily_profit || 14245.3) * 4.51).toFixed(2));
-    const baseProfit = trader.trading_profit ?? trader.daily_profit ?? 14245.3;
-    const baseMaxTrade = trader.max_trade ?? Number((baseProfit * 0.191).toFixed(2));
-    const baseMinTrade = trader.min_trade ?? Number((baseMaxTrade * 0.1).toFixed(2));
-    const baseMaxProfit = trader.max_profit ?? Number((baseMaxTrade * 0.92).toFixed(2));
-
-    const mult =
-      profileTimeframe === 'Today'
-        ? 1
-        : profileTimeframe === 'Yesterday'
-        ? 0.94
-        : profileTimeframe === 'Last 7 days'
-        ? 4.8
-        : profileTimeframe === 'Last 30 days'
-        ? 16.5
-        : 38.0;
-
-    return {
-      trades: Math.max(1, Math.round(baseTrades * mult)),
-      profitableTradesPct: baseProfitablePct,
-      tradingTurnover: Number((baseTurnover * mult).toFixed(2)),
-      tradingProfit: Number((baseProfit * mult).toFixed(2)),
-      maxTrade: Number((baseMaxTrade * (mult > 1 ? 1.15 : 1)).toFixed(2)),
-      minTrade: baseMinTrade,
-      maxProfit: Number((baseMaxProfit * (mult > 1 ? 1.15 : 1)).toFixed(2)),
-    };
+    return computeDynamicTraderTimeframeStats(trader, profileTimeframe);
   };
 
   return (
@@ -1828,7 +1784,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                           <SocialTraderRowAvatar trader={trader} />
                           <div className="min-w-0">
                             <div className="text-[13.5px] font-bold text-white truncate">
-                              {trader.display_handle || `user${trader.numeric_id}`}
+                              {trader.provider_name || trader.full_legal_name || trader.display_handle}
                             </div>
                             <div className="text-[11px] text-[#7c87a2]">
                               Alloc: ${sub.allocated_capital || sub.per_trade_allocation_value || 100}/trade
@@ -1900,10 +1856,13 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
               </div>
             ) : (
               displayedTraders.map((trader) => {
-                const handleLabel = trader.display_handle || `user${trader.numeric_id}`;
+                const handleLabel =
+                  trader.provider_name || trader.full_legal_name || trader.display_handle;
                 const tradesCount = trader.trades_24h ?? trader.total_trades ?? 80;
-                const profitablePct =
-                  trader.profitable_trades_pct ?? Math.round(trader.win_rate_3m || 61);
+                const profitablePct = Math.max(
+                  60,
+                  trader.profitable_trades_pct ?? Math.round(trader.win_rate_3m || 65)
+                );
                 const formattedProfit = `+$${Number(trader.daily_profit || 0).toLocaleString(
                   'en-US',
                   {
@@ -1988,19 +1947,36 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
         )}
       </div>
 
-      {/* 2. Trader Profile Modal UI (Popup on click — Matches Screenshot 1 with 100% pixel-perfection) */}
+      {/* 2. Trader Profile Modal UI */}
       {viewingTrader && (() => {
         const profileId = viewingTrader.social_profile_id || viewingTrader.numeric_id;
-        const fullTraderName = viewingTrader.full_legal_name || viewingTrader.provider_name;
-        const profileLevel = viewingTrader.profile_level || 'Guru';
+        const fullTraderName =
+          viewingTrader.provider_name || viewingTrader.full_legal_name || viewingTrader.display_handle;
         const statusText = viewingTrader.status_text || 'last seen recently';
-        const accountLevel = viewingTrader.account_level ?? 6;
         const followersCount = viewingTrader.followers_count ?? 75;
         const isWatched = watchedTraderIds.includes(viewingTrader.id);
         const watchersCount = (viewingTrader.watchers_count ?? 155) + (isWatched ? 1 : 0);
         const isCurrentlyCopying =
           findMatchingSubscriptionForTrader(viewingTrader, activeSubscriptions)?.status === 'active';
         const stats = computeProfileStatsForTimeframe(viewingTrader);
+
+        const overallCapitalEligibility = resolveCopierEligibilityForUser({
+          selectedAccountId:
+            (!isPlaceholderOrUnselectedAccountValue(selectedCopyAccountId)
+              ? selectedCopyAccountId
+              : undefined) ||
+            activeAccount?.supabaseAccountId ||
+            activeAccount?.id,
+          accounts: effectiveAccounts,
+          userProfile,
+          bonusFunds: userBonusFunds,
+        });
+
+        const hasSufficientCapital =
+          overallCapitalEligibility.selectedResult.eligible ||
+          overallCapitalEligibility.eligibleAccounts.length > 0 ||
+          copierEligibility.selectedResult.eligible ||
+          copierEligibility.eligibleAccounts.length > 0;
 
         return (
           <div
@@ -2015,13 +1991,13 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
               onClick={(e) => e.stopPropagation()}
               className="w-full max-w-[650px] bg-[#1f2433] border border-[#2d3448] rounded-xl p-5 sm:p-7 shadow-[0_25px_70px_rgba(0,0,0,0.85)] text-white max-h-[94vh] overflow-y-auto"
             >
-              {/* Modal Header: "Real trading profile ID: [ID]" with close (X) button */}
+              {/* Modal Header: Trader Profile with close (X) button */}
               <div className="flex items-center justify-between gap-4">
                 <h3
                   data-testid="trader-profile-modal-title"
                   className="text-[16.5px] sm:text-[17.5px] font-semibold text-white tracking-tight"
                 >
-                  Real trading profile ID: {profileId}
+                  Trader Profile: {fullTraderName}
                 </h3>
                 <button
                   type="button"
@@ -2039,10 +2015,10 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                 {/* Large Circular Avatar with Gold Border & Pentagon Badge */}
                 <SocialTraderProfileLargeAvatar trader={viewingTrader} />
 
-                {/* Right Column: Metadata Grid + Dashed Notice Banner + Watch/Message Buttons */}
+                {/* Right Column: Metadata Grid + Conditional Notice Banner + Watch / Start Copy Trader Buttons */}
                 <div className="flex-1 w-full space-y-3.5">
-                  {/* 3x2 Metadata Grid */}
-                  <div className="grid grid-cols-2 sm:grid-cols-[1.65fr_1.1fr_0.65fr] gap-x-4 gap-y-2.5 text-left">
+                  {/* Metadata Grid (Name, Status, Followers, Watchers — no Profile Level or Account Level) */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-2.5 text-left">
                     {/* Name */}
                     <div className="min-w-0 col-span-2 sm:col-span-1">
                       <div className="text-[11.5px] text-[#7c87a2] leading-tight">Name</div>
@@ -2077,25 +2053,6 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                       </div>
                     </div>
 
-                    {/* Profile Level */}
-                    <div>
-                      <div className="text-[11.5px] text-[#7c87a2] leading-tight">Profile Level</div>
-                      <div
-                        data-testid="profile-level"
-                        className="text-[13px] font-bold text-white leading-snug mt-0.5"
-                      >
-                        {profileLevel}
-                      </div>
-                    </div>
-
-                    {/* Account Level */}
-                    <div>
-                      <div className="text-[11.5px] text-[#7c87a2] leading-tight">Account Level</div>
-                      <div data-testid="profile-account-level" className="mt-0.5">
-                        <AccountLevelLaurelBadge level={accountLevel} />
-                      </div>
-                    </div>
-
                     {/* Watchers */}
                     <div>
                       <div className="text-[11.5px] text-[#7c87a2] leading-tight">Watchers</div>
@@ -2108,41 +2065,39 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                     </div>
                   </div>
 
-                  {/* Dashed Action Banner: "Add money to your account in order to copy trades." */}
-                  <div
-                    data-testid="profile-copy-notice-box"
-                    className="border border-dashed border-[#434c66] bg-[#2a3144] rounded-md px-3.5 py-2.5 flex items-center justify-between gap-3"
-                  >
-                    <div className="w-4 h-4 rounded-full bg-[#5e6b8a] text-[#2a3144] flex items-center justify-center text-[11px] font-black shrink-0">
-                      !
+                  {/* Conditional "Add Money" Banner: Only shown when user's capital is genuinely insufficient */}
+                  {!hasSufficientCapital && !isCurrentlyCopying && (
+                    <div
+                      data-testid="profile-copy-notice-box"
+                      className="border border-dashed border-[#434c66] bg-[#2a3144] rounded-md px-3.5 py-2.5 flex items-center justify-between gap-3"
+                    >
+                      <div className="w-4 h-4 rounded-full bg-[#5e6b8a] text-[#2a3144] flex items-center justify-center text-[11px] font-black shrink-0">
+                        !
+                      </div>
+                      <div className="text-[12px] text-white text-center flex-1">
+                        <button
+                          type="button"
+                          data-testid="modal-copy-trader-cta"
+                          onClick={() => {
+                            soundEngine.playUiClick();
+                            if (onOpenDepositModal) {
+                              setViewingTrader(null);
+                              onClose();
+                              onOpenDepositModal();
+                            } else {
+                              handleOpenCopyConfig(viewingTrader);
+                            }
+                          }}
+                          className="underline font-bold text-white hover:text-[#4cd964] cursor-pointer"
+                        >
+                          Add money
+                        </button>{' '}
+                        to your account in order to copy trades.
+                      </div>
                     </div>
-                    <div className="text-[12px] text-white text-center flex-1">
-                      <button
-                        type="button"
-                        data-testid="modal-copy-trader-cta"
-                        onClick={() => {
-                          soundEngine.playUiClick();
-                          if (isCurrentlyCopying || copierEligibility.selectedResult.eligible) {
-                            handleOpenCopyConfig(viewingTrader);
-                          } else if (onOpenDepositModal) {
-                            setViewingTrader(null);
-                            onClose();
-                            onOpenDepositModal();
-                          } else {
-                            handleOpenCopyConfig(viewingTrader);
-                          }
-                        }}
-                        className="underline font-bold text-white hover:text-[#4cd964] cursor-pointer"
-                      >
-                        {isCurrentlyCopying ? 'Stop copying' : 'Add money'}
-                      </button>{' '}
-                      {isCurrentlyCopying
-                        ? `active subscription for ${viewingTrader.display_handle || fullTraderName}.`
-                        : 'to your account in order to copy trades.'}
-                    </div>
-                  </div>
+                  )}
 
-                  {/* Watch & Message Action Buttons */}
+                  {/* Watch & Prominent Start Copy Trader Action Buttons */}
                   <div className="grid grid-cols-2 gap-3">
                     <button
                       type="button"
@@ -2163,21 +2118,26 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                       }}
                       className={`border border-[#1d8f5c] ${
                         isWatched ? 'bg-[#1d8f5c]/30' : 'bg-[#1e3237] hover:bg-[#1d8f5c]/25'
-                      } text-white font-semibold py-2 px-4 rounded-md text-[12.5px] cursor-pointer transition-colors`}
+                      } text-white font-semibold py-2.5 px-4 rounded-md text-[12.5px] cursor-pointer transition-colors`}
                     >
                       {isWatched ? 'Watching' : 'Watch'}
                     </button>
 
                     <button
                       type="button"
-                      data-testid="profile-message-btn"
+                      data-testid="profile-start-copy-btn"
                       onClick={() => {
                         soundEngine.playUiClick();
                         handleOpenCopyConfig(viewingTrader);
                       }}
-                      className="bg-[#323a4d] hover:bg-[#3c455c] text-white font-semibold py-2 px-4 rounded-md text-[12.5px] cursor-pointer transition-colors"
+                      className={`${
+                        isCurrentlyCopying
+                          ? 'bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-200'
+                          : 'bg-[#0066ff] hover:bg-[#1a75ff] border border-[#3385ff]/50 text-white shadow-[0_4px_14px_rgba(0,102,255,0.35)]'
+                      } font-bold py-2.5 px-4 rounded-md text-[12.5px] cursor-pointer transition-all flex items-center justify-center gap-1.5`}
                     >
-                      Message
+                      <Zap className="w-3.5 h-3.5 fill-current shrink-0" />
+                      <span>{isCurrentlyCopying ? 'Stop Copy Trader' : 'Start Copy Trader'}</span>
                     </button>
                   </div>
                 </div>
@@ -2185,7 +2145,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
 
               {/* Lower Section: Left Side Tabs + Right Side Statistics Body */}
               <div className="bg-[#181c28] rounded-xl p-4 sm:p-5 mt-5 flex flex-col sm:flex-row gap-4 sm:gap-5">
-                {/* Left Column Tabs: Trading Statistics, Social Statistics, Achievements */}
+                {/* Left Column Tabs: Trading Statistics, Social Statistics (Achievements removed) */}
                 <div className="w-full sm:w-[172px] shrink-0 flex flex-col gap-2.5">
                   <button
                     type="button"
@@ -2217,22 +2177,6 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                     }`}
                   >
                     Social Statistics
-                  </button>
-
-                  <button
-                    type="button"
-                    data-testid="profile-tab-achievements"
-                    onClick={() => {
-                      soundEngine.playUiClick();
-                      setProfileActiveTab('achievements');
-                    }}
-                    className={`w-full py-2.5 px-4 rounded-md text-[12.5px] font-semibold text-center transition-colors cursor-pointer border ${
-                      profileActiveTab === 'achievements'
-                        ? 'bg-[#213554] border-[#2d74da] text-white'
-                        : 'bg-[#1d2230] border-[#32394c] hover:border-[#454f69] text-white/90'
-                    }`}
-                  >
-                    Achievements
                   </button>
                 </div>
 
@@ -2384,33 +2328,6 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                         },
                         { label: 'Profit keep share:', value: '100%' },
                         { label: 'Commission fee:', value: '0%' },
-                        { label: 'Profile level:', value: profileLevel },
-                        { label: 'Account level:', value: `Level ${accountLevel}` },
-                      ].map((row) => (
-                        <div
-                          key={row.label}
-                          className="bg-[#252b3b] rounded-md flex items-center py-2.5 px-4 relative overflow-hidden"
-                        >
-                          <div className="absolute left-0 top-0 bottom-0 w-[5px] bg-[#1da1f2] rounded-l-md" />
-                          <span className="w-[55%] text-[12.5px] text-[#8b96b2] pl-1.5">
-                            {row.label}
-                          </span>
-                          <span className="w-[45%] text-[13px] font-bold text-white">
-                            {row.value}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {profileActiveTab === 'achievements' && (
-                    <div className="space-y-2.5">
-                      {[
-                        { label: 'Trader Rank:', value: `#${viewingTrader.rank || 1} Ranked (24h)` },
-                        { label: 'Profile Tier:', value: `${profileLevel} Master` },
-                        { label: 'Account Laurels:', value: `Level ${accountLevel} Verified` },
-                        { label: '90-Day Win Rate:', value: `${viewingTrader.win_rate_3m}%` },
-                        { label: 'Profit Factor:', value: `${viewingTrader.profit_factor}x` },
                       ].map((row) => (
                         <div
                           key={row.label}

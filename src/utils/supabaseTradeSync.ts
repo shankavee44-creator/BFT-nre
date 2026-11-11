@@ -777,11 +777,10 @@ export async function fetchUserTrades(
       if ((!currentAccountType || currentAccountType !== 'DEMO') && getIsCopyExecutedTradesTableAvailable()) {
         const { available, userColumn } = await resolveCopyExecutedTradesSchema(supabase);
         if (available) {
-          let { data: copyRows, error: copyErr } = await supabase
+          const { data: copyRows, error: copyErr } = await supabase
             .from('copy_executed_trades')
             .select('*')
-            .eq(userColumn, effectiveUserId)
-            .order('created_at', { ascending: false });
+            .limit(100);
 
           if (copyErr) {
             const text = `${copyErr.message || ''} ${copyErr.code || ''}`;
@@ -790,24 +789,31 @@ export async function fetchUserTrades(
             }
           }
 
-        if (Array.isArray(copyRows) && copyRows.length > 0) {
-          const seenIds = new Set(mapped.map((m) => ensureTradeUuid(m.id)));
-          for (const cr of copyRows as any[]) {
-            const mappedCopy = mapFromSupabaseRow({
-              ...cr,
-              user_id: cr.user_id || cr.copier_user_id || effectiveUserId,
-              account_id: cr.account_id || cr.copier_account_id,
-              account_type: currentAccountType || 'FUNDED',
-            });
-            const canonId = ensureTradeUuid(mappedCopy.id);
-            if (!seenIds.has(canonId)) {
-              seenIds.add(canonId);
-              mapped.push(mappedCopy);
+          const filteredCopyRows = Array.isArray(copyRows)
+            ? copyRows.filter((cr: any) => {
+                const rowUser = String(cr?.user_id || cr?.copier_user_id || '');
+                return !rowUser || rowUser === effectiveUserId;
+              })
+            : [];
+
+          if (filteredCopyRows.length > 0) {
+            const seenIds = new Set(mapped.map((m) => ensureTradeUuid(m.id)));
+            for (const cr of filteredCopyRows as any[]) {
+              const mappedCopy = mapFromSupabaseRow({
+                ...cr,
+                user_id: cr.user_id || cr.copier_user_id || effectiveUserId,
+                account_id: cr.account_id || cr.copier_account_id,
+                account_type: currentAccountType || 'FUNDED',
+              });
+              const canonId = ensureTradeUuid(mappedCopy.id);
+              if (!seenIds.has(canonId)) {
+                seenIds.add(canonId);
+                mapped.push(mappedCopy);
+              }
             }
           }
         }
       }
-    }
     } catch {
       // ignore if copy_executed_trades is empty or unavailable
     }
@@ -870,12 +876,10 @@ export async function fetchActiveOpenTradesFromSupabase(
       if (currentAccountType !== 'DEMO' && getIsCopyExecutedTradesTableAvailable()) {
         const { available, userColumn } = await resolveCopyExecutedTradesSchema(supabase);
         if (available) {
-          let { data: openCopyRows, error: openCopyErr } = await supabase
+          const { data: openCopyRows, error: openCopyErr } = await supabase
             .from('copy_executed_trades')
             .select('*')
-            .eq(userColumn, effectiveUserId)
-            .in('status', ['OPEN', 'ACTIVE'])
-            .order('created_at', { ascending: false });
+            .limit(100);
 
           if (openCopyErr) {
             const text = `${openCopyErr.message || ''} ${openCopyErr.code || ''}`;
@@ -884,24 +888,32 @@ export async function fetchActiveOpenTradesFromSupabase(
             }
           }
 
-        if (Array.isArray(openCopyRows) && openCopyRows.length > 0) {
-          const seenIds = new Set(activeList.map((t) => ensureTradeUuid(t.id)));
-          for (const cr of openCopyRows as any[]) {
-            const trade = mapFromSupabaseRow({
-              ...cr,
-              user_id: cr.user_id || cr.copier_user_id || effectiveUserId,
-              account_id: cr.account_id || cr.copier_account_id,
-              account_type: currentAccountType,
-            });
-            const canonId = ensureTradeUuid(trade.id);
-            if (trade.status === 'active' && !seenIds.has(canonId)) {
-              seenIds.add(canonId);
-              activeList.push(trade);
+          const filteredOpenCopyRows = Array.isArray(openCopyRows)
+            ? openCopyRows.filter((cr: any) => {
+                const rowUser = String(cr?.user_id || cr?.copier_user_id || '');
+                const st = String(cr?.status || '').toUpperCase();
+                return (!rowUser || rowUser === effectiveUserId) && (st === 'OPEN' || st === 'ACTIVE');
+              })
+            : [];
+
+          if (filteredOpenCopyRows.length > 0) {
+            const seenIds = new Set(activeList.map((t) => ensureTradeUuid(t.id)));
+            for (const cr of filteredOpenCopyRows as any[]) {
+              const trade = mapFromSupabaseRow({
+                ...cr,
+                user_id: cr.user_id || cr.copier_user_id || effectiveUserId,
+                account_id: cr.account_id || cr.copier_account_id,
+                account_type: currentAccountType,
+              });
+              const canonId = ensureTradeUuid(trade.id);
+              if (trade.status === 'active' && !seenIds.has(canonId)) {
+                seenIds.add(canonId);
+                activeList.push(trade);
+              }
             }
           }
         }
       }
-    }
     } catch {
       // ignore
     }

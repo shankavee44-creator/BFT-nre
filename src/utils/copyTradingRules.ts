@@ -292,8 +292,8 @@ export function validateCopyTradingAccountTypeMatch(
         isMatch: false,
         copierType,
         masterType,
-        error: 'Account type mismatch: Personal Live accounts can only copy Personal Live traders.',
-        badgeLabel: 'Incompatible (Needs Personal Live)',
+        error: 'Account type mismatch: Self-Funded (Personal Live) accounts can only copy Self-Funded traders.',
+        badgeLabel: 'Incompatible (Needs Self-Funded)',
         badgeColor: 'bg-rose-500/20 text-rose-400 border-rose-500/30',
       };
     }
@@ -301,7 +301,7 @@ export function validateCopyTradingAccountTypeMatch(
       isMatch: true,
       copierType,
       masterType,
-      badgeLabel: 'Compatible (Personal Live)',
+      badgeLabel: 'Compatible (Self-Funded)',
       badgeColor: 'bg-emerald-500/20 text-[#00F5A0] border-emerald-500/30',
     };
   }
@@ -312,8 +312,8 @@ export function validateCopyTradingAccountTypeMatch(
         isMatch: false,
         copierType,
         masterType,
-        error: 'Account type mismatch: Instant Funded accounts can only copy Instant Funded traders.',
-        badgeLabel: 'Incompatible (Needs Instant Funded)',
+        error: 'Account type mismatch: Funded accounts can only copy Funded traders.',
+        badgeLabel: 'Incompatible (Needs Funded)',
         badgeColor: 'bg-rose-500/20 text-rose-400 border-rose-500/30',
       };
     }
@@ -471,13 +471,39 @@ export function evaluateSingleAccountCopyEligibility(params: {
     phase === 'personal_live' ||
     id.includes('PERS');
 
+  const validTargetCategory =
+    params.targetProviderCategory === 'self_capital' ||
+    params.targetProviderCategory === 'instant_funded'
+      ? params.targetProviderCategory
+      : undefined;
+
   if (isSelfCapital) {
     const rawBalance =
       userProfile?.selfBalance !== undefined && userProfile?.selfBalance !== null
         ? Math.max(Number(userProfile.selfBalance), Number(account.currentBalance || 0))
         : Number(account.currentBalance ?? account.depositedCapital ?? account.initialBalance ?? 0);
-    const cleanBonus = Math.max(0, Number(bonusFunds || 0));
+    const hasSeparateSelfBalance =
+      userProfile?.selfBalance !== undefined && userProfile?.selfBalance !== null;
+    const inferredBonus =
+      Number(bonusFunds || 0) ||
+      Number((account as any)?.bonusFunds ?? (userProfile as any)?.bonusFunds ?? 0) ||
+      (!hasSeparateSelfBalance
+        ? Number((account as any)?.bonusBalance ?? (userProfile as any)?.bonusBalance ?? 0)
+        : 0);
+    const cleanBonus = Math.max(0, inferredBonus);
     const realBalance = Number(Math.max(0, rawBalance - cleanBonus).toFixed(2));
+
+    if (validTargetCategory && validTargetCategory !== 'self_capital') {
+      return {
+        eligible: false,
+        code: 'ACCOUNT_TYPE_MISMATCH',
+        accountCategory: 'self_capital',
+        accountLabel: 'Self-Capital Account',
+        availableBalance: realBalance,
+        realSelfBalance: realBalance,
+        reason: 'Account Type Restriction: Self-Funded accounts can only copy Self-Funded traders.',
+      };
+    }
 
     if (realBalance < MIN_SELF_CAPITAL_REAL_BALANCE) {
       return {
@@ -526,6 +552,17 @@ export function evaluateSingleAccountCopyEligibility(params: {
     };
   }
 
+  if (validTargetCategory && validTargetCategory !== 'instant_funded') {
+    return {
+      eligible: false,
+      code: 'ACCOUNT_TYPE_MISMATCH',
+      accountCategory: 'instant_funded',
+      accountLabel: account.tierName || 'Instant Funded Account',
+      availableBalance: Number(account.currentBalance || 0),
+      reason: 'Account Type Restriction: Funded accounts can only copy Funded traders.',
+    };
+  }
+
   // Check Instant Funded account status
   const isActiveStatus = status === 'active' || status === 'funded' || status === 'passed';
   if (!isActiveStatus) {
@@ -539,10 +576,11 @@ export function evaluateSingleAccountCopyEligibility(params: {
     };
   }
 
-  // Must be Instant Funded of $25K, $50K, or $100K ONLY
+  // Must be Instant Funded of $25K or higher ($25K, $50K, or $100K)
   const isInstantTier = tier === 'instant' || accountType === 'instant' || phase === 'funded';
   const accountSize = Number(account.size || account.initialBalance || 0);
-  const isAllowedSize = (ELIGIBLE_INSTANT_FUNDED_SIZES as readonly number[]).includes(accountSize);
+  const isAllowedSize =
+    accountSize >= 25000 && (ELIGIBLE_INSTANT_FUNDED_SIZES as readonly number[]).includes(accountSize);
 
   if (!isInstantTier || !isAllowedSize) {
     return {
@@ -844,56 +882,93 @@ export function deterministicHash(input: string): number {
   return Math.abs(h >>> 0);
 }
 
-const FIRST_NAMES = [
-  'Rajesh', 'Muhammad', 'Tanvir', 'Amit', 'Ahmed', 'Rakibul', 'Priya', 'Fatima', 'Nusrat', 'Vikram',
-  'Usman', 'Shakil', 'Arjun', 'Hamza', 'Tariq', 'Bilal', 'Ananya', 'Rohan', 'Syed', 'Farhan',
-  'Imran', 'Zubair', 'Shahid', 'Mustafa', 'Hassan', 'Mahmud', 'Sabbir', 'Tamim', 'Mushfiq', 'Shoriful',
-  'Taslim', 'Kabir', 'Deepak', 'Sanjay', 'Sunil', 'Neha', 'Pooja', 'Rahul', 'Aditya', 'Aarav',
-];
-
-const LAST_NAMES = [
-  'Sharma', 'Ali', 'Ahmed', 'Patel', 'Khan', 'Hasan', 'Verma', 'Malik', 'Jahan', 'Singh',
-  'Tariq', 'Mahmud', 'Malhotra', 'Qureshi', 'Chowdhury', 'Hossain', 'Rahman', 'Siddiqui', 'Shah', 'Farooqi',
-  'Deshmukh', 'Gupta', 'Iqbal', 'Islam', 'Kazi', 'Miah', 'Akter', 'Bhowmick', 'Mukherjee', 'Banerjee',
-  'Chatterjee', 'Reddy', 'Nair', 'Bhat', 'Abbasi', 'Butt', 'Mirza', 'Raza', 'Bukhari', 'Sultana',
-];
-
-const COUNTRIES: Array<{ name: string; code: string; flag: string }> = [
-  { name: 'India', code: 'IN', flag: '🇮🇳' },
-  { name: 'Pakistan', code: 'PK', flag: '🇵🇰' },
-  { name: 'Bangladesh', code: 'BD', flag: '🇧🇩' },
-  { name: 'India', code: 'IN', flag: '🇮🇳' },
-  { name: 'Pakistan', code: 'PK', flag: '🇵🇰' },
-  { name: 'Bangladesh', code: 'BD', flag: '🇧🇩' },
-  { name: 'United Arab Emirates', code: 'AE', flag: '🇦🇪' },
-  { name: 'Singapore', code: 'SG', flag: '🇸🇬' },
-  { name: 'Malaysia', code: 'MY', flag: '🇲🇾' },
-  { name: 'United Kingdom', code: 'GB', flag: '🇬🇧' },
-  { name: 'Qatar', code: 'QA', flag: '🇶🇦' },
-  { name: 'Germany', code: 'DE', flag: '🇩🇪' },
-  { name: 'Switzerland', code: 'CH', flag: '🇨🇭' },
-  { name: 'Japan', code: 'JP', flag: '🇯🇵' },
-  { name: 'Australia', code: 'AU', flag: '🇦🇺' },
-  { name: 'Canada', code: 'CA', flag: '🇨🇦' },
-  { name: 'United States', code: 'US', flag: '🇺🇸' },
-  { name: 'France', code: 'FR', flag: '🇫🇷' },
-  { name: 'Saudi Arabia', code: 'SA', flag: '🇸🇦' },
-  { name: 'Sri Lanka', code: 'LK', flag: '🇱🇰' },
+const REGIONAL_PROFILES: Array<{
+  country: string;
+  code: string;
+  flag: string;
+  firstNames: string[];
+  lastNames: string[];
+}> = [
+  {
+    country: 'India',
+    code: 'IN',
+    flag: '🇮🇳',
+    firstNames: [
+      'Aarav', 'Rajesh', 'Vikramaditya', 'Arjun', 'Rohan', 'Aditya', 'Siddharth', 'Karan',
+      'Pranav', 'Nikhil', 'Ananya', 'Priya', 'Harsh', 'Devansh', 'Yash', 'Varun',
+    ],
+    lastNames: [
+      'Sharma', 'Singhania', 'Deshmukh', 'Verma', 'Patel', 'Malhotra', 'Mehta', 'Kapoor',
+      'Reddy', 'Nair', 'Chatterjee', 'Mukherjee', 'Iyer', 'Chauhan', 'Joshi', 'Kulkarni',
+    ],
+  },
+  {
+    country: 'Bangladesh',
+    code: 'BD',
+    flag: '🇧🇩',
+    firstNames: [
+      'Tanvir', 'Mahmudul', 'Rakibul', 'Shakil', 'Nusrat', 'Farhan', 'Sabbir', 'Tamim',
+      'Mushfiq', 'Mehedi', 'Ashraful', 'Nayeem', 'Tawhid', 'Riyad', 'Fahim', 'Tahmid',
+    ],
+    lastNames: [
+      'Ahmed', 'Chowdhury', 'Hasan', 'Mahmud', 'Jahan', 'Rahman', 'Hossain', 'Islam',
+      'Talukder', 'Sikder', 'Bhuiyan', 'Uddin', 'Miah', 'Kazi', 'Akter', 'Sarkar',
+    ],
+  },
+  {
+    country: 'Pakistan',
+    code: 'PK',
+    flag: '🇵🇰',
+    firstNames: [
+      'Tariq', 'Kamran', 'Muhammad', 'Zain', 'Bilal', 'Usman', 'Hamza', 'Faisal',
+      'Imran', 'Zubair', 'Shahid', 'Mustafa', 'Hassan', 'Saad', 'Fahad', 'Salman',
+    ],
+    lastNames: [
+      'Qureshi', 'Malik', 'Khan', 'Ali', 'Tariq', 'Siddiqui', 'Raza', 'Abbasi',
+      'Bukhari', 'Mirza', 'Farooqi', 'Chaudhry', 'Sheikh', 'Hashmi', 'Javed', 'Niazi',
+    ],
+  },
+  {
+    country: 'Dubai, UAE',
+    code: 'AE',
+    flag: '🇦🇪',
+    firstNames: [
+      'Rashid', 'Zayed', 'Hamdan', 'Saeed', 'Khalid', 'Mansoor', 'Majid', 'Omar',
+      'Sultan', 'Nasser', 'Tariq', 'Faisal', 'Yousef', 'Abdullah', 'Marwan', 'Kareem',
+    ],
+    lastNames: [
+      'Al-Maktoum', 'Al-Nuaimi', 'Al-Mansoori', 'Al-Hashemi', 'Al-Suwaidi', 'Al-Mazrouei',
+      'Al-Qasimi', 'Al-Falasi', 'Al-Shamsi', 'Al-Zaabi', 'Al-Ketbi', 'Al-Muhairi',
+    ],
+  },
+  {
+    country: 'Ukraine',
+    code: 'UA',
+    flag: '🇺🇦',
+    firstNames: [
+      'Oleksandr', 'Dmytro', 'Artem', 'Maksym', 'Bohdan', 'Vladyslav', 'Andriy', 'Mykola',
+      'Taras', 'Yaroslav', 'Kyrylo', 'Denys', 'Illia', 'Roman', 'Pavlo', 'Ruslan',
+    ],
+    lastNames: [
+      'Kovalenko', 'Bondarenko', 'Shevchenko', 'Tkachenko', 'Kravchenko', 'Oliynyk',
+      'Melnyk', 'Boiko', 'Savchenko', 'Rudenko', 'Moroz', 'Lysenko', 'Marchenko', 'Petrenko',
+    ],
+  },
 ];
 
 const STRATEGY_DESCRIPTORS = [
   'Mumbai Institutional Nifty & FX',
   'Lahore Liquidity Pulse',
   'Dhaka Momentum Alpha',
-  'Gujarat High-Frequency Scalper',
+  'Dubai DIFC Institutional Flow',
+  'Kyiv Quantitative Volatility Engine',
   'Karachi OTC Flow Engine',
   'Chittagong Price Action',
   'Delhi Smart Money Breakout',
   'Islamabad Trend Sniper',
-  'Sylhet FX Syndicate',
-  'Punjab Volatility Surge',
-  'Rawalpindi Orderblock Pro',
-  'Padma Currency Flow',
+  'Lviv High-Frequency Scalper',
+  'Abu Dhabi Orderblock Pro',
+  'Bengaluru Algorithmic Momentum',
 ];
 
 interface FeaturedTraderConfig {
@@ -917,20 +992,19 @@ interface FeaturedTraderConfig {
 /**
  * Generates the authoritative pool of 200 Master Copy Traders
  * (100 Instant Funded + 100 Self-Capital) with unique numeric IDs (100101 - 100300)
- * and 45-minute dynamic profit & rank rotation.
+ * and 45-minute dynamic profit & rank rotation using realistic names from
+ * India, Bangladesh, Pakistan, Dubai (UAE), and Ukraine.
  */
 export function generate200TraderPool(nowMs: number = Date.now()): CopyTraderProfileData[] {
   const rotationSlot = Math.floor(nowMs / ROTATION_INTERVAL_MS);
   const startOfUtcDay = new Date(nowMs);
   startOfUtcDay.setUTCHours(0, 0, 0, 0);
   const elapsedMsToday = Math.max(0, nowMs - startOfUtcDay.getTime());
-  // Smooth progression from morning (0.30 baseline at 00:00 UTC) to evening (1.00 at 23:59 UTC)
   const dayProgress = Math.min(1, elapsedMsToday / (24 * 60 * 60 * 1000));
-  const intradayMultiplier = 0.32 + 0.68 * dayProgress;
+  const intradayMultiplier = 0.35 + 0.65 * dayProgress;
 
   const pool: CopyTraderProfileData[] = [];
 
-  // Authentic top traders from India, Pakistan, and Bangladesh
   const featuredOverrides: Record<number, FeaturedTraderConfig> = {
     // Instant Funded Top Traders
     0: {
@@ -951,13 +1025,13 @@ export function generate200TraderPool(nowMs: number = Date.now()): CopyTraderPro
       avgHoldingTime: '1m 15s',
     },
     1: {
-      name: 'Muhammad Ali',
-      country: 'Pakistan',
-      countryCode: 'PK',
-      flag: '🇵🇰',
+      name: 'Rashid Al-Maktoum',
+      country: 'Dubai, UAE',
+      countryCode: 'AE',
+      flag: '🇦🇪',
       category: 'instant_funded',
       startingBalance: 100000,
-      strategy: 'Lahore Liquidity Pulse $100K',
+      strategy: 'Dubai DIFC Liquidity Pulse $100K',
       winRate3m: 79.8,
       baseDailyProfit: 24800,
       copiers: 184,
@@ -985,13 +1059,13 @@ export function generate200TraderPool(nowMs: number = Date.now()): CopyTraderPro
       avgHoldingTime: '1m 25s',
     },
     3: {
-      name: 'Amit Patel',
-      country: 'India',
-      countryCode: 'IN',
-      flag: '🇮🇳',
+      name: 'Oleksandr Kovalenko',
+      country: 'Ukraine',
+      countryCode: 'UA',
+      flag: '🇺🇦',
       category: 'instant_funded',
       startingBalance: 100000,
-      strategy: 'Gujarat High-Frequency Scalper $100K',
+      strategy: 'Kyiv Quantitative Scalper $100K',
       winRate3m: 77.2,
       baseDailyProfit: 22400,
       copiers: 170,
@@ -1002,7 +1076,7 @@ export function generate200TraderPool(nowMs: number = Date.now()): CopyTraderPro
       avgHoldingTime: '1m 30s',
     },
     4: {
-      name: 'Ahmed Khan',
+      name: 'Tariq Mahmood Qureshi',
       country: 'Pakistan',
       countryCode: 'PK',
       flag: '🇵🇰',
@@ -1036,7 +1110,7 @@ export function generate200TraderPool(nowMs: number = Date.now()): CopyTraderPro
       avgHoldingTime: '1m 40s',
     },
     6: {
-      name: 'Priya Verma',
+      name: 'Vikramaditya Singhania',
       country: 'India',
       countryCode: 'IN',
       flag: '🇮🇳',
@@ -1053,13 +1127,13 @@ export function generate200TraderPool(nowMs: number = Date.now()): CopyTraderPro
       avgHoldingTime: '1m 45s',
     },
     7: {
-      name: 'Fatima Malik',
-      country: 'Pakistan',
-      countryCode: 'PK',
-      flag: '🇵🇰',
+      name: 'Dmytro Bondarenko',
+      country: 'Ukraine',
+      countryCode: 'UA',
+      flag: '🇺🇦',
       category: 'instant_funded',
       startingBalance: 50000,
-      strategy: 'Islamabad Trend Sniper $50K',
+      strategy: 'Lviv Volatility Sniper $50K',
       winRate3m: 73.8,
       baseDailyProfit: 18400,
       copiers: 142,
@@ -1070,13 +1144,13 @@ export function generate200TraderPool(nowMs: number = Date.now()): CopyTraderPro
       avgHoldingTime: '1m 50s',
     },
     8: {
-      name: 'Nusrat Jahan',
-      country: 'Bangladesh',
-      countryCode: 'BD',
-      flag: '🇧🇩',
+      name: 'Zayed Al-Nuaimi',
+      country: 'Dubai, UAE',
+      countryCode: 'AE',
+      flag: '🇦🇪',
       category: 'instant_funded',
       startingBalance: 25000,
-      strategy: 'Sylhet FX Syndicate $25K',
+      strategy: 'Dubai Gold & FX Precision $25K',
       winRate3m: 73.0,
       baseDailyProfit: 17600,
       copiers: 136,
@@ -1087,13 +1161,13 @@ export function generate200TraderPool(nowMs: number = Date.now()): CopyTraderPro
       avgHoldingTime: '1m 52s',
     },
     9: {
-      name: 'Vikram Singh',
-      country: 'India',
-      countryCode: 'IN',
-      flag: '🇮🇳',
+      name: 'Kamran Shahzad Malik',
+      country: 'Pakistan',
+      countryCode: 'PK',
+      flag: '🇵🇰',
       category: 'instant_funded',
       startingBalance: 25000,
-      strategy: 'Punjab Volatility Surge $25K',
+      strategy: 'Lahore Volatility Surge $25K',
       winRate3m: 72.4,
       baseDailyProfit: 16800,
       copiers: 130,
@@ -1104,13 +1178,13 @@ export function generate200TraderPool(nowMs: number = Date.now()): CopyTraderPro
       avgHoldingTime: '1m 55s',
     },
     10: {
-      name: 'Usman Tariq',
-      country: 'Pakistan',
-      countryCode: 'PK',
-      flag: '🇵🇰',
+      name: 'Artem Shevchenko',
+      country: 'Ukraine',
+      countryCode: 'UA',
+      flag: '🇺🇦',
       category: 'instant_funded',
       startingBalance: 25000,
-      strategy: 'Rawalpindi Orderblock Pro $25K',
+      strategy: 'Odessa Orderblock Pro $25K',
       winRate3m: 71.8,
       baseDailyProfit: 16100,
       copiers: 125,
@@ -1121,13 +1195,13 @@ export function generate200TraderPool(nowMs: number = Date.now()): CopyTraderPro
       avgHoldingTime: '1m 58s',
     },
     11: {
-      name: 'Shakil Mahmud',
+      name: 'Mahmudul Hasan Chowdhury',
       country: 'Bangladesh',
       countryCode: 'BD',
       flag: '🇧🇩',
       category: 'instant_funded',
       startingBalance: 25000,
-      strategy: 'Padma Currency Flow $25K',
+      strategy: 'Sylhet Currency Flow $25K',
       winRate3m: 71.2,
       baseDailyProfit: 15400,
       copiers: 120,
@@ -1140,7 +1214,7 @@ export function generate200TraderPool(nowMs: number = Date.now()): CopyTraderPro
 
     // Self Capital Top Traders
     100: {
-      name: 'Rajesh Sharma',
+      name: 'Aarav Deshmukh',
       country: 'India',
       countryCode: 'IN',
       flag: '🇮🇳',
@@ -1157,13 +1231,13 @@ export function generate200TraderPool(nowMs: number = Date.now()): CopyTraderPro
       avgHoldingTime: '1m 15s',
     },
     101: {
-      name: 'Muhammad Ali',
-      country: 'Pakistan',
-      countryCode: 'PK',
-      flag: '🇵🇰',
+      name: 'Hamdan Al-Mansoori',
+      country: 'Dubai, UAE',
+      countryCode: 'AE',
+      flag: '🇦🇪',
       category: 'self_capital',
       startingBalance: 25000,
-      strategy: 'Lahore OTC Momentum Live',
+      strategy: 'Dubai Marina OTC Momentum Live',
       winRate3m: 79.2,
       baseDailyProfit: 9100,
       copiers: 180,
@@ -1191,13 +1265,13 @@ export function generate200TraderPool(nowMs: number = Date.now()): CopyTraderPro
       avgHoldingTime: '1m 25s',
     },
     103: {
-      name: 'Amit Patel',
-      country: 'India',
-      countryCode: 'IN',
-      flag: '🇮🇳',
+      name: 'Maksym Tkachenko',
+      country: 'Ukraine',
+      countryCode: 'UA',
+      flag: '🇺🇦',
       category: 'self_capital',
       startingBalance: 20000,
-      strategy: 'Gujarat Trend Follower Live',
+      strategy: 'Kyiv Trend Follower Live',
       winRate3m: 76.5,
       baseDailyProfit: 8400,
       copiers: 166,
@@ -1208,7 +1282,7 @@ export function generate200TraderPool(nowMs: number = Date.now()): CopyTraderPro
       avgHoldingTime: '1m 30s',
     },
     104: {
-      name: 'Ahmed Khan',
+      name: 'Bilal Ahmed Siddiqui',
       country: 'Pakistan',
       countryCode: 'PK',
       flag: '🇵🇰',
@@ -1225,7 +1299,7 @@ export function generate200TraderPool(nowMs: number = Date.now()): CopyTraderPro
       avgHoldingTime: '1m 35s',
     },
     105: {
-      name: 'Rakibul Hasan',
+      name: 'Sabbir Hossain',
       country: 'Bangladesh',
       countryCode: 'BD',
       flag: '🇧🇩',
@@ -1242,7 +1316,7 @@ export function generate200TraderPool(nowMs: number = Date.now()): CopyTraderPro
       avgHoldingTime: '1m 40s',
     },
     106: {
-      name: 'Priya Verma',
+      name: 'Siddharth Malhotra',
       country: 'India',
       countryCode: 'IN',
       flag: '🇮🇳',
@@ -1259,13 +1333,13 @@ export function generate200TraderPool(nowMs: number = Date.now()): CopyTraderPro
       avgHoldingTime: '1m 45s',
     },
     107: {
-      name: 'Fatima Malik',
-      country: 'Pakistan',
-      countryCode: 'PK',
-      flag: '🇵🇰',
+      name: 'Bohdan Kravchenko',
+      country: 'Ukraine',
+      countryCode: 'UA',
+      flag: '🇺🇦',
       category: 'self_capital',
       startingBalance: 10000,
-      strategy: 'Islamabad Alpha Live',
+      strategy: 'Kharkiv Alpha Live',
       winRate3m: 73.1,
       baseDailyProfit: 7200,
       copiers: 138,
@@ -1276,13 +1350,13 @@ export function generate200TraderPool(nowMs: number = Date.now()): CopyTraderPro
       avgHoldingTime: '1m 50s',
     },
     108: {
-      name: 'Nusrat Jahan',
-      country: 'Bangladesh',
-      countryCode: 'BD',
-      flag: '🇧🇩',
+      name: 'Saeed Al-Hashemi',
+      country: 'Dubai, UAE',
+      countryCode: 'AE',
+      flag: '🇦🇪',
       category: 'self_capital',
       startingBalance: 10000,
-      strategy: 'Sylhet Orderblock Live',
+      strategy: 'Dubai Creek Orderblock Live',
       winRate3m: 72.5,
       baseDailyProfit: 6900,
       copiers: 132,
@@ -1293,13 +1367,13 @@ export function generate200TraderPool(nowMs: number = Date.now()): CopyTraderPro
       avgHoldingTime: '1m 52s',
     },
     109: {
-      name: 'Vikram Singh',
+      name: 'Rohan Kapoor',
       country: 'India',
       countryCode: 'IN',
       flag: '🇮🇳',
       category: 'self_capital',
       startingBalance: 5000,
-      strategy: 'Punjab Mean Reversion Live',
+      strategy: 'Mumbai Mean Reversion Live',
       winRate3m: 71.9,
       baseDailyProfit: 6600,
       copiers: 126,
@@ -1354,13 +1428,15 @@ export function generate200TraderPool(nowMs: number = Date.now()): CopyTraderPro
     const slotSeed = deterministicHash(`${id}_slot_${rotationSlot}`);
 
     const override = featuredOverrides[i];
-    const firstName = FIRST_NAMES[(i * 7 + (seed % 13)) % FIRST_NAMES.length];
-    const lastName = LAST_NAMES[(i * 11 + (seed % 17)) % LAST_NAMES.length];
+    // Rotate regional profile deterministically incorporating the 45-minute slot so non-override names & rankings also stay fresh
+    const regionProfile = REGIONAL_PROFILES[(i + (seed % REGIONAL_PROFILES.length)) % REGIONAL_PROFILES.length];
+    const firstName = regionProfile.firstNames[(i * 5 + (seed % 11)) % regionProfile.firstNames.length];
+    const lastName = regionProfile.lastNames[(i * 7 + (seed % 13)) % regionProfile.lastNames.length];
     const providerName = override ? override.name : `${firstName} ${lastName}`;
 
     const countryObj = override
       ? { name: override.country, code: override.countryCode, flag: override.flag }
-      : COUNTRIES[(i * 3 + (seed % 7)) % COUNTRIES.length];
+      : { name: regionProfile.country, code: regionProfile.code, flag: regionProfile.flag };
 
     const startingBalance = override
       ? override.startingBalance
@@ -1372,22 +1448,22 @@ export function generate200TraderPool(nowMs: number = Date.now()): CopyTraderPro
       ? override.strategy
       : `${STRATEGY_DESCRIPTORS[i % STRATEGY_DESCRIPTORS.length]} #${(i % 50) + 1}`;
 
-    // 45-minute dynamic surge factor: different traders surge into ranks 6..10 every 45 minutes
+    // 45-minute dynamic surge factor: different traders surge every 45 minutes
     const surgeWave = ((slotSeed % 1000) / 1000); // 0.0 to 1.0
-    const isSurgingInThis45mSlot = (slotSeed % 12) === 0;
+    const isSurgingInThis45mSlot = (slotSeed % 8) === 0;
 
     let dailyProfit: number;
     let dailyProfitPct: number;
 
     if (override) {
       // Dynamic 45-minute rank rotation among top masters
-      const slotVariance = 0.93 + ((slotSeed % 160) / 1000); // 0.93 .. 1.09
+      const slotVariance = 0.86 + ((slotSeed % 280) / 1000); // 0.86 .. 1.14
       dailyProfit = Number((override.baseDailyProfit * intradayMultiplier * slotVariance).toFixed(2));
       dailyProfitPct = Number(((dailyProfit / startingBalance) * 100).toFixed(2));
     } else {
       const dailyRoiBasePct = isInstant
-        ? (1.2 + (seed % 35) / 10) * (isSurgingInThis45mSlot ? 1.6 + surgeWave * 0.5 : 0.45 + surgeWave * 0.55)
-        : (1.2 + (seed % 35) / 10) * (isSurgingInThis45mSlot ? 1.3 + surgeWave * 0.4 : 0.40 + surgeWave * 0.45);
+        ? (1.4 + (seed % 35) / 10) * (isSurgingInThis45mSlot ? 1.85 + surgeWave * 0.65 : 0.45 + surgeWave * 0.55)
+        : (1.4 + (seed % 35) / 10) * (isSurgingInThis45mSlot ? 1.55 + surgeWave * 0.55 : 0.40 + surgeWave * 0.45);
 
       dailyProfitPct = Number((dailyRoiBasePct * intradayMultiplier).toFixed(2));
       dailyProfit = Number(((dailyProfitPct / 100) * startingBalance).toFixed(2));
@@ -1414,8 +1490,9 @@ export function generate200TraderPool(nowMs: number = Date.now()): CopyTraderPro
     const currentBalance = Number((startingBalance + retainedGain).toFixed(2));
     const allTimeWithdrawals = Number((threeMonthProfit * 0.78).toFixed(2));
 
-    // Proven >= 60% 3-month win rate
-    const winRate3m = override ? override.winRate3m : Number((62.4 + ((seed % 270) / 10)).toFixed(1));
+    // Proven >= 60% 3-month win rate floor
+    const rawWinRate = override ? override.winRate3m : Number((61.5 + ((seed % 235) / 10)).toFixed(1));
+    const winRate3m = Math.max(60, rawWinRate);
     const profitFactor = override ? override.profitFactor : Number((1.75 + ((seed % 160) / 100)).toFixed(2));
     const maxDrawdown = override ? override.maxDrawdown : Number((1.8 + ((seed % 55) / 10)).toFixed(1));
     const sharpeRatio = override ? override.sharpeRatio : Number((1.55 + ((seed % 140) / 100)).toFixed(2));
@@ -1447,8 +1524,8 @@ export function generate200TraderPool(nowMs: number = Date.now()): CopyTraderPro
     ];
     const avatarVariant = avatarVariants[i % avatarVariants.length];
     const isVipBadge = avatarVariant.startsWith('vip_octagon');
-    const trades24h = 24 + (seed % 260);
-    const profitablePct = Math.round(winRate3m);
+    const trades24h = 28 + ((seed + (slotSeed % 19)) % 220);
+    const profitablePct = Math.max(60, Math.round(winRate3m));
     const turnover = Number((dailyProfit * 4.44).toFixed(2));
     const maxTrade = Number((dailyProfit * 0.188).toFixed(2));
     const minTrade = Number((maxTrade * 0.1).toFixed(2));
@@ -1491,7 +1568,7 @@ export function generate200TraderPool(nowMs: number = Date.now()): CopyTraderPro
       commission_pct: MASTER_COMMISSION_PERCENT,
       follower_profit_keep_pct: FOLLOWER_PROFIT_SHARE_PERCENT,
       social_profile_id: numericId,
-      display_handle: `user${numericId}`,
+      display_handle: providerName,
       full_legal_name: providerName,
       profile_level: 'Guru',
       account_level: 6,
@@ -1515,7 +1592,8 @@ export function generate200TraderPool(nowMs: number = Date.now()): CopyTraderPro
 }
 
 /**
- * Authoritative Top Ranked Traders for 24h matching the Social Trading reference UI
+ * Authoritative Top Ranked Traders for 24h featuring realistic human names
+ * from India, Bangladesh, Pakistan, Dubai (UAE), and Ukraine, all with >= 60% win rates.
  */
 export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
   {
@@ -1523,17 +1601,17 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     numeric_id: '11101163',
     social_profile_id: '11101163',
     user_id: 'usr_provider_11101163',
-    display_handle: 'user11101163',
-    provider_name: 'Abdulla Ishaq Abdulla Mulla Ali A.',
-    full_legal_name: 'Abdulla Ishaq Abdulla Mulla Ali A.',
+    display_handle: 'Rashid Al-Maktoum',
+    provider_name: 'Rashid Al-Maktoum',
+    full_legal_name: 'Rashid Al-Maktoum',
     country_code: 'AE',
-    country: 'United Arab Emirates',
+    country: 'Dubai, UAE',
     flag: '🇦🇪',
     avatar_url: '🇦🇪',
     account_category: 'instant_funded',
-    account_type_label: 'Real Trading Account',
+    account_type_label: 'Instant Funded ($100K)',
     strategy_title: 'Institutional OTC & FX Flow',
-    tier_name: '$100K Real Account',
+    tier_name: '$100K Instant Funded',
     vip_level: 'Guru',
     profile_level: 'Guru',
     account_level: 6,
@@ -1554,7 +1632,7 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     monthly_profit_pct: 188.42,
     three_month_profit: 186400.0,
     three_month_profit_pct: 372.8,
-    win_rate_3m: 61.0,
+    win_rate_3m: 74.5,
     profit_factor: 2.64,
     max_drawdown: 2.8,
     sharpe_ratio: 2.75,
@@ -1562,7 +1640,7 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     total_trades: 80,
     trades_24h: 80,
     trades_today_profile: 79,
-    profitable_trades_pct: 61,
+    profitable_trades_pct: 74,
     trading_turnover: 64306.41,
     trading_profit: 14245.3,
     max_trade: 2722.94,
@@ -1579,17 +1657,17 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     numeric_id: '139597257',
     social_profile_id: '139597257',
     user_id: 'usr_provider_139597257',
-    display_handle: 'user139597257',
-    provider_name: 'Tariq Mahmood Al-Mansoor',
-    full_legal_name: 'Tariq Mahmood Al-Mansoor',
+    display_handle: 'Tariq Mahmood Qureshi',
+    provider_name: 'Tariq Mahmood Qureshi',
+    full_legal_name: 'Tariq Mahmood Qureshi',
     country_code: 'PK',
     country: 'Pakistan',
     flag: '🇵🇰',
     avatar_url: '🇵🇰',
     account_category: 'instant_funded',
-    account_type_label: 'Real Trading Account',
+    account_type_label: 'Instant Funded ($100K)',
     strategy_title: 'High-Frequency Momentum Scalp',
-    tier_name: '$100K Real Account',
+    tier_name: '$100K Instant Funded',
     vip_level: 'Guru',
     profile_level: 'Guru',
     account_level: 6,
@@ -1610,7 +1688,7 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     monthly_profit_pct: 177.0,
     three_month_profit: 172000.0,
     three_month_profit_pct: 344.0,
-    win_rate_3m: 64.2,
+    win_rate_3m: 71.2,
     profit_factor: 2.51,
     max_drawdown: 3.1,
     sharpe_ratio: 2.62,
@@ -1618,7 +1696,7 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     total_trades: 172,
     trades_24h: 172,
     trades_today_profile: 172,
-    profitable_trades_pct: 56,
+    profitable_trades_pct: 71,
     trading_turnover: 61840.25,
     trading_profit: 14140.8,
     max_trade: 2450.0,
@@ -1635,7 +1713,7 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     numeric_id: '127298296',
     social_profile_id: '127298296',
     user_id: 'usr_provider_127298296',
-    display_handle: 'user127298296',
+    display_handle: 'Vikramaditya Singhania',
     provider_name: 'Vikramaditya Singhania',
     full_legal_name: 'Vikramaditya Singhania',
     country_code: 'IN',
@@ -1643,9 +1721,9 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     flag: '🇮🇳',
     avatar_url: '🇮🇳',
     account_category: 'instant_funded',
-    account_type_label: 'Real Trading Account',
+    account_type_label: 'Instant Funded ($50K)',
     strategy_title: 'VIP Institutional Orderblock',
-    tier_name: '$50K Real Account',
+    tier_name: '$50K Instant Funded',
     vip_level: 'VIP',
     profile_level: 'Guru',
     account_level: 6,
@@ -1666,15 +1744,15 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     monthly_profit_pct: 164.8,
     three_month_profit: 89400.0,
     three_month_profit_pct: 357.6,
-    win_rate_3m: 62.5,
+    win_rate_3m: 68.5,
     profit_factor: 2.32,
     max_drawdown: 3.4,
     sharpe_ratio: 2.41,
     avg_holding_time: '1m 30s',
-    total_trades: 28,
-    trades_24h: 28,
-    trades_today_profile: 28,
-    profitable_trades_pct: 43,
+    total_trades: 64,
+    trades_24h: 64,
+    trades_today_profile: 64,
+    profitable_trades_pct: 69,
     trading_turnover: 28940.12,
     trading_profit: 5432.77,
     max_trade: 1850.0,
@@ -1691,17 +1769,17 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     numeric_id: '85396639',
     social_profile_id: '85396639',
     user_id: 'usr_provider_85396639',
-    display_handle: 'user85396639',
-    provider_name: 'Salman bin Rashid Al-Nuaimi',
-    full_legal_name: 'Salman bin Rashid Al-Nuaimi',
-    country_code: 'AE',
-    country: 'United Arab Emirates',
-    flag: '🇦🇪',
-    avatar_url: '🇦🇪',
+    display_handle: 'Oleksandr Kovalenko',
+    provider_name: 'Oleksandr Kovalenko',
+    full_legal_name: 'Oleksandr Kovalenko',
+    country_code: 'UA',
+    country: 'Ukraine',
+    flag: '🇺🇦',
+    avatar_url: '🇺🇦',
     account_category: 'instant_funded',
-    account_type_label: 'Real Trading Account',
+    account_type_label: 'Instant Funded ($50K)',
     strategy_title: 'Gold & FX Precision Breakout',
-    tier_name: '$50K Real Account',
+    tier_name: '$50K Instant Funded',
     vip_level: 'Guru',
     profile_level: 'Guru',
     account_level: 6,
@@ -1722,7 +1800,7 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     monthly_profit_pct: 145.6,
     three_month_profit: 78200.0,
     three_month_profit_pct: 312.8,
-    win_rate_3m: 63.0,
+    win_rate_3m: 67.0,
     profit_factor: 2.24,
     max_drawdown: 3.5,
     sharpe_ratio: 2.35,
@@ -1730,7 +1808,7 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     total_trades: 113,
     trades_24h: 113,
     trades_today_profile: 113,
-    profitable_trades_pct: 50,
+    profitable_trades_pct: 67,
     trading_turnover: 24180.55,
     trading_profit: 4352.01,
     max_trade: 1420.0,
@@ -1747,7 +1825,7 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     numeric_id: '143581606',
     social_profile_id: '143581606',
     user_id: 'usr_provider_143581606',
-    display_handle: 'user143581606',
+    display_handle: 'Arjun Deshmukh',
     provider_name: 'Arjun Deshmukh',
     full_legal_name: 'Arjun Deshmukh',
     country_code: 'IN',
@@ -1755,7 +1833,7 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     flag: '🇮🇳',
     avatar_url: '🇮🇳',
     account_category: 'self_capital',
-    account_type_label: 'Real Trading Account',
+    account_type_label: 'Self-Capital Live',
     strategy_title: 'Algorithmic Volatility Pulse',
     tier_name: 'Self-Capital Account',
     vip_level: 'Guru',
@@ -1778,7 +1856,7 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     monthly_profit_pct: 149.0,
     three_month_profit: 64500.0,
     three_month_profit_pct: 322.5,
-    win_rate_3m: 61.0,
+    win_rate_3m: 65.0,
     profit_factor: 2.18,
     max_drawdown: 3.6,
     sharpe_ratio: 2.28,
@@ -1786,7 +1864,7 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     total_trades: 290,
     trades_24h: 290,
     trades_today_profile: 290,
-    profitable_trades_pct: 61,
+    profitable_trades_pct: 65,
     trading_turnover: 21450.8,
     trading_profit: 3621.25,
     max_trade: 980.0,
@@ -1803,17 +1881,17 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     numeric_id: '119680988',
     social_profile_id: '119680988',
     user_id: 'usr_provider_119680988',
-    display_handle: 'user119680988',
-    provider_name: 'Rustamjon Karimov',
-    full_legal_name: 'Rustamjon Karimov',
-    country_code: 'UZ',
-    country: 'Uzbekistan',
-    flag: '🇺🇿',
-    avatar_url: '🇺🇿',
+    display_handle: 'Tanvir Ahmed Chowdhury',
+    provider_name: 'Tanvir Ahmed Chowdhury',
+    full_legal_name: 'Tanvir Ahmed Chowdhury',
+    country_code: 'BD',
+    country: 'Bangladesh',
+    flag: '🇧🇩',
+    avatar_url: '🇧🇩',
     account_category: 'instant_funded',
-    account_type_label: 'Real Trading Account',
-    strategy_title: 'Tashkent VIP Liquidity Sniper',
-    tier_name: '$25K Real Account',
+    account_type_label: 'Instant Funded ($25K)',
+    strategy_title: 'Dhaka VIP Liquidity Sniper',
+    tier_name: '$25K Instant Funded',
     vip_level: 'VIP',
     profile_level: 'Guru',
     account_level: 6,
@@ -1834,7 +1912,7 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     monthly_profit_pct: 109.6,
     three_month_profit: 59800.0,
     three_month_profit_pct: 239.2,
-    win_rate_3m: 62.8,
+    win_rate_3m: 66.8,
     profit_factor: 2.15,
     max_drawdown: 3.8,
     sharpe_ratio: 2.22,
@@ -1842,7 +1920,7 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     total_trades: 65,
     trades_24h: 65,
     trades_today_profile: 65,
-    profitable_trades_pct: 48,
+    profitable_trades_pct: 67,
     trading_turnover: 19820.4,
     trading_profit: 3501.52,
     max_trade: 1120.0,
@@ -1859,15 +1937,15 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     numeric_id: '108442910',
     social_profile_id: '108442910',
     user_id: 'usr_provider_108442910',
-    display_handle: 'Maksimys',
-    provider_name: 'Maksimilian Volkov',
-    full_legal_name: 'Maksimilian Volkov',
-    country_code: 'RU',
-    country: 'Russia',
-    flag: '🇷🇺',
-    avatar_url: '🇷🇺',
+    display_handle: 'Dmytro Bondarenko',
+    provider_name: 'Dmytro Bondarenko',
+    full_legal_name: 'Dmytro Bondarenko',
+    country_code: 'UA',
+    country: 'Ukraine',
+    flag: '🇺🇦',
+    avatar_url: '🇺🇦',
     account_category: 'self_capital',
-    account_type_label: 'Real Trading Account',
+    account_type_label: 'Self-Capital Live',
     strategy_title: 'High Win-Rate OTC Scalper',
     tier_name: 'Self-Capital Account',
     vip_level: 'Guru',
@@ -1915,16 +1993,16 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     numeric_id: '140257047',
     social_profile_id: '140257047',
     user_id: 'usr_provider_140257047',
-    display_handle: 'user140257047',
-    provider_name: 'Faridun Rahmonov',
-    full_legal_name: 'Faridun Rahmonov',
-    country_code: 'TJ',
-    country: 'Tajikistan',
-    flag: '🇹🇯',
-    avatar_url: '🇹🇯',
+    display_handle: 'Zayed bin Rashid Al-Nuaimi',
+    provider_name: 'Zayed bin Rashid Al-Nuaimi',
+    full_legal_name: 'Zayed bin Rashid Al-Nuaimi',
+    country_code: 'AE',
+    country: 'Dubai, UAE',
+    flag: '🇦🇪',
+    avatar_url: '🇦🇪',
     account_category: 'self_capital',
-    account_type_label: 'Real Trading Account',
-    strategy_title: 'Dushanbe Rapid Execution',
+    account_type_label: 'Self-Capital Live',
+    strategy_title: 'Dubai DIFC Rapid Execution',
     tier_name: 'Self-Capital Account',
     vip_level: 'Guru',
     profile_level: 'Guru',
@@ -1946,7 +2024,7 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     monthly_profit_pct: 167.33,
     three_month_profit: 54200.0,
     three_month_profit_pct: 361.33,
-    win_rate_3m: 61.5,
+    win_rate_3m: 64.5,
     profit_factor: 2.12,
     max_drawdown: 3.9,
     sharpe_ratio: 2.18,
@@ -1954,7 +2032,7 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     total_trades: 358,
     trades_24h: 358,
     trades_today_profile: 358,
-    profitable_trades_pct: 49,
+    profitable_trades_pct: 65,
     trading_turnover: 22840.75,
     trading_profit: 3390.69,
     max_trade: 890.0,
@@ -1971,17 +2049,17 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     numeric_id: '128871612',
     social_profile_id: '128871612',
     user_id: 'usr_provider_128871612',
-    display_handle: 'user128871612',
-    provider_name: 'Dmitry Aleksandrovich Sokolov',
-    full_legal_name: 'Dmitry Aleksandrovich Sokolov',
-    country_code: 'RU',
-    country: 'Russia',
-    flag: '🇷🇺',
-    avatar_url: '🇷🇺',
+    display_handle: 'Artem Shevchenko',
+    provider_name: 'Artem Shevchenko',
+    full_legal_name: 'Artem Shevchenko',
+    country_code: 'UA',
+    country: 'Ukraine',
+    flag: '🇺🇦',
+    avatar_url: '🇺🇦',
     account_category: 'instant_funded',
-    account_type_label: 'Real Trading Account',
+    account_type_label: 'Instant Funded ($25K)',
     strategy_title: 'VIP Precision Swing & OTC',
-    tier_name: '$25K Real Account',
+    tier_name: '$25K Instant Funded',
     vip_level: 'VIP',
     profile_level: 'Guru',
     account_level: 6,
@@ -2002,15 +2080,15 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     monthly_profit_pct: 98.4,
     three_month_profit: 53100.0,
     three_month_profit_pct: 212.4,
-    win_rate_3m: 62.0,
+    win_rate_3m: 64.0,
     profit_factor: 2.1,
     max_drawdown: 3.7,
     sharpe_ratio: 2.15,
     avg_holding_time: '1m 50s',
-    total_trades: 26,
-    trades_24h: 26,
-    trades_today_profile: 26,
-    profitable_trades_pct: 54,
+    total_trades: 62,
+    trades_24h: 62,
+    trades_today_profile: 62,
+    profitable_trades_pct: 64,
     trading_turnover: 17420.3,
     trading_profit: 3340.9,
     max_trade: 1250.0,
@@ -2027,17 +2105,17 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     numeric_id: '110028311',
     social_profile_id: '110028311',
     user_id: 'usr_provider_110028311',
-    display_handle: 'user110028311',
-    provider_name: 'Kamran Shahzad Qureshi',
-    full_legal_name: 'Kamran Shahzad Qureshi',
+    display_handle: 'Kamran Shahzad Malik',
+    provider_name: 'Kamran Shahzad Malik',
+    full_legal_name: 'Kamran Shahzad Malik',
     country_code: 'PK',
     country: 'Pakistan',
     flag: '🇵🇰',
     avatar_url: '🇵🇰',
     account_category: 'instant_funded',
-    account_type_label: 'Real Trading Account',
+    account_type_label: 'Instant Funded ($25K)',
     strategy_title: 'VIP Smart Money Execution',
-    tier_name: '$25K Real Account',
+    tier_name: '$25K Instant Funded',
     vip_level: 'VIP',
     profile_level: 'Guru',
     account_level: 6,
@@ -2058,7 +2136,7 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     monthly_profit_pct: 93.6,
     three_month_profit: 51200.0,
     three_month_profit_pct: 204.8,
-    win_rate_3m: 61.8,
+    win_rate_3m: 63.2,
     profit_factor: 2.08,
     max_drawdown: 4.0,
     sharpe_ratio: 2.12,
@@ -2066,7 +2144,7 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     total_trades: 61,
     trades_24h: 61,
     trades_today_profile: 61,
-    profitable_trades_pct: 52,
+    profitable_trades_pct: 63,
     trading_turnover: 16890.45,
     trading_profit: 3139.84,
     max_trade: 960.0,
@@ -2083,15 +2161,15 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     numeric_id: '134435450',
     social_profile_id: '134435450',
     user_id: 'usr_provider_134435450',
-    display_handle: 'user134435450',
-    provider_name: 'Mahmudul Hasan Chowdhury',
-    full_legal_name: 'Mahmudul Hasan Chowdhury',
+    display_handle: 'Mahmudul Hasan Rahman',
+    provider_name: 'Mahmudul Hasan Rahman',
+    full_legal_name: 'Mahmudul Hasan Rahman',
     country_code: 'BD',
     country: 'Bangladesh',
     flag: '🇧🇩',
     avatar_url: '🇧🇩',
     account_category: 'self_capital',
-    account_type_label: 'Real Trading Account',
+    account_type_label: 'Self-Capital Live',
     strategy_title: 'VIP Currency & Index Alpha',
     tier_name: 'Self-Capital Account',
     vip_level: 'VIP',
@@ -2114,7 +2192,7 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     monthly_profit_pct: 152.67,
     three_month_profit: 49800.0,
     three_month_profit_pct: 332.0,
-    win_rate_3m: 60.0,
+    win_rate_3m: 62.0,
     profit_factor: 2.06,
     max_drawdown: 4.1,
     sharpe_ratio: 2.1,
@@ -2122,7 +2200,7 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     total_trades: 95,
     trades_24h: 95,
     trades_today_profile: 95,
-    profitable_trades_pct: 60,
+    profitable_trades_pct: 62,
     trading_turnover: 16420.18,
     trading_profit: 3126.7,
     max_trade: 910.0,
@@ -2139,16 +2217,16 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     numeric_id: '109384721',
     social_profile_id: '109384721',
     user_id: 'usr_provider_109384721',
-    display_handle: 'GMKGK',
-    provider_name: 'Gurbanguly Meredow',
-    full_legal_name: 'Gurbanguly Meredow',
-    country_code: 'TM',
-    country: 'Turkmenistan',
-    flag: '🇹🇲',
-    avatar_url: '🇹🇲',
+    display_handle: 'Rajeshwar Sharma',
+    provider_name: 'Rajeshwar Sharma',
+    full_legal_name: 'Rajeshwar Sharma',
+    country_code: 'IN',
+    country: 'India',
+    flag: '🇮🇳',
+    avatar_url: '🇮🇳',
     account_category: 'self_capital',
-    account_type_label: 'Real Trading Account',
-    strategy_title: 'Ashgabat VIP Price Action',
+    account_type_label: 'Self-Capital Live',
+    strategy_title: 'Mumbai VIP Price Action',
     tier_name: 'Self-Capital Account',
     vip_level: 'VIP',
     profile_level: 'Guru',
@@ -2170,7 +2248,7 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     monthly_profit_pct: 143.33,
     three_month_profit: 46900.0,
     three_month_profit_pct: 312.67,
-    win_rate_3m: 60.8,
+    win_rate_3m: 61.5,
     profit_factor: 2.04,
     max_drawdown: 4.2,
     sharpe_ratio: 2.05,
@@ -2178,7 +2256,7 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     total_trades: 66,
     trades_24h: 66,
     trades_today_profile: 66,
-    profitable_trades_pct: 58,
+    profitable_trades_pct: 61,
     trading_turnover: 15280.9,
     trading_profit: 2867.04,
     max_trade: 840.0,
@@ -2191,6 +2269,161 @@ export const SOCIAL_TRADING_TOP_24H_TRADERS: CopyTraderProfileData[] = [
     rank: 12,
   },
 ];
+
+export type TraderProfileTimeframe =
+  | 'Today'
+  | 'Yesterday'
+  | 'Last 7 days'
+  | 'Last 30 days'
+  | 'All time';
+
+/**
+ * Dynamically calculates realistic trading statistics per timeframe filter
+ * (Today, Yesterday, Last 7 days, Last 30 days, All time), ensuring that:
+ * 1. Win rates (`profitableTradesPct`) dynamically change across timeframes (never static/identical).
+ * 2. The minimum Win Rate floor is strictly maintained at >= 60% for all top-performing traders.
+ */
+export function computeDynamicTraderTimeframeStats(
+  trader: CopyTraderProfileData,
+  timeframe: TraderProfileTimeframe
+): {
+  trades: number;
+  profitableTradesPct: number;
+  tradingTurnover: number;
+  tradingProfit: number;
+  maxTrade: number;
+  minTrade: number;
+  maxProfit: number;
+} {
+  const seed = deterministicHash(
+    `${trader.id || ''}_${trader.numeric_id || ''}_${trader.provider_name || ''}`
+  );
+  const baseTrades = Math.max(12, trader.trades_today_profile ?? trader.trades_24h ?? trader.total_trades ?? 79);
+  const rawBaseWinPct = trader.profitable_trades_pct ?? Math.round(trader.win_rate_3m || 68);
+  // Clamp base into [64, 84] so offsets around it stay strictly >= 60% and <= 92%
+  const anchorWinPct = Math.min(84, Math.max(64, Math.round(rawBaseWinPct)));
+
+  // Deterministic, mutually distinct offsets per timeframe so each tab shows a unique, realistic win rate >= 60%
+  const sign = seed % 2 === 0 ? 1 : -1;
+  const shiftA = 2 + (seed % 2); // 2 or 3
+  const shiftB = 4 + ((seed >> 2) % 2); // 4 or 5
+  const tfOffsets: Record<TraderProfileTimeframe, number> = {
+    'Today': 0,
+    'Yesterday': -sign * shiftA,
+    'Last 7 days': sign * shiftA,
+    'Last 30 days': -sign * shiftB,
+    'All time': sign * shiftB,
+  };
+
+  const profitableTradesPct = Math.max(60, Math.min(92, anchorWinPct + (tfOffsets[timeframe] ?? 0)));
+
+  const baseTurnover =
+    trader.trading_turnover ?? Number(((trader.daily_profit || 14245.3) * 4.51).toFixed(2));
+  const baseProfit = trader.trading_profit ?? trader.daily_profit ?? 14245.3;
+  const baseMaxTrade = trader.max_trade ?? Number((baseProfit * 0.191).toFixed(2));
+  const baseMinTrade = trader.min_trade ?? Number((baseMaxTrade * 0.1).toFixed(2));
+  const baseMaxProfit = trader.max_profit ?? Number((baseMaxTrade * 0.92).toFixed(2));
+
+  const multMap: Record<TraderProfileTimeframe, number> = {
+    'Today': 1,
+    'Yesterday': Number((0.88 + ((seed % 18) / 100)).toFixed(2)),
+    'Last 7 days': Number((4.6 + ((seed % 14) / 10)).toFixed(2)),
+    'Last 30 days': Number((15.8 + ((seed % 28) / 10)).toFixed(2)),
+    'All time': Number((36.5 + ((seed % 45) / 10)).toFixed(2)),
+  };
+  const mult = multMap[timeframe] ?? 1;
+
+  const maxScale =
+    timeframe === 'Today'
+      ? 1
+      : timeframe === 'Yesterday'
+      ? 0.96
+      : timeframe === 'Last 7 days'
+      ? 1.14
+      : timeframe === 'Last 30 days'
+      ? 1.28
+      : 1.42;
+
+  return {
+    trades: Math.max(1, Math.round(baseTrades * mult)),
+    profitableTradesPct,
+    tradingTurnover: Number((baseTurnover * mult).toFixed(2)),
+    tradingProfit: Number((baseProfit * mult).toFixed(2)),
+    maxTrade: Number((baseMaxTrade * maxScale).toFixed(2)),
+    minTrade: Number(
+      (baseMinTrade * (timeframe === 'All time' ? 0.85 : timeframe === 'Last 30 days' ? 0.9 : 1)).toFixed(2)
+    ),
+    maxProfit: Number((baseMaxProfit * maxScale).toFixed(2)),
+  };
+}
+
+/**
+ * Seamlessly rotates and shuffles the displayed Top 24h traders every 45 minutes
+ * using realistic human names from India, Bangladesh, Pakistan, Dubai (UAE), and Ukraine.
+ */
+export function getRotatedTop24hTraders(
+  nowMs: number = Date.now(),
+  pool?: CopyTraderProfileData[]
+): CopyTraderProfileData[] {
+  const rotationSlot = Math.floor(nowMs / ROTATION_INTERVAL_MS);
+  const activePool = pool && pool.length > 0 ? pool : generate200TraderPool(nowMs);
+
+  // Combine the 12 core social traders with top surging traders from the regional pool
+  const topFromPool = [...activePool]
+    .sort((a, b) => (b.daily_profit || 0) - (a.daily_profit || 0))
+    .slice(0, 12);
+
+  const candidatesMap = new Map<string, CopyTraderProfileData>();
+  for (const t of SOCIAL_TRADING_TOP_24H_TRADERS) {
+    candidatesMap.set(t.numeric_id, t);
+  }
+  for (const t of topFromPool) {
+    if (!candidatesMap.has(t.numeric_id)) {
+      candidatesMap.set(t.numeric_id, t);
+    }
+  }
+
+  const allCandidates = Array.from(candidatesMap.values());
+
+  const rotated = allCandidates.map((t, idx) => {
+    const slotHash = deterministicHash(`${t.id}_rot_${rotationSlot}_${idx}`);
+    // Organic 45-minute profit & trade volume wave (0.82x to 1.24x) so rankings & displayed traders shift naturally every 45m
+    const waveFactor = 0.82 + ((slotHash % 420) / 1000);
+    const adjustedDailyProfit = Number(Math.max(950, (t.daily_profit || 3000) * waveFactor).toFixed(2));
+    const adjustedDailyPct = Number(
+      ((adjustedDailyProfit / Math.max(1000, t.starting_balance || 25000)) * 100).toFixed(2)
+    );
+    const baseWinPct = Math.max(60, Math.round(t.profitable_trades_pct ?? t.win_rate_3m ?? 66));
+    const winDelta = (slotHash % 5) - 2; // -2 .. +2
+    const rotatedWinPct = Math.max(60, Math.min(88, baseWinPct + winDelta));
+    const baseTrades = Math.max(24, t.trades_24h ?? t.total_trades ?? 72);
+    const rotatedTrades = Math.max(18, baseTrades + ((slotHash % 23) - 11));
+    const humanName = t.provider_name || t.full_legal_name || t.display_handle || 'Rajesh Sharma';
+
+    return {
+      ...t,
+      provider_name: humanName,
+      full_legal_name: humanName,
+      display_handle: humanName,
+      daily_profit: adjustedDailyProfit,
+      daily_profit_pct: adjustedDailyPct,
+      trading_profit: adjustedDailyProfit,
+      trading_turnover: Number((adjustedDailyProfit * 4.42).toFixed(2)),
+      profitable_trades_pct: rotatedWinPct,
+      win_rate_3m: Math.max(60, Number((t.win_rate_3m || rotatedWinPct).toFixed(1))),
+      trades_24h: rotatedTrades,
+      trades_today_profile: rotatedTrades,
+    };
+  });
+
+  return rotated
+    .sort((a, b) => (b.daily_profit || 0) - (a.daily_profit || 0))
+    .slice(0, 12)
+    .map((t, index) => ({
+      ...t,
+      rank: index + 1,
+    }));
+}
 
 /**
  * Computes 45-minute rotation metadata (current slot, seconds remaining until next 45m rotation)
