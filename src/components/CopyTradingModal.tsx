@@ -55,6 +55,7 @@ import {
   queryCopyTradersPool,
   validateCopyTradingAccountTypeMatch,
   getCanonicalAccountDatabaseUuid,
+  SOCIAL_TRADING_TOP_24H_TRADERS,
   type CopyTraderProfileData,
   type CopySubscriptionData,
 } from '../utils/copyTradingRules';
@@ -67,6 +68,243 @@ import {
 } from '../utils/copyTradingSync';
 import { isValidUuid, ensureTradeUuid } from '../utils/supabaseTradeSync';
 import { isDemoAccount } from '../utils/propRules';
+
+/**
+ * Renders the exact gold laurel wreath Account Level badge (e.g., "6") from the Trader Profile Modal screenshot
+ */
+const AccountLevelLaurelBadge: React.FC<{ level?: number }> = ({ level = 6 }) => (
+  <div className="inline-flex items-center justify-center relative w-7 h-6 select-none" title={`Account Level ${level}`}>
+    <svg viewBox="0 0 36 30" className="w-7 h-6 overflow-visible">
+      {/* Left laurel branch */}
+      <path
+        d="M15 26 C9 24, 5 19, 5 12 C5 7, 8 4, 11 2"
+        fill="none"
+        stroke="#c99b3b"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+      <ellipse cx="6.2" cy="18.5" rx="2.3" ry="1.1" transform="rotate(-35 6.2 18.5)" fill="#d4a843" />
+      <ellipse cx="4.8" cy="14" rx="2.3" ry="1.1" transform="rotate(-15 4.8 14)" fill="#d4a843" />
+      <ellipse cx="5.8" cy="9.5" rx="2.3" ry="1.1" transform="rotate(15 5.8 9.5)" fill="#d4a843" />
+      <ellipse cx="8.5" cy="5.5" rx="2.2" ry="1.0" transform="rotate(35 8.5 5.5)" fill="#d4a843" />
+      <ellipse cx="10.2" cy="23.5" rx="2.2" ry="1.0" transform="rotate(-50 10.2 23.5)" fill="#d4a843" />
+      {/* Right laurel branch */}
+      <path
+        d="M21 26 C27 24, 31 19, 31 12 C31 7, 28 4, 25 2"
+        fill="none"
+        stroke="#c99b3b"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+      <ellipse cx="29.8" cy="18.5" rx="2.3" ry="1.1" transform="rotate(35 29.8 18.5)" fill="#d4a843" />
+      <ellipse cx="31.2" cy="14" rx="2.3" ry="1.1" transform="rotate(15 31.2 14)" fill="#d4a843" />
+      <ellipse cx="30.2" cy="9.5" rx="2.3" ry="1.1" transform="rotate(-15 30.2 9.5)" fill="#d4a843" />
+      <ellipse cx="27.5" cy="5.5" rx="2.2" ry="1.0" transform="rotate(-35 27.5 5.5)" fill="#d4a843" />
+      <ellipse cx="25.8" cy="23.5" rx="2.2" ry="1.0" transform="rotate(50 25.8 23.5)" fill="#d4a843" />
+      {/* Crossed stems */}
+      <path d="M13 27 L23 25 M23 27 L13 25" stroke="#c99b3b" strokeWidth="1.3" strokeLinecap="round" />
+      {/* Center dark circle & number */}
+      <circle cx="18" cy="14" r="7.5" fill="#252c3d" />
+      <text
+        x="18"
+        y="17.5"
+        textAnchor="middle"
+        fill="#ffffff"
+        fontSize="10.5"
+        fontWeight="700"
+        fontFamily="Inter, sans-serif"
+      >
+        {level}
+      </text>
+    </svg>
+  </div>
+);
+
+/**
+ * Renders the business suit silhouette SVG used inside circular & VIP octagonal trader avatars
+ */
+const SuitSilhouetteSvg: React.FC<{ className?: string }> = ({ className = 'w-full h-full' }) => (
+  <svg viewBox="0 0 100 100" className={className}>
+    <rect width="100" height="100" fill="#bac2cf" />
+    {/* Shoulders / Suit jacket */}
+    <path d="M12 100 C14 78, 28 70, 50 70 C72 70, 86 78, 88 100 Z" fill="#778396" />
+    {/* White shirt V-neck */}
+    <polygon points="39,71 50,96 61,71" fill="#e6ecf5" />
+    {/* Tie */}
+    <polygon points="48,76 52,76 54,96 50,100 46,96" fill="#778396" />
+    {/* Suit lapels */}
+    <polygon points="35,71 46,94 39,71" fill="#687488" />
+    <polygon points="65,71 54,94 61,71" fill="#687488" />
+    {/* Neck */}
+    <rect x="43" y="56" width="14" height="17" rx="4" fill="#778396" />
+    {/* Head & ears */}
+    <ellipse cx="34.5" cy="42" rx="3" ry="5.5" fill="#778396" />
+    <ellipse cx="65.5" cy="42" rx="3" ry="5.5" fill="#778396" />
+    <path
+      d="M35 36 C35 22, 65 22, 65 36 C65 51, 59 61, 50 61 C41 61, 35 51, 35 36 Z"
+      fill="#778396"
+    />
+    {/* Hair contour */}
+    <path
+      d="M34 35 C34 21, 45 18, 53 20 C61 21, 66 26, 65 35 C63 29, 56 26, 48 26 C40 26, 36 30, 34 35 Z"
+      fill="#6d798c"
+    />
+  </svg>
+);
+
+/**
+ * Renders the 44x44 trader avatar for each row in the Social Trading list matching Screenshot 2
+ */
+const SocialTraderRowAvatar: React.FC<{ trader: CopyTraderProfileData }> = ({ trader }) => {
+  const variant = trader.avatar_variant || 'gold_ring_silhouette';
+
+  // VIP Octagonal Frame variants
+  if (variant.startsWith('vip_octagon')) {
+    return (
+      <div className="relative w-11 h-11 shrink-0 select-none flex items-center justify-center">
+        <svg viewBox="0 0 48 48" className="w-11 h-11">
+          <defs>
+            <clipPath id={`oct-clip-${trader.id}`}>
+              <polygon points="15,4 33,4 44,15 44,31 33,42 15,42 4,31 4,15" />
+            </clipPath>
+          </defs>
+          {/* Outer octagonal border */}
+          <polygon
+            points="14,2 34,2 46,14 46,32 34,44 14,44 2,32 2,14"
+            fill="#1e2330"
+            stroke="#c59b38"
+            strokeWidth="2"
+          />
+          <g clipPath={`url(#oct-clip-${trader.id})`}>
+            {variant === 'vip_octagon_flag_uz' ? (
+              <g>
+                <rect x="0" y="0" width="48" height="16" fill="#0099b5" />
+                <rect x="0" y="16" width="48" height="1.5" fill="#ce1126" />
+                <rect x="0" y="17.5" width="48" height="13" fill="#ffffff" />
+                <rect x="0" y="30.5" width="48" height="1.5" fill="#ce1126" />
+                <rect x="0" y="32" width="48" height="16" fill="#1eb53a" />
+                <circle cx="14" cy="9" r="4" fill="#ffffff" />
+                <circle cx="15.5" cy="9" r="3.3" fill="#0099b5" />
+              </g>
+            ) : variant === 'vip_octagon_flag_ru' ? (
+              <g>
+                <rect x="0" y="0" width="48" height="15" fill="#ffffff" />
+                <rect x="0" y="15" width="48" height="15" fill="#0039a6" />
+                <rect x="0" y="30" width="48" height="18" fill="#d52b1e" />
+              </g>
+            ) : variant === 'vip_octagon_flag_tm' ? (
+              <g>
+                <rect x="0" y="0" width="48" height="48" fill="#00843d" />
+                <rect x="9" y="0" width="6" height="48" fill="#c8102e" />
+                <circle cx="24" cy="14" r="4.5" fill="#ffffff" />
+                <circle cx="22.5" cy="13.5" r="3.8" fill="#00843d" />
+              </g>
+            ) : (
+              <foreignObject x="2" y="2" width="44" height="42">
+                <SuitSilhouetteSvg />
+              </foreignObject>
+            )}
+          </g>
+          {/* Inner octagonal silver frame */}
+          <polygon
+            points="15,4 33,4 44,15 44,31 33,42 15,42 4,31 4,15"
+            fill="none"
+            stroke="#d4dce8"
+            strokeWidth="1.5"
+          />
+          {/* Gold VIP ribbon at bottom */}
+          <polygon points="10,36 38,36 34,45 14,45" fill="#e5a922" stroke="#1b202e" strokeWidth="1" />
+          <text
+            x="24"
+            y="43"
+            textAnchor="middle"
+            fill="#1b202e"
+            fontSize="7.5"
+            fontWeight="900"
+            fontFamily="Inter, sans-serif"
+            letterSpacing="0.4"
+          >
+            VIP
+          </text>
+        </svg>
+      </div>
+    );
+  }
+
+  // Circular Ring variants (gold, blue, purple)
+  const isBlue = variant.startsWith('blue_ring');
+  const isPurple = variant.startsWith('purple_ring');
+  const ringColor = isBlue ? '#2d74da' : isPurple ? '#7e42f5' : '#e5a01d';
+
+  return (
+    <div className="relative w-11 h-11 shrink-0 select-none">
+      <div
+        className="w-11 h-11 rounded-full p-[2px] flex items-center justify-center bg-[#202534]"
+        style={{ border: `2.5px solid ${ringColor}` }}
+      >
+        <div className="w-full h-full rounded-full overflow-hidden flex items-center justify-center bg-[#bac2cf]">
+          {variant === 'blue_ring_flag_tj' ? (
+            <svg viewBox="0 0 40 40" className="w-full h-full">
+              <rect x="0" y="0" width="40" height="13" fill="#cc0000" />
+              <rect x="0" y="13" width="40" height="14" fill="#ffffff" />
+              <rect x="0" y="27" width="40" height="13" fill="#006600" />
+              <circle cx="20" cy="20" r="3.5" fill="none" stroke="#f8c300" strokeWidth="1.5" />
+            </svg>
+          ) : variant === 'purple_ring_photo_1' ? (
+            <svg viewBox="0 0 40 40" className="w-full h-full">
+              <rect width="40" height="40" fill="#5c7a58" />
+              <path d="M6 40 C8 29, 14 26, 20 26 C26 26, 32 29, 34 40 Z" fill="#3a3f47" />
+              <circle cx="20" cy="16" r="7" fill="#d9a17c" />
+              <path d="M13 14 C13 9, 27 9, 27 14 C25 11, 15 11, 13 14 Z" fill="#1e1b18" />
+              <rect x="14.5" y="14.5" width="4.5" height="3" rx="0.8" fill="none" stroke="#1e1b18" strokeWidth="1" />
+              <rect x="21" y="14.5" width="4.5" height="3" rx="0.8" fill="none" stroke="#1e1b18" strokeWidth="1" />
+            </svg>
+          ) : variant === 'purple_ring_photo_2' ? (
+            <svg viewBox="0 0 40 40" className="w-full h-full">
+              <rect width="40" height="40" fill="#2c3e55" />
+              <path d="M7 40 C9 28, 15 25, 20 25 C25 25, 31 28, 33 40 Z" fill="#d59c78" />
+              <circle cx="20" cy="15.5" r="6.8" fill="#e0a884" />
+              <path d="M13.5 13 C14 8.5, 26 8.5, 26.5 13 Z" fill="#3b281e" />
+            </svg>
+          ) : (
+            <SuitSilhouetteSvg />
+          )}
+        </div>
+      </div>
+
+      {/* Top-right pentagon status badge */}
+      <div className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-[#202534] flex items-center justify-center">
+        <svg viewBox="0 0 16 16" className="w-3 h-3">
+          <polygon points="8,1.5 14.5,6 12,14 4,14 1.5,6" fill={ringColor} />
+        </svg>
+      </div>
+    </div>
+  );
+};
+
+/**
+ * Renders the large 120x120 circular avatar with thick gold border and pentagon badge for the Trader Profile Modal (Screenshot 1)
+ */
+const SocialTraderProfileLargeAvatar: React.FC<{ trader: CopyTraderProfileData }> = ({ trader }) => {
+  return (
+    <div className="relative w-[122px] h-[122px] shrink-0 select-none">
+      <div className="w-full h-full rounded-full border-[4.5px] border-[#e5a01d] p-[3.5px] bg-[#1f2433] flex items-center justify-center">
+        <div className="w-full h-full rounded-full overflow-hidden bg-[#bac2cf] flex items-center justify-center">
+          <SuitSilhouetteSvg />
+        </div>
+      </div>
+      {/* Top-right dark navy circle with gold pentagon icon */}
+      <div
+        data-testid={`profile-badge-${trader.social_profile_id || trader.numeric_id}`}
+        className="absolute top-0.5 right-0 w-8 h-8 rounded-full bg-[#1f2433] flex items-center justify-center shadow-md"
+      >
+        <svg viewBox="0 0 24 24" className="w-5 h-5">
+          <polygon points="12,2.5 21.5,9.2 17.8,20.5 6.2,20.5 2.5,9.2" fill="#e5a01d" />
+        </svg>
+      </div>
+    </div>
+  );
+};
 
 interface CopyTradingModalProps {
   isOpen: boolean;
@@ -356,6 +594,17 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
 }) => {
   const [mainViewMode, setMainViewMode] = useState<'leaderboard' | 'my_subscriptions'>('leaderboard');
   const [activeTab, setActiveTab] = useState<'instant_funded' | 'self_capital'>('instant_funded');
+  const [socialFilterOption, setSocialFilterOption] = useState<
+    'top_24h' | 'instant_funded' | 'self_capital' | 'my_subscriptions'
+  >('top_24h');
+  const [isSocialFilterDropdownOpen, setIsSocialFilterDropdownOpen] = useState<boolean>(false);
+  const [isToolsDrawerOpen, setIsToolsDrawerOpen] = useState<boolean>(false);
+  const [profileActiveTab, setProfileActiveTab] = useState<'trading' | 'social' | 'achievements'>('trading');
+  const [profileTimeframe, setProfileTimeframe] = useState<
+    'Today' | 'Yesterday' | 'Last 7 days' | 'Last 30 days' | 'All time'
+  >('Today');
+  const [isProfileDateDropdownOpen, setIsProfileDateDropdownOpen] = useState<boolean>(false);
+  const [watchedTraderIds, setWatchedTraderIds] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isMobileRulesOpen, setIsMobileRulesOpen] = useState<boolean>(false);
   const [fullPool, setFullPool] = useState<CopyTraderProfileData[]>(() => generate200TraderPool());
@@ -787,7 +1036,10 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
 
   if (!isOpen) return null;
 
-  const displayedTraders = queryResult.traders;
+  const displayedTraders =
+    !searchQuery.trim() && socialFilterOption === 'top_24h'
+      ? SOCIAL_TRADING_TOP_24H_TRADERS
+      : queryResult.traders;
 
   const handleOpenCopyConfig = (trader: CopyTraderProfileData) => {
     soundEngine.playUiClick();
@@ -1207,439 +1459,414 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
     );
   };
 
+  const filterDropdownLabel =
+    socialFilterOption === 'top_24h'
+      ? 'Top ranked traders for 24h'
+      : socialFilterOption === 'instant_funded'
+      ? 'Top ranked traders (Instant Funded)'
+      : socialFilterOption === 'self_capital'
+      ? 'Top ranked traders (Self-Capital)'
+      : `My Active Subscriptions (${activeSubsCount})`;
+
+  // Compute timeframe-scaled stats for the currently viewed trader in the Trader Profile Modal
+  const computeProfileStatsForTimeframe = (trader: CopyTraderProfileData) => {
+    const baseTrades = trader.trades_today_profile ?? trader.trades_24h ?? trader.total_trades ?? 79;
+    const baseProfitablePct = trader.profitable_trades_pct ?? Math.round(trader.win_rate_3m || 61);
+    const baseTurnover = trader.trading_turnover ?? Number(((trader.daily_profit || 14245.3) * 4.51).toFixed(2));
+    const baseProfit = trader.trading_profit ?? trader.daily_profit ?? 14245.3;
+    const baseMaxTrade = trader.max_trade ?? Number((baseProfit * 0.191).toFixed(2));
+    const baseMinTrade = trader.min_trade ?? Number((baseMaxTrade * 0.1).toFixed(2));
+    const baseMaxProfit = trader.max_profit ?? Number((baseMaxTrade * 0.92).toFixed(2));
+
+    const mult =
+      profileTimeframe === 'Today'
+        ? 1
+        : profileTimeframe === 'Yesterday'
+        ? 0.94
+        : profileTimeframe === 'Last 7 days'
+        ? 4.8
+        : profileTimeframe === 'Last 30 days'
+        ? 16.5
+        : 38.0;
+
+    return {
+      trades: Math.max(1, Math.round(baseTrades * mult)),
+      profitableTradesPct: baseProfitablePct,
+      tradingTurnover: Number((baseTurnover * mult).toFixed(2)),
+      tradingProfit: Number((baseProfit * mult).toFixed(2)),
+      maxTrade: Number((baseMaxTrade * (mult > 1 ? 1.15 : 1)).toFixed(2)),
+      minTrade: baseMinTrade,
+      maxProfit: Number((baseMaxProfit * (mult > 1 ? 1.15 : 1)).toFixed(2)),
+    };
+  };
+
   return (
     <div
       data-testid="copy-trading-modal"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[#07080B]/95 backdrop-blur-2xl animate-fade-in font-sans sm:p-4 overflow-hidden"
-      onClick={(e) => e.stopPropagation()}
+      className="fixed inset-0 z-50 flex items-stretch justify-end bg-black/55 backdrop-blur-[2px] animate-fade-in font-sans overflow-hidden"
+      onClick={onClose}
     >
+      {/* Main Social Trading Panel (Matches Screenshot 2 with 100% fidelity) */}
       <div
         onClick={(e) => e.stopPropagation()}
-        className="relative w-full h-full sm:h-[94vh] sm:max-w-[1320px] bg-[#090B10] sm:rounded-3xl shadow-2xl flex flex-col border border-slate-800/70 overflow-hidden"
+        className="relative w-full sm:w-[375px] md:w-[390px] h-full bg-[#1c202e] shadow-[-12px_0_40px_rgba(0,0,0,0.75)] flex flex-col border-l border-[#2c3246] overflow-hidden select-none"
       >
-        {/* Top Header Bar (Ultra-Compact on Mobile) */}
-        <div className="flex items-center justify-between gap-2 px-3 sm:px-6 py-2.5 sm:py-4 border-b border-slate-800/60 bg-[#0B0E17] shrink-0">
-          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-            <div className="w-8 h-8 sm:w-11 sm:h-11 rounded-xl sm:rounded-2xl bg-[#00F5A0]/15 border border-[#00F5A0]/30 flex items-center justify-center text-[#00F5A0] shrink-0">
-              <Users className="w-4 h-4 sm:w-6 sm:h-6" />
-            </div>
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-1 sm:gap-2">
-                <h2 className="text-xs sm:text-xl font-black text-white tracking-tight uppercase truncate">
-                  BFT Copy Trading <span className="text-[#00F5A0]">Master Pool</span>
-                </h2>
-                <span className="px-1.5 py-0.2 sm:px-2 sm:py-0.5 rounded bg-[#00F5A0]/15 border border-[#00F5A0]/30 text-[8.5px] sm:text-[10px] font-mono font-black text-[#00F5A0] uppercase">
-                  100% Profit Keep
-                </span>
-                <span className="hidden xs:inline-block px-1.5 py-0.2 sm:px-2 sm:py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-[8.5px] sm:text-[10px] font-mono font-bold text-amber-400">
-                  {TOTAL_TRADER_POOL_SIZE} Verified Traders
-                </span>
-              </div>
-              <p className="text-[9.5px] sm:text-[11px] text-slate-400 font-mono mt-0.5 flex flex-wrap items-center gap-1.5 sm:gap-3">
-                <span>Top {LEADERBOARD_TOP_LIMIT}</span>
-                <span>•</span>
-                <span data-testid="rotation-countdown-badge" className="text-cyan-400 font-bold">
-                  45m Rotation: {rotationInfo.formattedCountdown}
-                </span>
-                <span className="hidden sm:inline">•</span>
-                <span className="hidden sm:inline">Max {MAX_COPIERS_PER_TRADER} Copiers / Trader</span>
-              </p>
-            </div>
-          </div>
+        {/* 1. Header: Dark container with centered "Social Trading" title */}
+        <div className="bg-[#252a3a] border-b border-[#181c27] px-3.5 h-12 flex items-center justify-between shrink-0 relative">
+          <button
+            type="button"
+            data-testid="toggle-social-tools-btn"
+            title="Search / Account / Provider Options"
+            onClick={() => {
+              soundEngine.playUiClick();
+              setIsToolsDrawerOpen((prev) => !prev);
+            }}
+            className={`p-1.5 rounded-md transition-colors cursor-pointer z-10 ${
+              isToolsDrawerOpen
+                ? 'bg-[#2d74da]/25 text-[#4da3ff]'
+                : 'text-[#8b96b2] hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <Search className="w-4 h-4" />
+          </button>
 
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            <button
-              type="button"
-              data-testid="join-copy-provider-btn"
-              onClick={() => {
-                soundEngine.playUiClick();
-                setProviderErrorNotice(null);
-                setShowProviderModal(true);
-              }}
-              className="px-2.5 sm:px-4 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl bg-gradient-to-r from-[#ff8800] to-[#ffaa00] hover:brightness-110 text-slate-950 font-black text-[10px] sm:text-xs uppercase tracking-wider flex items-center justify-center gap-1 sm:gap-2 cursor-pointer shadow-md bft-touch-scale"
-            >
-              <UserPlus className="w-3.5 h-3.5 sm:w-4 sm:h-4 stroke-[2.5]" />
-              <span className="hidden xs:inline">Join as Copy Master</span>
-              <span className="xs:hidden">Join</span>
-            </button>
+          <h2
+            data-testid="social-trading-header-title"
+            className="text-[15.5px] font-semibold text-white tracking-tight absolute inset-x-0 text-center pointer-events-none"
+          >
+            Social Trading
+          </h2>
+
+          <div className="flex items-center gap-1 z-10">
+            {activeSubsCount > 0 && (
+              <button
+                type="button"
+                data-testid="active-subscriptions-badge"
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  setMainViewMode((prev) =>
+                    prev === 'my_subscriptions' ? 'leaderboard' : 'my_subscriptions'
+                  );
+                }}
+                className="px-2 py-0.5 rounded bg-[#4cd964]/20 border border-[#4cd964]/40 text-[#4cd964] text-[10px] font-bold cursor-pointer"
+                title="Active Copy Subscriptions"
+              >
+                {activeSubsCount} Active
+              </button>
+            )}
             <button
               type="button"
               data-testid="close-copy-trading-btn"
-              aria-label="Close Copy Trading Modal"
+              aria-label="Close Social Trading"
               onClick={onClose}
-              className="p-1.5 sm:p-2.5 rounded-lg sm:rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white border border-white/10 cursor-pointer shrink-0 bft-touch-scale"
+              className="p-1.5 rounded-md text-[#8b96b2] hover:text-white hover:bg-white/5 cursor-pointer"
             >
-              <X className="w-4 h-4 sm:w-5 sm:h-5" />
+              <X className="w-4 h-4" />
             </button>
           </div>
         </div>
 
-        {/* Copier Account Switcher & Collapsible Eligibility Rules Dropdown */}
-        <div className="bg-[#0D111C] border-b border-slate-800/60 px-3 sm:px-6 py-2 text-xs shrink-0">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5 flex-1 min-w-0">
-              <span className="font-mono text-[9.5px] sm:text-[10px] uppercase tracking-wider text-slate-400 font-bold shrink-0">
-                Account:
+        {/* 2. Dropdown Filter: "Top ranked traders for 24h" */}
+        <div className="bg-[#1c202e] px-3.5 py-2.5 shrink-0 relative">
+          <button
+            type="button"
+            data-testid="social-trading-filter-dropdown"
+            onClick={() => {
+              soundEngine.playUiClick();
+              setIsSocialFilterDropdownOpen((prev) => !prev);
+            }}
+            className="w-full bg-[#242938] hover:bg-[#292f40] border border-[#373e52] rounded-md px-3.5 py-2.5 flex items-center justify-between gap-2.5 cursor-pointer transition-colors"
+          >
+            <div className="flex items-center gap-2.5 min-w-0">
+              {/* Stopwatch / Rank Star Icon matching Screenshot 2 */}
+              <svg
+                viewBox="0 0 20 20"
+                className="w-4 h-4 text-[#7c87a2] shrink-0"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+              >
+                <circle cx="10" cy="11" r="6.5" />
+                <path d="M8 2.5h4M10 2.5v2" strokeLinecap="round" />
+                <polygon
+                  points="10,7.5 10.9,9.4 13,9.7 11.5,11.1 11.8,13.1 10,12.1 8.2,13.1 8.5,11.1 7,9.7 9.1,9.4"
+                  fill="currentColor"
+                  stroke="none"
+                />
+              </svg>
+              <span className="text-[13.5px] font-semibold text-white truncate">
+                {filterDropdownLabel}
               </span>
+            </div>
+            <ChevronDown
+              className={`w-4 h-4 text-white shrink-0 transition-transform duration-150 ${
+                isSocialFilterDropdownOpen ? 'rotate-180' : ''
+              }`}
+            />
+          </button>
+
+          {/* Dropdown Menu Options */}
+          {isSocialFilterDropdownOpen && (
+            <div
+              data-testid="social-filter-menu"
+              className="absolute left-3.5 right-3.5 top-[54px] z-30 bg-[#242938] border border-[#373e52] rounded-md shadow-2xl overflow-hidden py-1"
+            >
+              <button
+                type="button"
+                data-testid="filter-option-top-24h"
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  setSocialFilterOption('top_24h');
+                  setMainViewMode('leaderboard');
+                  setSearchQuery('');
+                  setIsSocialFilterDropdownOpen(false);
+                }}
+                className={`w-full px-3.5 py-2 text-left text-xs font-semibold flex items-center justify-between cursor-pointer ${
+                  socialFilterOption === 'top_24h' && mainViewMode === 'leaderboard'
+                    ? 'bg-[#2d74da]/25 text-white'
+                    : 'text-[#b4bdd0] hover:bg-white/5 hover:text-white'
+                }`}
+              >
+                <span>Top ranked traders for 24h</span>
+                <span className="text-[10px] text-[#4cd964] font-bold">24H</span>
+              </button>
+
+              <button
+                type="button"
+                data-testid="tab-instant-funded"
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  setSocialFilterOption('instant_funded');
+                  setActiveTab('instant_funded');
+                  setMainViewMode('leaderboard');
+                  setIsSocialFilterDropdownOpen(false);
+                }}
+                className={`w-full px-3.5 py-2 text-left text-xs font-semibold flex items-center justify-between cursor-pointer ${
+                  socialFilterOption === 'instant_funded' && mainViewMode === 'leaderboard'
+                    ? 'bg-[#2d74da]/25 text-white'
+                    : 'text-[#b4bdd0] hover:bg-white/5 hover:text-white'
+                }`}
+              >
+                <span>Top ranked traders (Instant Funded)</span>
+                <span className="text-[10px] text-[#7c87a2]">100 Pool</span>
+              </button>
+
+              <button
+                type="button"
+                data-testid="tab-self-capital"
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  setSocialFilterOption('self_capital');
+                  setActiveTab('self_capital');
+                  setMainViewMode('leaderboard');
+                  setIsSocialFilterDropdownOpen(false);
+                }}
+                className={`w-full px-3.5 py-2 text-left text-xs font-semibold flex items-center justify-between cursor-pointer ${
+                  socialFilterOption === 'self_capital' && mainViewMode === 'leaderboard'
+                    ? 'bg-[#2d74da]/25 text-white'
+                    : 'text-[#b4bdd0] hover:bg-white/5 hover:text-white'
+                }`}
+              >
+                <span>Top ranked traders (Self-Capital)</span>
+                <span className="text-[10px] text-[#7c87a2]">100 Pool</span>
+              </button>
+
+              <button
+                type="button"
+                data-testid="view-subscriptions-tab"
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  setSocialFilterOption('my_subscriptions');
+                  setMainViewMode('my_subscriptions');
+                  setIsSocialFilterDropdownOpen(false);
+                }}
+                className={`w-full px-3.5 py-2 text-left text-xs font-semibold flex items-center justify-between cursor-pointer border-t border-[#32394c] ${
+                  mainViewMode === 'my_subscriptions'
+                    ? 'bg-[#2d74da]/25 text-white'
+                    : 'text-[#b4bdd0] hover:bg-white/5 hover:text-white'
+                }`}
+              >
+                <span>My Active Copy Subscriptions</span>
+                <span className="px-1.5 py-0.2 rounded bg-[#4cd964]/20 text-[#4cd964] text-[10px] font-bold">
+                  {activeSubsCount}
+                </span>
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Collapsible Search / Account / Provider Drawer (Accessible when Search icon is clicked) */}
+        {isToolsDrawerOpen && (
+          <div className="bg-[#181c28] border-b border-[#2a3042] px-3.5 py-2.5 space-y-2 shrink-0">
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-[#7c87a2] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                data-testid="copy-trader-search-input"
+                aria-label="Search Traders by ID or Name"
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  if (mainViewMode !== 'leaderboard') setMainViewMode('leaderboard');
+                }}
+                placeholder="Search trader ID (e.g. 11101163 or 100105)..."
+                className="w-full bg-[#242938] border border-[#373e52] focus:border-[#2d74da] rounded-md pl-8 pr-7 py-1.5 text-xs text-white placeholder:text-[#7c87a2] outline-none"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-[#7c87a2] hover:text-white cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
               <select
                 aria-label="Select Copying Account"
                 data-testid="copy-account-selector"
                 value={resolvedFollowerSelection.selectedOptionValue}
                 onChange={(e) => setSelectedCopyAccountId(e.target.value)}
-                className="flex-1 sm:flex-none sm:max-w-xs bg-[#141926] border border-slate-700 rounded-lg px-2 py-1 text-[11px] sm:text-xs font-mono text-white outline-none focus:border-[#00F5A0] truncate"
+                className="flex-1 bg-[#242938] border border-[#373e52] rounded-md px-2.5 py-1.5 text-[11px] text-white outline-none truncate"
               >
                 {copierEligibility.allEvaluations.map(({ account, result }) => {
                   const optionDbId =
                     getCanonicalAccountDatabaseUuid(account, userProfile) || account.id;
                   return (
                     <option key={account.id} value={optionDbId}>
-                      {account.tierName || account.id} (${Number(account.currentBalance || 0).toLocaleString()}) —{' '}
+                      {account.tierName || account.id} ($
+                      {Number(account.currentBalance || 0).toLocaleString()}) —{' '}
                       {result.eligible ? 'ELIGIBLE' : 'RESTRICTED'}
                     </option>
                   );
                 })}
               </select>
-            </div>
 
-            <button
-              type="button"
-              data-testid="toggle-copy-rules-accordion"
-              aria-expanded={isMobileRulesOpen}
-              onClick={() => {
-                soundEngine.playUiClick();
-                setIsMobileRulesOpen((prev) => !prev);
-              }}
-              className="flex items-center gap-1 px-2 py-1 rounded-lg bg-[#141926] border border-slate-700/80 text-[10px] font-mono font-bold text-slate-300 hover:text-white cursor-pointer bft-touch-scale shrink-0"
-            >
-              {copierEligibility.selectedResult.eligible ? (
-                <CheckCircle2 className="w-3 h-3 text-[#00F5A0] shrink-0" />
-              ) : (
-                <Lock className="w-3 h-3 text-rose-400 shrink-0" />
-              )}
-              <span>{copierEligibility.selectedResult.eligible ? 'Eligible' : 'Rules'}</span>
-              <ChevronDown
-                className={`w-3 h-3 transition-transform duration-200 ${
-                  isMobileRulesOpen ? 'rotate-180 text-[#00F5A0]' : ''
-                }`}
-              />
-            </button>
-          </div>
-
-          {/* Collapsible Eligibility Details & Rule Breakdown */}
-          <div
-            data-testid="mobile-copy-rules-collapsible"
-            className={`bft-accordion-grid bft-accordion-sm-always-open ${
-              isMobileRulesOpen ? 'bft-accordion-open' : 'bft-accordion-closed'
-            }`}
-          >
-            <div className="bft-accordion-inner pt-2 flex flex-col lg:flex-row lg:items-center justify-between gap-2">
-              <span
-                data-testid="copier-eligibility-badge"
-                className={`px-2.5 py-1 rounded-lg font-mono text-[10px] font-bold flex items-center gap-1.5 border ${
-                  copierEligibility.selectedResult.eligible
-                    ? 'bg-emerald-500/15 border-emerald-500/40 text-[#00F5A0]'
-                    : 'bg-rose-500/15 border-rose-500/40 text-rose-300'
-                }`}
+              <button
+                type="button"
+                data-testid="join-copy-provider-btn"
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  setProviderErrorNotice(null);
+                  setShowProviderModal(true);
+                }}
+                className="px-2.5 py-1.5 rounded-md bg-[#2d74da] hover:bg-[#3882eb] text-white text-[11px] font-semibold shrink-0 cursor-pointer"
               >
-                {copierEligibility.selectedResult.eligible ? (
-                  <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-                ) : (
-                  <Lock className="w-3.5 h-3.5 shrink-0" />
-                )}
-                <span className="truncate">{copierEligibility.selectedResult.reason}</span>
-              </span>
-
-              <div className="flex flex-wrap items-center gap-1.5 text-[9.5px] sm:text-[10px] font-mono text-slate-400">
-                <span className="px-2 py-0.5 rounded bg-white/5 border border-white/10">
-                  Funded: <strong className="text-white">$25K/$50K/$100K Instant</strong>
-                </span>
-                <span className="px-2 py-0.5 rounded bg-white/5 border border-white/10">
-                  Challenge: <strong className="text-rose-400">Barred</strong>
-                </span>
-                <span className="px-2 py-0.5 rounded bg-white/5 border border-white/10">
-                  Self-Capital: <strong className="text-[#00F5A0]">$100+ Balance</strong>
-                </span>
-                <span className="px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-bold">
-                  Active Subs: {activeSubsCount}
-                </span>
-              </div>
+                + Become Master
+              </button>
             </div>
           </div>
+        )}
+
+        {/* 3. Section Tag: Small centered sub-header "REAL TRADING" in uppercase gray/white text */}
+        <div
+          data-testid="real-trading-section-tag"
+          className="bg-[#191d2a] py-1.5 px-3 border-y border-[#151822] text-center shrink-0"
+        >
+          <span className="text-[10.5px] font-bold tracking-wider text-[#d5dce6] uppercase">
+            {mainViewMode === 'my_subscriptions' ? 'ACTIVE COPY SUBSCRIPTIONS' : 'REAL TRADING'}
+          </span>
         </div>
 
-        {/* View Mode Navigation Switcher: All Traders (Leaderboard) vs My Active Subscriptions */}
-        <div className="px-3 sm:px-6 py-2 bg-[#0B0E17] border-b border-slate-800/60 flex items-center justify-between gap-2 shrink-0">
-          <div className="flex bg-[#121726] p-1 rounded-xl border border-slate-800/80 w-full sm:w-auto">
-            <button
-              type="button"
-              data-testid="view-leaderboard-tab"
-              onClick={() => {
-                soundEngine.playUiClick();
-                setMainViewMode('leaderboard');
-              }}
-              className={`flex-1 sm:flex-none px-3 sm:px-5 py-1.5 sm:py-2 rounded-lg font-black text-[11px] sm:text-xs transition-all flex items-center justify-center gap-2 cursor-pointer bft-touch-scale ${
-                mainViewMode === 'leaderboard'
-                  ? 'bg-gradient-to-r from-[#00F5A0] to-[#00D282] text-[#07080B] shadow-md'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <Trophy className="w-3.5 h-3.5 shrink-0" />
-              <span>All Traders (Leaderboard)</span>
-            </button>
-
-            <button
-              type="button"
-              data-testid="view-subscriptions-tab"
-              onClick={() => {
-                soundEngine.playUiClick();
-                setMainViewMode('my_subscriptions');
-              }}
-              className={`flex-1 sm:flex-none px-3 sm:px-5 py-1.5 sm:py-2 rounded-lg font-black text-[11px] sm:text-xs transition-all flex items-center justify-center gap-2 cursor-pointer bft-touch-scale ${
-                mainViewMode === 'my_subscriptions'
-                  ? 'bg-gradient-to-r from-[#00F5A0] to-[#00D282] text-[#07080B] shadow-md'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <Activity className="w-3.5 h-3.5 shrink-0" />
-              <span>My Active Subscriptions</span>
-              <span
-                data-testid="active-subscriptions-badge"
-                className={`px-1.5 py-0.2 rounded-full font-mono text-[10px] font-bold ${
-                  mainViewMode === 'my_subscriptions'
-                    ? 'bg-[#07080B]/20 text-[#07080B]'
-                    : activeSubsCount > 0
-                    ? 'bg-[#00F5A0] text-[#07080B]'
-                    : 'bg-white/10 text-slate-400'
-                }`}
-              >
-                {activeSubsCount}
-              </span>
-            </button>
-          </div>
-
-          {mainViewMode === 'my_subscriptions' && activeSubsCount > 0 && (
-            <button
-              type="button"
-              onClick={() => {
-                soundEngine.playUiClick();
-                setMainViewMode('leaderboard');
-              }}
-              className="hidden sm:flex items-center gap-1.5 text-xs font-mono font-bold text-[#00F5A0] hover:underline cursor-pointer"
-            >
-              <span>+ Explore More Master Traders</span>
-              <ChevronRight className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
-
-        {/* View Content: Either Leaderboard Search Feed OR My Active Subscriptions List */}
+        {/* 4. Trader Rows List OR Active Copy Subscriptions */}
         {mainViewMode === 'my_subscriptions' ? (
           <div
             data-testid="active-subscriptions-section"
-            className="flex-1 overflow-y-auto px-3 sm:px-6 py-3 sm:py-4 space-y-3 custom-scrollbar overscroll-contain touch-scroll hw-accelerate"
+            className="flex-1 overflow-y-auto bg-[#202534] divide-y divide-[#171b26] custom-scrollbar"
           >
             {activeSubsCount === 0 ? (
               <div
                 data-testid="empty-active-subscriptions"
-                className="flex flex-col items-center justify-center py-16 px-4 text-center space-y-4"
+                className="flex flex-col items-center justify-center py-16 px-5 text-center space-y-3"
               >
-                <div className="w-16 h-16 rounded-3xl bg-[#00F5A0]/10 border border-[#00F5A0]/25 flex items-center justify-center text-[#00F5A0]">
-                  <Users className="w-8 h-8" />
-                </div>
-                <div className="max-w-md">
-                  <h3 className="text-base sm:text-lg font-black text-white uppercase tracking-tight">
-                    No Active Copy Subscriptions
-                  </h3>
-                  <p className="text-xs font-mono text-slate-400 mt-1.5 leading-relaxed">
-                    You are not copying any master traders yet. Browse the Daily Top 10 Leaderboard to copy verified top traders with 100% profit keep (0% fee).
-                  </p>
-                </div>
+                <Users className="w-8 h-8 text-[#7c87a2]" />
+                <p className="text-sm font-bold text-white">No Active Copy Subscriptions</p>
+                <p className="text-xs text-[#7c87a2]">
+                  Select any trader from the Social Trading list to view their profile and copy trades.
+                </p>
                 <button
                   type="button"
                   data-testid="explore-leaderboard-cta"
                   onClick={() => {
                     soundEngine.playUiClick();
+                    setSocialFilterOption('top_24h');
                     setMainViewMode('leaderboard');
                   }}
-                  className="px-6 py-2.5 rounded-xl bg-[#00F5A0] hover:brightness-110 text-[#07080B] font-black text-xs uppercase tracking-wider cursor-pointer shadow-lg bft-touch-scale flex items-center gap-2"
+                  className="px-4 py-2 rounded-md bg-[#2d74da] text-white text-xs font-semibold cursor-pointer"
                 >
-                  <Trophy className="w-4 h-4" />
-                  <span>Explore Daily Top 10 Leaderboard</span>
+                  Back to Top Ranked Traders
                 </button>
               </div>
             ) : (
-              <div data-testid="active-subscriptions-feed" className="space-y-3">
-                <div className="flex items-center justify-between text-xs font-mono text-slate-400 px-1">
-                  <span>Showing <strong>{activeSubsCount}</strong> active provider subscription{activeSubsCount > 1 ? 's' : ''}:</span>
-                  <span className="text-[#00F5A0] font-bold">100% Profit Keep (0% Fee)</span>
-                </div>
-
+              <div data-testid="active-subscriptions-feed" className="divide-y divide-[#171b26]">
                 {activeSubscriptionsList.map((sub) => {
-                  const trader: CopyTraderProfileData = combinedPool.find(
-                    (t) =>
-                      t.id === sub.provider_id ||
-                      ensureTradeUuid(t.id) === sub.provider_id ||
-                      t.numeric_id === sub.provider_numeric_id ||
-                      t.user_id === sub.provider_id ||
-                      t.provider_name === sub.provider_name
-                  ) || {
-                    id: sub.provider_id,
-                    numeric_id: sub.provider_numeric_id || '100101',
-                    provider_name: sub.provider_name || 'Master Trader',
-                    country_code: 'US',
-                    country: 'United States',
-                    flag: '🇺🇸',
-                    avatar_url: '🇺🇸',
-                    account_category: (sub.copier_account_type || 'instant_funded') as any,
-                    account_type_label: sub.copier_account_type === 'self_capital' ? 'Self-Capital Live' : 'Instant Funded ($50K)',
-                    strategy_title: 'Institutional OTC Strategy',
-                    tier_name: 'Verified Master',
-                    vip_level: 'Master Trader',
-                    starting_balance: 50000,
-                    current_balance: 54000,
-                    all_time_withdrawals: 12000,
-                    lifetime_earnings: 12000,
-                    daily_profit: 1500,
-                    daily_profit_pct: 3.0,
-                    weekly_profit: 4500,
-                    weekly_profit_pct: 9.0,
-                    monthly_profit: 12000,
-                    monthly_profit_pct: 24.0,
-                    three_month_profit: 28000,
-                    three_month_profit_pct: 56.0,
-                    win_rate_3m: 78.5,
-                    profit_factor: 2.15,
-                    max_drawdown: 3.2,
-                    sharpe_ratio: 1.85,
-                    avg_holding_time: '2m 30s',
-                    total_trades: 450,
-                    current_copiers: 120,
-                    max_copiers: 200,
-                    commission_pct: 0,
-                    follower_profit_keep_pct: 100,
-                  };
+                  const allKnownTraders = [...SOCIAL_TRADING_TOP_24H_TRADERS, ...combinedPool];
+                  const trader: CopyTraderProfileData =
+                    allKnownTraders.find(
+                      (t) =>
+                        t.id === sub.provider_id ||
+                        ensureTradeUuid(t.id) === sub.provider_id ||
+                        t.numeric_id === sub.provider_numeric_id ||
+                        t.social_profile_id === sub.provider_numeric_id ||
+                        t.provider_name === sub.provider_name
+                    ) || SOCIAL_TRADING_TOP_24H_TRADERS[0];
 
-                  const tradeAllocLabel =
-                    sub.per_trade_allocation_type === 'percentage'
-                      ? `${sub.per_trade_allocation_value}% of Balance`
-                      : `$${(sub.allocated_capital || sub.per_trade_allocation_value || 100).toLocaleString()}/trade`;
-
-                  const stopLossVal = sub.max_loss_limit || sub.stop_loss || 250;
-                  const takeProfitVal = sub.take_profit_limit || sub.take_profit || 500;
-                  const maxDdVal = sub.max_drawdown || 5.0;
                   const currentPnl = sub.current_pnl || 0;
-
                   return (
                     <div
                       key={sub.id || sub.provider_id}
                       data-testid={`active-sub-card-${trader.numeric_id}`}
-                      className="p-3 sm:p-4 rounded-2xl bg-[#10141F] border border-[#00F5A0]/40 shadow-lg flex flex-col gap-3 transition-all"
+                      className="px-3.5 py-3 bg-[#202534] hover:bg-[#262c3e] transition-colors space-y-2"
                     >
-                      {/* Top Line: Flag, Name, Numeric ID, Category, Active Badge */}
-                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/80 pb-2.5">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-[#161C2B] border border-slate-700 flex items-center justify-center shrink-0 overflow-hidden">
-                            <CountryFlagIcon
-                              isoCode={trader.country_code}
-                              country={trader.country}
-                              flagEmoji={trader.flag}
-                              className="w-5 h-3.5 sm:w-6 sm:h-4 object-cover rounded-xs"
-                            />
-                          </div>
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <h4 className="text-xs sm:text-base font-black text-white truncate max-w-[130px] sm:max-w-xs">
-                                {trader.provider_name}
-                              </h4>
-                              <CheckCircle2 className="w-3.5 h-3.5 text-[#00F5A0] shrink-0" />
-                              <span className="px-1.5 py-0.2 rounded bg-cyan-500/15 border border-cyan-500/30 font-mono text-[8.5px] sm:text-[10px] font-bold text-cyan-300">
-                                ID #{trader.numeric_id}
-                              </span>
-                            </div>
-                            <p className="text-[9px] sm:text-[10.5px] font-mono text-slate-400 mt-0.5">
-                              {trader.account_type_label} • {trader.win_rate_3m}% 3M Win Rate
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-[9px] sm:text-[10.5px] font-mono font-bold text-[#00F5A0] flex items-center gap-1">
-                            <span className="w-1.5 h-1.5 rounded-full bg-[#00F5A0] animate-pulse" />
-                            <span>ACTIVE COPYING</span>
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Copy Risk Settings Grid */}
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 font-mono text-[10px] sm:text-xs">
-                        <div className="p-2 sm:p-2.5 rounded-xl bg-[#0B0E17] border border-slate-800">
-                          <span className="text-[8px] sm:text-[9.5px] text-slate-400 uppercase block">Trade Allocation</span>
-                          <span className="font-bold text-[#00F5A0] mt-0.5 block truncate">{tradeAllocLabel}</span>
-                        </div>
-
-                        <div className="p-2 sm:p-2.5 rounded-xl bg-[#0B0E17] border border-slate-800">
-                          <span className="text-[8px] sm:text-[9.5px] text-slate-400 uppercase block">Max Loss Stop</span>
-                          <span className="font-bold text-rose-400 mt-0.5 block truncate">${stopLossVal.toFixed(2)}</span>
-                        </div>
-
-                        <div className="p-2 sm:p-2.5 rounded-xl bg-[#0B0E17] border border-slate-800">
-                          <span className="text-[8px] sm:text-[9.5px] text-slate-400 uppercase block">Target Profit</span>
-                          <span className="font-bold text-[#00F5A0] mt-0.5 block truncate">${takeProfitVal.toFixed(2)}</span>
-                        </div>
-
-                        <div className="p-2 sm:p-2.5 rounded-xl bg-[#0B0E17] border border-slate-800">
-                          <span className="text-[8px] sm:text-[9.5px] text-slate-400 uppercase block">Realized Copied P&L</span>
-                          <span className={`font-black mt-0.5 block truncate ${currentPnl >= 0 ? 'text-[#00F5A0]' : 'text-rose-400'}`}>
-                            {currentPnl >= 0 ? `+$${currentPnl.toFixed(2)}` : `-$${Math.abs(currentPnl).toFixed(2)}`}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Card Action Buttons: Edit Settings & Uncopy */}
-                      <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-800/60">
-                        <button
-                          type="button"
-                          data-testid={`view-stats-active-${trader.numeric_id}`}
-                          onClick={() => {
-                            soundEngine.playUiClick();
-                            setViewingTrader(trader);
-                          }}
-                          className="px-2.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 font-mono font-bold text-[10px] sm:text-xs cursor-pointer bft-touch-scale"
+                      <div className="flex items-center justify-between gap-3">
+                        <div
+                          onClick={() => setViewingTrader(trader)}
+                          className="flex items-center gap-3 min-w-0 cursor-pointer"
                         >
-                          Trader Stats
-                        </button>
+                          <SocialTraderRowAvatar trader={trader} />
+                          <div className="min-w-0">
+                            <div className="text-[13.5px] font-bold text-white truncate">
+                              {trader.display_handle || `user${trader.numeric_id}`}
+                            </div>
+                            <div className="text-[11px] text-[#7c87a2]">
+                              Alloc: ${sub.allocated_capital || sub.per_trade_allocation_value || 100}/trade
+                            </div>
+                          </div>
+                        </div>
 
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            data-testid={`edit-sub-btn-${trader.numeric_id}`}
-                            onClick={() => {
-                              soundEngine.playUiClick();
-                              if (sub.copier_account_id) {
-                                setSelectedCopyAccountId(sub.copier_account_id);
-                              }
-                              setPerTradeAllocationType(sub.per_trade_allocation_type || 'amount');
-                              setPerTradeAllocationValue(sub.per_trade_allocation_value || sub.allocated_capital || 100);
-                              setMaxLossStopUsd(sub.max_loss_limit || sub.stop_loss || 250);
-                              setTargetProfitStopUsd(sub.take_profit_limit || sub.take_profit || 500);
-                              setMaxDrawdownPercent(sub.max_drawdown || 5.0);
-                              setShowRiskConfigModal(trader);
-                            }}
-                            className="px-3 py-1.5 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/40 text-cyan-300 font-mono font-bold text-[10.5px] sm:text-xs flex items-center gap-1.5 cursor-pointer bft-touch-scale"
+                        <div className="text-right">
+                          <div
+                            className={`text-[13.5px] font-semibold ${
+                              currentPnl >= 0 ? 'text-[#4cd964]' : 'text-rose-400'
+                            }`}
                           >
-                            <Settings2 className="w-3.5 h-3.5" />
-                            <span>Edit Settings</span>
-                          </button>
-
-                          <button
-                            type="button"
-                            data-testid={`uncopy-sub-btn-${trader.numeric_id}`}
-                            onClick={() => handleCancelSubscription(trader, sub)}
-                            className="px-3 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-rose-300 font-mono font-black text-[10.5px] sm:text-xs uppercase tracking-wider flex items-center gap-1.5 cursor-pointer bft-touch-scale"
-                          >
-                            <StopCircle className="w-3.5 h-3.5" />
-                            <span>Uncopy</span>
-                          </button>
+                            {currentPnl >= 0
+                              ? `+$${currentPnl.toFixed(2)}`
+                              : `-$${Math.abs(currentPnl).toFixed(2)}`}
+                          </div>
+                          <div className="flex items-center justify-end gap-1.5 mt-1">
+                            <button
+                              type="button"
+                              data-testid={`edit-sub-btn-${trader.numeric_id}`}
+                              onClick={() => {
+                                soundEngine.playUiClick();
+                                setShowRiskConfigModal(trader);
+                              }}
+                              className="px-2 py-0.5 rounded bg-[#323a4d] hover:bg-[#3c455c] text-white text-[10px] font-semibold cursor-pointer"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              data-testid={`uncopy-sub-btn-${trader.numeric_id}`}
+                              onClick={() => handleCancelSubscription(trader, sub)}
+                              className="px-2 py-0.5 rounded bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 text-[10px] font-semibold cursor-pointer"
+                            >
+                              Stop
+                            </button>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -1649,401 +1876,563 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
             )}
           </div>
         ) : (
-          <>
-            {/* Category Tabs + 200-Pool Numeric ID Search Bar (Compact on Mobile) */}
-            <div className="px-3 sm:px-6 py-2 sm:py-3 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2 sm:gap-3 border-b border-slate-800/40 bg-[#090B10] shrink-0">
-              <div className="flex bg-[#111520] p-0.5 sm:p-1 rounded-xl border border-slate-800 w-full md:w-auto">
-                <button
-                  type="button"
-                  data-testid="tab-instant-funded"
-                  onClick={() => {
-                    soundEngine.playUiClick();
-                    setActiveTab('instant_funded');
-                  }}
-                  className={`flex-1 sm:flex-none px-2.5 sm:px-6 py-1.5 sm:py-2 rounded-lg font-black text-[10.5px] sm:text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer bft-touch-scale ${
-                    activeTab === 'instant_funded'
-                      ? 'bg-[#00F5A0] text-[#07080B] shadow-md'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <Trophy className="w-3.5 h-3.5 shrink-0" />
-                  <span>
-                    <span className="hidden sm:inline">INSTANT FUNDED TRADERS (100)</span>
-                    <span className="sm:hidden">INSTANT FUNDED (100)</span>
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  data-testid="tab-self-capital"
-                  onClick={() => {
-                    soundEngine.playUiClick();
-                    setActiveTab('self_capital');
-                  }}
-                  className={`flex-1 sm:flex-none px-2.5 sm:px-6 py-1.5 sm:py-2 rounded-lg font-black text-[10.5px] sm:text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer bft-touch-scale ${
-                    activeTab === 'self_capital'
-                      ? 'bg-[#00F5A0] text-[#07080B] shadow-md'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <DollarSign className="w-3.5 h-3.5 shrink-0" />
-                  <span>
-                    <span className="hidden sm:inline">SELF-CAPITAL TRADERS (100)</span>
-                    <span className="sm:hidden">SELF-CAPITAL (100)</span>
-                  </span>
-                </button>
-              </div>
-
-              {/* Search across all 200 traders by numeric ID (#100101 - #100300) or name */}
-              <div className="relative w-full md:max-w-md">
-                <Search className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                <input
-                  type="text"
-                  data-testid="copy-trader-search-input"
-                  aria-label="Search 200 Traders by Numeric ID or Name"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search 200 traders by ID (e.g. 100105) or name..."
-                  className="w-full bg-[#111520] border border-slate-700/80 focus:border-[#00F5A0] rounded-lg sm:rounded-xl pl-9 pr-8 py-1.5 sm:py-2 text-xs font-mono text-white placeholder:text-slate-500 outline-none transition-all"
-                />
-                {searchQuery && (
-                  <button
-                    type="button"
-                    aria-label="Clear Trader Search"
-                    onClick={() => setSearchQuery('')}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer touch-manipulation"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Main Leaderboard Feed with Mobile Horizontal Swipable Top 3 Spotlight */}
-            <div
-              data-testid="copy-traders-list"
-              className="flex-1 overflow-y-auto px-3 sm:px-6 py-2.5 sm:py-4 space-y-2 sm:space-y-3 custom-scrollbar overscroll-contain touch-scroll hw-accelerate"
-            >
-              {/* Mobile Horizontal Swipable Top 3 Podium Cards */}
-              {!isLoading && !queryResult.isSearchActive && displayedTraders.length >= 3 && (
-                <div className="sm:hidden pb-1">
-                  <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 mb-1.5 px-0.5">
-                    <span className="font-bold text-white flex items-center gap-1">
-                      <Trophy className="w-3 h-3 text-amber-400" /> Top 3 Spotlight (Swipe →)
-                    </span>
-                    <span className="text-[#00F5A0] font-bold">
-                      Tap card chevron for full ROI
-                    </span>
-                  </div>
-                  <div
-                    data-testid="mobile-swipable-top-traders"
-                    className="bft-snap-strip gap-2 pb-1"
-                  >
-                    {displayedTraders.slice(0, 3).map((topTrader, idx) => {
-                      const topRank = topTrader.rank || idx + 1;
-                      const topSub = findMatchingSubscriptionForTrader(topTrader, activeSubscriptions);
-                      const topIsCopying = Boolean(topSub && topSub.status === 'active');
-                      const topIsFull = topTrader.current_copiers >= MAX_COPIERS_PER_TRADER && !topIsCopying;
-                      return (
-                        <div
-                          key={`swipe-${topTrader.id}`}
-                          className="bft-snap-card w-[235px] p-2.5 rounded-xl bg-gradient-to-br from-[#131929] to-[#0D111C] border border-slate-700/80 flex flex-col justify-between gap-2"
-                        >
-                          <div className="flex items-center justify-between gap-1.5">
-                            <div className="flex items-center gap-1.5 min-w-0">
-                              <span
-                                className={`w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-black font-mono shrink-0 ${
-                                  topRank === 1
-                                    ? 'bg-amber-400 text-slate-950'
-                                    : topRank === 2
-                                    ? 'bg-slate-300 text-slate-950'
-                                    : 'bg-amber-600 text-white'
-                                }`}
-                              >
-                                #{topRank}
-                              </span>
-                              <CountryFlagIcon
-                                isoCode={topTrader.country_code}
-                                country={topTrader.country}
-                                flagEmoji={topTrader.flag}
-                                className="w-4 h-3 object-cover rounded-xs shrink-0"
-                              />
-                              <span className="text-xs font-black text-white truncate">
-                                {topTrader.provider_name}
-                              </span>
-                            </div>
-                            <span className="text-[9px] font-mono font-bold text-[#00F5A0] bg-emerald-500/15 px-1.5 py-0.2 rounded shrink-0">
-                              {topTrader.win_rate_3m}% WR
-                            </span>
-                          </div>
-
-                          <div className="flex items-center justify-between font-mono bg-[#090C14] px-2 py-1 rounded-lg border border-slate-800/80">
-                            <div>
-                              <span className="text-[8px] text-slate-400 uppercase block">24H Profit</span>
-                              <span className="text-xs font-black text-[#00F5A0]">
-                                +${topTrader.daily_profit.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                              </span>
-                            </div>
-                            <div className="text-right">
-                              <span className="text-[8px] text-slate-400 uppercase block">90D ROI</span>
-                              <span className="text-xs font-black text-amber-300">
-                                +{topTrader.three_month_profit_pct}%
-                              </span>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                soundEngine.playUiClick();
-                                setViewingTrader(topTrader);
-                              }}
-                              className="px-2 py-1 rounded-lg bg-white/5 border border-white/10 text-[10px] font-mono font-bold text-slate-300 bft-touch-scale cursor-pointer"
-                            >
-                              Stats
-                            </button>
-                            <button
-                              type="button"
-                              disabled={topIsFull}
-                              data-testid={`mobile-quick-copy-${topTrader.numeric_id}`}
-                              onClick={() =>
-                                topIsCopying
-                                  ? handleCancelSubscription(topTrader, topSub)
-                                  : handleOpenCopyConfig(topTrader)
-                              }
-                              className={`flex-1 py-1 px-2 rounded-lg font-black text-[10px] uppercase tracking-wider flex items-center justify-center gap-1 bft-touch-scale cursor-pointer ${
-                                topIsCopying
-                                  ? 'bg-rose-500/20 border border-rose-500/40 text-rose-300'
-                                  : topIsFull
-                                  ? 'bg-slate-800 text-slate-500'
-                                  : 'bg-[#00F5A0] text-[#07080B]'
-                              }`}
-                            >
-                              <Zap className="w-2.5 h-2.5 fill-current shrink-0" />
-                              <span>{topIsCopying ? 'Stop' : topIsFull ? 'Full' : 'Quick Copy'}</span>
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {isLoading ? (
-                <div className="flex flex-col items-center justify-center py-16 space-y-3">
-                  <RefreshCw className="w-7 h-7 text-[#00F5A0] animate-spin" />
-                  <p className="text-slate-400 font-mono text-xs uppercase tracking-widest">
-                    Synchronizing 200-Trader Master Pool...
-                  </p>
-                </div>
-              ) : displayedTraders.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-14 space-y-3 text-center">
-                  <ShieldAlert className="w-8 h-8 text-amber-400" />
-                  <div>
-                    <p className="text-white font-bold text-xs sm:text-sm">No Master Trader Found Matching "{searchQuery}"</p>
-                    <p className="text-slate-400 font-mono text-[11px] mt-1">
-                      Try searching any numeric Trader ID between #100101 and #100300.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setSearchQuery('')}
-                    className="px-4 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-mono text-white cursor-pointer bft-touch-scale"
-                  >
-                    Reset Search to Daily Top 10
-                  </button>
-                </div>
-              ) : (
-                displayedTraders.map((trader, index) => {
-                  const sub = findMatchingSubscriptionForTrader(trader, activeSubscriptions);
-                  const isCopying = Boolean(sub && sub.status === 'active');
-                  const isFull = trader.current_copiers >= MAX_COPIERS_PER_TRADER && !isCopying;
-                  const displayRank = trader.rank || index + 1;
-
-                  return (
-                    <MasterTraderCardItem
-                      key={trader.id}
-                      trader={trader}
-                      displayRank={displayRank}
-                      isCopying={isCopying}
-                      isFull={isFull}
-                      activeAccount={copierEligibility.selectedAccount || activeAccount}
-                      onViewStats={setViewingTrader}
-                      onCancelSubscription={(t) => handleCancelSubscription(t, sub)}
-                      onOpenCopyConfig={handleOpenCopyConfig}
-                    />
-                  );
-                })
-              )}
-            </div>
-          </>
-        )}
-
-        {/* Bottom Footer (Compact on Mobile) */}
-        <div className="px-3 sm:px-6 py-2 sm:py-3 border-t border-slate-800/60 bg-[#0B0E17] flex items-center justify-between gap-2 text-[10px] sm:text-[11px] font-mono text-slate-400 shrink-0">
-          <div className="flex flex-wrap items-center gap-2 sm:gap-4 min-w-0">
-            <span className="flex items-center gap-1 text-slate-300 truncate">
-              <ShieldCheck className="w-3.5 h-3.5 text-[#00F5A0] shrink-0" />
-              <span className="truncate">100% Profit Keep (0% Fee)</span>
-            </span>
-            <span className="hidden sm:inline">•</span>
-            <span className="hidden sm:inline">Provider Requirement: ≥{MIN_PROVIDER_WIN_RATE_3M}% 90-Day Win Rate</span>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-3 sm:px-5 py-1.5 rounded-lg sm:rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 font-bold text-[10.5px] sm:text-xs uppercase cursor-pointer shrink-0 bft-touch-scale"
+          <div
+            data-testid="copy-traders-list"
+            className="flex-1 overflow-y-auto bg-[#202534] divide-y divide-[#171b26] custom-scrollbar overscroll-contain"
           >
-            Close
-          </button>
-        </div>
+            {isLoading ? (
+              <div className="flex flex-col items-center justify-center py-16 space-y-3">
+                <RefreshCw className="w-6 h-6 text-[#4cd964] animate-spin" />
+                <p className="text-[#7c87a2] text-xs">Loading ranked traders...</p>
+              </div>
+            ) : displayedTraders.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-14 px-4 space-y-3 text-center">
+                <p className="text-white font-semibold text-xs">
+                  No trader found matching "{searchQuery}"
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="px-3.5 py-1.5 rounded-md bg-[#242938] border border-[#373e52] text-xs text-white cursor-pointer"
+                >
+                  Reset Filter
+                </button>
+              </div>
+            ) : (
+              displayedTraders.map((trader) => {
+                const handleLabel = trader.display_handle || `user${trader.numeric_id}`;
+                const tradesCount = trader.trades_24h ?? trader.total_trades ?? 80;
+                const profitablePct =
+                  trader.profitable_trades_pct ?? Math.round(trader.win_rate_3m || 61);
+                const formattedProfit = `+$${Number(trader.daily_profit || 0).toLocaleString(
+                  'en-US',
+                  {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  }
+                )}`;
+                const isCopying = Boolean(
+                  findMatchingSubscriptionForTrader(trader, activeSubscriptions)?.status === 'active'
+                );
+
+                return (
+                  <div
+                    key={trader.id}
+                    data-testid={`copy-trader-card-${trader.numeric_id}`}
+                    onClick={() => {
+                      soundEngine.playUiClick();
+                      setProfileActiveTab('trading');
+                      setProfileTimeframe('Today');
+                      setIsProfileDateDropdownOpen(false);
+                      setViewingTrader(trader);
+                    }}
+                    className={`px-3.5 py-2.5 flex items-center justify-between gap-3 transition-colors cursor-pointer ${
+                      isCopying
+                        ? 'bg-[#25333a] hover:bg-[#2a3a42]'
+                        : 'bg-[#202534] hover:bg-[#262c3e]'
+                    }`}
+                  >
+                    {/* Left: Circular/Octagonal Avatar + Trader Handle & Number of trades */}
+                    <div className="flex items-center gap-3 min-w-0">
+                      <SocialTraderRowAvatar trader={trader} />
+
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            data-testid={`trader-handle-${trader.numeric_id}`}
+                            className="text-[13.5px] font-bold text-white leading-tight truncate"
+                          >
+                            {handleLabel}
+                          </span>
+                          {isCopying && (
+                            <span className="px-1.5 py-0.2 rounded bg-[#4cd964]/20 text-[#4cd964] text-[9px] font-bold">
+                              COPYING
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[11.5px] text-[#7c87a2] leading-tight mt-0.5">
+                          Number of trades:
+                        </div>
+                        <div
+                          data-testid={`trader-trades-count-${trader.numeric_id}`}
+                          className="text-[12.5px] font-bold text-white leading-tight mt-0.5"
+                        >
+                          {tradesCount}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Right: Green Profit Amount on top + Profitable trades: [Y]% underneath */}
+                    <div className="text-right shrink-0">
+                      <div
+                        data-testid={`trader-profit-${trader.numeric_id}`}
+                        className="text-[13.5px] font-semibold text-[#4cd964] leading-tight"
+                      >
+                        {formattedProfit}
+                      </div>
+                      <div className="text-[11.5px] text-[#7c87a2] leading-tight mt-0.5">
+                        Profitable trades:
+                      </div>
+                      <div
+                        data-testid={`trader-winrate-${trader.numeric_id}`}
+                        className="text-[12.5px] font-bold text-white leading-tight mt-0.5"
+                      >
+                        {profitablePct}%
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        )}
       </div>
 
-      {/* Detailed Trader Profile Modal */}
-      {viewingTrader && (
-        <div
-          data-testid="trader-profile-detail-modal"
-          className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/85 backdrop-blur-xl animate-fade-in"
-          onClick={() => setViewingTrader(null)}
-        >
+      {/* 2. Trader Profile Modal UI (Popup on click — Matches Screenshot 1 with 100% pixel-perfection) */}
+      {viewingTrader && (() => {
+        const profileId = viewingTrader.social_profile_id || viewingTrader.numeric_id;
+        const fullTraderName = viewingTrader.full_legal_name || viewingTrader.provider_name;
+        const profileLevel = viewingTrader.profile_level || 'Guru';
+        const statusText = viewingTrader.status_text || 'last seen recently';
+        const accountLevel = viewingTrader.account_level ?? 6;
+        const followersCount = viewingTrader.followers_count ?? 75;
+        const isWatched = watchedTraderIds.includes(viewingTrader.id);
+        const watchersCount = (viewingTrader.watchers_count ?? 155) + (isWatched ? 1 : 0);
+        const isCurrentlyCopying =
+          findMatchingSubscriptionForTrader(viewingTrader, activeSubscriptions)?.status === 'active';
+        const stats = computeProfileStatsForTimeframe(viewingTrader);
+
+        return (
           <div
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-2xl bg-[#0B0E17] border border-slate-700/80 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6 max-h-[90vh] overflow-y-auto"
+            data-testid="trader-profile-detail-modal"
+            className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-5 bg-black/65 backdrop-blur-[2px] animate-fade-in"
+            onClick={(e) => {
+              e.stopPropagation();
+              setViewingTrader(null);
+            }}
           >
-            <div className="flex items-start justify-between gap-4 border-b border-slate-800 pb-4">
-              <div className="flex items-center gap-4">
-                <div className="w-14 h-14 rounded-2xl bg-[#141926] border border-slate-700 flex items-center justify-center">
-                  <CountryFlagIcon
-                    isoCode={viewingTrader.country_code}
-                    country={viewingTrader.country}
-                    flagEmoji={viewingTrader.flag}
-                    className="w-10 h-7 object-cover rounded-xs"
-                  />
-                </div>
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-xl font-black text-white">{viewingTrader.provider_name}</h3>
-                    <span className="px-2 py-0.5 rounded bg-cyan-500/15 border border-cyan-500/30 font-mono text-xs font-bold text-cyan-300">
-                      ID #{viewingTrader.numeric_id}
-                    </span>
-                    <span className="px-2 py-0.5 rounded bg-[#00F5A0]/15 border border-[#00F5A0]/30 font-mono text-[10px] font-bold text-[#00F5A0]">
-                      100% Profit Keep
-                    </span>
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-[650px] bg-[#1f2433] border border-[#2d3448] rounded-xl p-5 sm:p-7 shadow-[0_25px_70px_rgba(0,0,0,0.85)] text-white max-h-[94vh] overflow-y-auto"
+            >
+              {/* Modal Header: "Real trading profile ID: [ID]" with close (X) button */}
+              <div className="flex items-center justify-between gap-4">
+                <h3
+                  data-testid="trader-profile-modal-title"
+                  className="text-[16.5px] sm:text-[17.5px] font-semibold text-white tracking-tight"
+                >
+                  Real trading profile ID: {profileId}
+                </h3>
+                <button
+                  type="button"
+                  aria-label="Close Trader Profile"
+                  data-testid="close-trader-profile-modal-btn"
+                  onClick={() => setViewingTrader(null)}
+                  className="p-1 text-[#6c7893] hover:text-white transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5 stroke-[2.2]" />
+                </button>
+              </div>
+
+              {/* Profile Header Box: Large Avatar on Left + Metadata Grid & Action Buttons on Right */}
+              <div className="flex flex-col sm:flex-row items-center sm:items-start gap-5 sm:gap-6 mt-5">
+                {/* Large Circular Avatar with Gold Border & Pentagon Badge */}
+                <SocialTraderProfileLargeAvatar trader={viewingTrader} />
+
+                {/* Right Column: Metadata Grid + Dashed Notice Banner + Watch/Message Buttons */}
+                <div className="flex-1 w-full space-y-3.5">
+                  {/* 3x2 Metadata Grid */}
+                  <div className="grid grid-cols-2 sm:grid-cols-[1.65fr_1.1fr_0.65fr] gap-x-4 gap-y-2.5 text-left">
+                    {/* Name */}
+                    <div className="min-w-0 col-span-2 sm:col-span-1">
+                      <div className="text-[11.5px] text-[#7c87a2] leading-tight">Name</div>
+                      <div
+                        data-testid="profile-full-name"
+                        className="text-[13px] font-bold text-white leading-snug mt-0.5 truncate"
+                        title={fullTraderName}
+                      >
+                        {fullTraderName}
+                      </div>
+                    </div>
+
+                    {/* Status */}
+                    <div>
+                      <div className="text-[11.5px] text-[#7c87a2] leading-tight">Status</div>
+                      <div
+                        data-testid="profile-status"
+                        className="text-[13px] font-bold text-white leading-snug mt-0.5"
+                      >
+                        {statusText}
+                      </div>
+                    </div>
+
+                    {/* Followers */}
+                    <div>
+                      <div className="text-[11.5px] text-[#7c87a2] leading-tight">Followers</div>
+                      <div
+                        data-testid="profile-followers-count"
+                        className="text-[13px] font-bold text-white leading-snug mt-0.5"
+                      >
+                        {followersCount}
+                      </div>
+                    </div>
+
+                    {/* Profile Level */}
+                    <div>
+                      <div className="text-[11.5px] text-[#7c87a2] leading-tight">Profile Level</div>
+                      <div
+                        data-testid="profile-level"
+                        className="text-[13px] font-bold text-white leading-snug mt-0.5"
+                      >
+                        {profileLevel}
+                      </div>
+                    </div>
+
+                    {/* Account Level */}
+                    <div>
+                      <div className="text-[11.5px] text-[#7c87a2] leading-tight">Account Level</div>
+                      <div data-testid="profile-account-level" className="mt-0.5">
+                        <AccountLevelLaurelBadge level={accountLevel} />
+                      </div>
+                    </div>
+
+                    {/* Watchers */}
+                    <div>
+                      <div className="text-[11.5px] text-[#7c87a2] leading-tight">Watchers</div>
+                      <div
+                        data-testid="profile-watchers-count"
+                        className="text-[13px] font-bold text-white leading-snug mt-0.5"
+                      >
+                        {watchersCount}
+                      </div>
+                    </div>
                   </div>
-                  <p className="text-xs font-mono text-slate-400 mt-1">
-                    {viewingTrader.account_type_label} • {viewingTrader.strategy_title} • {viewingTrader.country}
-                  </p>
+
+                  {/* Dashed Action Banner: "Add money to your account in order to copy trades." */}
+                  <div
+                    data-testid="profile-copy-notice-box"
+                    className="border border-dashed border-[#434c66] bg-[#2a3144] rounded-md px-3.5 py-2.5 flex items-center justify-between gap-3"
+                  >
+                    <div className="w-4 h-4 rounded-full bg-[#5e6b8a] text-[#2a3144] flex items-center justify-center text-[11px] font-black shrink-0">
+                      !
+                    </div>
+                    <div className="text-[12px] text-white text-center flex-1">
+                      <button
+                        type="button"
+                        data-testid="modal-copy-trader-cta"
+                        onClick={() => {
+                          soundEngine.playUiClick();
+                          if (isCurrentlyCopying || copierEligibility.selectedResult.eligible) {
+                            handleOpenCopyConfig(viewingTrader);
+                          } else if (onOpenDepositModal) {
+                            setViewingTrader(null);
+                            onClose();
+                            onOpenDepositModal();
+                          } else {
+                            handleOpenCopyConfig(viewingTrader);
+                          }
+                        }}
+                        className="underline font-bold text-white hover:text-[#4cd964] cursor-pointer"
+                      >
+                        {isCurrentlyCopying ? 'Stop copying' : 'Add money'}
+                      </button>{' '}
+                      {isCurrentlyCopying
+                        ? `active subscription for ${viewingTrader.display_handle || fullTraderName}.`
+                        : 'to your account in order to copy trades.'}
+                    </div>
+                  </div>
+
+                  {/* Watch & Message Action Buttons */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      data-testid="profile-watch-btn"
+                      onClick={() => {
+                        soundEngine.playUiClick();
+                        setWatchedTraderIds((prev) =>
+                          prev.includes(viewingTrader.id)
+                            ? prev.filter((id) => id !== viewingTrader.id)
+                            : [...prev, viewingTrader.id]
+                        );
+                        triggerToast(
+                          isWatched
+                            ? `Removed ${fullTraderName} from your Watchlist.`
+                            : `Now watching ${fullTraderName} (ID: ${profileId}).`,
+                          'success'
+                        );
+                      }}
+                      className={`border border-[#1d8f5c] ${
+                        isWatched ? 'bg-[#1d8f5c]/30' : 'bg-[#1e3237] hover:bg-[#1d8f5c]/25'
+                      } text-white font-semibold py-2 px-4 rounded-md text-[12.5px] cursor-pointer transition-colors`}
+                    >
+                      {isWatched ? 'Watching' : 'Watch'}
+                    </button>
+
+                    <button
+                      type="button"
+                      data-testid="profile-message-btn"
+                      onClick={() => {
+                        soundEngine.playUiClick();
+                        handleOpenCopyConfig(viewingTrader);
+                      }}
+                      className="bg-[#323a4d] hover:bg-[#3c455c] text-white font-semibold py-2 px-4 rounded-md text-[12.5px] cursor-pointer transition-colors"
+                    >
+                      Message
+                    </button>
+                  </div>
                 </div>
               </div>
-              <button
-                type="button"
-                aria-label="Close Trader Profile"
-                onClick={() => setViewingTrader(null)}
-                className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
 
-            {/* Balances & All-Time Withdrawals */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="p-4 rounded-2xl bg-[#111624] border border-slate-800">
-                <p className="text-[10px] font-mono text-slate-400 uppercase">Starting Balance</p>
-                <p className="text-lg font-mono font-black text-white mt-1">
-                  ${viewingTrader.starting_balance.toLocaleString()}
-                </p>
-              </div>
-              <div className="p-4 rounded-2xl bg-[#111624] border border-[#00F5A0]/30">
-                <p className="text-[10px] font-mono text-[#00F5A0] uppercase">Current Balance</p>
-                <p className="text-lg font-mono font-black text-[#00F5A0] mt-1">
-                  ${viewingTrader.current_balance.toLocaleString()}
-                </p>
-              </div>
-              <div className="p-4 rounded-2xl bg-[#111624] border border-amber-500/30">
-                <p className="text-[10px] font-mono text-amber-400 uppercase">All-Time Withdrawals</p>
-                <p className="text-lg font-mono font-black text-amber-300 mt-1">
-                  ${viewingTrader.all_time_withdrawals.toLocaleString()}
-                </p>
-              </div>
-            </div>
+              {/* Lower Section: Left Side Tabs + Right Side Statistics Body */}
+              <div className="bg-[#181c28] rounded-xl p-4 sm:p-5 mt-5 flex flex-col sm:flex-row gap-4 sm:gap-5">
+                {/* Left Column Tabs: Trading Statistics, Social Statistics, Achievements */}
+                <div className="w-full sm:w-[172px] shrink-0 flex flex-col gap-2.5">
+                  <button
+                    type="button"
+                    data-testid="profile-tab-trading-stats"
+                    onClick={() => {
+                      soundEngine.playUiClick();
+                      setProfileActiveTab('trading');
+                    }}
+                    className={`w-full py-2.5 px-4 rounded-md text-[12.5px] font-semibold text-center transition-colors cursor-pointer border ${
+                      profileActiveTab === 'trading'
+                        ? 'bg-[#213554] border-[#2d74da] text-white'
+                        : 'bg-[#1d2230] border-[#32394c] hover:border-[#454f69] text-white/90'
+                    }`}
+                  >
+                    Trading Statistics
+                  </button>
 
-            {/* 4-Period ROI Breakdown */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <div className="p-3.5 rounded-2xl bg-[#111624] border border-slate-800">
-                <p className="text-[10px] font-mono text-slate-400 uppercase">Daily ROI</p>
-                <p className="text-sm font-mono font-black text-[#00F5A0] mt-1">
-                  +${viewingTrader.daily_profit.toLocaleString()}
-                </p>
-                <p className="text-xs font-mono text-[#00F5A0]/80">+{viewingTrader.daily_profit_pct}%</p>
-              </div>
-              <div className="p-3.5 rounded-2xl bg-[#111624] border border-slate-800">
-                <p className="text-[10px] font-mono text-slate-400 uppercase">Weekly ROI</p>
-                <p className="text-sm font-mono font-black text-white mt-1">
-                  +${viewingTrader.weekly_profit.toLocaleString()}
-                </p>
-                <p className="text-xs font-mono text-emerald-400">+{viewingTrader.weekly_profit_pct}%</p>
-              </div>
-              <div className="p-3.5 rounded-2xl bg-[#111624] border border-slate-800">
-                <p className="text-[10px] font-mono text-slate-400 uppercase">Monthly ROI</p>
-                <p className="text-sm font-mono font-black text-white mt-1">
-                  +${viewingTrader.monthly_profit.toLocaleString()}
-                </p>
-                <p className="text-xs font-mono text-emerald-400">+{viewingTrader.monthly_profit_pct}%</p>
-              </div>
-              <div className="p-3.5 rounded-2xl bg-[#111624] border border-slate-800">
-                <p className="text-[10px] font-mono text-slate-400 uppercase">3-Month ROI</p>
-                <p className="text-sm font-mono font-black text-amber-300 mt-1">
-                  +${viewingTrader.three_month_profit.toLocaleString()}
-                </p>
-                <p className="text-xs font-mono text-amber-400">+{viewingTrader.three_month_profit_pct}%</p>
-              </div>
-            </div>
+                  <button
+                    type="button"
+                    data-testid="profile-tab-social-stats"
+                    onClick={() => {
+                      soundEngine.playUiClick();
+                      setProfileActiveTab('social');
+                    }}
+                    className={`w-full py-2.5 px-4 rounded-md text-[12.5px] font-semibold text-center transition-colors cursor-pointer border ${
+                      profileActiveTab === 'social'
+                        ? 'bg-[#213554] border-[#2d74da] text-white'
+                        : 'bg-[#1d2230] border-[#32394c] hover:border-[#454f69] text-white/90'
+                    }`}
+                  >
+                    Social Statistics
+                  </button>
 
-            {/* Verification & Capacity Stats */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono">
-              <div className="p-3 rounded-xl bg-[#111624] border border-slate-800">
-                <span className="text-slate-400 block text-[10px]">3M Win Rate</span>
-                <strong className="text-[#00F5A0] text-sm">{viewingTrader.win_rate_3m}%</strong>
-              </div>
-              <div className="p-3 rounded-xl bg-[#111624] border border-slate-800">
-                <span className="text-slate-400 block text-[10px]">Max Drawdown</span>
-                <strong className="text-rose-400 text-sm">-{viewingTrader.max_drawdown}%</strong>
-              </div>
-              <div className="p-3 rounded-xl bg-[#111624] border border-slate-800">
-                <span className="text-slate-400 block text-[10px]">Profit Factor</span>
-                <strong className="text-white text-sm">{viewingTrader.profit_factor}x</strong>
-              </div>
-              <div className="p-3 rounded-xl bg-[#111624] border border-slate-800">
-                <span className="text-slate-400 block text-[10px]">Copier Capacity</span>
-                <strong className="text-cyan-300 text-sm">
-                  {viewingTrader.current_copiers} / {MAX_COPIERS_PER_TRADER}
-                </strong>
-              </div>
-            </div>
+                  <button
+                    type="button"
+                    data-testid="profile-tab-achievements"
+                    onClick={() => {
+                      soundEngine.playUiClick();
+                      setProfileActiveTab('achievements');
+                    }}
+                    className={`w-full py-2.5 px-4 rounded-md text-[12.5px] font-semibold text-center transition-colors cursor-pointer border ${
+                      profileActiveTab === 'achievements'
+                        ? 'bg-[#213554] border-[#2d74da] text-white'
+                        : 'bg-[#1d2230] border-[#32394c] hover:border-[#454f69] text-white/90'
+                    }`}
+                  >
+                    Achievements
+                  </button>
+                </div>
 
-            <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-end gap-2.5 sm:gap-3 pt-2">
-              <button
-                type="button"
-                onClick={() => setViewingTrader(null)}
-                className="w-full sm:w-auto px-5 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 font-bold text-xs uppercase cursor-pointer touch-manipulation"
-              >
-                Close
-              </button>
-              <button
-                type="button"
-                data-testid="modal-copy-trader-cta"
-                onClick={() => handleOpenCopyConfig(viewingTrader)}
-                className="w-full sm:w-auto px-6 py-3 rounded-xl bg-[#00F5A0] hover:brightness-110 text-[#07080B] font-black text-xs uppercase tracking-wider cursor-pointer shadow-lg touch-manipulation"
-              >
-                {findMatchingSubscriptionForTrader(viewingTrader, activeSubscriptions)?.status === 'active'
-                  ? 'Stop Copying Trader'
-                  : `Copy ${viewingTrader.provider_name} (#${viewingTrader.numeric_id})`}
-              </button>
+                {/* Right Column Statistics Body */}
+                <div className="flex-1 space-y-2.5">
+                  {profileActiveTab === 'trading' && (
+                    <>
+                      {/* Date Filter Dropdown ("Today" with blue calendar icon) */}
+                      <div className="relative w-full sm:w-[225px]">
+                        <button
+                          type="button"
+                          data-testid="profile-date-filter"
+                          onClick={() => {
+                            soundEngine.playUiClick();
+                            setIsProfileDateDropdownOpen((prev) => !prev);
+                          }}
+                          className="w-full bg-[#1d2230] border border-[#32394c] hover:border-[#454f69] rounded-md px-3 py-2 flex items-center justify-between text-[12px] text-[#8b96b2] cursor-pointer"
+                        >
+                          <div className="flex items-center gap-2">
+                            {/* Blue Calendar Icon */}
+                            <svg
+                              viewBox="0 0 16 16"
+                              className="w-3.5 h-3.5 text-[#2d74da] shrink-0"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="1.5"
+                            >
+                              <rect x="2" y="3" width="12" height="11" rx="1.5" />
+                              <path d="M2 6.5h12M5.5 1.5v3M10.5 1.5v3" strokeLinecap="round" />
+                              <circle cx="5.5" cy="9.5" r="0.8" fill="currentColor" stroke="none" />
+                              <circle cx="8" cy="9.5" r="0.8" fill="currentColor" stroke="none" />
+                              <circle cx="10.5" cy="9.5" r="0.8" fill="currentColor" stroke="none" />
+                            </svg>
+                            <span>{profileTimeframe}</span>
+                          </div>
+                          <span className="text-[9px] text-[#8b96b2]">▼</span>
+                        </button>
+
+                        {isProfileDateDropdownOpen && (
+                          <div className="absolute left-0 right-0 top-[38px] z-20 bg-[#242938] border border-[#373e52] rounded-md shadow-xl overflow-hidden py-1">
+                            {(
+                              [
+                                'Today',
+                                'Yesterday',
+                                'Last 7 days',
+                                'Last 30 days',
+                                'All time',
+                              ] as const
+                            ).map((tf) => (
+                              <button
+                                key={tf}
+                                type="button"
+                                onClick={() => {
+                                  soundEngine.playUiClick();
+                                  setProfileTimeframe(tf);
+                                  setIsProfileDateDropdownOpen(false);
+                                }}
+                                className={`w-full px-3 py-1.5 text-left text-xs cursor-pointer ${
+                                  profileTimeframe === tf
+                                    ? 'bg-[#2d74da]/25 text-white font-semibold'
+                                    : 'text-[#8b96b2] hover:bg-white/5 hover:text-white'
+                                }`}
+                              >
+                                {tf}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 7 Clean Dark Horizontal Stat Cards with Blue Left Accent Border */}
+                      {[
+                        {
+                          label: 'Trades:',
+                          value: String(stats.trades),
+                          testId: 'stat-row-trades',
+                        },
+                        {
+                          label: 'Profitable trades:',
+                          value: `${stats.profitableTradesPct}%`,
+                          testId: 'stat-row-profitable-trades',
+                        },
+                        {
+                          label: 'Trading turnover:',
+                          value: `$${stats.tradingTurnover.toLocaleString('en-US', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}`,
+                          testId: 'stat-row-trading-turnover',
+                        },
+                        {
+                          label: 'Trading profit:',
+                          value: `$${stats.tradingProfit.toLocaleString('en-US', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}`,
+                          testId: 'stat-row-trading-profit',
+                        },
+                        {
+                          label: 'Max. trade:',
+                          value: `$${stats.maxTrade.toLocaleString('en-US', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}`,
+                          testId: 'stat-row-max-trade',
+                        },
+                        {
+                          label: 'Min. trade:',
+                          value: `$${stats.minTrade.toLocaleString('en-US', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}`,
+                          testId: 'stat-row-min-trade',
+                        },
+                        {
+                          label: 'Max. profit:',
+                          value: `$${stats.maxProfit.toLocaleString('en-US', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}`,
+                          testId: 'stat-row-max-profit',
+                        },
+                      ].map((row) => (
+                        <div
+                          key={row.label}
+                          data-testid={row.testId}
+                          className="bg-[#252b3b] rounded-md flex items-center py-2.5 px-4 relative overflow-hidden"
+                        >
+                          <div className="absolute left-0 top-0 bottom-0 w-[5px] bg-[#1da1f2] rounded-l-md" />
+                          <span className="w-[55%] text-[12.5px] text-[#8b96b2] pl-1.5">
+                            {row.label}
+                          </span>
+                          <span className="w-[45%] text-[13px] font-bold text-white">
+                            {row.value}
+                          </span>
+                        </div>
+                      ))}
+                    </>
+                  )}
+
+                  {profileActiveTab === 'social' && (
+                    <div className="space-y-2.5">
+                      {[
+                        { label: 'Followers:', value: String(followersCount) },
+                        { label: 'Watchers:', value: String(watchersCount) },
+                        {
+                          label: 'Active copiers:',
+                          value: `${viewingTrader.current_copiers} / ${MAX_COPIERS_PER_TRADER}`,
+                        },
+                        { label: 'Profit keep share:', value: '100%' },
+                        { label: 'Commission fee:', value: '0%' },
+                        { label: 'Profile level:', value: profileLevel },
+                        { label: 'Account level:', value: `Level ${accountLevel}` },
+                      ].map((row) => (
+                        <div
+                          key={row.label}
+                          className="bg-[#252b3b] rounded-md flex items-center py-2.5 px-4 relative overflow-hidden"
+                        >
+                          <div className="absolute left-0 top-0 bottom-0 w-[5px] bg-[#1da1f2] rounded-l-md" />
+                          <span className="w-[55%] text-[12.5px] text-[#8b96b2] pl-1.5">
+                            {row.label}
+                          </span>
+                          <span className="w-[45%] text-[13px] font-bold text-white">
+                            {row.value}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {profileActiveTab === 'achievements' && (
+                    <div className="space-y-2.5">
+                      {[
+                        { label: 'Trader Rank:', value: `#${viewingTrader.rank || 1} Ranked (24h)` },
+                        { label: 'Profile Tier:', value: `${profileLevel} Master` },
+                        { label: 'Account Laurels:', value: `Level ${accountLevel} Verified` },
+                        { label: '90-Day Win Rate:', value: `${viewingTrader.win_rate_3m}%` },
+                        { label: 'Profit Factor:', value: `${viewingTrader.profit_factor}x` },
+                      ].map((row) => (
+                        <div
+                          key={row.label}
+                          className="bg-[#252b3b] rounded-md flex items-center py-2.5 px-4 relative overflow-hidden"
+                        >
+                          <div className="absolute left-0 top-0 bottom-0 w-[5px] bg-[#1da1f2] rounded-l-md" />
+                          <span className="w-[55%] text-[12.5px] text-[#8b96b2] pl-1.5">
+                            {row.label}
+                          </span>
+                          <span className="w-[45%] text-[13px] font-bold text-white">
+                            {row.value}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Quick Copy Allocation Modal */}
       {showRiskConfigModal && (
