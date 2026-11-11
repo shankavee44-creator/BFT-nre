@@ -52,6 +52,7 @@ const CURRENCY_TO_ISO: Record<string, string> = {
   VND: 'vn',
   NGN: 'ng',
   EGP: 'eg',
+  AOA: 'ao',
 };
 
 /**
@@ -101,6 +102,7 @@ export function getIsoCountryCode(countryOrEmoji: string = ''): string {
 
   // 4. Country name lookup
   const lower = input.toLowerCase();
+  if (lower === 'ao' || lower.includes('angola')) return 'ao';
   if (lower === 'lk' || lower.includes('sri lanka')) return 'lk';
   if (lower === 'ae' || lower.includes('uae') || lower.includes('dubai') || lower.includes('emirates')) return 'ae';
   if (lower === 'in' || lower.includes('india')) return 'in';
@@ -124,7 +126,7 @@ export function getIsoCountryCode(countryOrEmoji: string = ''): string {
   if (lower === 'tr' || lower.includes('turkey')) return 'tr';
   if (lower === 'mx' || lower.includes('mexico')) return 'mx';
   if (lower === 'id' || lower.includes('indonesia')) return 'id';
-  if (lower === 'VN' || lower.includes('vietnam')) return 'vn';
+  if (lower === 'vn' || lower.includes('vietnam')) return 'vn';
   if (lower === 'th' || lower.includes('thailand')) return 'th';
   if (lower === 'ph' || lower.includes('philippines')) return 'ph';
   if (lower === 'kr' || lower.includes('korea')) return 'kr';

@@ -22,27 +22,43 @@ export interface LeaderboardTrader {
 export const SRI_LANKA_OFFSET_MINUTES = 330; // UTC+5:30
 export const SRI_LANKA_OFFSET_MS = SRI_LANKA_OFFSET_MINUTES * 60 * 1000;
 
-export const YOHAN_FUNDED_PROFIT = 72876.98;
+export const MATEUS_FUNDED_PROFIT = 72876.98;
+export const YOHAN_FUNDED_PROFIT = MATEUS_FUNDED_PROFIT;
 export const FUNDED_RANK_15_PROFIT = 27321.11;
 export const YOHAN_SELF_FUNDED_PROFIT = 37456.55;
-export const YOHAN_EVENING_TARGET_PROFIT = YOHAN_FUNDED_PROFIT;
+export const YOHAN_EVENING_TARGET_PROFIT = MATEUS_FUNDED_PROFIT;
+
+export const MATEUS_DOMINGOS_ENTRY: LeaderboardTrader = {
+  id: 'fnd_ao_01',
+  rank: 1,
+  name: 'Mateus Domingos',
+  country: 'Angola',
+  flag: '🇦🇴',
+  isoCode: 'AO',
+  category: 'funded',
+  accountTier: '$100,000 Instant Funded',
+  profit: MATEUS_FUNDED_PROFIT,
+  targetEveningProfit: MATEUS_FUNDED_PROFIT,
+  winRate: 84.2,
+  payoutTime: '1m 12s',
+};
 
 export const YOHAN_SIRIWARDHANA_ENTRY: LeaderboardTrader = {
-  id: 'usr_lk_yohan_01',
+  id: 'slf_lk_01',
   rank: 1,
   name: 'Yohan Siriwardhana',
   country: 'Sri Lanka',
   flag: '🇱🇰',
   isoCode: 'LK',
-  category: 'funded',
-  accountTier: '$100,000 Instant Funded',
-  profit: YOHAN_FUNDED_PROFIT,
-  targetEveningProfit: YOHAN_FUNDED_PROFIT,
-  winRate: 84.2,
-  payoutTime: '1m 12s',
+  category: 'self_funded',
+  accountTier: 'Self-Funded VIP Live',
+  profit: YOHAN_SELF_FUNDED_PROFIT,
+  targetEveningProfit: YOHAN_SELF_FUNDED_PROFIT,
+  winRate: 83.1,
+  payoutTime: '0m 58s',
 };
 
-export const KASUN_PERERA_ENTRY = YOHAN_SIRIWARDHANA_ENTRY;
+export const KASUN_PERERA_ENTRY = MATEUS_DOMINGOS_ENTRY;
 
 interface SeedTraderConfig {
   id: string;
@@ -59,27 +75,27 @@ interface SeedTraderConfig {
 /**
  * FUNDED TRADERS POOL (Weekly Reset Timeframe - Past Week Best Funded Traders):
  * Top 15 Regional Distribution:
- * - 1 Sri Lanka (Rank 1 fixed: Yohan Siriwardhana - Peak $72,876.98)
+ * - 1 Angola (Rank 1 fixed: Mateus Domingos - Peak $72,876.98)
  * - 7 India
  * - 3 Bangladesh
  * - 2 Pakistan
  * - 2 UAE / Malaysia (1 UAE, 1 Malaysia)
  *
  * Profit Range:
- * - Rank 1: Exactly $72,876.98
+ * - Rank 1: Exactly $72,876.98 (Mateus Domingos, Angola)
  * - Rank 15: Exactly $27,321.11
  * - Ranks 2 to 14: Progressive scaling in between
  */
 export const FUNDED_TRADER_POOL: SeedTraderConfig[] = [
-  // 1 Sri Lanka (Fixed Rank 1)
+  // 1 Angola (Fixed Rank 1 - Mateus Domingos)
   {
-    id: 'fnd_lk_01',
-    name: 'Yohan Siriwardhana',
-    country: 'Sri Lanka',
-    flag: '🇱🇰',
-    isoCode: 'LK',
+    id: 'fnd_ao_01',
+    name: 'Mateus Domingos',
+    country: 'Angola',
+    flag: '🇦🇴',
+    isoCode: 'AO',
     accountTier: '$100,000 Instant Funded',
-    eveningProfit: YOHAN_FUNDED_PROFIT,
+    eveningProfit: MATEUS_FUNDED_PROFIT,
     winRate: 84.2,
     payoutTime: '1m 12s',
   },
@@ -478,7 +494,10 @@ export function getSriLankaDailyResetInfo(nowMs: number = Date.now()): {
   let intradayScale = 0.0;
   let sessionPhase: 'morning' | 'afternoon' | 'evening' = 'morning';
 
-  if (elapsedHoursSinceReset < 4) {
+  if (elapsedMsSinceReset <= 0) {
+    sessionPhase = 'morning';
+    intradayScale = 0.0;
+  } else if (elapsedHoursSinceReset < 4) {
     sessionPhase = 'morning';
     intradayScale = (elapsedHoursSinceReset / 4) * 0.25;
   } else if (elapsedHoursSinceReset < 12) {
@@ -586,7 +605,8 @@ export const getMondayWeeklyResetInfo = getSriLankaDailyResetInfo;
 
 /**
  * Normalizes Funded Leaderboard traders:
- * Keeps Yohan Siriwardhana anchored at Rank 1 (Sri Lanka, LK) with exact peak $72,876.98,
+ * Removes Yohan Siriwardhana from the Funded Leaderboard tab and keeps
+ * Mateus Domingos anchored at Rank 1 (Angola, AO) with exact profit $72,876.98,
  * and Karthik Reddy anchored at Rank 15 with exact peak $27,321.11,
  * sorting all intermediate traders strictly in descending order.
  */
@@ -594,38 +614,51 @@ export function normalizeFundedLeaderboard(
   traders: LeaderboardTrader[],
   useEveningPeak?: boolean
 ): LeaderboardTrader[] {
-  const yohan = traders.find((t) => t.name === 'Yohan Siriwardhana' || t.isoCode === 'LK') || {
-    id: 'fnd_lk_01',
+  const mateus = traders.find(
+    (t) => t.name === 'Mateus Domingos' || t.isoCode === 'AO' || t.country === 'Angola'
+  ) || {
+    id: 'fnd_ao_01',
     rank: 1,
-    name: 'Yohan Siriwardhana',
-    country: 'Sri Lanka',
-    flag: '🇱🇰',
-    isoCode: 'LK',
+    name: 'Mateus Domingos',
+    country: 'Angola',
+    flag: '🇦🇴',
+    isoCode: 'AO',
     category: 'funded' as LeaderboardTabCategory,
     accountTier: '$100,000 Instant Funded',
-    profit: YOHAN_FUNDED_PROFIT,
+    profit: MATEUS_FUNDED_PROFIT,
     winRate: 84.2,
     payoutTime: '1m 12s',
   };
 
-  const rank1Profit = useEveningPeak ? YOHAN_FUNDED_PROFIT : Math.max(YOHAN_FUNDED_PROFIT * 0.8, yohan.profit);
+  // Maintain the exact Rank 1 profit of $72,876.98 for Mateus Domingos
+  const rank1Profit = MATEUS_FUNDED_PROFIT;
 
   const others = traders
-    .filter((t) => t.name !== 'Yohan Siriwardhana' && t.isoCode !== 'LK')
+    .filter(
+      (t) =>
+        t.name !== 'Mateus Domingos' &&
+        t.name !== 'Yohan Siriwardhana' &&
+        t.isoCode !== 'AO' &&
+        t.isoCode !== 'LK' &&
+        t.country !== 'Angola'
+    )
     .sort((a, b) => b.profit - a.profit);
 
-  const yohanRank1: LeaderboardTrader = {
-    ...yohan,
+  const mateusRank1: LeaderboardTrader = {
+    ...mateus,
+    id: mateus.id && !mateus.id.includes('lk') ? mateus.id : 'fnd_ao_01',
     rank: 1,
-    name: 'Yohan Siriwardhana',
-    country: 'Sri Lanka',
-    flag: '🇱🇰',
-    isoCode: 'LK',
+    name: 'Mateus Domingos',
+    country: 'Angola',
+    flag: '🇦🇴',
+    isoCode: 'AO',
+    category: 'funded',
     profit: rank1Profit,
   };
 
-  const result = [yohanRank1, ...others.slice(0, 14)].map((t, idx) => ({
+  const result = [mateusRank1, ...others.slice(0, 14)].map((t, idx) => ({
     ...t,
+    category: 'funded' as LeaderboardTabCategory,
     rank: idx + 1,
   }));
 
@@ -638,11 +671,13 @@ export function normalizeFundedLeaderboard(
 
 /**
  * Normalizes Self-Funded Leaderboard traders:
- * Keeps Yohan Siriwardhana anchored at Rank 1 (Sri Lanka, LK) with exact peak $37,456.55.
+ * Keeps Yohan Siriwardhana anchored at Rank 1 (Sri Lanka, LK).
+ * When `resetToZero` is true (at 05:30 AM UTC+5:30 daily reset), traders start fresh at $0.00.
  */
 export function normalizeSelfFundedLeaderboard(
   traders: LeaderboardTrader[],
-  useEveningPeak?: boolean
+  useEveningPeak?: boolean,
+  resetToZero?: boolean
 ): LeaderboardTrader[] {
   const yohan = traders.find((t) => t.name === 'Yohan Siriwardhana' || t.isoCode === 'LK') || {
     id: 'slf_lk_01',
@@ -653,17 +688,22 @@ export function normalizeSelfFundedLeaderboard(
     isoCode: 'LK',
     category: 'self_funded' as LeaderboardTabCategory,
     accountTier: 'Self-Funded VIP Live',
-    profit: YOHAN_SELF_FUNDED_PROFIT,
+    profit: resetToZero ? 0 : YOHAN_SELF_FUNDED_PROFIT,
     winRate: 83.1,
     payoutTime: '0m 58s',
   };
 
-  const rank1Profit = useEveningPeak
+  const rank1Profit = resetToZero
+    ? 0
+    : useEveningPeak
     ? YOHAN_SELF_FUNDED_PROFIT
-    : Math.max(YOHAN_SELF_FUNDED_PROFIT * 0.22, yohan.profit);
+    : yohan.profit === 0
+    ? 0
+    : Math.max(yohan.profit, YOHAN_SELF_FUNDED_PROFIT);
 
   const others = traders
     .filter((t) => t.name !== 'Yohan Siriwardhana' && t.isoCode !== 'LK')
+    .map((t) => (resetToZero ? { ...t, profit: 0 } : t))
     .sort((a, b) => b.profit - a.profit);
 
   const yohanRank1: LeaderboardTrader = {
@@ -673,16 +713,38 @@ export function normalizeSelfFundedLeaderboard(
     country: 'Sri Lanka',
     flag: '🇱🇰',
     isoCode: 'LK',
+    category: 'self_funded',
     profit: rank1Profit,
   };
 
   return [yohanRank1, ...others.slice(0, 14)].map((t, idx) => ({
     ...t,
+    category: 'self_funded' as LeaderboardTabCategory,
     rank: idx + 1,
   }));
 }
 
 export const normalizeWeeklyLeaderboard = normalizeFundedLeaderboard;
+
+/**
+ * Generates a fresh $0.00 Self-Funded Daily Leaderboard snapshot at 05:30 AM (UTC+5:30).
+ */
+export function createFreshZeroSelfFundedLeaderboard(): LeaderboardTrader[] {
+  return SELF_FUNDED_TRADER_POOL.map((cfg, idx) => ({
+    id: cfg.id,
+    rank: idx + 1,
+    name: cfg.name,
+    country: cfg.country,
+    flag: cfg.flag,
+    isoCode: cfg.isoCode,
+    category: 'self_funded' as LeaderboardTabCategory,
+    accountTier: cfg.accountTier,
+    profit: 0,
+    targetEveningProfit: cfg.eveningProfit,
+    winRate: cfg.winRate,
+    payoutTime: cfg.payoutTime,
+  }));
+}
 
 /**
  * Generates the Top 15 leaderboard for the given tab ('funded' | 'self_funded') and timestamp.
@@ -691,6 +753,7 @@ export function getDynamicLeaderboardTraders(options?: {
   category?: LeaderboardTabCategory;
   nowMs?: number;
   useEveningPeak?: boolean;
+  resetToZero?: boolean;
 }): LeaderboardTrader[] {
   const category: LeaderboardTabCategory = options?.category || 'funded';
   const nowMs = options?.nowMs ?? Date.now();
@@ -702,9 +765,7 @@ export function getDynamicLeaderboardTraders(options?: {
     const rawList: LeaderboardTrader[] = FUNDED_TRADER_POOL.map((cfg, idx) => {
       let profit: number;
       if (idx === 0) {
-        profit = options?.useEveningPeak
-          ? YOHAN_FUNDED_PROFIT
-          : Number((YOHAN_FUNDED_PROFIT * scale).toFixed(2));
+        profit = MATEUS_FUNDED_PROFIT;
       } else if (idx === FUNDED_TRADER_POOL.length - 1) {
         profit = options?.useEveningPeak
           ? FUNDED_RANK_15_PROFIT
@@ -734,8 +795,16 @@ export function getDynamicLeaderboardTraders(options?: {
     return normalizeFundedLeaderboard(rawList, options?.useEveningPeak);
   }
 
-  // Daily Reset Logic for Self-Funded Traders
+  // Daily Reset Logic for Self-Funded Traders (resets every day at 05:30 AM UTC+5:30 / 00:00 UTC)
   const resetInfo = getSriLankaDailyResetInfo(nowMs);
+  const isAtExactResetBoundary =
+    options?.resetToZero === true ||
+    (!options?.useEveningPeak && resetInfo.elapsedMsSinceReset === 0);
+
+  if (isAtExactResetBoundary) {
+    return createFreshZeroSelfFundedLeaderboard();
+  }
+
   const scale = options?.useEveningPeak ? 1.0 : resetInfo.intradayScale;
 
   const rawList: LeaderboardTrader[] = SELF_FUNDED_TRADER_POOL.map((cfg, idx) => {
@@ -743,13 +812,13 @@ export function getDynamicLeaderboardTraders(options?: {
     if (cfg.isoCode === 'LK' || cfg.name === 'Yohan Siriwardhana') {
       profit = options?.useEveningPeak
         ? YOHAN_SELF_FUNDED_PROFIT
-        : Number((YOHAN_SELF_FUNDED_PROFIT * scale).toFixed(2));
+        : YOHAN_SELF_FUNDED_PROFIT;
     } else {
       const minuteBucket = Math.floor(resetInfo.elapsedMsSinceReset / (60 * 1000));
       const waveSeed = Math.sin((minuteBucket + idx * 19) * 0.15) * 0.025;
       const effectiveScale = options?.useEveningPeak
         ? 1.0
-        : Math.max(0.15, Math.min(1.0, scale + waveSeed));
+        : Math.max(0.0, Math.min(1.0, scale + waveSeed));
       profit = Number((cfg.eveningProfit * effectiveScale).toFixed(2));
     }
 
@@ -769,7 +838,7 @@ export function getDynamicLeaderboardTraders(options?: {
     };
   });
 
-  return normalizeSelfFundedLeaderboard(rawList, options?.useEveningPeak);
+  return normalizeSelfFundedLeaderboard(rawList, options?.useEveningPeak, false);
 }
 
 export const WEEKLY_LEADERBOARD_TRADERS: LeaderboardTrader[] = getDynamicLeaderboardTraders({
@@ -779,7 +848,7 @@ export const WEEKLY_LEADERBOARD_TRADERS: LeaderboardTrader[] = getDynamicLeaderb
 
 export const SELF_FUNDED_LEADERBOARD_TRADERS: LeaderboardTrader[] = getDynamicLeaderboardTraders({
   category: 'self_funded',
-  useEveningPeak: true,
+  useEveningPeak: false,
 });
 
 /**
@@ -888,11 +957,23 @@ export function calculateUserLeaderboardPnL(params: {
         tradesCount: settled.length,
       };
     }
+
+    // For self_funded daily leaderboard, if trades exist in history but none occurred since 05:30 AM SLST today,
+    // today's daily PnL starts fresh at $0.00!
+    if (params.category === 'self_funded') {
+      return {
+        pnl: 0,
+        tradesCount: 0,
+      };
+    }
   }
 
   // If activeAccount is eligible for category, compute balance diff
   if (params.activeAccount && activeAccountEligible) {
-    if (typeof params.activeAccount.currentBalance === 'number' && typeof params.activeAccount.initialBalance === 'number') {
+    if (
+      typeof params.activeAccount.currentBalance === 'number' &&
+      typeof params.activeAccount.initialBalance === 'number'
+    ) {
       const diff = Number(
         (params.activeAccount.currentBalance - params.activeAccount.initialBalance).toFixed(2)
       );
@@ -1101,6 +1182,131 @@ export function formatCleanLeaderboardRow(trader: LeaderboardTrader): {
   };
 }
 
+const SELF_FUNDED_DAILY_RESET_STORAGE_KEY = 'bft_self_funded_daily_reset_date_v2';
+let supabaseLeaderboardWriteAllowed = true;
+
+/**
+ * Syncs the Self-Funded Daily Leaderboard rows to the Supabase `self_funded_leaderboard` table
+ * so connected clients subscribed via Supabase Realtime receive live updates.
+ */
+export async function syncSelfFundedLeaderboardToSupabase(
+  traders: LeaderboardTrader[]
+): Promise<void> {
+  if (!supabaseLeaderboardWriteAllowed) return;
+  try {
+    const { data: sessionData } = await supabase.auth
+      .getSession()
+      .catch(() => ({ data: { session: null } }));
+    if (!sessionData?.session) return;
+
+    const nowIso = new Date().toISOString();
+    const payload = traders.slice(0, 15).map((t, idx) => ({
+      rank: idx + 1,
+      trader_name: t.name,
+      country: t.country,
+      profit: Number(t.profit.toFixed(2)),
+      updated_at: nowIso,
+    }));
+
+    const { error } = await supabase
+      .from('self_funded_leaderboard')
+      .upsert(payload, { onConflict: 'rank' });
+    if (error && (error.code === '42501' || error.code === '42P10' || error.code === 'PGRST204')) {
+      supabaseLeaderboardWriteAllowed = false;
+    }
+  } catch {
+    // Non-blocking if RLS restricts client upserts
+  }
+}
+
+/**
+ * Syncs Funded Leaderboard Rank 1 (Mateus Domingos, Angola, $72,876.98) to Supabase `funded_leaderboard`.
+ */
+export async function syncFundedLeaderboardToSupabase(
+  traders: LeaderboardTrader[]
+): Promise<void> {
+  if (!supabaseLeaderboardWriteAllowed) return;
+  try {
+    const { data: sessionData } = await supabase.auth
+      .getSession()
+      .catch(() => ({ data: { session: null } }));
+    if (!sessionData?.session) return;
+
+    const nowIso = new Date().toISOString();
+    const payload = traders.slice(0, 15).map((t, idx) => ({
+      rank: idx + 1,
+      trader_name: t.name,
+      country: t.country,
+      profit: Number(t.profit.toFixed(2)),
+      updated_at: nowIso,
+    }));
+
+    const { error } = await supabase
+      .from('funded_leaderboard')
+      .upsert(payload, { onConflict: 'rank' });
+    if (error && (error.code === '42501' || error.code === '42P10' || error.code === 'PGRST204')) {
+      supabaseLeaderboardWriteAllowed = false;
+    }
+  } catch {
+    // Non-blocking
+  }
+}
+
+/**
+ * Checks whether a new daily cycle (05:30 AM UTC+5:30 / 00:00 UTC) has started.
+ * Upon reset, clears out previous cumulative totals so each trader starts fresh from $0.00,
+ * and pushes the reset state to Supabase `self_funded_leaderboard`.
+ */
+export async function checkAndPerformDailySelfFundedReset(
+  nowMs: number = Date.now()
+): Promise<{
+  wasReset: boolean;
+  resetDateIso: string;
+  traders: LeaderboardTrader[];
+}> {
+  const resetInfo = getSriLankaDailyResetInfo(nowMs);
+  let lastResetDate = '';
+  try {
+    lastResetDate = localStorage.getItem(SELF_FUNDED_DAILY_RESET_STORAGE_KEY) || '';
+  } catch {
+    // ignore storage error
+  }
+
+  const isExactResetMinute = resetInfo.elapsedMsSinceReset < 60 * 1000;
+  const dateRolledOver = Boolean(lastResetDate && lastResetDate !== resetInfo.sriLankaDateIso);
+
+  if (isExactResetMinute || dateRolledOver) {
+    try {
+      localStorage.setItem(SELF_FUNDED_DAILY_RESET_STORAGE_KEY, resetInfo.sriLankaDateIso);
+    } catch {}
+    const zeroTraders = createFreshZeroSelfFundedLeaderboard();
+    await syncSelfFundedLeaderboardToSupabase(zeroTraders);
+    return {
+      wasReset: true,
+      resetDateIso: resetInfo.sriLankaDateIso,
+      traders: zeroTraders,
+    };
+  }
+
+  if (!lastResetDate) {
+    try {
+      localStorage.setItem(SELF_FUNDED_DAILY_RESET_STORAGE_KEY, resetInfo.sriLankaDateIso);
+    } catch {}
+  }
+
+  const currentTraders = getDynamicLeaderboardTraders({
+    category: 'self_funded',
+    nowMs,
+    useEveningPeak: false,
+  });
+
+  return {
+    wasReset: false,
+    resetDateIso: resetInfo.sriLankaDateIso,
+    traders: currentTraders,
+  };
+}
+
 export async function fetchFundedLeaderboardFromSupabase(): Promise<LeaderboardTrader[]> {
   try {
     const { data, error } = await supabase
@@ -1113,28 +1319,63 @@ export async function fetchFundedLeaderboardFromSupabase(): Promise<LeaderboardT
       return getDynamicLeaderboardTraders({ category: 'funded', useEveningPeak: true });
     }
 
-    const mapped: LeaderboardTrader[] = data.map((r: any) => ({
-      id: String(r.id || `fnd_${r.rank}`),
-      rank: Number(r.rank),
-      name: String(r.name || 'Trader'),
-      country: String(r.country || 'Sri Lanka'),
-      flag: String(r.flag || '🇱🇰'),
-      isoCode: String(r.iso_code || r.isoCode || 'LK'),
-      category: 'funded',
-      accountTier: String(r.account_tier || r.accountTier || '$100,000 Instant Funded'),
-      profit: Number(r.profit),
-      winRate: Number(r.win_rate ?? r.winRate ?? 80.0),
-      payoutTime: String(r.payout_time || r.payoutTime || '1m 20s'),
-    }));
+    const hadLegacyYohan = data.some(
+      (r: any) => String(r.trader_name || r.name || '').trim() === 'Yohan Siriwardhana'
+    );
 
-    return normalizeFundedLeaderboard(mapped, true);
+    const mapped: LeaderboardTrader[] = data.map((r: any) => {
+      const rowName = String(r.trader_name || r.name || 'Trader').trim();
+      const isRank1OrYohan = Number(r.rank) === 1 || rowName === 'Yohan Siriwardhana';
+      if (isRank1OrYohan) {
+        return {
+          id: 'fnd_ao_01',
+          rank: 1,
+          name: 'Mateus Domingos',
+          country: 'Angola',
+          flag: '🇦🇴',
+          isoCode: 'AO',
+          category: 'funded',
+          accountTier: String(r.account_tier || r.accountTier || '$100,000 Instant Funded'),
+          profit: MATEUS_FUNDED_PROFIT,
+          winRate: Number(r.win_rate ?? r.winRate ?? 84.2),
+          payoutTime: String(r.payout_time || r.payoutTime || '1m 12s'),
+        };
+      }
+      return {
+        id: String(r.id || `fnd_${r.rank}`),
+        rank: Number(r.rank),
+        name: rowName,
+        country: String(r.country || 'India'),
+        flag: String(r.flag || '🇮🇳'),
+        isoCode: String(r.iso_code || r.isoCode || 'IN'),
+        category: 'funded',
+        accountTier: String(r.account_tier || r.accountTier || '$100,000 Instant Funded'),
+        profit: Number(r.profit ?? r.funded_profit ?? 0),
+        winRate: Number(r.win_rate ?? r.winRate ?? 80.0),
+        payoutTime: String(r.payout_time || r.payoutTime || '1m 20s'),
+      };
+    });
+
+    const normalized = normalizeFundedLeaderboard(mapped, true);
+    if (hadLegacyYohan) {
+      syncFundedLeaderboardToSupabase(normalized).catch(() => {});
+    }
+    return normalized;
   } catch {
     return getDynamicLeaderboardTraders({ category: 'funded', useEveningPeak: true });
   }
 }
 
-export async function fetchSelfFundedLeaderboardFromSupabase(): Promise<LeaderboardTrader[]> {
+export async function fetchSelfFundedLeaderboardFromSupabase(
+  nowMs: number = Date.now()
+): Promise<LeaderboardTrader[]> {
   try {
+    const resetCheck = await checkAndPerformDailySelfFundedReset(nowMs);
+    if (resetCheck.wasReset) {
+      return resetCheck.traders;
+    }
+
+    const resetInfo = getSriLankaDailyResetInfo(nowMs);
     const { data, error } = await supabase
       .from('self_funded_leaderboard')
       .select('*')
@@ -1142,26 +1383,76 @@ export async function fetchSelfFundedLeaderboardFromSupabase(): Promise<Leaderbo
       .limit(15);
 
     if (error || !Array.isArray(data) || data.length === 0) {
-      return getDynamicLeaderboardTraders({ category: 'self_funded', useEveningPeak: true });
+      const dynamic = getDynamicLeaderboardTraders({
+        category: 'self_funded',
+        nowMs,
+        useEveningPeak: false,
+      });
+      syncSelfFundedLeaderboardToSupabase(dynamic).catch(() => {});
+      return dynamic;
     }
 
-    const mapped: LeaderboardTrader[] = data.map((r: any) => ({
-      id: String(r.id || `slf_${r.rank}`),
-      rank: Number(r.rank),
-      name: String(r.name || 'Trader'),
-      country: String(r.country || 'Sri Lanka'),
-      flag: String(r.flag || '🇱🇰'),
-      isoCode: String(r.iso_code || r.isoCode || 'LK'),
-      category: 'self_funded',
-      accountTier: String(r.account_tier || r.accountTier || 'Self-Funded Live'),
-      profit: Number(r.profit),
-      winRate: Number(r.win_rate ?? r.winRate ?? 80.0),
-      payoutTime: String(r.payout_time || r.payoutTime || '1m 20s'),
-    }));
+    // Check if the rows in Supabase are from before today's 05:30 AM (UTC+5:30) reset
+    const hasStalePreResetRows = data.some((r: any) => {
+      if (!r.updated_at) return false;
+      const updatedMs =
+        typeof r.updated_at === 'number' ? r.updated_at : Date.parse(String(r.updated_at));
+      return Number.isFinite(updatedMs) && updatedMs < resetInfo.dayStartUtcMs;
+    });
 
-    return normalizeSelfFundedLeaderboard(mapped, true);
+    if (hasStalePreResetRows) {
+      const freshIntraday = getDynamicLeaderboardTraders({
+        category: 'self_funded',
+        nowMs,
+        useEveningPeak: false,
+      });
+      syncSelfFundedLeaderboardToSupabase(freshIntraday).catch(() => {});
+      return freshIntraday;
+    }
+
+    const dynamicIntraday = getDynamicLeaderboardTraders({
+      category: 'self_funded',
+      nowMs,
+      useEveningPeak: false,
+    });
+    const dynamicMap = new Map(dynamicIntraday.map((d) => [d.name, d]));
+
+    const mapped: LeaderboardTrader[] = data.map((r: any) => {
+      const name = String(r.trader_name || r.name || 'Trader');
+      const rawProfit = Number(r.daily_self_funded_profit ?? r.profit ?? 0);
+      const intradayTarget = dynamicMap.get(name);
+      // If DB holds static evening peak for non-Rank-1 traders during morning/afternoon, scale to current day's intraday progress
+      const isStaticEveningSeed =
+        intradayTarget &&
+        name !== 'Yohan Siriwardhana' &&
+        resetInfo.intradayScale < 0.92 &&
+        Math.abs(rawProfit - (intradayTarget.targetEveningProfit || rawProfit)) < 1;
+
+      const resolvedProfit = isStaticEveningSeed ? intradayTarget.profit : rawProfit;
+
+      return {
+        id: String(r.id || `slf_${r.rank}`),
+        rank: Number(r.rank),
+        name,
+        country: String(r.country || intradayTarget?.country || 'Sri Lanka'),
+        flag: String(r.flag || intradayTarget?.flag || '🇱🇰'),
+        isoCode: String(r.iso_code || r.isoCode || intradayTarget?.isoCode || 'LK'),
+        category: 'self_funded',
+        accountTier: String(r.account_tier || r.accountTier || intradayTarget?.accountTier || 'Self-Funded Live'),
+        profit: resolvedProfit,
+        targetEveningProfit: intradayTarget?.targetEveningProfit,
+        winRate: Number(r.win_rate ?? r.winRate ?? intradayTarget?.winRate ?? 80.0),
+        payoutTime: String(r.payout_time || r.payoutTime || intradayTarget?.payoutTime || '1m 20s'),
+      };
+    });
+
+    return normalizeSelfFundedLeaderboard(mapped, false, false);
   } catch {
-    return getDynamicLeaderboardTraders({ category: 'self_funded', useEveningPeak: true });
+    return getDynamicLeaderboardTraders({
+      category: 'self_funded',
+      nowMs,
+      useEveningPeak: false,
+    });
   }
 }
 
@@ -1194,3 +1485,4 @@ export function subscribeToLeaderboardsRealtime(
     supabase.removeChannel(channel);
   };
 }
+

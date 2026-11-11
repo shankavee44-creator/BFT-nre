@@ -71,6 +71,8 @@ import {
   requiresDualSidedUpload,
   formatKycStatusBadgeText,
   KYC_WITHDRAWAL_LOCK_MESSAGE,
+  markKycVerifiedLock,
+  resolveStableKycStatus,
 } from '../utils/kycVerification';
 import {
   isLiveFundedAccount,
@@ -102,6 +104,7 @@ import {
   cancelSupabaseWithdrawal,
   computeWithdrawalRefund,
   commitProfileBalanceToSupabase,
+  commitKycVerifiedToSupabase,
   mapPurchaseRecord,
   mergeRealtimePurchase,
   NormalizedPurchaseRecord,
@@ -660,21 +663,29 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           const bSub = backendKyc?.kycSubmission;
           const meta = user?.user_metadata || {};
 
-          const rawStatuses = [
-            bUser?.kycStatus,
-            bSub?.status,
-            supaProfile?.kyc_status,
-            meta.kyc_status,
-            latest.kycStatus,
-          ]
-            .filter(Boolean)
-            .map((s) => String(s).toLowerCase());
+          const resolvedKycStatus: UserProfile['kycStatus'] = resolveStableKycStatus(
+            [
+              bUser?.kycStatus,
+              bSub?.status,
+              supaProfile?.kyc_status,
+              meta.kyc_status,
+              latest.kycStatus,
+            ],
+            { userId: targetUserId, email: targetEmail }
+          );
 
-          let resolvedKycStatus: UserProfile['kycStatus'] = latest.kycStatus;
-          if (rawStatuses.some((s) => s === 'verified' || s === 'approved')) {
-            resolvedKycStatus = 'verified';
-          } else if (rawStatuses.some((s) => s === 'pending' || s === 'pending verification' || s === 'pending_verification')) {
-            resolvedKycStatus = 'pending';
+          // Ensure Supabase `profiles.kyc_status` is updated to 'verified' if resolvedKycStatus is 'verified'
+          // so that background profile polling never sees a stale 'unverified' row.
+          if (
+            resolvedKycStatus === 'verified' &&
+            supaProfile &&
+            String(supaProfile.kyc_status || '').toLowerCase() !== 'verified'
+          ) {
+            commitKycVerifiedToSupabase({
+              userId: supaProfile.id || targetUuid || targetUserId,
+              userEmail: targetEmail,
+              fullName: latest.fullName,
+            }).catch(() => {});
           }
 
           const resolvedAddress =
@@ -1259,13 +1270,11 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             () => {}
           );
 
-        await supabase
-          .from('profiles')
-          .update({
-            full_name: userProfile.fullName,
-            kyc_status: 'verified',
-          })
-          .eq('id', userProfile.id);
+        await commitKycVerifiedToSupabase({
+          userId: userProfile.id,
+          userEmail: userProfile.email,
+          fullName: userProfile.fullName,
+        });
 
         await supabase.auth
           .updateUser({
@@ -1287,6 +1296,12 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             },
           })
           .catch(() => {});
+      } else {
+        await commitKycVerifiedToSupabase({
+          userId: userProfile.id,
+          userEmail: userProfile.email,
+          fullName: userProfile.fullName,
+        });
       }
 
       // 5. Persist & Automated verification via backend API (`users`, `kyc_submissions`, `kyc_documents`)
@@ -1313,6 +1328,8 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     } finally {
       setIsUploadingKyc(false);
     }
+
+    markKycVerifiedLock({ userId: userProfile.id, email: userProfile.email });
 
     const verifiedProfile: UserProfile = {
       ...userProfile,

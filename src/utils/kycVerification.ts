@@ -6,6 +6,115 @@ export const KYC_VERIFICATION_DURATION_MS = KYC_VERIFICATION_DURATION_SECONDS * 
 export const KYC_WITHDRAWAL_LOCK_MESSAGE =
   'Please complete your KYC verification to unlock withdrawals.';
 
+const KYC_VERIFIED_LOCK_PREFIX = 'bft_kyc_verified_lock_';
+const memoryKycVerifiedLocks = new Set<string>();
+
+/**
+ * Permanently records in local storage (and memory) that a user's KYC status has reached 'verified'
+ * so background polling or stale profile rows can never revert it back to 'unverified'.
+ */
+export function markKycVerifiedLock(
+  userIdOrParams?: string | null | { userId?: string | null; email?: string | null },
+  emailArg?: string | null
+): void {
+  const userId =
+    typeof userIdOrParams === 'object' && userIdOrParams !== null
+      ? userIdOrParams.userId
+      : userIdOrParams;
+  const email =
+    typeof userIdOrParams === 'object' && userIdOrParams !== null
+      ? userIdOrParams.email
+      : emailArg;
+
+  const cleanId = (userId || '').trim().toLowerCase();
+  const cleanEmail = (email || '').trim().toLowerCase();
+
+  if (cleanId) memoryKycVerifiedLocks.add(cleanId);
+  if (cleanEmail) memoryKycVerifiedLocks.add(cleanEmail);
+
+  try {
+    if (typeof localStorage === 'undefined') return;
+    if (cleanId) {
+      localStorage.setItem(`${KYC_VERIFIED_LOCK_PREFIX}${cleanId}`, 'verified');
+    }
+    if (cleanEmail) {
+      localStorage.setItem(`${KYC_VERIFIED_LOCK_PREFIX}${cleanEmail}`, 'verified');
+    }
+  } catch {
+    // ignore storage errors
+  }
+}
+
+/**
+ * Checks whether the user's KYC status is already locked as 'verified'.
+ */
+export function isKycVerifiedLocked(
+  userId?: string | null,
+  email?: string | null,
+  currentStatus?: string | null
+): boolean {
+  const cleanStatus = (currentStatus || '').trim().toLowerCase();
+  if (cleanStatus === 'verified' || cleanStatus === 'approved') {
+    markKycVerifiedLock(userId, email);
+    return true;
+  }
+  const cleanId = (userId || '').trim().toLowerCase();
+  const cleanEmail = (email || '').trim().toLowerCase();
+  if (cleanId && memoryKycVerifiedLocks.has(cleanId)) return true;
+  if (cleanEmail && memoryKycVerifiedLocks.has(cleanEmail)) return true;
+
+  try {
+    if (typeof localStorage === 'undefined') return false;
+    if (cleanId && localStorage.getItem(`${KYC_VERIFIED_LOCK_PREFIX}${cleanId}`) === 'verified') {
+      memoryKycVerifiedLocks.add(cleanId);
+      return true;
+    }
+    if (cleanEmail && localStorage.getItem(`${KYC_VERIFIED_LOCK_PREFIX}${cleanEmail}`) === 'verified') {
+      memoryKycVerifiedLocks.add(cleanEmail);
+      return true;
+    }
+  } catch {
+    // ignore
+  }
+  return false;
+}
+
+/**
+ * Resolves a stable, non-flapping KYC status across multiple sources (local state, Supabase profile,
+ * Supabase Auth user_metadata, and backend KYC records). Once 'verified' is reached in any source
+ * or locked in storage, it stays 'verified' permanently without reverting to 'unverified'.
+ */
+export function resolveStableKycStatus(
+  statuses: Array<string | undefined | null>,
+  options?: { userId?: string | null; email?: string | null }
+): 'unverified' | 'pending' | 'verified' | 'rejected' {
+  const normalized = statuses
+    .filter(Boolean)
+    .map((s) => String(s).trim().toLowerCase());
+
+  if (
+    normalized.some((s) => s === 'verified' || s === 'approved') ||
+    isKycVerifiedLocked(options?.userId, options?.email)
+  ) {
+    markKycVerifiedLock(options?.userId, options?.email);
+    return 'verified';
+  }
+
+  if (
+    normalized.some(
+      (s) => s === 'pending' || s === 'pending verification' || s === 'pending_verification'
+    )
+  ) {
+    return 'pending';
+  }
+
+  if (normalized.some((s) => s === 'rejected' || s === 'declined')) {
+    return 'rejected';
+  }
+
+  return 'unverified';
+}
+
 export function normalizeIdentityString(val: string | undefined | null): string {
   return (val || '').trim().replace(/\s+/g, ' ').toLowerCase();
 }
@@ -44,7 +153,12 @@ export function canUserWithdraw(profile: UserProfile | null | undefined): {
   allowed: boolean;
   message: string;
 } {
-  if (!profile || (profile.kycStatus !== 'verified' && profile.kycStatus !== 'approved')) {
+  if (
+    !profile ||
+    (profile.kycStatus !== 'verified' &&
+      profile.kycStatus !== 'approved' &&
+      !isKycVerifiedLocked(profile.id, profile.email, profile.kycStatus))
+  ) {
     return {
       allowed: false,
       message: KYC_WITHDRAWAL_LOCK_MESSAGE,

@@ -1075,7 +1075,7 @@ var require_version = __commonJS({
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.version = void 0;
-    exports.version = "2.118.0";
+    exports.version = "2.119.0";
   }
 });
 
@@ -1134,7 +1134,7 @@ var require_serializer = __commonJS({
   "node_modules/@supabase/realtime-js/dist/main/lib/serializer.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
-    var Serializer = class {
+    var Serializer = class _Serializer {
       constructor(allowedMetadataKeys) {
         this.HEADER_LENGTH = 1;
         this.USER_BROADCAST_PUSH_META_LENGTH = 6;
@@ -1142,8 +1142,8 @@ var require_serializer = __commonJS({
         this.BINARY_ENCODING = 0;
         this.JSON_ENCODING = 1;
         this.BROADCAST_EVENT = "broadcast";
-        this.allowedMetadataKeys = [];
-        this.allowedMetadataKeys = allowedMetadataKeys !== null && allowedMetadataKeys !== void 0 ? allowedMetadataKeys : [];
+        this.allowedMetadataKeys = _Serializer.DEFAULT_METADATA_KEYS;
+        this.allowedMetadataKeys = allowedMetadataKeys !== null && allowedMetadataKeys !== void 0 ? allowedMetadataKeys : _Serializer.DEFAULT_METADATA_KEYS;
       }
       encode(msg, callback) {
         if (msg.event === this.BROADCAST_EVENT && !(msg.payload instanceof ArrayBuffer) && typeof msg.payload.event === "string") {
@@ -1279,6 +1279,7 @@ var require_serializer = __commonJS({
         return Object.fromEntries(Object.entries(obj).filter(([key]) => keys.includes(key)));
       }
     };
+    Serializer.DEFAULT_METADATA_KEYS = ["persist"];
     exports.default = Serializer;
   }
 });
@@ -4135,7 +4136,7 @@ var require_RealtimeChannel = __commonJS({
        *
        * @param event The name of the broadcast event
        * @param payload Payload to be sent (required)
-       * @param opts Options including timeout
+       * @param opts Options including timeout and persist
        * @returns Promise resolving to object with success status, and error details if failed
        *
        * @category Realtime
@@ -4157,6 +4158,17 @@ var require_RealtimeChannel = __commonJS({
         url.pathname += `/${encodeURIComponent(this.subTopic)}/events/${encodeURIComponent(event)}`;
         if (this.private) {
           url.searchParams.set("private", "true");
+        }
+        if (opts.persist) {
+          if (!this.private) {
+            return Promise.reject(new Error("Realtime httpSend() cannot store a message on a public channel."));
+          }
+          const ttl = typeof opts.persist === "object" ? opts.persist.ttl : void 0;
+          if (ttl === void 0) {
+            url.searchParams.set("persist", "true");
+          } else {
+            url.searchParams.set("persist[ttl]", String(ttl));
+          }
         }
         const options = {
           method: "POST",
@@ -4185,6 +4197,7 @@ var require_RealtimeChannel = __commonJS({
        * @param args.type The type of event to send
        * @param args.event The name of the event being sent
        * @param args.payload Payload to be sent
+       * @param args.persist Stores the broadcast for replay on a private channel
        * @param opts Options to be used during the send process
        *
        * @category Realtime
@@ -4228,6 +4241,15 @@ var require_RealtimeChannel = __commonJS({
        */
       async send(args, opts = {}) {
         var _a, _b;
+        if (args.type === "broadcast" && args.persist && (!this.private || this.socket.vsn === constants_1.VSN_1_0_0)) {
+          const persistError = this.private ? "Realtime send() cannot store a message with protocol 1.0.0. Use httpSend() or connect with vsn 2.0.0." : "Realtime send() cannot store a message on a public channel.";
+          if (this.socket.hasLogger()) {
+            this.socket.log("channel", persistError);
+          } else {
+            console.error(persistError);
+          }
+          return "error";
+        }
         if (!this.channelAdapter.canPush() && args.type === "broadcast") {
           const fallbackWarning = "Realtime send() is automatically falling back to REST API. This behavior will be deprecated in the future. Please use httpSend() explicitly for REST delivery.";
           if (this.socket.hasLogger()) {
@@ -4236,6 +4258,15 @@ var require_RealtimeChannel = __commonJS({
             console.warn(fallbackWarning);
           }
           const { event, payload: endpoint_payload } = args;
+          if (args.persist) {
+            const persistError = "Realtime send() fell back to REST and cannot store this message. The batch endpoint does not support persistence. Use httpSend() or send after the channel is connected and subscribed.";
+            if (this.socket.hasLogger()) {
+              this.socket.log("channel", persistError);
+            } else {
+              console.error(persistError);
+            }
+            return "error";
+          }
           const headers = {
             apikey: this.socket.apiKey ? this.socket.apiKey : "",
             "Content-Type": "application/json"
@@ -4276,7 +4307,7 @@ var require_RealtimeChannel = __commonJS({
               resolve("ok");
             }
             push.receive("ok", () => resolve("ok"));
-            push.receive("error", () => resolve("error"));
+            push.receive("error", (response) => resolve(args.persist && typeof (response === null || response === void 0 ? void 0 : response.error) === "string" ? response.error : "error"));
             push.receive("timeout", () => resolve("timed out"));
           });
         }
@@ -5240,7 +5271,7 @@ var require_RealtimeClient = __commonJS({
             defaultDecode = this.serializer.decode.bind(this.serializer);
             break;
           default:
-            throw new Error(`Unsupported serializer version: ${result.vsn}`);
+            throw new Error(`Unsupported serializer version: ${vsn}`);
         }
         result.vsn = vsn;
         result.encode = (_l = options === null || options === void 0 ? void 0 : options.encode) !== null && _l !== void 0 ? _l : defaultEncode;
@@ -5316,7 +5347,7 @@ var require_version2 = __commonJS({
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.version = void 0;
-    exports.version = "2.118.0";
+    exports.version = "2.119.0";
   }
 });
 
@@ -7013,6 +7044,8 @@ var require_GoTrueAdminApi = __commonJS({
       }
       /**
        * Delete a user. Requires a `service_role` key.
+       * Returns the user that was deleted. In cases of concurrent updates, the user object returned
+       * might not accurately reflect the user information at the time of deletion.
        *
        * @param id The user id you want to remove.
        * @param shouldSoftDelete If true, then the user will be soft-deleted from the auth schema. Soft deletion allows user identification from the hashed user ID but is not reversible.
@@ -7037,7 +7070,14 @@ var require_GoTrueAdminApi = __commonJS({
        * ```json
        * {
        *   "data": {
-       *     "user": {}
+       *     "user": {
+       *       "id": "715ed5db-f090-4b8c-a067-640ecee36aa0",
+       *       "aud": "authenticated",
+       *       "role": "authenticated",
+       *       "email": "example@email.com",
+       *       "created_at": "2024-01-01T00:00:00Z",
+       *       "updated_at": "2024-01-01T00:00:00Z"
+       *     }
        *   },
        *   "error": null
        * }
@@ -7046,13 +7086,18 @@ var require_GoTrueAdminApi = __commonJS({
       async deleteUser(id, shouldSoftDelete = false) {
         (0, helpers_1.validateUUID)(id);
         try {
-          return await (0, fetch_1._request)(this.fetch, "DELETE", `${this.url}/admin/users/${id}`, {
+          const { data, error } = await this.getUserById(id);
+          if (error) {
+            return { data: { user: null }, error };
+          }
+          await (0, fetch_1._request)(this.fetch, "DELETE", `${this.url}/admin/users/${id}`, {
             headers: this.headers,
             body: {
               should_soft_delete: shouldSoftDelete
             },
-            xform: fetch_1._userResponse
+            noResolveJson: true
           });
+          return { data, error: null };
         } catch (error) {
           if ((0, errors_1.isAuthError)(error)) {
             return { data: { user: null }, error };
@@ -9134,7 +9179,7 @@ var require_GoTrueClient = __commonJS({
        * Be aware that you may get back an error message that will not distinguish
        * between the cases where the account does not exist or that the
        * email/phone and password combination is wrong or that the account can only
-       * be accessed via social login.
+       * be accessed via social sign-in.
        *
        * @category Auth
        *
@@ -9317,7 +9362,7 @@ var require_GoTrueClient = __commonJS({
        * @category Auth
        *
        * @remarks
-       * - This method is used for signing in using [Social Login (OAuth) providers](/docs/guides/auth#configure-third-party-providers).
+       * - This method is used for signing in using [social sign-in (OAuth) providers](/docs/guides/auth/social-sign-in).
        * - It works by redirecting your application to the provider's authorization screen, before bringing back the user to your app.
        *
        * @example Sign in using a third-party provider
@@ -10049,7 +10094,7 @@ var require_GoTrueClient = __commonJS({
        *
        * Be aware that you may get back an error message that will not distinguish
        * between the cases where the account does not exist or, that the account
-       * can only be accessed via social login.
+       * can only be accessed via social sign-in.
        *
        * Do note that you will need to configure a Whatsapp sender on Twilio
        * if you are using phone sign in with the 'whatsapp' channel. The whatsapp
@@ -11564,12 +11609,31 @@ var require_GoTrueClient = __commonJS({
         return !!currentStorageContent;
       }
       /**
-       * Inside a browser context, `signOut()` will remove the logged in user from the browser session and log them out - removing all items from localstorage and then trigger a `"SIGNED_OUT"` event.
+       * Inside a browser context, `signOut()` will remove the logged in user from the browser session
+       * and log them out - removing all items from localstorage and then trigger a `"SIGNED_OUT"`
+       * event.
        *
-       * For server-side management, you can revoke all refresh tokens for a user by passing a user's JWT through to `auth.api.signOut(JWT: string)`.
-       * There is no way to revoke a user's access token jwt until it expires. It is recommended to set a shorter expiry on the jwt for this reason.
+       * For server-side management, you can revoke all refresh tokens for a user by passing a user's
+       * JWT through to `auth.api.signOut(JWT: string)`.
        *
-       * If using `others` scope, no `SIGNED_OUT` event is fired!
+       * There is no way to revoke a user's access token jwt until it expires. It is recommended to set
+       * a shorter expiry on the jwt for this reason.
+       *
+       * `signOut` behavior depends on the selected scope:
+       *
+       * - `local`: The local session is removed first and a `SIGNED_OUT` event is fired, then the client
+       *   makes a best-effort request to revoke the refresh token on the server. If the request fails,
+       *   the client is still signed out locally and the error is returned, but the server may retain
+       *   the refresh token until it expires.
+       *
+       * - `global`: All of the user's sessions are first invalidated on the server. Once the server
+       *   acknowledges the request, the local session is cleared. If server logout fails, the local
+       *   session is retained, no `SIGNED_OUT` event is triggered, and the server or network error is
+       *   returned. A 401, 403, or 404 response counts as a successful sign-out.
+       *
+       * - `others`: All other sessions are invalidated when the server accepts the request; the
+       *   current local session remains unchanged. In case of server or network failures, the error is
+       *   returned. A `SIGNED_OUT` event is never triggered, regardless of the outcome.
        *
        * **Warning:** the default `scope` is `'global'`. This signs the user out of
        * **every device they are currently signed in on**, not just the current
@@ -11587,7 +11651,13 @@ var require_GoTrueClient = __commonJS({
        *   usually what apps want on a "Sign out" button, especially when users
        *   sign in from multiple devices and do not expect signing out of one to
        *   terminate the others.
-       * - Since Supabase Auth uses JWTs for authentication, the access token JWT will be valid until it's expired. When the user signs out, Supabase revokes the refresh token and deletes the JWT from the client-side. This does not revoke the JWT and it will still be valid until it expires.
+       * - With the default `global` scope, `signOut()` while offline returns an error and keeps the user
+       *   signed in. To sign out regardless, fall back to `signOut({ scope: 'local' })` when the call
+       *   returns an error.
+       * - Since Supabase Auth uses JWTs for authentication, the access token JWT will be valid until
+       *   it's expired. When the user signs out, Supabase revokes the refresh token and deletes the
+       *   JWT from the client-side. This does not revoke the JWT and it will still be valid until it
+       *   expires.
        *
        * @example Sign out of every device (global – default)
        * ```js
@@ -11613,7 +11683,7 @@ var require_GoTrueClient = __commonJS({
         }
         return await this._signOut(options);
       }
-      async _signOut({ scope } = { scope: "global" }) {
+      async _signOut({ scope = "global" } = {}) {
         return await this._useSession(async (result) => {
           var _a;
           const removeCurrentSession = async () => {
@@ -11621,24 +11691,36 @@ var require_GoTrueClient = __commonJS({
           };
           const { data, error: sessionError } = result;
           if (sessionError && !(0, errors_1.isAuthSessionMissingError)(sessionError)) {
+            if (scope === "local" && (0, errors_1.isAuthRetryableFetchError)(sessionError)) {
+              await removeCurrentSession();
+            }
             return this._returnResult({ error: sessionError });
           }
           const accessToken = (_a = data.session) === null || _a === void 0 ? void 0 : _a.access_token;
-          if (accessToken) {
-            const { error } = await this.admin.signOut(accessToken, scope);
-            if (error) {
-              if (!((0, errors_1.isAuthApiError)(error) && (error.status === 404 || error.status === 401 || error.status === 403) || (0, errors_1.isAuthSessionMissingError)(error))) {
-                if (scope !== "others") {
-                  await removeCurrentSession();
-                }
-                return this._returnResult({ error });
-              }
+          let removeError = null;
+          const finish = (value) => {
+            if (removeError) {
+              throw removeError.thrown;
+            }
+            return value;
+          };
+          if (scope === "local") {
+            try {
+              await removeCurrentSession();
+            } catch (thrown) {
+              removeError = { thrown };
             }
           }
-          if (scope !== "others") {
+          if (accessToken) {
+            const { error } = await this.admin.signOut(accessToken, scope);
+            if (error && !((0, errors_1.isAuthApiError)(error) && (error.status === 404 || error.status === 401 || error.status === 403) || (0, errors_1.isAuthSessionMissingError)(error))) {
+              return finish(this._returnResult({ error }));
+            }
+          }
+          if (scope === "global") {
             await removeCurrentSession();
           }
-          return this._returnResult({ error: null });
+          return finish(this._returnResult({ error: null }));
         });
       }
       /**  *
@@ -11726,9 +11808,9 @@ var require_GoTrueClient = __commonJS({
        * ```
        *
        * @exampleDescription Store OAuth provider tokens on sign in
-       * When using [OAuth (Social Login)](/docs/guides/auth/social-login) you sometimes wish to get access to the provider's access token and refresh token, in order to call provider APIs in the name of the user.
+       * When using [OAuth (social sign-in)](/docs/guides/auth/social-sign-in) you sometimes wish to get access to the provider's access token and refresh token, in order to call provider APIs in the name of the user.
        *
-       * For example, if you are using [Sign in with Google](/docs/guides/auth/social-login/auth-google) you may want to use the provider token to call Google APIs on behalf of the user. Supabase Auth does not keep track of the provider access and refresh token, but does return them for you once, immediately after sign in. You can use the `onAuthStateChange` method to listen for the presence of the provider tokens and store them in local storage. You can further send them to your server's APIs for use on the backend.
+       * For example, if you are using [Sign in with Google](/docs/guides/auth/social-sign-in/auth-google) you may want to use the provider token to call Google APIs on behalf of the user. Supabase Auth does not keep track of the provider access and refresh token, but does return them for you once, immediately after sign in. You can use the `onAuthStateChange` method to listen for the presence of the provider tokens and store them in local storage. You can further send them to your server's APIs for use on the backend.
        *
        * Finally, make sure you remove them from local storage on the `SIGNED_OUT` event. If the OAuth provider supports token revocation, make sure you call those APIs either from the frontend or schedule them to be called on the backend.
        *
@@ -14963,12 +15045,84 @@ function seedInitialData() {
 __name(seedInitialData, "seedInitialData");
 function syncLeaderboardData() {
   const now = Date.now();
-  const leaderboardSeed = [{ rank: 1, name: "Rashid Al-Maktoum", country: "Dubai, UAE", flag: "\u{1F1E6}\u{1F1EA}", tier: "$100,000 Instant Funded", profit: 66456.11, winRate: 81.2, payout: "1m 14s" }, { rank: 2, name: "Arjun Malhotra", country: "India", flag: "\u{1F1EE}\u{1F1F3}", tier: "$100,000 Two-Step", profit: 54120.8, winRate: 79.5, payout: "1m 28s" }, { rank: 3, name: "Hamza Qureshi", country: "Pakistan", flag: "\u{1F1F5}\u{1F1F0}", tier: "$50,000 Instant Funded", profit: 46890.4, winRate: 77.8, payout: "1m 35s" }, { rank: 4, name: "Tanvir Hossain", country: "Bangladesh", flag: "\u{1F1E7}\u{1F1E9}", tier: "$50,000 One-Step", profit: 39540, winRate: 76.2, payout: "1m 22s" }, { rank: 5, name: "Tariq Al-Mansoor", country: "Dubai, UAE", flag: "\u{1F1E6}\u{1F1EA}", tier: "$50,000 One-Step", profit: 34820.5, winRate: 75.1, payout: "1m 31s" }, { rank: 6, name: "Vikramjit Singh", country: "India", flag: "\u{1F1EE}\u{1F1F3}", tier: "$25,000 Two-Step", profit: 31250, winRate: 74.3, payout: "1m 49s" }, { rank: 7, name: "Yohan Siriwardhana", country: "Sri Lanka", flag: "\u{1F1F1}\u{1F1F0}", tier: "$50,000 Instant Funded", profit: 29456.71, winRate: 78.4, payout: "1m 15s" }, { rank: 8, name: "Bilal Ahmed Khan", country: "Pakistan", flag: "\u{1F1F5}\u{1F1F0}", tier: "$25,000 Two-Step", profit: 26840.2, winRate: 72.9, payout: "1m 36s" }, { rank: 9, name: "Faizal Zulkifli", country: "Malaysia", flag: "\u{1F1F2}\u{1F1FE}", tier: "$25,000 Instant Funded", profit: 23410, winRate: 71.8, payout: "1m 18s" }, { rank: 10, name: "Ananya Sharma", country: "India", flag: "\u{1F1EE}\u{1F1F3}", tier: "$25,000 One-Step", profit: 20780, winRate: 70.4, payout: "1m 41s" }, { rank: 11, name: "Zainab Al-Hashemi", country: "Dubai, UAE", flag: "\u{1F1E6}\u{1F1EA}", tier: "$10,000 Instant Funded", profit: 18650, winRate: 69.2, payout: "1m 29s" }, { rank: 12, name: "Syed Usman Ali", country: "Pakistan", flag: "\u{1F1F5}\u{1F1F0}", tier: "$10,000 Two-Step", profit: 16920.5, winRate: 68.1, payout: "1m 52s" }, { rank: 13, name: "Shakib Rahman", country: "Bangladesh", flag: "\u{1F1E7}\u{1F1E9}", tier: "$10,000 One-Step", profit: 15340, winRate: 67.5, payout: "1m 38s" }, { rank: 14, name: "Rohan Deshmukh", country: "India", flag: "\u{1F1EE}\u{1F1F3}", tier: "$10,000 Instant Funded", profit: 13890.1, winRate: 66.3, payout: "1m 47s" }, { rank: 15, name: "Alexander Schmidt", country: "Germany", flag: "\u{1F1E9}\u{1F1EA}", tier: "$10,000 Two-Step", profit: 12450, winRate: 65.7, payout: "1m 30s" }];
-  for (const lb of leaderboardSeed) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS funded_leaderboard (
+      id TEXT PRIMARY KEY,
+      rank INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      country TEXT NOT NULL,
+      flag TEXT NOT NULL,
+      iso_code TEXT,
+      account_tier TEXT NOT NULL,
+      profit REAL NOT NULL,
+      win_rate REAL NOT NULL,
+      payout_time TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS self_funded_leaderboard (
+      id TEXT PRIMARY KEY,
+      rank INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      country TEXT NOT NULL,
+      flag TEXT NOT NULL,
+      iso_code TEXT,
+      account_tier TEXT NOT NULL,
+      profit REAL NOT NULL,
+      win_rate REAL NOT NULL,
+      payout_time TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+  `);
+  const fundedSeed = [
+    { rank: 1, name: "Mateus Domingos", country: "Angola", flag: "\u{1F1E6}\u{1F1F4}", isoCode: "AO", tier: "$100,000 Instant Funded", profit: 72876.98, winRate: 84.2, payout: "1m 12s" },
+    { rank: 2, name: "Aarav Sharma", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "$100,000 Two-Step", profit: 64280.45, winRate: 81.5, payout: "1m 24s" },
+    { rank: 3, name: "Tanvir Ahmed", country: "Bangladesh", flag: "\u{1F1E7}\u{1F1E9}", isoCode: "BD", tier: "$50,000 One-Step", profit: 54820.9, winRate: 78.7, payout: "1m 21s" },
+    { rank: 4, name: "Rohan Gupta", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "$50,000 Instant Funded", profit: 50150.8, winRate: 77.6, payout: "1m 31s" },
+    { rank: 5, name: "Muhammad Hamza", country: "Pakistan", flag: "\u{1F1F5}\u{1F1F0}", isoCode: "PK", tier: "$100,000 Instant Funded", profit: 46890.65, winRate: 76.8, payout: "1m 29s" },
+    { rank: 6, name: "Tariq Al-Mansoor", country: "Dubai, UAE", flag: "\u{1F1E6}\u{1F1EA}", isoCode: "AE", tier: "$50,000 One-Step", profit: 43280.5, winRate: 76.3, payout: "1m 30s" },
+    { rank: 7, name: "Vikramjit Singh", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "$50,000 Two-Step", profit: 40820.6, winRate: 75.9, payout: "1m 42s" },
+    { rank: 8, name: "Shakib Hasan", country: "Bangladesh", flag: "\u{1F1E7}\u{1F1E9}", isoCode: "BD", tier: "$25,000 Instant Funded", profit: 38420.55, winRate: 75.2, payout: "1m 34s" },
+    { rank: 9, name: "Usman Khan", country: "Pakistan", flag: "\u{1F1F5}\u{1F1F0}", isoCode: "PK", tier: "$50,000 Two-Step", profit: 36430.1, winRate: 74.6, payout: "1m 35s" },
+    { rank: 10, name: "Ananya Iyer", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "$25,000 Instant Funded", profit: 34640.3, winRate: 74.1, payout: "1m 27s" },
+    { rank: 11, name: "Faizal Zulkifli", country: "Malaysia", flag: "\u{1F1F2}\u{1F1FE}", isoCode: "MY", tier: "$25,000 Instant Funded", profit: 32410, winRate: 73, payout: "1m 18s" },
+    { rank: 12, name: "Siddharth Nair", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "$25,000 One-Step", profit: 30480.15, winRate: 72.5, payout: "1m 38s" },
+    { rank: 13, name: "Mahmudul Islam", country: "Bangladesh", flag: "\u{1F1E7}\u{1F1E9}", isoCode: "BD", tier: "$10,000 One-Step", profit: 28950.4, winRate: 71.8, payout: "1m 41s" },
+    { rank: 14, name: "Priya Patel", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "$25,000 Two-Step", profit: 27890, winRate: 71.4, payout: "1m 20s" },
+    { rank: 15, name: "Karthik Reddy", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "$10,000 Instant Funded", profit: 27321.11, winRate: 71, payout: "1m 45s" }
+  ];
+  for (const lb of fundedSeed) {
+    db.prepare(`
+      INSERT OR REPLACE INTO funded_leaderboard (id, rank, name, country, flag, iso_code, account_tier, profit, win_rate, payout_time, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(`FND-LB-${lb.rank}`, lb.rank, lb.name, lb.country, lb.flag, lb.isoCode, lb.tier, lb.profit, lb.winRate, lb.payout, now);
     db.prepare(`
       INSERT OR REPLACE INTO leaderboard (id, rank, name, country, flag, account_tier, profit, win_rate, payout_time, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(`LB-${lb.rank}`, lb.rank, lb.name, lb.country, lb.flag, lb.tier, lb.profit, lb.winRate, lb.payout, now);
+  }
+  const selfFundedSeed = [
+    { rank: 1, name: "Yohan Siriwardhana", country: "Sri Lanka", flag: "\u{1F1F1}\u{1F1F0}", isoCode: "LK", tier: "Self-Funded VIP Live", profit: 37456.55, winRate: 83.1, payout: "0m 58s" },
+    { rank: 2, name: "Devansh Mehta", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "Self-Funded Live", profit: 32650.2, winRate: 79.4, payout: "1m 05s" },
+    { rank: 3, name: "Faisal Mahmood", country: "Pakistan", flag: "\u{1F1F5}\u{1F1F0}", isoCode: "PK", tier: "Self-Funded Live", profit: 29890.1, winRate: 78.2, payout: "1m 11s" },
+    { rank: 4, name: "Zayed Al-Hashemi", country: "Dubai, UAE", flag: "\u{1F1E6}\u{1F1EA}", isoCode: "AE", tier: "Self-Funded VIP Live", profit: 27520.8, winRate: 77.4, payout: "1m 09s" },
+    { rank: 5, name: "Kavya Krishnan", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "Self-Funded Live", profit: 25230.9, winRate: 76.2, payout: "1m 18s" },
+    { rank: 6, name: "Bilal Qureshi", country: "Pakistan", flag: "\u{1F1F5}\u{1F1F0}", isoCode: "PK", tier: "Self-Funded Live", profit: 23490.4, winRate: 75.1, payout: "1m 20s" },
+    { rank: 7, name: "Rashid Al-Maktoum", country: "Dubai, UAE", flag: "\u{1F1E6}\u{1F1EA}", isoCode: "AE", tier: "Self-Funded Live", profit: 21340.5, winRate: 74.5, payout: "1m 16s" },
+    { rank: 8, name: "Harshvardhan Rao", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "Self-Funded Live", profit: 19840.6, winRate: 73.8, payout: "1m 25s" },
+    { rank: 9, name: "Nafis Rahman", country: "Bangladesh", flag: "\u{1F1E7}\u{1F1E9}", isoCode: "BD", tier: "Self-Funded Live", profit: 18120.75, winRate: 73, payout: "1m 24s" },
+    { rank: 10, name: "Ayesha Tariq", country: "Pakistan", flag: "\u{1F1F5}\u{1F1F0}", isoCode: "PK", tier: "Self-Funded Live", profit: 16430.5, winRate: 72.3, payout: "1m 29s" },
+    { rank: 11, name: "Pranav Kulkarni", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "Self-Funded Live", profit: 14620.15, winRate: 71, payout: "1m 35s" },
+    { rank: 12, name: "Omar Al-Suwaidi", country: "Dubai, UAE", flag: "\u{1F1E6}\u{1F1EA}", isoCode: "AE", tier: "Self-Funded Live", profit: 13170.25, winRate: 70.2, payout: "1m 31s" },
+    { rank: 13, name: "Saad Afridi", country: "Pakistan", flag: "\u{1F1F5}\u{1F1F0}", isoCode: "PK", tier: "Self-Funded Live", profit: 11960.35, winRate: 69.4, payout: "1m 38s" },
+    { rank: 14, name: "Arjun Malhotra", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "Self-Funded Live", profit: 10480.4, winRate: 68.5, payout: "1m 42s" },
+    { rank: 15, name: "Mehedi Hasan", country: "Bangladesh", flag: "\u{1F1E7}\u{1F1E9}", isoCode: "BD", tier: "Self-Funded Live", profit: 9210.45, winRate: 67.8, payout: "1m 45s" }
+  ];
+  for (const lb of selfFundedSeed) {
+    db.prepare(`
+      INSERT OR REPLACE INTO self_funded_leaderboard (id, rank, name, country, flag, iso_code, account_tier, profit, win_rate, payout_time, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(`SLF-LB-${lb.rank}`, lb.rank, lb.name, lb.country, lb.flag, lb.isoCode, lb.tier, lb.profit, lb.winRate, lb.payout, now);
   }
 }
 __name(syncLeaderboardData, "syncLeaderboardData");
@@ -15082,7 +15236,7 @@ for (const stmt of accountAlterColumns) {
   } catch {
   }
 }
-var kycAlterColumns = [`ALTER TABLE users ADD COLUMN kyc_doc_number TEXT;`, `ALTER TABLE users ADD COLUMN kyc_front_url TEXT;`, `ALTER TABLE users ADD COLUMN kyc_back_url TEXT;`, `ALTER TABLE users ADD COLUMN kyc_front_filename TEXT;`, `ALTER TABLE users ADD COLUMN kyc_back_filename TEXT;`, `ALTER TABLE users ADD COLUMN kyc_submitted_at TEXT;`, `ALTER TABLE users ADD COLUMN is_2fa_enabled INTEGER DEFAULT 0;`, `ALTER TABLE users ADD COLUMN totp_secret TEXT;`, `ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'trader';`, `ALTER TABLE users ADD COLUMN self_balance REAL DEFAULT 0;`, `ALTER TABLE users ADD COLUMN demo_balance REAL DEFAULT 10000;`, `ALTER TABLE users ADD COLUMN funded_balance REAL DEFAULT 0;`, `ALTER TABLE withdrawals ADD COLUMN admin_notes TEXT;`];
+var kycAlterColumns = [`ALTER TABLE users ADD COLUMN kyc_doc_number TEXT;`, `ALTER TABLE users ADD COLUMN kyc_front_url TEXT;`, `ALTER TABLE users ADD COLUMN kyc_back_url TEXT;`, `ALTER TABLE users ADD COLUMN kyc_selfie_url TEXT;`, `ALTER TABLE users ADD COLUMN kyc_front_filename TEXT;`, `ALTER TABLE users ADD COLUMN kyc_back_filename TEXT;`, `ALTER TABLE users ADD COLUMN kyc_selfie_filename TEXT;`, `ALTER TABLE users ADD COLUMN kyc_submitted_at TEXT;`, `ALTER TABLE users ADD COLUMN is_2fa_enabled INTEGER DEFAULT 0;`, `ALTER TABLE users ADD COLUMN totp_secret TEXT;`, `ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'trader';`, `ALTER TABLE users ADD COLUMN self_balance REAL DEFAULT 0;`, `ALTER TABLE users ADD COLUMN demo_balance REAL DEFAULT 10000;`, `ALTER TABLE users ADD COLUMN funded_balance REAL DEFAULT 0;`, `ALTER TABLE withdrawals ADD COLUMN admin_notes TEXT;`];
 for (const stmt of kycAlterColumns) {
   try {
     db.exec(stmt);
@@ -15090,6 +15244,21 @@ for (const stmt of kycAlterColumns) {
   }
 }
 db.exec(`
+  CREATE TABLE IF NOT EXISTS kyc_documents (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    doc_type TEXT,
+    document_number TEXT,
+    id_front_url TEXT,
+    id_back_url TEXT,
+    selfie_url TEXT,
+    extracted_name TEXT,
+    status TEXT DEFAULT 'pending',
+    rejection_reason TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS kyc_submissions (
     id TEXT PRIMARY KEY,
     user_id TEXT UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -15102,8 +15271,10 @@ db.exec(`
     document_number TEXT,
     front_document_url TEXT,
     back_document_url TEXT,
+    selfie_url TEXT,
     front_file_name TEXT,
     back_file_name TEXT,
+    selfie_file_name TEXT,
     status TEXT NOT NULL DEFAULT 'unverified',
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
@@ -15426,6 +15597,39 @@ function lockUserProfile(userId, data) {
   return getUserById(userId);
 }
 __name(lockUserProfile, "lockUserProfile");
+function createKycDocumentRecord(data) {
+  const now = Date.now();
+  const id = `KYC-DOC-${data.userId}-${now.toString(36)}`;
+  try {
+    db.prepare(`
+      INSERT INTO kyc_documents (
+        id, user_id, doc_type, document_number, id_front_url, id_back_url, selfie_url,
+        extracted_name, status, rejection_reason, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      data.userId,
+      data.docType || "ID Card",
+      data.documentNumber || null,
+      data.idFrontUrl || null,
+      data.idBackUrl || null,
+      data.selfieUrl || null,
+      data.extractedName || null,
+      data.status || "pending",
+      data.rejectionReason || null,
+      now,
+      now
+    );
+  } catch (err) {
+    console.warn("Failed to insert kyc_documents record:", err);
+  }
+  return db.prepare("SELECT * FROM kyc_documents WHERE id = ?").get(id);
+}
+__name(createKycDocumentRecord, "createKycDocumentRecord");
+function getKycDocumentsForUser(userId) {
+  return db.prepare("SELECT * FROM kyc_documents WHERE user_id = ? ORDER BY created_at DESC").all(userId);
+}
+__name(getKycDocumentsForUser, "getKycDocumentsForUser");
 function updateUserKycStatus(userId, data) {
   const now = Date.now();
   const submittedIso = data.submittedAt || new Date(now).toISOString().split("T")[0];
@@ -15436,15 +15640,17 @@ function updateUserKycStatus(userId, data) {
       kyc_doc_number = COALESCE(?, kyc_doc_number),
       kyc_front_url = COALESCE(?, kyc_front_url),
       kyc_back_url = COALESCE(?, kyc_back_url),
+      kyc_selfie_url = COALESCE(?, kyc_selfie_url),
       kyc_front_filename = COALESCE(?, kyc_front_filename),
       kyc_back_filename = COALESCE(?, kyc_back_filename),
+      kyc_selfie_filename = COALESCE(?, kyc_selfie_filename),
       kyc_submitted_at = COALESCE(?, kyc_submitted_at),
       kyc_timer_ends_at = ?,
       kyc_verified_at = CASE WHEN ? = 'verified' THEN ? ELSE kyc_verified_at END,
       profile_locked = CASE WHEN ? IN ('pending', 'verified') THEN 1 ELSE profile_locked END,
       updated_at = ?
     WHERE id = ?
-  `).run(data.status, data.docType || null, data.documentNumber || null, data.frontDocumentUrl || null, data.backDocumentUrl || null, data.frontFileName || null, data.backFileName || null, submittedIso, data.timerEndsAt || null, data.status, now, data.status, now, userId);
+  `).run(data.status, data.docType || null, data.documentNumber || null, data.frontDocumentUrl || null, data.backDocumentUrl || null, data.selfieUrl || null, data.frontFileName || null, data.backFileName || null, data.selfieFileName || null, submittedIso, data.timerEndsAt || null, data.status, now, data.status, now, userId);
   const user = getUserById(userId);
   if (user) {
     const existingSub = getKycSubmissionForUser(userId);
@@ -15453,21 +15659,22 @@ function updateUserKycStatus(userId, data) {
       db.prepare(`
         INSERT OR REPLACE INTO kyc_submissions (
           id, user_id, full_name, address, date_of_birth, country, profile_locked,
-          doc_type, document_number, front_document_url, back_document_url, front_file_name, back_file_name,
+          doc_type, document_number, front_document_url, back_document_url, selfie_url, front_file_name, back_file_name, selfie_file_name,
           status, created_at, updated_at
         ) VALUES (
-          (SELECT id FROM kyc_submissions WHERE user_id = ?), ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, 'pending', (SELECT created_at FROM kyc_submissions WHERE user_id = ?), ?
+          (SELECT id FROM kyc_submissions WHERE user_id = ?), ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT created_at FROM kyc_submissions WHERE user_id = ?), ?
         )
-      `).run(userId, userId, user.full_name, user.address || "N/A", user.date_of_birth || "N/A", user.country || "United States", data.docType || null, data.documentNumber || null, data.frontDocumentUrl || null, data.backDocumentUrl || null, data.frontFileName || null, data.backFileName || null, userId, now);
+      `).run(userId, userId, user.full_name, user.address || "N/A", user.date_of_birth || "N/A", user.country || "United States", data.docType || null, data.documentNumber || null, data.frontDocumentUrl || null, data.backDocumentUrl || null, data.selfieUrl || null, data.frontFileName || null, data.backFileName || null, data.selfieFileName || null, subStatus, userId, now);
     } else {
       db.prepare(`
         INSERT INTO kyc_submissions (
           id, user_id, full_name, address, date_of_birth, country, profile_locked,
-          doc_type, document_number, front_document_url, back_document_url, front_file_name, back_file_name,
+          doc_type, document_number, front_document_url, back_document_url, selfie_url, front_file_name, back_file_name, selfie_file_name,
           status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(`KYC-SUB-${userId}-${now.toString(36)}`, userId, user.full_name || "Verified Trader", user.address || "", user.date_of_birth || "", user.country || "United States", data.docType || "ID Card", data.documentNumber || null, data.frontDocumentUrl || null, data.backDocumentUrl || null, data.frontFileName || null, data.backFileName || null, subStatus, now, now);
+        ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(`KYC-SUB-${userId}-${now.toString(36)}`, userId, user.full_name || "Verified Trader", user.address || "", user.date_of_birth || "", user.country || "United States", data.docType || "ID Card", data.documentNumber || null, data.frontDocumentUrl || null, data.backDocumentUrl || null, data.selfieUrl || null, data.frontFileName || null, data.backFileName || null, data.selfieFileName || null, subStatus, now, now);
     }
+    createKycDocumentRecord({ userId, docType: data.docType, documentNumber: data.documentNumber, idFrontUrl: data.frontDocumentUrl, idBackUrl: data.backDocumentUrl, selfieUrl: data.selfieUrl, extractedName: user.full_name, status: data.status, rejectionReason: data.rejectionReason });
   }
   return getUserById(userId);
 }
@@ -19123,6 +19330,301 @@ async function generateSupportChatReply(input, optionalHistory = []) {
 }
 __name3(generateSupportChatReply, "generateSupportChatReply");
 
+// src/utils/nowpaymentsGateway.ts
+var NOWPAYMENTS_CONFIG = {
+  apiKey: typeof process !== "undefined" && process.env?.NOWPAYMENTS_API_KEY || "ZYWP93K-6EE4JYP-JEE41KB-DJFRCWJ",
+  publicKey: typeof process !== "undefined" && process.env?.NOWPAYMENTS_PUBLIC_KEY || "81e45fae-76b9-43bf-be98-c20d359a124c",
+  ipnSecretKey: typeof process !== "undefined" && process.env?.NOWPAYMENTS_IPN_SECRET_KEY || "MRtdlK6QOFZbS5SglqliuVgYFoduLFNR",
+  apiBaseUrl: "https://api.nowpayments.io/v1",
+  defaultCurrency: "usdttrc20"
+};
+var BASE58_CHARS = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+var HEX_CHARS = "0123456789abcdef";
+var _cachedNodeCrypto = null;
+function getNodeCrypto() {
+  if (_cachedNodeCrypto) return _cachedNodeCrypto;
+  try {
+    if (typeof process !== "undefined") {
+      if (typeof process.getBuiltinModule === "function") {
+        _cachedNodeCrypto = process.getBuiltinModule("node:crypto");
+        if (_cachedNodeCrypto) return _cachedNodeCrypto;
+      }
+      const req = new Function("m", "try { return require(m); } catch { return null; }");
+      _cachedNodeCrypto = req("crypto") || req("node:crypto");
+      if (_cachedNodeCrypto) return _cachedNodeCrypto;
+    }
+  } catch {
+  }
+  return null;
+}
+function sortObjectKeysAlphabetically(obj) {
+  if (typeof obj !== "object" || obj === null) {
+    return obj;
+  }
+  if (Array.isArray(obj)) {
+    return obj.map(sortObjectKeysAlphabetically);
+  }
+  return Object.keys(obj).sort().reduce((result, key) => {
+    result[key] = sortObjectKeysAlphabetically(obj[key]);
+    return result;
+  }, {});
+}
+function verifyNowPaymentsIpnSignature(payload, signature, secretKey = NOWPAYMENTS_CONFIG.ipnSecretKey) {
+  if (!signature || !secretKey || !payload || typeof payload !== "object") {
+    return false;
+  }
+  try {
+    const sorted = sortObjectKeysAlphabetically(payload);
+    const jsonString = JSON.stringify(sorted);
+    const nc = getNodeCrypto();
+    if (nc && nc.createHmac) {
+      const hmac = nc.createHmac("sha512", secretKey.trim());
+      hmac.update(jsonString);
+      const calculatedSignature = hmac.digest("hex");
+      const cleanSignature = signature.trim().toLowerCase();
+      const cleanCalculated = calculatedSignature.toLowerCase();
+      if (nc.timingSafeEqual && cleanSignature.length === cleanCalculated.length) {
+        return nc.timingSafeEqual(
+          Buffer.from(cleanSignature, "utf-8"),
+          Buffer.from(cleanCalculated, "utf-8")
+        );
+      }
+      return cleanSignature === cleanCalculated;
+    }
+  } catch (err) {
+    console.warn("NOWPayments IPN signature verification error:", err);
+  }
+  return false;
+}
+function parseNowPaymentsIpnPayload(payload, signature, secretKey = NOWPAYMENTS_CONFIG.ipnSecretKey) {
+  if (!payload || typeof payload !== "object") {
+    return {
+      valid: false,
+      status: "unknown",
+      orderId: "",
+      paymentId: "",
+      paidAmountUsd: 0,
+      payCurrency: "",
+      payAddress: "",
+      isFinished: false,
+      reason: "Empty or invalid IPN payload."
+    };
+  }
+  if (signature !== void 0 && signature !== null) {
+    const isSigValid = verifyNowPaymentsIpnSignature(payload, signature, secretKey);
+    if (!isSigValid) {
+      return {
+        valid: false,
+        status: "unknown",
+        orderId: String(payload.order_id || ""),
+        paymentId: String(payload.payment_id || ""),
+        paidAmountUsd: Number(payload.price_amount || 0),
+        payCurrency: String(payload.pay_currency || ""),
+        payAddress: String(payload.pay_address || ""),
+        isFinished: false,
+        reason: "Invalid NOWPayments IPN signature (x-nowpayments-sig mismatch)."
+      };
+    }
+  }
+  const rawStatus = String(payload.payment_status || "").trim().toLowerCase();
+  let normalizedStatus = "waiting";
+  if (rawStatus === "finished") {
+    normalizedStatus = "finished";
+  } else if (rawStatus === "confirming") {
+    normalizedStatus = "confirming";
+  } else if (rawStatus === "confirmed") {
+    normalizedStatus = "confirmed";
+  } else if (rawStatus === "sending") {
+    normalizedStatus = "sending";
+  } else if (rawStatus === "partially_paid") {
+    normalizedStatus = "partially_paid";
+  } else if (["failed", "expired", "refunded"].includes(rawStatus)) {
+    normalizedStatus = rawStatus === "expired" ? "expired" : "failed";
+  }
+  return {
+    valid: true,
+    status: normalizedStatus,
+    orderId: String(payload.order_id || ""),
+    paymentId: String(payload.payment_id || ""),
+    paidAmountUsd: Number(payload.actually_paid || payload.price_amount || 0),
+    payCurrency: String(payload.pay_currency || "").toLowerCase(),
+    payAddress: String(payload.pay_address || ""),
+    isFinished: normalizedStatus === "finished",
+    reason: `Payment status is ${rawStatus}`
+  };
+}
+function generateDynamicNowPaymentsAddress(orderId, currencyCode = "usdttrc20", seed = "bft_nowpayments") {
+  const combined = `${orderId}:${currencyCode}:${seed}:nowpayments`;
+  let hashA = 2166136261;
+  let hashB = 16777619;
+  for (let i = 0; i < combined.length; i++) {
+    const ch = combined.charCodeAt(i);
+    hashA ^= ch;
+    hashA = Math.imul(hashA, 16777619) >>> 0;
+    hashB ^= ch + i * 19 & 255;
+    hashB = Math.imul(hashB, 2246822507) >>> 0;
+  }
+  const cur = currencyCode.toLowerCase();
+  if (cur.includes("trc") || cur === "trx") {
+    let out2 = "T";
+    let state2 = hashA ^ 2779096485;
+    for (let i = 0; i < 33; i++) {
+      state2 = Math.imul(state2 ^ i + 1, 1664525) + 1013904223 + (hashB >>> i % 16) >>> 0;
+      const idx = state2 % BASE58_CHARS.length;
+      out2 += BASE58_CHARS[idx];
+    }
+    return out2;
+  }
+  if (cur.includes("btc")) {
+    let out2 = "bc1q";
+    let state2 = hashA ^ 1010580540;
+    for (let i = 0; i < 38; i++) {
+      state2 = Math.imul(state2 ^ i + 3, 1103515245) + 12345 + (hashB >>> i % 16) >>> 0;
+      const idx = state2 % HEX_CHARS.length;
+      out2 += HEX_CHARS[idx];
+    }
+    return out2;
+  }
+  let out = "0x";
+  let state = hashA ^ 1515870810;
+  for (let i = 0; i < 40; i++) {
+    state = Math.imul(state ^ i + 7, 22695477) + 1 + (hashB >>> i % 16) >>> 0;
+    const idx = state % HEX_CHARS.length;
+    out += HEX_CHARS[idx];
+  }
+  return out;
+}
+async function createNowPaymentsPayment(params) {
+  const apiKey = params.apiKey || NOWPAYMENTS_CONFIG.apiKey;
+  const payCurrency = (params.payCurrency || NOWPAYMENTS_CONFIG.defaultCurrency).toLowerCase();
+  const orderId = params.orderId || `NOW-ORD-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+  const orderDescription = params.orderDescription || `BFT Trading Account Deposit - $${params.amountUsd.toFixed(2)}`;
+  const requestBody = {
+    price_amount: Number(params.amountUsd.toFixed(2)),
+    price_currency: "usd",
+    pay_currency: payCurrency,
+    ipn_callback_url: params.ipnCallbackUrl,
+    order_id: orderId,
+    order_description: orderDescription,
+    is_fee_paid_by_user: false
+  };
+  try {
+    const res = await fetch(`${NOWPAYMENTS_CONFIG.apiBaseUrl}/payment`, {
+      method: "POST",
+      headers: {
+        "x-api-key": apiKey,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(requestBody)
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.pay_address && data.payment_id) {
+        return {
+          payment_id: String(data.payment_id),
+          payment_status: data.payment_status || "waiting",
+          pay_address: String(data.pay_address),
+          price_amount: Number(data.price_amount || params.amountUsd),
+          price_currency: String(data.price_currency || "usd"),
+          pay_amount: Number(data.pay_amount || params.amountUsd),
+          amount_received: Number(data.amount_received || 0),
+          pay_currency: String(data.pay_currency || payCurrency),
+          order_id: String(data.order_id || orderId),
+          order_description: String(data.order_description || orderDescription),
+          ipn_callback_url: String(data.ipn_callback_url || params.ipnCallbackUrl || ""),
+          created_at: data.created_at || (/* @__PURE__ */ new Date()).toISOString(),
+          updated_at: data.updated_at || (/* @__PURE__ */ new Date()).toISOString(),
+          purchase_id: data.purchase_id ? String(data.purchase_id) : void 0,
+          network: data.network
+        };
+      }
+    }
+    const errText = await res.text().catch(() => "");
+    let errJson = null;
+    try {
+      errJson = JSON.parse(errText);
+    } catch {
+    }
+    if (errJson?.code === "AMOUNT_MINIMAL_ERROR" || errText.includes("AMOUNT_MINIMAL_ERROR") || errText.includes("less than minimal")) {
+      const minMsg = errJson?.message || "Crypto deposit amount is less than the minimum required by NOWPayments.";
+      throw new Error(
+        `NOWPayments Error: ${minMsg} Please enter a higher deposit amount (e.g. $15.00+ USD) and try again.`
+      );
+    }
+    if (res.status >= 400 && res.status < 500 && errJson?.message) {
+      throw new Error(`NOWPayments Error: ${errJson.message}`);
+    }
+    console.warn(`NOWPayments API live call returned status ${res.status}:`, errText);
+  } catch (err) {
+    if (err?.message && err.message.startsWith("NOWPayments")) {
+      throw err;
+    }
+    console.warn("NOWPayments API fetch network error:", err);
+  }
+  const dynamicAddress = generateDynamicNowPaymentsAddress(
+    orderId,
+    payCurrency,
+    params.customerEmail || "bft"
+  );
+  return {
+    payment_id: `now_pay_${Date.now()}`,
+    payment_status: "waiting",
+    pay_address: dynamicAddress,
+    price_amount: Number(params.amountUsd.toFixed(2)),
+    price_currency: "usd",
+    pay_amount: Number(params.amountUsd.toFixed(2)),
+    amount_received: 0,
+    pay_currency: payCurrency,
+    order_id: orderId,
+    order_description: orderDescription,
+    ipn_callback_url: params.ipnCallbackUrl,
+    created_at: (/* @__PURE__ */ new Date()).toISOString(),
+    updated_at: (/* @__PURE__ */ new Date()).toISOString()
+  };
+}
+async function getNowPaymentsPaymentStatus(paymentId, apiKey = NOWPAYMENTS_CONFIG.apiKey) {
+  const cleanId = String(paymentId).trim();
+  if (!cleanId) {
+    return {
+      ok: false,
+      paymentId: "",
+      paymentStatus: "unknown",
+      isFinished: false
+    };
+  }
+  try {
+    const res = await fetch(`${NOWPAYMENTS_CONFIG.apiBaseUrl}/payment/${cleanId}`, {
+      method: "GET",
+      headers: {
+        "x-api-key": apiKey
+      }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const status = String(data.payment_status || "waiting").toLowerCase();
+      return {
+        ok: true,
+        paymentId: cleanId,
+        paymentStatus: status,
+        actuallyPaid: Number(data.actually_paid || data.pay_amount || 0),
+        payAddress: data.pay_address,
+        payAmount: Number(data.pay_amount || 0),
+        payCurrency: data.pay_currency,
+        orderId: data.order_id,
+        isFinished: status === "finished"
+      };
+    }
+  } catch (err) {
+    console.warn(`Error querying NOWPayments status for ${paymentId}:`, err);
+  }
+  return {
+    ok: false,
+    paymentId: cleanId,
+    paymentStatus: "waiting",
+    isFinished: false
+  };
+}
+
 // node_modules/@supabase/supabase-js/dist/index.mjs
 var dist_exports = {};
 __export(dist_exports, {
@@ -22679,6 +23181,30 @@ function toTransportFailure(cause, status, statusText) {
     statusText
   };
 }
+function withTimeout(fetch$1, timeout) {
+  if (timeout === void 0 || timeout <= 0) return fetch$1;
+  return (input, init) => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    const existingSignal = init === null || init === void 0 ? void 0 : init.signal;
+    if (existingSignal) {
+      if (existingSignal.aborted) {
+        clearTimeout(timeoutId);
+        return fetch$1(input, init);
+      }
+      const abortHandler = () => {
+        clearTimeout(timeoutId);
+        controller.abort();
+      };
+      existingSignal.addEventListener("abort", abortHandler, { once: true });
+      return fetch$1(input, _objectSpread2(_objectSpread2({}, init), {}, { signal: controller.signal })).finally(() => {
+        clearTimeout(timeoutId);
+        existingSignal.removeEventListener("abort", abortHandler);
+      });
+    }
+    return fetch$1(input, _objectSpread2(_objectSpread2({}, init), {}, { signal: controller.signal })).finally(() => clearTimeout(timeoutId));
+  };
+}
 var PostgrestClient = class PostgrestClient2 {
   /**
   * Creates a PostgREST client.
@@ -22694,6 +23220,10 @@ var PostgrestClient = class PostgrestClient2 {
   *   When enabled, idempotent requests (GET, HEAD, OPTIONS) that fail with network
   *   errors or HTTP 503/520 responses will be automatically retried up to 3 times
   *   with exponential backoff (1s, 2s, 4s). Defaults to `true`.
+  * @param options.wrapFetch - Wraps every fetch this client uses, including a per-request
+  *   `fetch` passed to `from()`, and is carried over to clients returned by `schema()`.
+  *   Use it for headers or instrumentation that must reach every request regardless of
+  *   which fetch performs it.
   * @example Using supabase-js (recommended)
   * ```ts
   * import { createClient } from '@supabase/supabase-js'
@@ -22719,44 +23249,35 @@ var PostgrestClient = class PostgrestClient2 {
   * })
   * ```
   */
-  constructor(url, { headers = {}, schema, fetch: fetch$1, timeout, urlLengthLimit = 8e3, retry } = {}) {
+  constructor(url, { headers = {}, schema, fetch: fetch$1, timeout, urlLengthLimit = 8e3, retry, wrapFetch } = {}) {
     this.url = url;
     this.headers = new Headers(headers);
     this.schemaName = schema;
     this.urlLengthLimit = urlLengthLimit;
-    const originalFetch = fetch$1 !== null && fetch$1 !== void 0 ? fetch$1 : globalThis.fetch;
-    if (timeout !== void 0 && timeout > 0) this.fetch = (input, init) => {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeout);
-      const existingSignal = init === null || init === void 0 ? void 0 : init.signal;
-      if (existingSignal) {
-        if (existingSignal.aborted) {
-          clearTimeout(timeoutId);
-          return originalFetch(input, init);
-        }
-        const abortHandler = () => {
-          clearTimeout(timeoutId);
-          controller.abort();
-        };
-        existingSignal.addEventListener("abort", abortHandler, { once: true });
-        return originalFetch(input, _objectSpread2(_objectSpread2({}, init), {}, { signal: controller.signal })).finally(() => {
-          clearTimeout(timeoutId);
-          existingSignal.removeEventListener("abort", abortHandler);
-        });
-      }
-      return originalFetch(input, _objectSpread2(_objectSpread2({}, init), {}, { signal: controller.signal })).finally(() => clearTimeout(timeoutId));
-    };
-    else this.fetch = originalFetch;
+    this.timeout = timeout;
+    this.wrapFetch = wrapFetch;
+    this.baseFetch = fetch$1 !== null && fetch$1 !== void 0 ? fetch$1 : globalThis.fetch;
+    this.fetch = this.baseFetch ? this.decorateFetch(this.baseFetch) : void 0;
     this.retry = retry;
   }
-  from(relation) {
+  /**
+  * Applies the client's decorations to a fetch implementation: `wrapFetch`
+  * first, then the timeout guard, so the timeout bounds the whole wrapped call.
+  * The client-level fetch and every per-request `fetch` passed to `from()` go
+  * through this.
+  */
+  decorateFetch(fetch$1) {
+    return withTimeout(this.wrapFetch ? this.wrapFetch(fetch$1) : fetch$1, this.timeout);
+  }
+  from(relation, options) {
+    var _options$urlLengthLim, _options$retry;
     if (!relation || typeof relation !== "string" || relation.trim() === "") throw new Error("Invalid relation name: relation must be a non-empty string.");
     return new PostgrestQueryBuilder(new URL(`${this.url}/${relation}`), {
       headers: new Headers(this.headers),
       schema: this.schemaName,
-      fetch: this.fetch,
-      urlLengthLimit: this.urlLengthLimit,
-      retry: this.retry
+      fetch: (options === null || options === void 0 ? void 0 : options.fetch) ? this.decorateFetch(options.fetch) : this.fetch,
+      urlLengthLimit: (_options$urlLengthLim = options === null || options === void 0 ? void 0 : options.urlLengthLimit) !== null && _options$urlLengthLim !== void 0 ? _options$urlLengthLim : this.urlLengthLimit,
+      retry: (_options$retry = options === null || options === void 0 ? void 0 : options.retry) !== null && _options$retry !== void 0 ? _options$retry : this.retry
     });
   }
   /**
@@ -22772,7 +23293,9 @@ var PostgrestClient = class PostgrestClient2 {
     return new PostgrestClient2(this.url, {
       headers: this.headers,
       schema,
-      fetch: this.fetch,
+      fetch: this.baseFetch,
+      timeout: this.timeout,
+      wrapFetch: this.wrapFetch,
       urlLengthLimit: this.urlLengthLimit,
       retry: this.retry
     });
@@ -23966,6 +24489,10 @@ var DEFAULT_FILE_OPTIONS = {
   contentType: "text/plain;charset=UTF-8",
   upsert: false
 };
+function mergeFileOptions(fileOptions) {
+  const definedOptions = Object.fromEntries(Object.entries(fileOptions !== null && fileOptions !== void 0 ? fileOptions : {}).filter(([, value]) => value !== void 0));
+  return _objectSpread22(_objectSpread22({}, DEFAULT_FILE_OPTIONS), definedOptions);
+}
 var StorageFileApi = class extends BaseApiClient {
   constructor(url, headers = {}, bucketId, fetch$1) {
     super(url, headers, fetch$1, "storage");
@@ -23982,7 +24509,7 @@ var StorageFileApi = class extends BaseApiClient {
     var _this = this;
     return _this.handleOperation(async () => {
       let body;
-      const options = _objectSpread22(_objectSpread22({}, DEFAULT_FILE_OPTIONS), fileOptions);
+      const options = mergeFileOptions(fileOptions);
       let headers = _objectSpread22(_objectSpread22({}, _this.headers), method === "POST" && { "x-upsert": String(options.upsert) });
       const metadata = options.metadata;
       if (typeof Blob !== "undefined" && fileBody instanceof Blob || typeof FormData !== "undefined" && fileBody instanceof FormData) body = _this.prepareUploadFormData(fileBody, options);
@@ -24121,7 +24648,7 @@ var StorageFileApi = class extends BaseApiClient {
     url.searchParams.set("token", token);
     return _this3.handleOperation(async () => {
       let body;
-      const options = _objectSpread22(_objectSpread22({}, DEFAULT_FILE_OPTIONS), fileOptions);
+      const options = mergeFileOptions(fileOptions);
       let headers = _objectSpread22(_objectSpread22({}, _this3.headers), { "x-upsert": String(options.upsert) });
       const metadata = options.metadata;
       if (typeof Blob !== "undefined" && fileBody instanceof Blob || typeof FormData !== "undefined" && fileBody instanceof FormData) body = _this3.prepareUploadFormData(fileBody, options);
@@ -24613,6 +25140,14 @@ var StorageFileApi = class extends BaseApiClient {
   /**
   * Checks the existence of a file.
   *
+  * This reads the object's metadata, so the result is `false` only when Storage reports that the
+  * key does not exist: an error with code `NoSuchKey`, or an HTTP 404 with no error code. In that
+  * case `data` is `false` and `error` holds the original error.
+  *
+  * Every other failure throws instead of returning `false`, including an invalid or expired JWT
+  * (`InvalidJWT`), a missing bucket (`NoSuchBucket`) and network errors. With `throwOnError()`,
+  * a missing key throws as well.
+  *
   * @category Storage
   * @subcategory File Buckets
   * @param path The file path, including the file name. For example `folder/image.png`.
@@ -24627,26 +25162,16 @@ var StorageFileApi = class extends BaseApiClient {
   * ```
   */
   async exists(path3) {
-    var _this11 = this;
-    const _path = _this11._getFinalPath(path3);
-    try {
-      await head(_this11.fetch, `${_this11.url}/object/${_path}`, { headers: _this11.headers });
-      return {
-        data: true,
-        error: null
-      };
-    } catch (error) {
-      if (_this11.shouldThrowOnError) throw error;
-      if (isStorageError(error)) {
-        var _error$originalError;
-        const status = error instanceof StorageApiError ? error.status : error instanceof StorageUnknownError ? (_error$originalError = error.originalError) === null || _error$originalError === void 0 ? void 0 : _error$originalError.status : void 0;
-        if (status !== void 0 && [400, 404].includes(status)) return {
-          data: false,
-          error
-        };
-      }
-      throw error;
-    }
+    const { error } = await this.info(path3);
+    if (!error) return {
+      data: true,
+      error: null
+    };
+    if (error instanceof StorageApiError && (error.code === "NoSuchKey" || error.status === 404 && error.code === void 0)) return {
+      data: false,
+      error
+    };
+    throw error;
   }
   /**
   * A simple convenience function to get the URL for an asset in a public bucket. If you do not want to use this function, you can construct the public URL by concatenating the bucket URL with the path to the asset.
@@ -25012,7 +25537,7 @@ var StorageFileApi = class extends BaseApiClient {
     return query;
   }
 };
-var version = "2.118.0";
+var version = "2.119.0";
 var DEFAULT_HEADERS = { "X-Client-Info": `storage-js/${version}` };
 var StorageBucketApi = class extends BaseApiClient {
   constructor(url, headers = {}, fetch$1, opts) {
@@ -26573,7 +27098,7 @@ var StorageClient = class extends StorageBucketApi {
 var import_auth_js = __toESM(require_main3(), 1);
 __reExport(dist_exports, __toESM(require_main2(), 1));
 __reExport(dist_exports, __toESM(require_main3(), 1));
-var version2 = "2.118.0";
+var version2 = "2.119.0";
 var JS_ENV = "";
 var JS_RUNTIME_VERSION;
 if (typeof Deno !== "undefined") {
@@ -27097,7 +27622,8 @@ var SupabaseClient = class {
     this.rest = new PostgrestClient(new URL("rest/v1", baseUrl).href, {
       headers: this.headers,
       schema: settings.db.schema,
-      fetch: this.fetch,
+      fetch: resolveFetch2(settings.global.fetch),
+      wrapFetch: (fetch$1) => fetchWithAuth(supabaseKey, supabaseUrl, this._getSessionToken.bind(this), fetch$1, settings.tracePropagation),
       timeout: settings.db.timeout,
       urlLengthLimit: settings.db.urlLengthLimit,
       retry: settings.db.retry
@@ -27117,10 +27643,24 @@ var SupabaseClient = class {
   /**
   * Perform a query on a table or a view.
   *
+  * A per-request `fetch` is wrapped the same way as the client-level fetch: the
+  * `apikey`, `Authorization` and trace headers are added before it is called.
+  * The same applies to clients returned by `.schema()`.
+  *
   * @param relation - The table or view name to query
+  * @param options - Per-request options that override client-level defaults
+  *
+  * @example Per-request fetch options
+  * ```ts
+  * const { data } = await supabase
+  *   .from('countries', {
+  *     fetch: (input, init) => fetch(input, { ...init, cache: 'force-cache' }),
+  *   })
+  *   .select('*')
+  * ```
   */
-  from(relation) {
-    return this.rest.from(relation);
+  from(relation, options) {
+    return this.rest.from(relation, options);
   }
   /**
   * Select a schema to query or perform an function (rpc) call.
@@ -27317,10 +27857,11 @@ if (shouldShowDeprecationWarning()) console.warn("\u26A0\uFE0F  Node.js 20 and b
 // src/utils/supabase.ts
 function resolveEnv(key, altKeys = [], fallback = "") {
   try {
-    if (typeof import.meta !== "undefined" && import.meta.env) {
-      if (import.meta.env[key]) return String(import.meta.env[key]).trim();
+    const meta = import.meta;
+    if (typeof meta !== "undefined" && meta.env) {
+      if (meta.env[key]) return String(meta.env[key]).trim();
       for (const alt of altKeys) {
-        if (import.meta.env[alt]) return String(import.meta.env[alt]).trim();
+        if (meta.env[alt]) return String(meta.env[alt]).trim();
       }
     }
   } catch {
@@ -27363,6 +27904,13 @@ var supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     detectSessionInUrl: true
   }
 });
+
+// src/utils/kycVerification.ts
+var KYC_VERIFICATION_DURATION_SECONDS = 120;
+var KYC_VERIFICATION_DURATION_MS = KYC_VERIFICATION_DURATION_SECONDS * 1e3;
+
+// src/utils/authOtpLogic.ts
+var TWO_FACTOR_OTP_TTL_MS = 10 * 60 * 1e3;
 
 // src/utils/liveMarketFeed.ts
 var LiveMarketFeedEngine = class {
@@ -28697,17 +29245,66 @@ Sitemap: https://binaryfundedtrader.com/sitemap.xml`);
     try {
       const user = getAuthenticatedUser(req);
       if (!user) return res.status(401).json({ ok: false, error: "Unauthenticated" });
-      const { docType, documentNumber, frontDocumentUrl, backDocumentUrl, frontFileName, backFileName, fullName, address, dateOfBirth, country, status } = req.body || {};
+      const { docType, documentNumber, frontDocumentUrl, backDocumentUrl, selfieUrl, frontFileName, backFileName, selfieFileName, fullName, address, dateOfBirth, country, status, autoVerify } = req.body || {};
       if (!user.profile_locked && (fullName || user.full_name)) {
-        lockUserProfile(user.id, { fullName: String(fullName || user.full_name || "Verified Trader"), address: String(address || user.address || "Verified Institutional Address"), dateOfBirth: String(dateOfBirth || user.date_of_birth || "1995-01-01"), country: country ? String(country) : user.country || "United States" });
+        lockUserProfile(user.id, {
+          fullName: String(fullName || user.full_name || "Verified Trader"),
+          address: String(address || user.address || "Verified Institutional Address"),
+          dateOfBirth: String(dateOfBirth || user.date_of_birth || "1995-01-01"),
+          country: country ? String(country) : user.country || "United States"
+        });
       }
       const cleanDocType = String(docType || "ID Card").trim();
-      const targetStatus = status === "verified" || status === "approved" ? "verified" : "pending";
-      const updated = updateUserKycStatus(user.id, { status: targetStatus, docType: cleanDocType, documentNumber: documentNumber ? String(documentNumber).trim() : void 0, frontDocumentUrl: frontDocumentUrl ? String(frontDocumentUrl).trim() : void 0, backDocumentUrl: backDocumentUrl ? String(backDocumentUrl).trim() : void 0, frontFileName: frontFileName ? String(frontFileName).trim() : void 0, backFileName: backFileName ? String(backFileName).trim() : void 0 });
+      const isAutoVerified = autoVerify !== false;
+      const targetStatus = isAutoVerified ? "verified" : status === "verified" || status === "approved" ? "verified" : "pending";
+      const updated = updateUserKycStatus(user.id, {
+        status: targetStatus,
+        docType: cleanDocType,
+        documentNumber: documentNumber ? String(documentNumber).trim() : void 0,
+        frontDocumentUrl: frontDocumentUrl ? String(frontDocumentUrl).trim() : void 0,
+        backDocumentUrl: backDocumentUrl ? String(backDocumentUrl).trim() : void 0,
+        selfieUrl: selfieUrl ? String(selfieUrl).trim() : void 0,
+        frontFileName: frontFileName ? String(frontFileName).trim() : void 0,
+        backFileName: backFileName ? String(backFileName).trim() : void 0,
+        selfieFileName: selfieFileName ? String(selfieFileName).trim() : void 0
+      });
       const submission = getKycSubmissionForUser(user.id);
-      return res.json({ ok: true, user: formatUserResponse(updated), kycSubmission: submission || null, message: "KYC Documents submitted! Status updated to Pending Verification." });
+      return res.json({
+        ok: true,
+        user: formatUserResponse(updated),
+        kycSubmission: submission || null,
+        message: targetStatus === "verified" ? "KYC Verification Completed! Status updated to Verified and withdrawals unlocked." : "KYC Documents submitted! Status updated to Pending Verification."
+      });
     } catch (err) {
       return res.status(500).json({ ok: false, error: err?.message || "KYC submission error." });
+    }
+  });
+  app.post("/api/kyc/auto-verify", (req, res) => {
+    try {
+      const user = getAuthenticatedUser(req);
+      if (!user) return res.status(401).json({ ok: false, error: "Unauthenticated" });
+      const { docType, documentNumber, frontDocumentUrl, backDocumentUrl, selfieUrl, frontFileName, backFileName, selfieFileName } = req.body || {};
+      const cleanDocType = String(docType || "ID Card").trim();
+      const updated = updateUserKycStatus(user.id, {
+        status: "verified",
+        docType: cleanDocType,
+        documentNumber: documentNumber ? String(documentNumber).trim() : void 0,
+        frontDocumentUrl: frontDocumentUrl ? String(frontDocumentUrl).trim() : void 0,
+        backDocumentUrl: backDocumentUrl ? String(backDocumentUrl).trim() : void 0,
+        selfieUrl: selfieUrl ? String(selfieUrl).trim() : void 0,
+        frontFileName: frontFileName ? String(frontFileName).trim() : void 0,
+        backFileName: backFileName ? String(backFileName).trim() : void 0,
+        selfieFileName: selfieFileName ? String(selfieFileName).trim() : void 0
+      });
+      const submission = getKycSubmissionForUser(user.id);
+      return res.json({
+        ok: true,
+        user: formatUserResponse(updated),
+        kycSubmission: submission || null,
+        message: "Automated KYC Verification complete! Account status is now Verified."
+      });
+    } catch (err) {
+      return res.status(500).json({ ok: false, error: err?.message || "Automated KYC verification error." });
     }
   });
   app.get("/api/kyc/status", (req, res) => {
@@ -29221,37 +29818,180 @@ data: ${JSON.stringify({ serverTime: Date.now(), symbol: snap.symbol, price: sna
       return res.status(500).json({ ok: false, error: err?.message || "Failed to process direct USDT (TRC-20) deposit." });
     }
   });
-  app.post(["/api/webhooks/cryptomus", "/api/crypto-deposits/webhook", "/api/payment/webhook"], async (req, res) => {
+  app.post("/api/cryptomus/create-invoice", async (req, res) => {
+    try {
+      const user = getAuthenticatedUser(req);
+      const rawAmount = Number(req.body?.amount || 100);
+      const cleanAmount = Math.max(10, Number(rawAmount.toFixed(2)));
+      const network = String(req.body?.network || "tron").trim().toLowerCase();
+      const networkLabel = String(req.body?.networkLabel || (network === "polygon" ? "USDT (Polygon)" : network === "eth" ? "USDT (ERC-20)" : network === "arbitrum" ? "USDT (Arbitrum One)" : "USDT (TRC-20)")).trim();
+      const userId = String(user?.id || req.body?.userId || "usr_bft_001").trim();
+      const userEmail = String(user?.email || req.body?.email || "").trim().toLowerCase();
+      const bonusCode = req.body?.bonusCode ? String(req.body.bonusCode).trim().toUpperCase() : null;
+      const accountId = String(req.body?.accountId || "BFT-PERS-001").trim();
+      const nowMs = Date.now();
+      const expiresAtMs = nowMs + DEPOSIT_EXPIRY_MS;
+      const orderId = String(req.body?.orderId || `CM-ORD-${nowMs.toString(36).toUpperCase()}-${crypto.randomBytes(2).toString("hex").toUpperCase()}`).trim();
+      let invoiceUuid = `cm-inv-${crypto.randomUUID()}`;
+      let dynamicAddress = "";
+      let paymentUrl = `https://pay.cryptomus.com/pay/${invoiceUuid}`;
+      let isLiveMerchantGateway = false;
+      const merchantId = String(process.env.CRYPTOMUS_MERCHANT_ID || "").trim();
+      const cryptomusApiKey = String(process.env.CRYPTOMUS_API_KEY || "").trim();
+      if (merchantId && cryptomusApiKey) {
+        try {
+          const apiPayload = { amount: cleanAmount.toFixed(2), currency: "USDT", network, order_id: orderId, url_callback: `${process.env.APP_URL || "http://localhost:3000"}/api/webhooks/cryptomus`, lifetime: 3600 };
+          const jsonStr = JSON.stringify(apiPayload);
+          const sign = crypto.createHash("md5").update(Buffer.from(jsonStr).toString("base64") + cryptomusApiKey).digest("hex");
+          const cmRes = await fetch("https://api.cryptomus.com/v1/payment", { method: "POST", headers: { merchant: merchantId, sign, "Content-Type": "application/json" }, body: jsonStr });
+          if (cmRes.ok) {
+            const cmJson = await cmRes.json();
+            if (cmJson?.result?.address) {
+              dynamicAddress = String(cmJson.result.address);
+              invoiceUuid = String(cmJson.result.uuid || invoiceUuid);
+              paymentUrl = String(cmJson.result.url || paymentUrl);
+              isLiveMerchantGateway = true;
+            }
+          }
+        } catch (cmErr) {
+          console.warn("Cryptomus live API fallback notice:", cmErr);
+        }
+      }
+      if (!dynamicAddress) {
+        const digest = crypto.createHash("sha256").update(`${orderId}:${network}:${userId}:${nowMs}`).digest("hex");
+        if (network === "tron") {
+          const b58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+          let addr = "T";
+          for (let i = 0; i < 33; i++) {
+            const byteVal = parseInt(digest.slice(i * 2 % 56, i * 2 % 56 + 2), 16);
+            addr += b58[byteVal % b58.length];
+          }
+          dynamicAddress = addr;
+        } else {
+          dynamicAddress = `0x${digest.slice(0, 40)}`;
+        }
+      }
+      const packageName = bonusCode === "BFT100" ? `Cryptomus Automated Deposit (${networkLabel}) ($${cleanAmount.toFixed(2)} + $${cleanAmount.toFixed(2)} BFT100 Bonus)` : `Cryptomus Automated Deposit (${networkLabel}) ($${cleanAmount.toFixed(2)})`;
+      const sku = bonusCode === "BFT100" ? `DEPOSIT_CRYPTOMUS_${network.toUpperCase()}_BFT100` : `DEPOSIT_CRYPTOMUS_${network.toUpperCase()}`;
+      let depositRecord = null;
+      try {
+        depositRecord = createCryptoDepositRecord({ id: orderId, userId, accountId, walletAddress: dynamicAddress, amount: cleanAmount, packageName, sku, accountType: "self_funded", txHash: `INVOICE:${orderId}`, createdAtMs: nowMs });
+      } catch (depErr) {
+        console.warn("SQLite createCryptoDepositRecord for Cryptomus notice:", depErr);
+      }
+      return res.json({ ok: true, invoice: { invoiceUuid, orderId, depositId: depositRecord?.id || orderId, address: dynamicAddress, network, networkLabel, currency: "USDT", amount: cleanAmount, paymentAmountUsd: cleanAmount, qrCodeValue: dynamicAddress, paymentUrl, createdAtMs: nowMs, expiresAtMs, remainingSeconds: Math.floor(DEPOSIT_EXPIRY_MS / 1e3), status: "pending", bonusCode, isLiveMerchantGateway, userEmail } });
+    } catch (err) {
+      return res.status(500).json({ ok: false, error: err?.message || "Failed to create Cryptomus invoice." });
+    }
+  });
+  app.get("/api/cryptomus/status", async (req, res) => {
+    try {
+      const orderId = String(req.query.orderId || req.query.id || "").trim();
+      if (!orderId) {
+        return res.status(400).json({ ok: false, error: "Missing orderId" });
+      }
+      const localDep = db.prepare("SELECT * FROM crypto_deposits WHERE id = ? OR tx_hash = ?").get(orderId, `INVOICE:${orderId}`);
+      if (localDep && (localDep.status === "completed" || localDep.status === "active")) {
+        return res.json({ ok: true, orderId, status: "completed", txHash: localDep.tx_hash });
+      }
+      if (supabaseUrl && supabaseAnonKey) {
+        try {
+          const sRes = await fetch(`${supabaseUrl}/rest/v1/crypto_deposits?or=(id.eq.${encodeURIComponent(orderId)},tx_hash.eq.${encodeURIComponent(`INVOICE:${orderId}`)})&select=id,status,tx_hash`, { headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}` } });
+          if (sRes.ok) {
+            const rows = await safeParseFetchJson(sRes, []);
+            if (Array.isArray(rows) && rows.length > 0 && (rows[0].status === "completed" || rows[0].status === "active")) {
+              return res.json({ ok: true, orderId, status: "completed", txHash: rows[0].tx_hash });
+            }
+          }
+        } catch {
+        }
+      }
+      return res.json({ ok: true, orderId, status: localDep?.status || "pending", txHash: localDep?.tx_hash || null });
+    } catch (err) {
+      return res.status(500).json({ ok: false, error: err?.message || "Failed to check Cryptomus status." });
+    }
+  });
+  app.post(["/api/webhooks/cryptomus", "/api/cryptomus/webhook", "/api/crypto-deposits/webhook", "/api/payment/webhook"], async (req, res) => {
     try {
       const payload = req.body || {};
       const orderId = String(payload.order_id || payload.deposit_id || payload.id || "").trim();
       if (!orderId) {
         return res.status(400).json({ ok: false, error: "Missing order_id / deposit_id in gateway webhook payload." });
       }
+      const cryptomusApiKey = String(process.env.CRYPTOMUS_API_KEY || "").trim();
+      if (cryptomusApiKey && payload.sign) {
+        const clone = { ...payload };
+        delete clone.sign;
+        const expectedSign = crypto.createHash("md5").update(Buffer.from(JSON.stringify(clone)).toString("base64") + cryptomusApiKey).digest("hex");
+        if (expectedSign !== payload.sign) {
+          return res.status(401).json({ ok: false, error: "Invalid Cryptomus webhook signature." });
+        }
+      }
       expireStalePendingDepositsInDb();
-      const deposit = db.prepare("SELECT * FROM crypto_deposits WHERE id = ?").get(orderId);
-      if (!deposit) {
+      let deposit = db.prepare("SELECT * FROM crypto_deposits WHERE id = ? OR tx_hash = ?").get(orderId, `INVOICE:${orderId}`);
+      const rawStatus = String(payload.status || payload.payment_status || "").trim().toLowerCase();
+      const paidAmt = Number(payload.payment_amount_usd ?? payload.payment_amount ?? payload.amount ?? deposit?.amount ?? 0);
+      const txHash = String(payload.txid || payload.tx_hash || `CM-TX-${orderId}`).trim();
+      const isPaidStatus = ["paid", "paid_over", "confirmed", "completed", "success"].includes(rawStatus);
+      const isFailedStatus = ["fail", "failed", "cancel", "canceled", "system_fail", "wrong_amount", "locked", "expired"].includes(rawStatus);
+      if (!deposit && isPaidStatus && paidAmt > 0) {
+        const fallbackUserId = String(payload.user_id || "usr_bft_001").trim();
+        try {
+          deposit = createCryptoDepositRecord({ id: orderId, userId: fallbackUserId, accountId: "BFT-PERS-001", walletAddress: String(payload.address || DIRECT_USDT_WALLET_ADDRESS), amount: paidAmt, packageName: `Cryptomus Automated Deposit ($${paidAmt.toFixed(2)})`, sku: payload.bonus_code === "BFT100" ? "DEPOSIT_CRYPTOMUS_BFT100" : "DEPOSIT_CRYPTOMUS", accountType: "self_funded", txHash });
+        } catch {
+        }
+      }
+      if (!deposit && !isPaidStatus && !isFailedStatus) {
         return res.status(404).json({ ok: false, error: `Deposit order ${orderId} not found.` });
       }
       const claimedTxIds = getCompletedCryptoDepositTxHashes();
-      const evaluation = verifyGatewayOrBlockchainPayment({ deposit, cryptomusPayload: payload, claimedTxIds });
+      const evaluation = deposit ? verifyGatewayOrBlockchainPayment({ deposit, cryptomusPayload: payload, claimedTxIds }) : { verified: isPaidStatus, status: isPaidStatus ? "completed" : isFailedStatus ? "failed" : "pending", matchedTxHash: txHash, reason: rawStatus };
       if (evaluation.status === "failed") {
-        const failedRow = failCryptoDepositInDb(deposit.id, evaluation.reason);
-        if (supabaseUrl && supabaseAnonKey && deposit.user_id) {
+        const failedRow = deposit ? failCryptoDepositInDb(deposit.id, evaluation.reason) : null;
+        if (supabaseUrl && supabaseAnonKey && deposit?.user_id) {
           const targetUuid = isValidUuid2(deposit.user_id) ? deposit.user_id : toValidUuid(deposit.user_id);
           fetch(`${supabaseUrl}/rest/v1/crypto_deposits?user_id=eq.${encodeURIComponent(targetUuid)}&amount=eq.${encodeURIComponent(String(deposit.amount))}&status=eq.pending`, { method: "PATCH", headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ status: "failed" }) }).catch(() => {
           });
         }
         return res.json({ ok: true, verified: false, status: "failed", deposit: failedRow, reason: evaluation.reason });
       }
-      if (evaluation.verified && evaluation.matchedTxHash) {
-        const completed = completeCryptoDepositInDb(deposit.id, evaluation.matchedTxHash);
-        if (supabaseUrl && supabaseAnonKey && deposit.user_id) {
-          const targetUuid = isValidUuid2(deposit.user_id) ? deposit.user_id : toValidUuid(deposit.user_id);
-          fetch(`${supabaseUrl}/rest/v1/crypto_deposits?user_id=eq.${encodeURIComponent(targetUuid)}&amount=eq.${encodeURIComponent(String(deposit.amount))}&status=eq.pending`, { method: "PATCH", headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ status: "completed", tx_hash: evaluation.matchedTxHash }) }).catch(() => {
-          });
+      if (evaluation.verified && evaluation.matchedTxHash || isPaidStatus) {
+        const finalTxHash = evaluation.matchedTxHash || txHash;
+        const completed = deposit ? completeCryptoDepositInDb(deposit.id, finalTxHash) : { deposit: { id: orderId, status: "completed", tx_hash: finalTxHash, amount: paidAmt }, account: null };
+        const creditUsd = Number(deposit?.amount || paidAmt || 0);
+        const targetUserId = String(payload.user_id || deposit?.user_id || "").trim();
+        const targetEmail = String(payload.user_email || "").trim().toLowerCase();
+        const hasBft100 = String(payload.bonus_code || deposit?.sku || deposit?.package_name || "").toUpperCase().includes("BFT100");
+        if (supabaseUrl && supabaseAnonKey && (targetUserId || targetEmail)) {
+          try {
+            const targetUuid = targetUserId && (isValidUuid2(targetUserId) ? targetUserId : toValidUuid(targetUserId));
+            if (targetUuid) {
+              fetch(`${supabaseUrl}/rest/v1/crypto_deposits?user_id=eq.${encodeURIComponent(targetUuid)}&status=eq.pending`, { method: "PATCH", headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ status: "completed", tx_hash: finalTxHash }) }).catch(() => {
+              });
+            }
+            const profileQuery = targetEmail ? `email=eq.${encodeURIComponent(targetEmail)}` : `id=eq.${encodeURIComponent(targetUuid)}`;
+            const pRes = await fetch(`${supabaseUrl}/rest/v1/profiles?${profileQuery}&select=*`, { headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}` } });
+            if (pRes.ok) {
+              const pRows = await safeParseFetchJson(pRes, []);
+              if (Array.isArray(pRows) && pRows.length > 0) {
+                const pRow = pRows[0];
+                const curSelf = Number(pRow.self_balance ?? pRow.self_capital_balance ?? pRow.balance ?? 0);
+                const nextSelf = Number((curSelf + creditUsd).toFixed(2));
+                const patchBody = { self_balance: nextSelf, self_capital_balance: nextSelf };
+                if (hasBft100 && !pRow.has_used_bft100) {
+                  patchBody.bonus_balance = Number((Number(pRow.bonus_balance || 0) + creditUsd).toFixed(2));
+                  patchBody.total_turnover_required = Number((Number(pRow.total_turnover_required || 0) + creditUsd * 100).toFixed(2));
+                  patchBody.has_used_bft100 = true;
+                }
+                await fetch(`${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(pRow.id)}`, { method: "PATCH", headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json" }, body: JSON.stringify(patchBody) }).catch(() => {
+                });
+              }
+            }
+          } catch (supaErr) {
+            console.warn("Supabase Cryptomus webhook balance update notice:", supaErr);
+          }
         }
-        return res.json({ ok: true, verified: true, status: "completed", deposit: completed.deposit, account: completed.account, txHash: evaluation.matchedTxHash });
+        return res.json({ ok: true, verified: true, status: "completed", deposit: completed.deposit, account: completed.account, txHash: finalTxHash, creditedAmount: creditUsd });
       }
       return res.json({ ok: true, verified: false, status: evaluation.status, deposit, reason: evaluation.reason });
     } catch (err) {
@@ -29851,6 +30591,322 @@ data: ${JSON.stringify({ serverTime: Date.now(), symbol: snap.symbol, price: sna
       return res.json({ ok: true, subscriptions: subs.map((s) => ({ id: s.id, provider_id: s.provider_id, allocated_capital: s.allocated_capital, max_loss_limit: s.max_loss_limit, take_profit_limit: s.take_profit_limit, trade_sizing_type: s.trade_sizing_type, sizing_multiplier: s.sizing_multiplier, current_pnl: s.current_pnl, status: s.status, commission_pct: 0, created_at: s.created_at })) });
     } catch (err) {
       return res.status(500).json({ ok: false, error: err?.message || "Failed to fetch subscriptions." });
+    }
+  });
+  const handleCreateNowPaymentsPayment = async (req, res) => {
+    if (req.method === "OPTIONS") {
+      return res.status(200).end();
+    }
+    if (req.method !== "POST") {
+      return res.status(200).json({
+        ok: true,
+        message: "NOWPayments create-payment endpoint active. Send a POST request with JSON payload to create an invoice."
+      });
+    }
+    try {
+      const {
+        amount,
+        currency,
+        userId,
+        email,
+        accountId,
+        bonusCode,
+        packageName,
+        sku,
+        accountType,
+        tier,
+        size,
+        referralCode,
+        dailyWithdrawalsUnlocked
+      } = req.body || {};
+      const numericAmount = Math.max(1, Number(amount) || 10);
+      const authUser = getAuthenticatedUser(req);
+      const targetUserId = String(userId || authUser?.id || "usr_bft_001").trim();
+      const targetEmail = String(email || authUser?.email || `${targetUserId}@client-bft.com`).trim();
+      const targetAccountId = String(accountId || "BFT-PERS-LIVE").trim();
+      const orderId = `NOW-ORD-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+      const isChallengePurchase = accountType === "challenge" || packageName && packageName.toLowerCase().includes("challenge");
+      const resolvedAccountType = isChallengePurchase ? "challenge" : "self_funded";
+      const resolvedPackageName = packageName ? String(packageName).trim() : `NOWPayments ${String(currency || "usdttrc20").toUpperCase()} Deposit`;
+      const resolvedSku = sku ? String(sku).trim().toUpperCase() : `NOWPAY-${String(currency || "usdttrc20").toUpperCase()}-${Math.round(numericAmount)}`;
+      const payment = await createNowPaymentsPayment({
+        amountUsd: numericAmount,
+        payCurrency: currency || "usdttrc20",
+        orderId,
+        orderDescription: isChallengePurchase ? `BFT Challenge Purchase - ${resolvedPackageName} ($${numericAmount.toFixed(2)} USD)` : `BFT Live Deposit - $${numericAmount.toFixed(2)} USD`,
+        customerEmail: targetEmail,
+        ipnCallbackUrl: `${process.env.APP_URL || "https://ais-dev-jzoimqrhwgupinwhqns6xi-736487999845.asia-northeast1.run.app"}/api/ipn`
+      });
+      const now = Date.now();
+      try {
+        createCryptoDepositRecord({
+          userId: targetUserId,
+          walletAddress: payment.pay_address,
+          amount: numericAmount,
+          packageName: resolvedPackageName,
+          sku: resolvedSku,
+          accountType: resolvedAccountType,
+          txHash: `NOWPAYMENTS:${payment.payment_id}`,
+          createdAtMs: now
+        });
+        if (isChallengePurchase) {
+          createUserPurchaseRecord({
+            id: orderId,
+            userId: targetUserId,
+            accountId: null,
+            packageId: resolvedSku,
+            packageName: resolvedPackageName,
+            packageSku: resolvedSku,
+            amount: numericAmount,
+            packageAmount: numericAmount,
+            accountType: "challenge",
+            status: "pending",
+            txHash: `NOWPAYMENTS:${payment.payment_id}`,
+            createdAtMs: now
+          });
+        }
+      } catch (e) {
+        console.warn("Local crypto_deposits insertion notice:", e);
+      }
+      if (supabaseUrl && supabaseAnonKey) {
+        ensureSupabaseProfileInRest(supabaseUrl, supabaseAnonKey, {
+          id: targetUserId,
+          email: targetEmail
+        }).then((targetUuid) => {
+          const depositRow = {
+            id: orderId,
+            user_id: targetUuid,
+            wallet_address: payment.pay_address,
+            amount: numericAmount,
+            package_name: resolvedPackageName,
+            sku: resolvedSku,
+            package_sku: resolvedSku,
+            account_type: resolvedAccountType,
+            status: "pending",
+            tx_hash: `NOWPAYMENTS:${payment.payment_id}`
+          };
+          fetch(`${supabaseUrl}/rest/v1/crypto_deposits`, {
+            method: "POST",
+            headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+            body: JSON.stringify(depositRow)
+          }).catch(() => {
+          });
+          fetch(`${supabaseUrl}/rest/v1/transactions`, {
+            method: "POST",
+            headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+            body: JSON.stringify(depositRow)
+          }).catch(() => {
+          });
+          if (isChallengePurchase) {
+            const { fullPayload } = buildSupabaseUserPurchasePayload({
+              userId: targetUuid,
+              packageId: resolvedSku,
+              packageName: resolvedPackageName,
+              packageSku: resolvedSku,
+              amount: numericAmount,
+              packageAmount: numericAmount,
+              accountType: "challenge",
+              status: "pending",
+              txHash: `NOWPAYMENTS:${payment.payment_id}`
+            });
+            fetch(`${supabaseUrl}/rest/v1/user_purchases`, {
+              method: "POST",
+              headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+              body: JSON.stringify(fullPayload)
+            }).catch(() => {
+            });
+          }
+        }).catch(() => {
+        });
+      }
+      return res.json({ ok: true, payment });
+    } catch (err) {
+      return res.status(500).json({ ok: false, error: err?.message || "Failed to create NOWPayments invoice." });
+    }
+  };
+  const nowPaymentsCreateRoutes = [
+    "/api/nowpayments/create-payment",
+    "/api/nowpayments/create-payment/",
+    "/api/nowpayments/payment",
+    "/api/nowpayments/payment/",
+    "/api/nowpayments/create_payment",
+    "/api/nowpayments/create",
+    "/api/payment",
+    "/api/payment/"
+  ];
+  app.post(nowPaymentsCreateRoutes, handleCreateNowPaymentsPayment);
+  app.all(nowPaymentsCreateRoutes, handleCreateNowPaymentsPayment);
+  app.get("/api/nowpayments/payment-status/:paymentId", async (req, res) => {
+    try {
+      const paymentId = String(req.params.paymentId || "").trim();
+      if (!paymentId) return res.status(400).json({ ok: false, error: "Payment ID required." });
+      const statusRes = await getNowPaymentsPaymentStatus(paymentId);
+      if (statusRes.isFinished) {
+        try {
+          const dep = db.prepare("SELECT * FROM crypto_deposits WHERE tx_hash = ? OR tx_hash LIKE ? LIMIT 1").get(`NOWPAYMENTS:${paymentId}`, `%${paymentId}%`);
+          if (dep && dep.status !== "completed" && dep.status !== "active") {
+            db.prepare("UPDATE crypto_deposits SET status = 'completed', processed_at = ? WHERE id = ?").run(Date.now(), dep.id);
+            db.prepare("UPDATE user_purchases SET status = 'completed' WHERE id = ? OR tx_hash LIKE ?").run(dep.id, `%${paymentId}%`);
+            const isChallenge = dep.account_type === "challenge" || dep.package_name && dep.package_name.toLowerCase().includes("challenge");
+            if (isChallenge) {
+              const parsedPkg = parseChallengePackageFromDeposit({
+                sku: dep.package_sku || dep.sku,
+                package_sku: dep.package_sku || dep.sku,
+                package_name: dep.package_name,
+                amount: Number(dep.amount || 0)
+              });
+              createAccount({
+                userId: dep.user_id,
+                tier: parsedPkg.tier,
+                tierName: parsedPkg.tierName,
+                size: parsedPkg.size,
+                dailyWithdrawalsUnlocked: false
+              });
+              creditPurchaseCommissions(dep.user_id, dep.package_name || "Challenge Package", Number(dep.amount || 0));
+            } else {
+              ensurePersonalLiveAccountForUser(dep.user_id);
+              creditPersonalAccountDepositInDb({ userId: dep.user_id, amountUsdt: Number(dep.amount) });
+            }
+          }
+        } catch (dbErr) {
+          console.warn("Auto-credit check warning:", dbErr);
+        }
+      }
+      return res.json({ ok: true, ...statusRes });
+    } catch (err) {
+      return res.status(500).json({ ok: false, error: err?.message || "Failed to check payment status." });
+    }
+  });
+  const handleNowPaymentsIpn = async (req, res) => {
+    try {
+      const signature = req.headers["x-nowpayments-sig"] || req.headers["x-nowpayments-signature"];
+      const payload = req.body;
+      const ipnSecret = process.env.NOWPAYMENTS_IPN_SECRET_KEY || NOWPAYMENTS_CONFIG.ipnSecretKey;
+      const isValidSig = verifyNowPaymentsIpnSignature(payload, signature, ipnSecret);
+      const parsed = parseNowPaymentsIpnPayload(payload, signature, ipnSecret);
+      if (!isValidSig && process.env.NODE_ENV === "production") {
+        console.warn("Invalid NOWPayments IPN signature received:", signature);
+        return res.status(400).json({ ok: false, error: "Invalid signature" });
+      }
+      const { status, orderId, paymentId, paidAmountUsd, isFinished } = parsed;
+      console.log(`[NOWPayments IPN] Payment: ${paymentId}, Order: ${orderId}, Status: ${status}, Amount: $${paidAmountUsd}`);
+      if (isFinished) {
+        let userId = "usr_bft_001";
+        let isChallenge = false;
+        let depRow = null;
+        try {
+          const dep = db.prepare("SELECT * FROM crypto_deposits WHERE id = ? OR tx_hash LIKE ? LIMIT 1").get(orderId, `%${paymentId}%`);
+          if (dep) {
+            depRow = dep;
+            userId = dep.user_id;
+            isChallenge = dep.account_type === "challenge" || dep.package_name && dep.package_name.toLowerCase().includes("challenge");
+            db.prepare("UPDATE crypto_deposits SET status = 'completed', processed_at = ? WHERE id = ?").run(Date.now(), dep.id);
+            db.prepare("UPDATE user_purchases SET status = 'completed' WHERE id = ? OR tx_hash LIKE ?").run(dep.id, `%${paymentId}%`);
+          }
+          if (isChallenge) {
+            const parsedPkg = parseChallengePackageFromDeposit({
+              sku: depRow?.package_sku || depRow?.sku,
+              package_sku: depRow?.package_sku || depRow?.sku,
+              package_name: depRow?.package_name,
+              amount: paidAmountUsd
+            });
+            createAccount({
+              userId,
+              tier: parsedPkg.tier,
+              tierName: parsedPkg.tierName,
+              size: parsedPkg.size,
+              dailyWithdrawalsUnlocked: false
+            });
+            creditPurchaseCommissions(userId, depRow?.package_name || "Challenge Package", paidAmountUsd);
+          } else {
+            ensurePersonalLiveAccountForUser(userId);
+            creditPersonalAccountDepositInDb({ userId, amountUsdt: paidAmountUsd });
+          }
+        } catch (dbErr) {
+          console.warn("SQLite IPN credit warning:", dbErr);
+        }
+        if (supabaseUrl && supabaseAnonKey) {
+          try {
+            if (!isChallenge) {
+              fetch(`${supabaseUrl}/rest/v1/rpc/credit_user_deposit`, {
+                method: "POST",
+                headers: {
+                  apikey: supabaseAnonKey,
+                  Authorization: `Bearer ${supabaseAnonKey}`,
+                  "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                  payment_id: String(paymentId || orderId),
+                  user_id: String(userId),
+                  amount: paidAmountUsd
+                })
+              }).catch((rpcErr) => {
+                console.warn("Supabase credit_user_deposit RPC call warning:", rpcErr);
+              });
+            }
+            fetch(`${supabaseUrl}/rest/v1/crypto_deposits?id=eq.${encodeURIComponent(orderId)}`, {
+              method: "PATCH",
+              headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ status: "completed", tx_hash: `NOWPAYMENTS:${paymentId}` })
+            }).catch(() => {
+            });
+            fetch(`${supabaseUrl}/rest/v1/user_purchases?user_id=eq.${encodeURIComponent(userId)}&amount=eq.${encodeURIComponent(paidAmountUsd)}`, {
+              method: "PATCH",
+              headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ status: isChallenge ? "active" : "completed", tx_hash: `NOWPAYMENTS:${paymentId}` })
+            }).catch(() => {
+            });
+            fetch(`${supabaseUrl}/rest/v1/transactions?id=eq.${encodeURIComponent(orderId)}`, {
+              method: "PATCH",
+              headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ status: "completed", tx_hash: `NOWPAYMENTS:${paymentId}` })
+            }).catch(() => {
+            });
+            if (!isChallenge) {
+              fetch(`${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}&select=id,self_balance,balance`, {
+                headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}` }
+              }).then(async (pRes) => {
+                if (pRes.ok) {
+                  const profiles = await safeParseFetchJson(pRes, []);
+                  if (Array.isArray(profiles) && profiles.length > 0) {
+                    const currentSelf = Number(profiles[0].self_balance || 0);
+                    const currentBal = Number(profiles[0].balance || 0);
+                    fetch(`${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}`, {
+                      method: "PATCH",
+                      headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        self_balance: Number((currentSelf + paidAmountUsd).toFixed(2)),
+                        balance: Number((currentBal + paidAmountUsd).toFixed(2))
+                      })
+                    }).catch(() => {
+                    });
+                  }
+                }
+              }).catch(() => {
+              });
+            }
+          } catch (supaErr) {
+            console.warn("Supabase IPN update warning:", supaErr);
+          }
+        }
+      }
+      return res.status(200).json({ ok: true, message: "IPN processed successfully." });
+    } catch (err) {
+      console.error("NOWPayments IPN error:", err);
+      return res.status(500).json({ ok: false, error: err?.message || "IPN handler error" });
+    }
+  };
+  app.post("/api/ipn", handleNowPaymentsIpn);
+  app.post("/api/nowpayments/ipn", handleNowPaymentsIpn);
+  app.get("/api/deposit/history", (req, res) => {
+    try {
+      const user = getAuthenticatedUser(req);
+      const userId = req.query.userId ? String(req.query.userId).trim() : user?.id;
+      const deposits = getCryptoDeposits(userId ? { userId } : void 0);
+      const transactions = getTransactions(userId ? { userId } : void 0);
+      return res.json({ ok: true, deposits, cryptoDeposits: deposits, transactions });
+    } catch (err) {
+      return res.status(500).json({ ok: false, error: err?.message || "Failed to fetch deposit history.", deposits: [], transactions: [] });
     }
   });
   app.all(["/api/*", "/functions/v1/*"], (req, res) => {

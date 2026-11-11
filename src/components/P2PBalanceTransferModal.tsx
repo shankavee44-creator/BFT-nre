@@ -14,6 +14,7 @@ import {
   Clock,
   ArrowUpRight,
   ArrowDownLeft,
+  Lock,
 } from 'lucide-react';
 import type { TradingAccount, UserProfile } from '../types/index.ts';
 import {
@@ -31,6 +32,7 @@ import {
 } from '../utils/p2pTransfer.ts';
 import { subscribeToRealtimeBalanceTransfers } from '../utils/userNotifications.ts';
 import { soundEngine } from '../utils/soundEffects.ts';
+import { apiValidate2fa, apiSend2faEmailOtp } from '../utils/apiClient.ts';
 
 export interface P2PBalanceTransferModalProps {
   isOpen: boolean;
@@ -64,6 +66,16 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
     message: string;
   } | null>(null);
   const [recentTransfers, setRecentTransfers] = useState<P2PTransferRecord[]>([]);
+
+  // 2FA Enforcement State for P2P Transfers
+  const [show2faPrompt, setShow2faPrompt] = useState(false);
+  const [twoFactorCode, setTwoFactorCode] = useState('');
+  const [twoFactorError, setTwoFactorError] = useState<string | null>(null);
+  const [dispatchedP2pOtp, setDispatchedP2pOtp] = useState<string | null>(null);
+  const [pendingTransferPayload, setPendingTransferPayload] = useState<{
+    normalizedReceiverNumericId: string;
+    normalizedAmount: number;
+  } | null>(null);
 
   const ownNumericId = resolveUserNumericId(userProfile);
   const { availableLiveBalance } = resolveTransferableLiveBalance(userProfile, accounts);
@@ -218,43 +230,92 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
   const handleSubmitTransfer = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting || isSubmittingRef.current) return;
-    setIsSubmitting(true);
-    isSubmittingRef.current = true;
     setModalToast(null);
     soundEngine.playUiClick();
 
+    const preCheck = validateP2PTransferInput({
+      senderNumericId: ownNumericId,
+      receiverNumericId,
+      transferAmount,
+      availableLiveBalance,
+    });
+
+    if (!preCheck.valid) {
+      soundEngine.playErrorAlert();
+      const errToast = {
+        type: 'error' as const,
+        title: preCheck.exceedsSelfCapitalBalance
+          ? 'Self-Capital Balance Limit'
+          : 'Transfer Validation Error',
+        message: preCheck.error || P2P_SELF_CAPITAL_ONLY_ERROR,
+      };
+      setModalToast(errToast);
+      if (onNotifyToast) onNotifyToast(errToast);
+      return;
+    }
+
+    // Enforce 2FA verification step before executing any P2P transfer
+    const otpRes = await apiSend2faEmailOtp({
+      userId: userProfile.id,
+      email: userProfile.email,
+      purpose: 'p2p',
+      forceNew: true,
+    });
+
+    setPendingTransferPayload({
+      normalizedReceiverNumericId: preCheck.normalizedReceiverNumericId,
+      normalizedAmount: preCheck.normalizedAmount,
+    });
+    setDispatchedP2pOtp(otpRes.code);
+    setTwoFactorCode('');
+    setTwoFactorError(null);
+    setShow2faPrompt(true);
+  };
+
+  const handleConfirm2faAndTransfer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isSubmitting || isSubmittingRef.current || !pendingTransferPayload) return;
+
+    const cleanCode = twoFactorCode.replace(/\D/g, '').trim();
+    if (cleanCode.length !== 6) {
+      setTwoFactorError('Please enter your 6-digit 2FA verification code.');
+      soundEngine.playErrorAlert();
+      return;
+    }
+
+    setIsSubmitting(true);
+    isSubmittingRef.current = true;
+    setTwoFactorError(null);
+    soundEngine.playUiClick();
+
     try {
-      const preCheck = validateP2PTransferInput({
-        senderNumericId: ownNumericId,
-        receiverNumericId,
-        transferAmount,
-        availableLiveBalance,
+      const validation = await apiValidate2fa({
+        userId: userProfile.id,
+        email: userProfile.email,
+        code: cleanCode,
       });
 
-      if (!preCheck.valid) {
+      if (!validation.isValid) {
         setIsSubmitting(false);
+        isSubmittingRef.current = false;
         soundEngine.playErrorAlert();
-        const errToast = {
-          type: 'error' as const,
-          title: preCheck.exceedsSelfCapitalBalance
-            ? 'Self-Capital Balance Limit'
-            : 'Transfer Validation Error',
-          message: preCheck.error || P2P_SELF_CAPITAL_ONLY_ERROR,
-        };
-        setModalToast(errToast);
-        if (onNotifyToast) onNotifyToast(errToast);
+        setTwoFactorError(
+          validation.error ||
+            'Invalid 6-digit 2FA code. Please check your Email OTP or Google Authenticator code.'
+        );
         return;
       }
 
       const result = await executeP2PBalanceTransfer({
         userProfile,
         accounts,
-        receiverNumericId: preCheck.normalizedReceiverNumericId,
-        transferAmount: preCheck.normalizedAmount,
+        receiverNumericId: pendingTransferPayload.normalizedReceiverNumericId,
+        transferAmount: pendingTransferPayload.normalizedAmount,
       });
 
       if (!result.ok) {
         setIsSubmitting(false);
+        isSubmittingRef.current = false;
         soundEngine.playErrorAlert();
         const errToast = {
           type: 'error' as const,
@@ -263,6 +324,7 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
         };
         setModalToast(errToast);
         if (onNotifyToast) onNotifyToast(errToast);
+        setShow2faPrompt(false);
         return;
       }
 
@@ -283,7 +345,7 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
 
       const successToast = {
         type: 'success' as const,
-        title: 'P2P Transfer Sent',
+        title: '2FA Verified • P2P Transfer Sent',
         message:
           result.message ||
           `Transferred -$${result.transferAmount.toFixed(2)} USD from Self-Capital Balance to Receiver ID #${result.receiverNumericId}.`,
@@ -291,6 +353,9 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
       setModalToast(successToast);
       if (onNotifyToast) onNotifyToast(successToast);
 
+      setShow2faPrompt(false);
+      setPendingTransferPayload(null);
+      setTwoFactorCode('');
       setReceiverNumericId('');
       setTransferAmount('');
     } catch (err: any) {
@@ -680,6 +745,166 @@ export const P2PBalanceTransferModal: React.FC<P2PBalanceTransferModalProps> = (
               </button>
             </div>
           </form>
+
+          {/* 2FA Verification Prompt Modal Overlay for P2P Transfer */}
+          {show2faPrompt && pendingTransferPayload && (
+            <form
+              onSubmit={handleConfirm2faAndTransfer}
+              data-testid="p2p-2fa-verification-prompt"
+              className="p-4 rounded-2xl bg-[#141720] border-2 border-[#ff8800]/60 shadow-[0_12px_40px_rgba(0,0,0,0.85)] space-y-3.5 font-mono"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-[#ff8800]/15 border border-[#ff8800]/40 flex items-center justify-center text-[#ff8800] shrink-0">
+                    <ShieldCheck className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-xs sm:text-sm font-black text-white uppercase tracking-wide">
+                      2FA Security Verification Required
+                    </h3>
+                    <p className="text-[11px] text-slate-400">
+                      Confirm transfer of{' '}
+                      <strong className="text-emerald-400">
+                        ${pendingTransferPayload.normalizedAmount.toFixed(2)} USD
+                      </strong>{' '}
+                      to Trader <strong className="text-white">#{pendingTransferPayload.normalizedReceiverNumericId}</strong>
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={isSubmitting}
+                  onClick={() => {
+                    setShow2faPrompt(false);
+                    setTwoFactorCode('');
+                    setTwoFactorError(null);
+                  }}
+                  className="text-slate-400 hover:text-white cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {dispatchedP2pOtp && (
+                <div
+                  data-testid="p2p-2fa-otp-banner"
+                  className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/35 flex items-center justify-between gap-2 text-[11px]"
+                >
+                  <div className="text-emerald-200">
+                    <span className="block font-bold">
+                      Email OTP Sent to {userProfile.email}
+                    </span>
+                    <span>
+                      P2P Security Code:{' '}
+                      <strong
+                        data-testid="p2p-2fa-otp-code"
+                        className="text-white font-black tracking-widest bg-black/50 px-1.5 py-0.5 rounded border border-emerald-500/40"
+                      >
+                        {dispatchedP2pOtp}
+                      </strong>
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    data-testid="p2p-2fa-use-code-btn"
+                    onClick={() => {
+                      setTwoFactorCode(dispatchedP2pOtp);
+                      setTwoFactorError(null);
+                    }}
+                    className="px-2.5 py-1 rounded bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-200 text-[10px] font-bold uppercase shrink-0 cursor-pointer"
+                  >
+                    Use Code
+                  </button>
+                </div>
+              )}
+
+              {twoFactorError && (
+                <div
+                  data-testid="p2p-2fa-error"
+                  className="p-2.5 rounded-xl bg-rose-950/90 border border-rose-500/50 text-rose-200 text-xs flex items-center gap-2"
+                >
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span>{twoFactorError}</span>
+                </div>
+              )}
+
+              <div>
+                <label
+                  htmlFor="p2p-2fa-code-input"
+                  className="flex items-center justify-between text-[11px] font-bold text-slate-300 mb-1"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <Lock className="w-3.5 h-3.5 text-[#ff8800]" />
+                    <span>Enter 6-Digit 2FA Code (Email OTP or Authenticator) *</span>
+                  </span>
+                  <span className="text-[10px] text-slate-400">{twoFactorCode.length}/6</span>
+                </label>
+                <input
+                  id="p2p-2fa-code-input"
+                  data-testid="p2p-2fa-code-input"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  autoFocus
+                  maxLength={6}
+                  disabled={isSubmitting}
+                  value={twoFactorCode}
+                  onChange={(e) => {
+                    setTwoFactorCode(e.target.value.replace(/\D/g, '').slice(0, 6));
+                    if (twoFactorError) setTwoFactorError(null);
+                  }}
+                  placeholder="000000"
+                  className="w-full px-4 py-2.5 bg-[#0a0a0a] border border-white/20 focus:border-[#ff8800] rounded-xl text-white text-center text-lg font-black tracking-[0.5em] focus:outline-none"
+                />
+                <div className="flex items-center justify-between mt-1.5 text-[10px]">
+                  <span className="text-slate-400">Protected by 2-Factor Authentication</span>
+                  <button
+                    type="button"
+                    data-testid="p2p-2fa-resend-btn"
+                    onClick={async () => {
+                      const res = await apiSend2faEmailOtp({
+                        userId: userProfile.id,
+                        email: userProfile.email,
+                        purpose: 'p2p',
+                        forceNew: true,
+                      });
+                      setDispatchedP2pOtp(res.code);
+                      setTwoFactorError(null);
+                    }}
+                    className="text-[#ff8800] hover:underline font-bold cursor-pointer"
+                  >
+                    Resend 2FA OTP
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="submit"
+                  data-testid="p2p-2fa-verify-submit-btn"
+                  disabled={isSubmitting || twoFactorCode.length !== 6}
+                  className="flex-1 py-2.5 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-45 text-slate-950 font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+                >
+                  <ShieldCheck className="w-4 h-4 stroke-[2.5]" />
+                  <span>
+                    {isSubmitting ? 'Verifying 2FA...' : 'Verify 2FA & Execute Transfer'}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  disabled={isSubmitting}
+                  onClick={() => {
+                    setShow2faPrompt(false);
+                    setTwoFactorCode('');
+                    setTwoFactorError(null);
+                  }}
+                  className="py-2.5 px-3.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 text-xs font-bold cursor-pointer"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          )}
 
           {/* P2P Transfer History (Sent & Received Transfers from balance_transfers) */}
           <div

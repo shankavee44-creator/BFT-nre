@@ -20,7 +20,7 @@ import {
   validateSponsorReferralCode,
   resolve3TierUplineChain,
 } from '../utils/affiliateEngine';
-import { apiEmailSessionSync, apiValidate2fa } from '../utils/apiClient';
+import { apiEmailSessionSync, apiValidate2fa, apiSend2faEmailOtp } from '../utils/apiClient';
 import { supabase, ensureSupabaseProfileAndDemoAccount } from '../utils/supabase';
 import { resolveOrBuildUserProfile, isTwoFactorEnabledOnProfile } from '../utils/authOtpLogic';
 import { BftLogo } from './BftLogo';
@@ -90,6 +90,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [tempUserId, setTempUserId] = useState('');
   const [pendingAuthUser, setPendingAuthUser] = useState<any>(null);
   const [totpCode, setTotpCode] = useState('');
+  const [dispatchedEmailOtp, setDispatchedEmailOtp] = useState<string | null>(null);
+  const [otpResendMessage, setOtpResendMessage] = useState<string | null>(null);
 
   const [referralCodeInput, setReferralCodeInput] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
@@ -310,50 +312,45 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       }
 
       const userHas2fa = isTwoFactorEnabledOnProfile(profileRow, authUser);
+      const resolvedAuthUserId = profileRow?.id || authUser.id;
 
-      if (userHas2fa) {
-        try {
-          sessionStorage.removeItem(`bft_2fa_verified_${authUser.id}`);
-          localStorage.removeItem(`bft_2fa_verified_${authUser.id}`);
-          if (profileRow?.id) {
-            sessionStorage.removeItem(`bft_2fa_verified_${profileRow.id}`);
-            localStorage.removeItem(`bft_2fa_verified_${profileRow.id}`);
-          }
-          sessionStorage.setItem(`bft_2fa_pending_${authUser.id}`, 'true');
-        } catch {
-          // ignore
-        }
-
-        setTempUserId(profileRow?.id || authUser.id);
-        setPendingAuthUser({
-          ...authUser,
-          totp_secret:
-            profileRow?.totp_secret ||
-            authUser.user_metadata?.totp_secret ||
-            authUser.user_metadata?.pending_totp_secret ||
-            undefined,
-        });
-        setIs2faRequired(true);
-        setTotpCode('');
-        setAuthError(null);
-        setIsSubmitting(false);
-        return;
-      }
-
+      // Always enforce 2FA verification step during login (supports both Email OTP & Authenticator Code)
       try {
-        sessionStorage.removeItem('bft_2fa_login_gate_active');
-        sessionStorage.removeItem(`bft_2fa_pending_${authUser.id}`);
-        sessionStorage.setItem(`bft_2fa_verified_${authUser.id}`, 'true');
-        sessionStorage.setItem(`bft_2fa_verified_${cleanEmail}`, 'true');
-        if (rememberMe) {
-          localStorage.setItem(`bft_2fa_verified_${authUser.id}`, 'true');
-          localStorage.setItem(`bft_2fa_verified_${cleanEmail}`, 'true');
+        sessionStorage.removeItem(`bft_2fa_verified_${authUser.id}`);
+        localStorage.removeItem(`bft_2fa_verified_${authUser.id}`);
+        if (profileRow?.id) {
+          sessionStorage.removeItem(`bft_2fa_verified_${profileRow.id}`);
+          localStorage.removeItem(`bft_2fa_verified_${profileRow.id}`);
         }
+        sessionStorage.setItem(`bft_2fa_pending_${authUser.id}`, 'true');
       } catch {
         // ignore
       }
 
-      await ensureSupabaseUserProfileAndLogin(authUser);
+      const otpDispatch = await apiSend2faEmailOtp({
+        userId: resolvedAuthUserId,
+        email: cleanEmail,
+        purpose: 'login',
+        forceNew: true,
+      });
+
+      setDispatchedEmailOtp(otpDispatch.code);
+      setOtpResendMessage(`6-digit security OTP dispatched to ${cleanEmail}`);
+      setTempUserId(resolvedAuthUserId);
+      setPendingAuthUser({
+        ...authUser,
+        hasTotpConfigured: userHas2fa,
+        totp_secret:
+          profileRow?.totp_secret ||
+          authUser.user_metadata?.totp_secret ||
+          authUser.user_metadata?.pending_totp_secret ||
+          undefined,
+      });
+      setIs2faRequired(true);
+      setTotpCode('');
+      setAuthError(null);
+      setIsSubmitting(false);
+      return;
     } catch {
       try {
         sessionStorage.removeItem('bft_2fa_login_gate_active');
@@ -801,7 +798,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         </form>
       )}
 
-      {/* FORM MODE 1B: 2FA VERIFICATION */}
+      {/* FORM MODE 1B: 2FA VERIFICATION (EMAIL OTP OR AUTHENTICATOR CODE) */}
       {authTab === 'email_signin' && is2faRequired && (
         <form onSubmit={handleVerify2fa} className="space-y-4 mb-4 font-mono">
           <div
@@ -811,10 +808,43 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <div className="w-12 h-12 mx-auto rounded-xl bg-[#ff8800]/15 border border-[#ff8800]/40 flex items-center justify-center text-[#ff8800]">
               <ShieldCheck className="w-6 h-6 stroke-[2.5]" />
             </div>
-            <h4 className="text-sm font-black text-white">Google Authenticator (2FA)</h4>
+            <h4 className="text-sm font-black text-white">
+              Two-Factor Authentication (2FA) Required
+            </h4>
             <p className="text-xs text-slate-400">
-              Two-Factor Authentication is active for <strong className="text-white">{email}</strong>. Enter the 6-digit code from your authenticator app:
+              Enter the 6-digit verification code sent via <strong className="text-white">Email OTP</strong> to{' '}
+              <strong className="text-[#ff8800]">{email}</strong> or from your{' '}
+              <strong className="text-white">Google Authenticator</strong> app:
             </p>
+            {dispatchedEmailOtp && (
+              <div
+                data-testid="signin-2fa-email-otp-banner"
+                className="mt-2 p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-left flex items-center justify-between gap-2"
+              >
+                <div className="text-[11px] text-emerald-300">
+                  <span className="font-bold block text-emerald-200">
+                    {otpResendMessage || 'Email OTP Dispatched'}
+                  </span>
+                  <span>
+                    Instant Verification OTP:{' '}
+                    <strong
+                      data-testid="signin-2fa-email-otp-code"
+                      className="text-white font-black tracking-widest bg-black/50 px-1.5 py-0.5 rounded border border-emerald-500/40"
+                    >
+                      {dispatchedEmailOtp}
+                    </strong>
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  data-testid="signin-2fa-autofill-otp-btn"
+                  onClick={() => setTotpCode(dispatchedEmailOtp)}
+                  className="px-2.5 py-1 rounded bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-200 text-[10px] font-bold uppercase shrink-0 cursor-pointer"
+                >
+                  Use Code
+                </button>
+              </div>
+            )}
           </div>
 
           <div>
@@ -824,7 +854,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             >
               <span className="flex items-center gap-1.5">
                 <Lock className="w-3.5 h-3.5 text-[#ff8800]" />
-                <span>6-Digit Verification Code *</span>
+                <span>6-Digit 2FA Code (Email OTP / Authenticator) *</span>
               </span>
               <span className="text-[10px] text-slate-500">{totpCode.length}/6 digits</span>
             </label>
@@ -842,6 +872,27 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               placeholder="000000"
               className="w-full px-4 py-3 bg-[#0a0a0a] border border-white/20 rounded-xl text-white text-center text-xl font-black tracking-[0.5em] focus:outline-none focus:border-[#ff8800]"
             />
+            <div className="flex items-center justify-between mt-1.5 text-[11px]">
+              <span className="text-slate-500">Valid for 10 minutes</span>
+              <button
+                type="button"
+                data-testid="signin-2fa-resend-otp-btn"
+                onClick={async () => {
+                  const cleanEmail = email.trim().toLowerCase();
+                  const res = await apiSend2faEmailOtp({
+                    userId: tempUserId,
+                    email: cleanEmail,
+                    purpose: 'login',
+                    forceNew: true,
+                  });
+                  setDispatchedEmailOtp(res.code);
+                  setOtpResendMessage(`New 6-digit OTP sent to ${cleanEmail}`);
+                }}
+                className="text-[#ff8800] hover:underline font-bold cursor-pointer"
+              >
+                Resend Email OTP
+              </button>
+            </div>
           </div>
 
           <div className="flex flex-col gap-2 pt-1">
@@ -852,7 +903,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               className="w-full py-3.5 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] disabled:opacity-50 text-slate-950 font-black text-xs cursor-pointer transition-colors flex items-center justify-center gap-2 uppercase tracking-wider"
             >
               <ShieldCheck className="w-4 h-4 stroke-[2.5]" />
-              <span>{isSubmitting ? 'Verifying Code...' : 'Verify & Enter Dashboard'}</span>
+              <span>{isSubmitting ? 'Verifying 2FA Code...' : 'Verify 2FA & Enter Dashboard'}</span>
             </button>
 
             <button

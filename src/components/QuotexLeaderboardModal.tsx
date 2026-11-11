@@ -15,6 +15,7 @@ import { CountryFlagIcon } from './CountryFlagIcon';
 import {
   LeaderboardTrader,
   LeaderboardTabCategory,
+  MATEUS_DOMINGOS_ENTRY,
   YOHAN_SIRIWARDHANA_ENTRY,
   getDynamicLeaderboardTraders,
   getSriLankaDailyResetInfo,
@@ -22,7 +23,10 @@ import {
   calculateUserLeaderboardPnL,
   formatDailyProfitLoss,
   resolveUserLeaderboardPosition,
-  normalizeWeeklyLeaderboard,
+  normalizeFundedLeaderboard,
+  normalizeSelfFundedLeaderboard,
+  createFreshZeroSelfFundedLeaderboard,
+  syncSelfFundedLeaderboardToSupabase,
   formatCleanLeaderboardRow,
   fetchFundedLeaderboardFromSupabase,
   fetchSelfFundedLeaderboardFromSupabase,
@@ -56,6 +60,7 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
   userCountryIso = 'LK',
   userAccountId = 'ACTIVE',
   activeAccount,
+  accounts = [],
   trades = [],
   defaultTab = 'funded',
 }) => {
@@ -64,12 +69,13 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
     getDynamicLeaderboardTraders({ category: 'funded', useEveningPeak: true })
   );
   const [selfFundedTraders, setSelfFundedTraders] = useState<LeaderboardTrader[]>(() =>
-    getDynamicLeaderboardTraders({ category: 'self_funded', useEveningPeak: true })
+    getDynamicLeaderboardTraders({ category: 'self_funded', useEveningPeak: false })
   );
   const [showHowItWorks, setShowHowItWorks] = useState<boolean>(false);
   const [lastUpdatedTraderId, setLastUpdatedTraderId] = useState<string | null>(null);
   const [dailyResetInfo, setDailyResetInfo] = useState(() => getSriLankaDailyResetInfo());
   const [weeklyResetInfo, setWeeklyResetInfo] = useState(() => getSriLankaWeeklyResetInfo());
+  const lastResetDateRef = React.useRef<string>(getSriLankaDailyResetInfo().sriLankaDateIso);
 
   // Fetch initial leaderboard rows from Supabase tables and subscribe to Realtime updates
   useEffect(() => {
@@ -95,18 +101,38 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
       }
     );
 
-    setDailyResetInfo(getSriLankaDailyResetInfo());
+    const nowReset = getSriLankaDailyResetInfo();
+    setDailyResetInfo(nowReset);
     setWeeklyResetInfo(getSriLankaWeeklyResetInfo());
+    lastResetDateRef.current = nowReset.sriLankaDateIso;
 
     const interval = setInterval(() => {
-      setDailyResetInfo(getSriLankaDailyResetInfo());
+      const freshDaily = getSriLankaDailyResetInfo();
+      setDailyResetInfo(freshDaily);
       setWeeklyResetInfo(getSriLankaWeeklyResetInfo());
 
-      const applyRealisticStep = (prevList: LeaderboardTrader[]): LeaderboardTrader[] => {
+      // Automatic Daily Reset at 05:30 AM (UTC+5:30): clear cumulative totals so all traders start fresh at $0.00
+      if (freshDaily.sriLankaDateIso !== lastResetDateRef.current) {
+        lastResetDateRef.current = freshDaily.sriLankaDateIso;
+        const freshZero = createFreshZeroSelfFundedLeaderboard();
+        setSelfFundedTraders(freshZero);
+        syncSelfFundedLeaderboardToSupabase(freshZero).catch(() => {});
+        return;
+      }
+
+      const applyRealisticStep = (
+        prevList: LeaderboardTrader[],
+        tabCategory: LeaderboardTabCategory
+      ): LeaderboardTrader[] => {
         const next = prevList.map((t) => ({ ...t }));
         const eligibleIndices = next
           .map((t, idx) =>
-            t.rank > 1 && t.name !== 'Yohan Siriwardhana' && !t.isCurrentUser ? idx : -1
+            t.rank > 1 &&
+            t.name !== 'Mateus Domingos' &&
+            t.name !== 'Yohan Siriwardhana' &&
+            !t.isCurrentUser
+              ? idx
+              : -1
           )
           .filter((idx) => idx !== -1);
 
@@ -114,26 +140,46 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
 
         const randomIndex = eligibleIndices[Math.floor(Math.random() * eligibleIndices.length)];
         const target = next[randomIndex];
-        const yohan = next.find((t) => t.rank === 1 || t.name === 'Yohan Siriwardhana');
-        const maxAllowedForOthers = (yohan?.profit ?? YOHAN_SIRIWARDHANA_ENTRY.profit) - 150;
-
-        const stepGain = Number((Math.random() * 35 + 5.5).toFixed(2));
-        target.profit = Math.min(
-          maxAllowedForOthers,
-          Number((target.profit + stepGain).toFixed(2))
+        const rank1 = next.find(
+          (t) =>
+            t.rank === 1 ||
+            (tabCategory === 'funded'
+              ? t.name === 'Mateus Domingos'
+              : t.name === 'Yohan Siriwardhana')
         );
-        target.recentWin = true;
+        const defaultCap =
+          tabCategory === 'funded'
+            ? MATEUS_DOMINGOS_ENTRY.profit
+            : YOHAN_SIRIWARDHANA_ENTRY.profit;
+        const maxAllowedForOthers = Math.max(0, (rank1?.profit ?? defaultCap) - 150);
+
+        // Realistic intraday increment (mostly positive gains with occasional small pullbacks on self_funded)
+        const isSmallPullback = tabCategory === 'self_funded' && Math.random() < 0.15 && target.profit > 50;
+        const stepDelta = isSmallPullback
+          ? -Number((Math.random() * 12 + 2.5).toFixed(2))
+          : Number((Math.random() * 35 + 5.5).toFixed(2));
+
+        target.profit = Math.max(
+          0,
+          Math.min(maxAllowedForOthers, Number((target.profit + stepDelta).toFixed(2)))
+        );
+        target.recentWin = stepDelta > 0;
 
         setLastUpdatedTraderId(target.id);
         setTimeout(() => setLastUpdatedTraderId(null), 2200);
 
-        return normalizeWeeklyLeaderboard(next);
+        if (tabCategory === 'funded') {
+          return normalizeFundedLeaderboard(next, true);
+        }
+        const normalizedSelf = normalizeSelfFundedLeaderboard(next, false, false);
+        syncSelfFundedLeaderboardToSupabase(normalizedSelf).catch(() => {});
+        return normalizedSelf;
       };
 
       if (activeTab === 'funded') {
-        setFundedTraders((prev) => applyRealisticStep(prev));
+        setFundedTraders((prev) => applyRealisticStep(prev, 'funded'));
       } else {
-        setSelfFundedTraders((prev) => applyRealisticStep(prev));
+        setSelfFundedTraders((prev) => applyRealisticStep(prev, 'self_funded'));
       }
     }, 5500);
 
@@ -144,16 +190,17 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
   }, [isOpen, activeTab]);
 
   // Track the logged-in user's real performance according to the active tab timeframe:
-  // - 'funded': Weekly PnL (trades during the past week)
-  // - 'self_funded': Daily PnL (trades since 05:30 AM SLST today)
+  // - 'funded': Weekly PnL from Funded/Challenge accounts ONLY
+  // - 'self_funded': Daily PnL from Self-Funded accounts ONLY (since 05:30 AM SLST today)
   const userMetrics = useMemo(() => {
     return calculateUserLeaderboardPnL({
       category: activeTab,
       trades,
       activeAccount,
+      accounts,
       fallbackProfitLoss: userProfit,
     });
-  }, [activeTab, trades, activeAccount, userProfit]);
+  }, [activeTab, trades, activeAccount, accounts, userProfit]);
 
   const activeBaseTraders = activeTab === 'funded' ? fundedTraders : selfFundedTraders;
 

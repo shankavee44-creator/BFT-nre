@@ -1,3 +1,5 @@
+import { resolveStableKycStatus } from './kycVerification';
+
 export interface SupabaseUserLike {
   id: string;
   email?: string;
@@ -204,6 +206,135 @@ export function generateSixDigitOtp(seedNumber?: number): string {
   return String(randomVal);
 }
 
+const TWO_FACTOR_OTP_STORAGE_PREFIX = 'bft_2fa_email_otp_';
+const TWO_FACTOR_OTP_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const memoryTwoFactorOtpMap = new Map<string, StoredTwoFactorOtpRecord>();
+
+export interface StoredTwoFactorOtpRecord {
+  code: string;
+  email: string;
+  userId?: string;
+  purpose: 'login' | 'p2p' | 'withdrawal';
+  createdAt: number;
+  expiresAt: number;
+}
+
+/**
+ * Generates and stores a 6-digit 2FA Email OTP code for Login or P2P Transfer verification.
+ */
+export function issueTwoFactorEmailOtp(params: {
+  email?: string | null;
+  userId?: string | null;
+  purpose?: 'login' | 'p2p' | 'withdrawal';
+  forceNew?: boolean;
+  nowMs?: number;
+}): StoredTwoFactorOtpRecord {
+  const nowMs = params.nowMs ?? Date.now();
+  const cleanEmail = sanitizeOtpEmail(params.email || 'trader@bft.io');
+  const cleanUserId = String(params.userId || '').trim();
+  const purpose = params.purpose || 'login';
+
+  if (!params.forceNew) {
+    const existing = getActiveTwoFactorEmailOtp({ email: cleanEmail, userId: cleanUserId, nowMs });
+    if (existing && nowMs - existing.createdAt < 45 * 1000) {
+      return existing;
+    }
+  }
+
+  const code = generateSixDigitOtp();
+  const record: StoredTwoFactorOtpRecord = {
+    code,
+    email: cleanEmail,
+    userId: cleanUserId || undefined,
+    purpose,
+    createdAt: nowMs,
+    expiresAt: nowMs + TWO_FACTOR_OTP_TTL_MS,
+  };
+
+  if (cleanEmail) memoryTwoFactorOtpMap.set(`${TWO_FACTOR_OTP_STORAGE_PREFIX}${cleanEmail}`, record);
+  if (cleanUserId) memoryTwoFactorOtpMap.set(`${TWO_FACTOR_OTP_STORAGE_PREFIX}${cleanUserId}`, record);
+  memoryTwoFactorOtpMap.set(`${TWO_FACTOR_OTP_STORAGE_PREFIX}latest`, record);
+
+  try {
+    const serialized = JSON.stringify(record);
+    if (typeof sessionStorage !== 'undefined') {
+      if (cleanEmail) sessionStorage.setItem(`${TWO_FACTOR_OTP_STORAGE_PREFIX}${cleanEmail}`, serialized);
+      if (cleanUserId) sessionStorage.setItem(`${TWO_FACTOR_OTP_STORAGE_PREFIX}${cleanUserId}`, serialized);
+      sessionStorage.setItem(`${TWO_FACTOR_OTP_STORAGE_PREFIX}latest`, serialized);
+    }
+    if (typeof localStorage !== 'undefined') {
+      if (cleanEmail) localStorage.setItem(`${TWO_FACTOR_OTP_STORAGE_PREFIX}${cleanEmail}`, serialized);
+      if (cleanUserId) localStorage.setItem(`${TWO_FACTOR_OTP_STORAGE_PREFIX}${cleanUserId}`, serialized);
+      localStorage.setItem(`${TWO_FACTOR_OTP_STORAGE_PREFIX}latest`, serialized);
+    }
+  } catch {
+    // ignore storage errors
+  }
+
+  return record;
+}
+
+/**
+ * Retrieves a non-expired 2FA Email OTP record for the given user/email.
+ */
+export function getActiveTwoFactorEmailOtp(params: {
+  email?: string | null;
+  userId?: string | null;
+  nowMs?: number;
+}): StoredTwoFactorOtpRecord | null {
+  const nowMs = params.nowMs ?? Date.now();
+  const cleanEmail = sanitizeOtpEmail(params.email || '');
+  const cleanUserId = String(params.userId || '').trim();
+  const keysToTry = [
+    cleanEmail ? `${TWO_FACTOR_OTP_STORAGE_PREFIX}${cleanEmail}` : '',
+    cleanUserId ? `${TWO_FACTOR_OTP_STORAGE_PREFIX}${cleanUserId}` : '',
+    `${TWO_FACTOR_OTP_STORAGE_PREFIX}latest`,
+  ].filter(Boolean);
+
+  for (const key of keysToTry) {
+    const memRec = memoryTwoFactorOtpMap.get(key);
+    if (memRec && memRec.code && memRec.expiresAt > nowMs) {
+      return memRec;
+    }
+    try {
+      const raw =
+        (typeof sessionStorage !== 'undefined' && sessionStorage.getItem(key)) ||
+        (typeof localStorage !== 'undefined' && localStorage.getItem(key)) ||
+        null;
+      if (!raw) continue;
+      const parsed = JSON.parse(raw) as StoredTwoFactorOtpRecord;
+      if (parsed && parsed.code && parsed.expiresAt > nowMs) {
+        return parsed;
+      }
+    } catch {
+      // ignore parse error
+    }
+  }
+  return null;
+}
+
+/**
+ * Validates whether a 6-digit code matches the user's active 2FA Email OTP.
+ */
+export function verifyTwoFactorEmailOtpCode(params: {
+  code: string;
+  email?: string | null;
+  userId?: string | null;
+  nowMs?: number;
+}): boolean {
+  const cleanCode = sanitizeOtpCode(params.code);
+  if (cleanCode.length !== 6) return false;
+  const active = getActiveTwoFactorEmailOtp({
+    email: params.email,
+    userId: params.userId,
+    nowMs: params.nowMs,
+  });
+  if (active && active.code === cleanCode) {
+    return true;
+  }
+  return false;
+}
+
 export function buildOAuthCallbackUrl(origin: string): string {
   const cleanOrigin = String(origin || '').trim().replace(/\/+$/, '');
   if (!cleanOrigin) return '/auth/callback';
@@ -259,14 +390,12 @@ export function resolveOrBuildUserProfile(
       .slice(0, 6)
       .toUpperCase()}`;
 
-  const rawKyc =
-    existingProfile?.kyc_status || user.user_metadata?.kyc_status || 'unverified';
+  const stableKyc = resolveStableKycStatus(
+    [existingProfile?.kyc_status, user.user_metadata?.kyc_status],
+    { userId: existingProfile?.id || user.id, email: cleanEmail }
+  );
   const kycStatus: 'unverified' | 'pending' | 'verified' =
-    rawKyc === 'verified' || rawKyc === 'approved'
-      ? 'verified'
-      : rawKyc === 'pending' || rawKyc === 'Pending Verification'
-      ? 'pending'
-      : 'unverified';
+    stableKyc === 'verified' ? 'verified' : stableKyc === 'pending' ? 'pending' : 'unverified';
 
   const profileLocked = Boolean(
     existingProfile?.profile_locked ??
@@ -337,4 +466,5 @@ export function resolveOrBuildUserProfile(
     },
   };
 }
+
 

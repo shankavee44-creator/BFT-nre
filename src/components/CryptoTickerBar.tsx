@@ -14,13 +14,13 @@ interface CryptoTickerBarProps {
 export const CryptoTickerBar: React.FC<CryptoTickerBarProps> = ({ onSelectPair }) => {
   const [traders, setTraders] = useState(() => normalizeWeeklyLeaderboard(WEEKLY_LEADERBOARD_TRADERS));
 
-  // Periodic leaderboard update simulation (keeping Rank 1 Yohan Siriwardhana anchored)
+  // Periodic leaderboard update simulation (keeping Rank 1 Mateus Domingos anchored)
   useEffect(() => {
     const interval = setInterval(() => {
       setTraders((prev) =>
         normalizeWeeklyLeaderboard(
           prev.map((t) =>
-            t.rank === 1 || t.name === 'Yohan Siriwardhana'
+            t.rank === 1 || t.name === 'Mateus Domingos' || t.name === 'Yohan Siriwardhana'
               ? t
               : { ...t, profit: Number((t.profit + Math.random() * 18).toFixed(2)) }
           )

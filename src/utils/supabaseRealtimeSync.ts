@@ -36,6 +36,7 @@ import {
 } from '../config/directDeposit.ts';
 import { isTwoFactorEnabledOnProfile } from './authOtpLogic.ts';
 import { ensureTradeUuid } from './supabaseTradeSync.ts';
+import { resolveStableKycStatus, markKycVerifiedLock } from './kycVerification.ts';
 
 
 export {
@@ -893,6 +894,68 @@ export async function commitProfileBalanceToSupabase(params: {
 }
 
 /**
+ * Permanently locks a user's `kyc_status` to `'verified'` in both local state
+ * and the live Supabase `profiles` table (matching by UUID and/or email) so
+ * background polling or real-time updates never revert it to `'unverified'`.
+ */
+export async function commitKycVerifiedToSupabase(params: {
+  userId?: string;
+  userEmail?: string;
+  fullName?: string;
+}): Promise<boolean> {
+  const { userId, userEmail, fullName } = params;
+  markKycVerifiedLock({ userId, email: userEmail });
+
+  const cleanEmail = userEmail ? String(userEmail).trim().toLowerCase() : '';
+  const targetUuid =
+    userId && UUID_REGEX.test(userId)
+      ? userId
+      : cachedSupabaseProfileUuid && UUID_REGEX.test(cachedSupabaseProfileUuid)
+      ? cachedSupabaseProfileUuid
+      : null;
+
+  const updatePayload: Record<string, any> = {
+    kyc_status: 'verified',
+  };
+  if (fullName && fullName.trim()) {
+    updatePayload.full_name = fullName.trim();
+  }
+
+  let updated = false;
+  if (targetUuid) {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .update(updatePayload)
+        .eq('id', targetUuid)
+        .select('id, kyc_status');
+      if (!error && Array.isArray(data) && data.length > 0) {
+        updated = true;
+      }
+    } catch {
+      // ignore network error
+    }
+  }
+
+  if (cleanEmail) {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .update(updatePayload)
+        .ilike('email', cleanEmail)
+        .select('id, kyc_status');
+      if (!error && Array.isArray(data) && data.length > 0) {
+        updated = true;
+      }
+    } catch {
+      // ignore network error
+    }
+  }
+
+  return updated;
+}
+
+/**
  * Pure helper: applies a Supabase `profiles` row (from initial fetch or real-time UPDATE/INSERT)
  * to the current UserProfile and TradingAccount[] state, maintaining strict separation between
  * Personal Live (`self_balance`), Demo (`demo_balance`), and Funded (`funded_balance`) modes
@@ -1004,18 +1067,27 @@ export function applyRealtimeProfileUpdate(
     }
   }
 
-  let resolvedKycStatus: KYCStatus = prevProfile.kycStatus;
-  if (typeof row.kyc_status === 'string' && row.kyc_status.trim()) {
-    const raw = row.kyc_status.trim().toLowerCase();
-    if (raw === 'verified' || raw === 'approved') {
-      resolvedKycStatus = 'verified';
-    } else if (raw === 'pending' || raw === 'pending_verification' || raw === 'pending verification') {
-      resolvedKycStatus = 'pending';
-    } else if (raw === 'rejected' || raw === 'declined') {
-      resolvedKycStatus = 'rejected';
-    } else if (raw === 'unverified') {
-      resolvedKycStatus = 'unverified';
-    }
+  const syncUid = (typeof row.id === 'string' && row.id) || options?.userId || prevProfile.id;
+  const syncEmail =
+    (typeof row.email === 'string' && row.email) || options?.userEmail || prevProfile.email;
+
+  const resolvedKycStatus: KYCStatus = resolveStableKycStatus(
+    [prevProfile.kycStatus, row.kyc_status],
+    { userId: syncUid, email: syncEmail }
+  );
+
+  // If the user is verified locally/in auth metadata, ensure Supabase `profiles.kyc_status` stays locked as 'verified'
+  if (
+    resolvedKycStatus === 'verified' &&
+    typeof row.kyc_status === 'string' &&
+    row.kyc_status.trim().toLowerCase() !== 'verified' &&
+    row.kyc_status.trim().toLowerCase() !== 'approved'
+  ) {
+    commitKycVerifiedToSupabase({
+      userId: syncUid,
+      userEmail: syncEmail,
+      fullName: prevProfile.fullName,
+    }).catch(() => {});
   }
 
   const nextSelf = newSelf !== undefined ? newSelf : prevProfile.selfBalance;

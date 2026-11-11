@@ -284,7 +284,7 @@ var __defProp=Object.defineProperty;var __name=(target,value)=>__defProp(target,
   `);
 
   const fundedSeed = [
-    { rank: 1, name: "Yohan Siriwardhana", country: "Sri Lanka", flag: "🇱🇰", isoCode: "LK", tier: "$100,000 Instant Funded", profit: 72876.98, winRate: 84.2, payout: "1m 12s" },
+    { rank: 1, name: "Mateus Domingos", country: "Angola", flag: "🇦🇴", isoCode: "AO", tier: "$100,000 Instant Funded", profit: 72876.98, winRate: 84.2, payout: "1m 12s" },
     { rank: 2, name: "Aarav Sharma", country: "India", flag: "🇮🇳", isoCode: "IN", tier: "$100,000 Two-Step", profit: 64280.45, winRate: 81.5, payout: "1m 24s" },
     { rank: 3, name: "Tanvir Ahmed", country: "Bangladesh", flag: "🇧🇩", isoCode: "BD", tier: "$50,000 One-Step", profit: 54820.90, winRate: 78.7, payout: "1m 21s" },
     { rank: 4, name: "Rohan Gupta", country: "India", flag: "🇮🇳", isoCode: "IN", tier: "$50,000 Instant Funded", profit: 50150.80, winRate: 77.6, payout: "1m 31s" },

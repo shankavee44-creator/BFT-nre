@@ -33,7 +33,10 @@ import {
 import {
   isTwoFactorEnabledOnProfile,
   verifyAdminAuthorization,
+  issueTwoFactorEmailOtp,
+  verifyTwoFactorEmailOtpCode,
 } from './authOtpLogic';
+import { resolveStableKycStatus } from './kycVerification';
 import {
   formatPurchasedPackageLabel,
   recordAffiliateUserPurchase,
@@ -186,7 +189,10 @@ export async function apiEmailSessionSync(params: {
       role: profileRow?.role || undefined,
       referralCode: profileRow?.referral_code || '',
       referredBy: profileRow?.referred_by || params.referralCode || null,
-      kycStatus: profileRow?.kyc_status || 'unverified',
+      kycStatus: resolveStableKycStatus([profileRow?.kyc_status], {
+        userId: resolvedId,
+        email: profileRow?.email || cleanEmail,
+      }),
       is2faEnabled: has2fa,
       twoFactorEnabled: has2fa,
       totp_secret: profileRow?.totp_secret || null,
@@ -233,7 +239,10 @@ export async function apiGetMe(params?: { userId?: string; email?: string }): Pr
           role: profileRow.role || undefined,
           referralCode: profileRow.referral_code,
           referredBy: profileRow.referred_by,
-          kycStatus: profileRow.kyc_status || 'unverified',
+          kycStatus: resolveStableKycStatus([profileRow.kyc_status], {
+            userId: profileRow.id,
+            email: profileRow.email || cleanEmail,
+          }),
           is2faEnabled: has2fa,
           twoFactorEnabled: has2fa,
           totp_secret: profileRow.totp_secret || null,
@@ -2754,6 +2763,34 @@ export async function apiDisable2fa(params: { userId?: string; email?: string })
   }
 }
 
+export async function apiSend2faEmailOtp(params: {
+  userId?: string;
+  email?: string;
+  purpose?: 'login' | 'p2p' | 'withdrawal';
+  forceNew?: boolean;
+}): Promise<{
+  ok: boolean;
+  code: string;
+  email: string;
+  expiresAt: number;
+  message: string;
+}> {
+  const issued = issueTwoFactorEmailOtp({
+    email: params.email,
+    userId: params.userId,
+    purpose: params.purpose || 'login',
+    forceNew: params.forceNew,
+  });
+
+  return {
+    ok: true,
+    code: issued.code,
+    email: issued.email,
+    expiresAt: issued.expiresAt,
+    message: `6-digit 2FA verification code dispatched to ${issued.email || 'your registered email'}.`,
+  };
+}
+
 export async function apiValidate2fa(params: {
   userId?: string;
   email?: string;
@@ -2767,10 +2804,26 @@ export async function apiValidate2fa(params: {
 
   try {
     const cleanEmail = params.email ? params.email.trim().toLowerCase() : '';
+
+    // 1. Check issued 2FA Email OTP first (supports both Login 2FA and P2P Transfer 2FA)
+    const isEmailOtpValid = verifyTwoFactorEmailOtpCode({
+      code: cleanCode,
+      email: cleanEmail,
+      userId: params.userId,
+    });
+    if (isEmailOtpValid) {
+      return {
+        ok: true,
+        isValid: true,
+        method: 'email_otp',
+      };
+    }
+
+    // 2. Check TOTP (Google Authenticator) secret
     let secret = params.secret || '';
 
     if (!secret && (params.userId || cleanEmail)) {
-      let targetUuid = params.userId && UUID_REGEX.test(params.userId) ? params.userId : null;
+      const targetUuid = params.userId && UUID_REGEX.test(params.userId) ? params.userId : null;
       let query = supabase.from('profiles').select('*');
       if (targetUuid) {
         query = query.eq('id', targetUuid);
@@ -2804,9 +2857,13 @@ export async function apiValidate2fa(params: {
       return {
         ok: isValid,
         isValid,
+        method: 'totp',
         ...(isValid
           ? {}
-          : { error: 'Invalid 6-digit verification code. Please check your Google Authenticator app.' }),
+          : {
+              error:
+                'Invalid 6-digit 2FA code. Please enter your Email OTP or Google Authenticator code.',
+            }),
       };
     }
 
@@ -2825,7 +2882,8 @@ export async function apiValidate2fa(params: {
     return {
       ok: false,
       isValid: false,
-      error: '2FA secret not found for this account. Please check your Google Authenticator setup.',
+      error:
+        'Invalid 6-digit 2FA verification code. Please check your Email OTP or Authenticator code.',
     };
   } catch (err: any) {
     return { ok: false, isValid: false, error: err?.message || '2FA validation failed.' };
