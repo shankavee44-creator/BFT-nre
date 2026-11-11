@@ -35,16 +35,16 @@ export const CryptoTickerBar: React.FC<CryptoTickerBarProps> = ({ onSelectPair }
   return (
     <div
       data-testid="weekly-top-traders-ticker"
-      className="w-full bg-[#0a0a0a] border-b border-white/10 overflow-hidden py-1.5 flex items-center text-xs relative select-none"
+      className="w-full bg-[#07090e] border-b border-white/[0.08] overflow-hidden py-1.5 flex items-center text-xs relative select-none"
     >
-      <div className="hidden sm:flex items-center gap-1.5 px-3 py-0.5 bg-[#121215] border-r border-white/10 text-[10px] font-mono font-bold text-[#ff8800] z-10 shrink-0">
+      <div className="hidden sm:flex items-center gap-1.5 px-3 py-0.5 bg-[#111827] border-r border-white/[0.08] text-[10px] font-mono font-bold text-[#ff8800] z-10 shrink-0">
         <Trophy className="w-3 h-3 text-[#ff8800]" />
         <span>DAILY TOP TRADERS</span>
       </div>
 
       <div className="relative flex-1 overflow-hidden">
-        <div className="absolute left-0 top-0 bottom-0 w-8 bg-gradient-to-r from-[#0a0a0a] to-transparent z-10 pointer-events-none" />
-        <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-[#0a0a0a] to-transparent z-10 pointer-events-none" />
+        <div className="absolute left-0 top-0 bottom-0 w-8 bg-gradient-to-r from-[#07090e] to-transparent z-10 pointer-events-none" />
+        <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-[#07090e] to-transparent z-10 pointer-events-none" />
 
         <div className="animate-marquee flex items-center gap-6 whitespace-nowrap">
           {marqueeItems.map((trader, index) => {
@@ -55,7 +55,7 @@ export const CryptoTickerBar: React.FC<CryptoTickerBarProps> = ({ onSelectPair }
                 data-testid={`trader-ticker-item-${index}`}
                 className="flex items-center gap-2 shrink-0 text-xs"
               >
-                <span className="font-mono font-bold text-slate-500">#{row.rank}</span>
+                <span className="font-mono font-bold text-[#9ca3af]">#{row.rank}</span>
                 <span className="flex items-center justify-center shrink-0">
                   <CountryFlagIcon
                     country={trader.country}

@@ -843,21 +843,21 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
   const portalContent = (
     <div
       data-testid="withdrawal-dashboard"
-      className="w-full min-h-[720px] bg-[#0a0a0a] text-[#e2e8f0] font-sans rounded-xl border border-[#1e2330] overflow-hidden flex flex-col justify-between pb-16 md:pb-0"
+      className="w-full min-h-[720px] bg-[#0b0f19] text-white font-sans rounded-xl border border-white/[0.08] overflow-hidden flex flex-col justify-between pb-16 md:pb-0"
     >
       <div>
         {/* =====================================================================
             1. TOP NAVIGATION HEADER (Desktop & Mobile Quotex Sub-Header Bar)
             ===================================================================== */}
-        <div className="bg-[#12151e] border-b border-[#1e2330] px-3 sm:px-6">
+        <div className="bg-[#111827] border-b border-white/[0.08] px-3 sm:px-6">
           {/* Mobile Compact Top Row: Live Balance Dropdown + Deposit Button */}
-          <div className="flex md:hidden items-center justify-between py-2.5 border-b border-[#1e2330]">
+          <div className="flex md:hidden items-center justify-between py-2.5 border-b border-white/[0.08]">
             <div className="relative">
               <button
                 type="button"
                 data-testid="mobile-portal-balance-dropdown"
                 onClick={() => setAccountDropdownOpen(!accountDropdownOpen)}
-                className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[#181c26] border border-[#262c3a] text-left cursor-pointer"
+                className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[#0b0f19] border border-white/[0.08] text-left cursor-pointer"
               >
                 <span
                   className={`w-2 h-2 rounded-full shrink-0 ${

@@ -1629,7 +1629,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
       className="py-3 sm:py-10 max-w-6xl mx-auto px-2.5 sm:px-6 lg:px-8 font-sans w-full max-w-full overflow-y-visible touch-pan-y"
     >
       {/* Ultra-Compact Trader Profile Header Card */}
-      <div className="p-3.5 sm:p-7 rounded-2xl sm:rounded-3xl bg-[#0a0a0a]/95 backdrop-blur-md border border-[#ff8800]/40 shadow-[0_8px_30px_rgba(0,0,0,0.65)] mb-4 sm:mb-6">
+      <div className="p-3.5 sm:p-7 rounded-2xl sm:rounded-3xl bg-[#111827]/95 backdrop-blur-md border border-white/[0.08] shadow-[0_8px_30px_rgba(0,0,0,0.65)] mb-4 sm:mb-6">
         <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 sm:gap-6">
           {/* Top / Left Identity Row: Compact side-by-side layout on mobile */}
           <div className="flex items-center gap-3 sm:gap-5 text-left min-w-0">
@@ -1637,7 +1637,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               <img
                 src={userProfile.avatarUrl || BUILTIN_AVATARS[0]}
                 alt={userProfile.fullName || 'Trader'}
-                className="w-14 h-14 sm:w-20 sm:h-20 rounded-xl sm:rounded-2xl object-cover ring-2 ring-[#ff8800] bg-[#141418]"
+                className="w-14 h-14 sm:w-20 sm:h-20 rounded-xl sm:rounded-2xl object-cover ring-2 ring-[#0066ff] bg-[#0b0f19]"
               />
               <label
                 htmlFor="quick-avatar-upload"

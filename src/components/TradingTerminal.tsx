@@ -3445,12 +3445,12 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   }, []);
 
   return (
-    <div className="flex flex-col h-[100dvh] md:h-[calc(100vh-60px)] md:min-h-[720px] bg-[#0a0a0a] text-slate-100 overflow-hidden hw-accelerate gpu-accelerated font-sans select-none relative">
+    <div className="flex flex-col h-[100dvh] md:h-[calc(100vh-60px)] md:min-h-[720px] bg-[#0b0f19] text-slate-100 overflow-hidden hw-accelerate gpu-accelerated font-sans select-none relative">
       {/* Global Assets Loading Overlay */}
       {isLoadingAssets && (
-        <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-[#0a0a0a]/98 backdrop-blur-md pointer-events-auto font-mono text-center px-6">
+        <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-[#0b0f19]/98 backdrop-blur-md pointer-events-auto font-mono text-center px-6">
           <div className="relative mb-8 flex items-center justify-center">
-            <div className="w-24 h-24 rounded-full border-2 border-white/10 border-t-[#ff8800] animate-spin" />
+            <div className="w-24 h-24 rounded-full border-2 border-white/10 border-t-[#0066ff] animate-spin" />
             <div className="absolute inset-0 flex items-center justify-center">
               <BftLogo
                 imgClassName="h-14 w-auto"
@@ -3464,10 +3464,10 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               Synchronizing Markets
             </h2>
             <div className="flex flex-col items-center gap-1.5">
-              <p className="text-[11px] text-slate-400 font-bold uppercase tracking-widest animate-pulse">
+              <p className="text-[11px] text-[#9ca3af] font-bold uppercase tracking-widest animate-pulse">
                 Fetching 250+ Institutional OTC Feeds...
               </p>
-              <p className="text-[10px] text-[#ff8800]/60 font-black tracking-tighter italic">
+              <p className="text-[10px] text-[#0066ff] font-black tracking-tighter italic">
                 Verifying Global Price Synchronization
               </p>
             </div>
@@ -3478,7 +3478,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       <div
         data-testid="quotex-mobile-top-header"
         style={{ willChange: 'transform', transform: 'translateZ(0)' }}
-        className="flex md:hidden h-9 bg-[#0a0a0a] border-b border-white/10 items-center justify-between px-2 shrink-0 relative z-50 mobile-trading-controls"
+        className="flex md:hidden h-9 bg-[#07090e] border-b border-white/[0.08] items-center justify-between px-2 shrink-0 relative z-50 mobile-trading-controls"
       >
         <div className="flex items-center gap-1 min-w-0">
           <button
@@ -3486,7 +3486,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               soundEngine.playUiClick();
               onNavigateTab?.('home');
             }}
-            className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-[#141720] border border-white/10 text-[11px] font-mono font-bold text-slate-300 shrink-0"
+            className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-[#111827] border border-white/[0.08] text-[11px] font-mono font-bold text-slate-300 shrink-0"
             title="Return to BFT Portal"
           >
             <BftLogo
@@ -4154,11 +4154,11 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         </div>
 
         {/* 3. CENTRAL SUPER-SMOOTH OTC ALGORITHMIC CHART ENGINE */}
-        <div className="flex-1 flex flex-col relative overflow-hidden bg-[#0a0a0a] min-h-0 pb-[136px] md:pb-0">
+        <div className="flex-1 flex flex-col relative overflow-hidden bg-[#0b0f19] min-h-0 pb-[136px] md:pb-0">
           {/* 0. QUICK-ACCESS TOP 5 MOST VOLATILE ASSETS HORIZONTAL SCROLL STRIP */}
           <div
             data-testid="quick-access-volatile-strip"
-            className="flex items-center gap-1.5 overflow-x-auto px-1.5 py-1 md:px-3 md:py-1 bg-[#0d1017] border-b border-white/10 shrink-0 z-25 font-mono text-[10px] select-none no-scrollbar bft-snap-strip"
+            className="flex items-center gap-1.5 overflow-x-auto px-1.5 py-1 md:px-3 md:py-1 bg-[#07090e] border-b border-white/[0.08] shrink-0 z-25 font-mono text-[10px] select-none no-scrollbar bft-snap-strip"
           >
             <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#ff8800]/15 border border-[#ff8800]/40 text-[#ff8800] font-black uppercase tracking-wider text-[8.5px] md:text-[9px] shrink-0">
               <Zap className="w-2.5 h-2.5 fill-[#ff8800] shrink-0" />
@@ -4192,8 +4192,8 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                   }}
                   className={`bft-snap-card bft-touch-scale flex items-center gap-1.5 px-2 py-0.5 rounded-md border transition-all cursor-pointer shrink-0 ${
                     isCurrent
-                      ? 'bg-[#ff8800]/20 border-[#ff8800] text-white font-black shadow-[0_0_10px_rgba(255,136,0,0.2)]'
-                      : 'bg-[#141822]/90 hover:bg-[#1c2230] border-white/10 text-slate-300 hover:text-white'
+                      ? 'bg-[#0066ff]/20 border-[#0066ff] text-white font-black shadow-[0_0_10px_rgba(0,102,255,0.25)]'
+                      : 'bg-[#111827]/90 hover:bg-[#161f33] border-white/[0.08] text-slate-300 hover:text-white'
                   }`}
                   title={`One-Tap Switch to ${volAsset.name} (${volAsset.symbol}) • Volatility: ±${volAsset.volatility}`}
                 >
@@ -4219,7 +4219,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
           {/* 1. TOP MULTI-ASSET SCROLLING TICKER BAR (Quotex Style) */}
           <div
             data-testid="top-multi-asset-ticker-bar"
-            className="flex items-center gap-1 md:gap-1.5 overflow-x-auto px-1.5 py-1 md:px-3 md:py-2 bg-[#0a0a0a] border-b border-white/10 shrink-0 z-25 font-mono text-xs select-none no-scrollbar mobile-trading-controls"
+            className="flex items-center gap-1 md:gap-1.5 overflow-x-auto px-1.5 py-1 md:px-3 md:py-2 bg-[#07090e] border-b border-white/[0.08] shrink-0 z-25 font-mono text-xs select-none no-scrollbar mobile-trading-controls"
           >
             {openTabs.map((tabAsset) => {
               const isTabActive =

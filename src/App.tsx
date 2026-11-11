@@ -1694,7 +1694,7 @@ export default function App() {
   );
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-slate-100 flex flex-col selection:bg-[#ff8800] selection:text-slate-950 w-full max-w-[100vw] overflow-x-hidden relative">
+    <div className="min-h-screen bg-[#0b0f19] text-white flex flex-col selection:bg-[#0066ff] selection:text-white w-full max-w-[100vw] overflow-x-hidden relative">
       {/* Top Header (Hidden on mobile when inside full-screen Trading Terminal) */}
       <div className={currentTab === 'terminal' ? 'hidden md:block' : 'block'}>
         <Header
@@ -1720,16 +1720,16 @@ export default function App() {
 
       {/* Security Protected Route Notice Banner */}
       {protectedRouteNotice && (
-        <div className="bg-[#1c1208] border-b border-[#ff8800]/50 px-4 py-2.5 flex items-center justify-between text-xs text-amber-200">
+        <div className="bg-[#111827] border-b border-white/[0.08] px-4 py-2.5 flex items-center justify-between text-xs text-slate-200">
           <div className="flex flex-wrap items-center gap-3 max-w-5xl mx-auto flex-1 justify-center">
-            <ShieldAlert className="w-4 h-4 text-[#ffaa00] shrink-0" />
+            <ShieldAlert className="w-4 h-4 text-[#0066ff] shrink-0" />
             <span className="font-medium font-sans">
-              <strong className="text-white font-mono uppercase tracking-wider mr-1">Protected Area:</strong>
+              <strong className="text-white uppercase tracking-wider mr-1">Protected Area:</strong>
               {protectedRouteNotice}
             </span>
             <button
               onClick={() => handleOpenAuthModal('login')}
-              className="px-3 py-1 rounded-lg bg-[#ff8800] hover:bg-[#ffaa00] text-slate-950 font-black text-xs flex items-center gap-1 cursor-pointer font-mono"
+              className="px-3 py-1 rounded-lg bg-[#0066ff] hover:bg-[#1a75ff] text-white font-bold text-xs flex items-center gap-1 cursor-pointer transition-colors"
             >
               <LogIn className="w-3.5 h-3.5 stroke-[2.5]" />
               <span>Sign In</span>
@@ -1737,7 +1737,7 @@ export default function App() {
           </div>
           <button
             onClick={() => setProtectedRouteNotice(null)}
-            className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-white transition cursor-pointer"
+            className="p-1 hover:bg-white/10 rounded text-[#9ca3af] hover:text-white transition cursor-pointer"
           >
             <X className="w-3.5 h-3.5" />
           </button>
@@ -1746,19 +1746,19 @@ export default function App() {
 
       {/* Active Referral Notification Banner with Direct Sign-Up Trigger */}
       {activeReferralNotification && (
-        <div className="bg-gradient-to-r from-[#ff8800]/25 via-[#1c1208] to-emerald-500/20 border-b border-[#ff8800]/40 px-4 py-2.5 flex items-center justify-between text-xs text-amber-100">
+        <div className="bg-[#111827] border-b border-[#0066ff]/30 px-4 py-2.5 flex items-center justify-between text-xs text-slate-200">
           <div className="flex flex-wrap items-center gap-3 max-w-5xl mx-auto flex-1 justify-center">
-            <Gift className="w-4 h-4 text-[#ffaa00] shrink-0 animate-bounce" />
+            <Gift className="w-4 h-4 text-[#ff7b00] shrink-0 animate-bounce" />
             <span>
-              <strong>Direct Referral Partner Active:</strong> Sponsor Code{' '}
-              <span className="font-mono bg-[#ff8800]/25 border border-[#ff8800]/40 px-2 py-0.5 rounded text-[#ffaa00] font-bold">
+              <strong className="text-white">Direct Referral Partner Active:</strong> Sponsor Code{' '}
+              <span className="bg-[#0066ff]/15 border border-[#0066ff]/40 px-2 py-0.5 rounded text-white font-bold">
                 {activeReferralNotification}
               </span>{' '}
               stored in 30-day browser cookie!
             </span>
             <button
               onClick={() => handleOpenAuthModal('register')}
-              className="px-2.5 py-1 rounded-lg bg-gradient-to-r from-[#ff8800] to-[#ffaa00] text-slate-950 font-black font-mono text-[11px] flex items-center gap-1 cursor-pointer"
+              className="px-3 py-1 rounded-lg bg-[#0066ff] hover:bg-[#1a75ff] text-white font-bold text-[11px] flex items-center gap-1 cursor-pointer transition-colors"
             >
               <UserPlus className="w-3 h-3" />
               <span>Open Referral Registration</span>
@@ -1766,7 +1766,7 @@ export default function App() {
           </div>
           <button
             onClick={() => setActiveReferralNotification(null)}
-            className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-white transition cursor-pointer"
+            className="p-1 hover:bg-white/10 rounded text-[#9ca3af] hover:text-white transition cursor-pointer"
           >
             <X className="w-3.5 h-3.5" />
           </button>

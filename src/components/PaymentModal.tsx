@@ -532,11 +532,11 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       aria-label="Package Purchase Modal"
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md overflow-y-auto"
     >
-      <div className="relative w-full max-w-lg rounded-3xl bg-[#0a0a0a] border border-[#ff8800]/50 shadow-2xl p-6 sm:p-8 my-8 text-white">
+      <div className="relative w-full max-w-lg rounded-3xl bg-[#0b0f19] border border-white/[0.08] shadow-2xl p-6 sm:p-8 my-8 text-white">
         <button
           onClick={onClose}
           aria-label="Close purchase modal"
-          className="absolute top-4 right-4 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
+          className="absolute top-4 right-4 p-2 rounded-xl text-[#9ca3af] hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
         >
           <X className="w-5 h-5" />
         </button>
@@ -552,15 +552,15 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         {step === 'checkout' && (
           <div>
             <div className="flex items-center gap-3 mb-5">
-              <div className="w-12 h-12 rounded-xl bg-[#00e676]/15 border border-[#00e676]/40 flex items-center justify-center text-[#00e676]">
-                <Zap className="w-6 h-6 fill-[#00e676]" />
+              <div className="w-12 h-12 rounded-xl bg-[#0066ff]/15 border border-[#0066ff]/40 flex items-center justify-center text-[#0066ff]">
+                <Zap className="w-6 h-6 fill-[#0066ff]" />
               </div>
               <div>
-                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400 font-mono">
-                  <span className="text-[#00e676] font-bold">AUTOMATED GATEWAY</span>
+                <div className="flex flex-wrap items-center gap-2 text-xs text-[#9ca3af] font-mono">
+                  <span className="text-[#0066ff] font-bold">AUTOMATED GATEWAY</span>
                   <span aria-hidden="true">·</span>
                   <span className="flex items-center gap-1 text-slate-300">
-                    <ShieldCheck className="w-3.5 h-3.5 text-[#ff8800]" />
+                    <ShieldCheck className="w-3.5 h-3.5 text-[#ff7b00]" />
                     NOWPayments &amp; Commercial Bank
                   </span>
                 </div>
@@ -581,7 +581,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
             )}
 
             {/* Package Metadata Summary */}
-            <div className="p-4 rounded-2xl bg-[#141418] border border-white/10 mb-4 space-y-2 font-mono tabular-nums">
+            <div className="p-4 rounded-2xl bg-[#111827] border border-white/[0.08] mb-4 space-y-2 font-mono tabular-nums">
               <div className="flex items-center justify-between text-xs">
                 <span className="text-slate-400">Package Name</span>
                 <span
@@ -685,8 +685,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                       onClick={() => setSelectedPayCurrency(method.id)}
                       className={`flex items-center gap-3 p-3 rounded-xl border text-left transition-all cursor-pointer ${
                         isSelected
-                          ? 'bg-[#1a140a] border-[#ff8800] text-white shadow-lg shadow-[#ff8800]/10'
-                          : 'bg-[#121216] border-white/10 text-slate-300 hover:border-white/25 hover:bg-[#16161c]'
+                          ? 'bg-[#161f33] border-[#0066ff] text-white shadow-lg shadow-[#0066ff]/15'
+                          : 'bg-[#111827] border-white/[0.08] text-slate-300 hover:border-white/20 hover:bg-[#161f33]'
                       }`}
                     >
                       <PaymentIcon id={method.icon} className="w-6 h-6 shrink-0" />
@@ -699,19 +699,19 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                             className={`text-[9px] font-mono font-black px-1.5 py-0.5 rounded uppercase ${
                               method.isNowPayments
                                 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
-                                : 'bg-blue-500/20 text-blue-400 border border-blue-500/40'
+                                : 'bg-[#0066ff]/20 text-blue-400 border border-[#0066ff]/40'
                             }`}
                           >
                             {method.badge}
                           </span>
                         </div>
-                        <p className="text-[10px] text-slate-400 font-mono truncate">
+                        <p className="text-[10px] text-[#9ca3af] font-mono truncate">
                           {method.subtitle}
                         </p>
                       </div>
                       <ChevronRight
                         className={`w-4 h-4 shrink-0 transition-transform ${
-                          isSelected ? 'text-[#ff8800] translate-x-0.5' : 'text-slate-600'
+                          isSelected ? 'text-[#0066ff] translate-x-0.5' : 'text-slate-600'
                         }`}
                       />
                     </button>
@@ -722,23 +722,23 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
 
             {/* If Commercial Bank is selected */}
             {selectedPayCurrency === 'commercial_bank' && (
-              <div className="p-4 rounded-2xl bg-[#12141c] border border-white/10 mb-4 space-y-2 text-xs font-mono">
+              <div className="p-4 rounded-2xl bg-[#111827] border border-white/[0.08] mb-4 space-y-2 text-xs font-mono">
                 <div className="flex items-center gap-2 text-blue-400 font-bold mb-1">
                   <Building2 className="w-4 h-4" /> Commercial Bank of Ceylon
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-400">Account Name:</span>
+                  <span className="text-[#9ca3af]">Account Name:</span>
                   <span className="text-white font-bold">A.D.H.W Kumari</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-400">Account Number:</span>
+                  <span className="text-[#9ca3af]">Account Number:</span>
                   <span className="text-[#ffaa00] font-bold">8174001908</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-400">LKR Deposit Rate:</span>
+                  <span className="text-[#9ca3af]">LKR Deposit Rate:</span>
                   <span className="text-white">$1 USD = 350.44 LKR</span>
                 </div>
-                <div className="flex justify-between pt-1 border-t border-white/10 text-emerald-400 font-bold">
+                <div className="flex justify-between pt-1 border-t border-white/[0.08] text-emerald-400 font-bold">
                   <span>Required LKR Amount:</span>
                   <span>Rs. {(finalPrice * 350.44).toLocaleString('en-US', { maximumFractionDigits: 2 })} LKR</span>
                 </div>
@@ -746,7 +746,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
             )}
 
             {activeReferralCode && (
-              <div className="mb-4 p-3 rounded-xl bg-[#16120c] border border-[#ff8800]/40 flex items-center justify-between text-xs">
+              <div className="mb-4 p-3 rounded-xl bg-[#111827] border border-[#ff8800]/40 flex items-center justify-between text-xs">
                 <div className="flex items-center gap-2 text-[#ff8800] font-bold">
                   <Gift className="w-4 h-4 shrink-0" />
                   <span>
@@ -765,7 +765,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
               data-testid="confirm-challenge-payment-btn"
               onClick={handleProceedPackagePayment}
               disabled={isGeneratingInvoice}
-              className="w-full py-4 px-6 rounded-xl bg-[#00e676] hover:bg-[#00c853] disabled:opacity-60 text-slate-950 font-black text-sm flex items-center justify-center gap-2 cursor-pointer transition-colors font-mono whitespace-nowrap"
+              className="w-full py-4 px-6 rounded-xl bg-[#0066ff] hover:bg-[#1a75ff] disabled:opacity-60 text-white font-black text-sm flex items-center justify-center gap-2 cursor-pointer transition-colors font-mono whitespace-nowrap shadow-[0_8px_24px_rgba(0,102,255,0.3)]"
             >
               {isGeneratingInvoice ? (
                 <>

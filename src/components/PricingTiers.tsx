@@ -131,7 +131,7 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
     <section
       id="pricing"
       data-testid="ftmo-pricing-section"
-      className="pt-8 pb-20 md:pt-12 md:pb-28 relative bg-[#040507] border-b border-white/10 overflow-hidden select-none font-sans"
+      className="pt-8 pb-20 md:pt-12 md:pb-28 relative bg-[#07090e] border-b border-white/[0.08] overflow-hidden select-none font-sans"
     >
       {/* Top Spotlight Beam & Conical Cyan-Blue Glow (FTMO Visual Styling) */}
       <div className="relative max-w-[1380px] mx-auto px-4 sm:px-6 lg:px-8 z-10">
@@ -151,7 +151,7 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
           />
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute top-[10px] left-1/2 -translate-x-1/2 w-[300px] sm:w-[440px] h-[140px] bg-[#00a6ff]/20 rounded-full blur-[55px] z-0"
+            className="pointer-events-none absolute top-[10px] left-1/2 -translate-x-1/2 w-[300px] sm:w-[440px] h-[140px] bg-[#0066ff]/20 rounded-full blur-[55px] z-0"
           />
 
           {/* Main Section Heading */}
@@ -161,7 +161,7 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
           >
             Choose Your Path with BFT
           </h2>
-          <p className="relative z-10 text-[#cbd5e1] text-sm sm:text-base mt-3 font-normal sm:font-medium leading-[1.65] max-w-2xl">
+          <p className="relative z-10 text-[#9ca3af] text-sm sm:text-base mt-3 font-normal sm:font-medium leading-[1.65] max-w-2xl">
             Pick the way you start. All BFT accounts feature{' '}
             <strong className="text-white font-semibold">80% profit split for the first 3 months</strong>, automatically upgrading to{' '}
             <strong className="text-[#ff8800] font-semibold">90% profit split + Account Scaling</strong> after Month 3.
@@ -171,7 +171,7 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
           <div
             role="tablist"
             aria-label="Challenge Type Selector"
-            className="relative z-10 mt-7 inline-flex items-center p-1.5 rounded-2xl bg-[#272c39]/90 border border-white/10 shadow-2xl backdrop-blur-md"
+            className="relative z-10 mt-7 inline-flex items-center p-1.5 rounded-2xl bg-[#111827]/95 border border-white/[0.08] shadow-2xl backdrop-blur-md"
           >
             {/* 2-Step Tab */}
             <button
@@ -240,7 +240,7 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
         </div>
 
         {/* Filter & Controls Toolbar: Currency Pills + Promo/Daily Add-on (Left) & Show Numbers / Show Phases (Right) */}
-        <div className="border-y border-white/10 py-3.5 mb-8 flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-4 relative z-20">
+        <div className="border-y border-white/[0.08] py-3.5 mb-8 flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-4 relative z-20">
           {/* Left: USD, EUR, GBP, More + Original BFT Promo Code & Daily Withdrawals Toggles */}
           <div className="flex flex-wrap items-center gap-2 relative">
             {primaryCurrencies.map((curr) => {
@@ -256,8 +256,8 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
                   }}
                   className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
                     isActive
-                      ? 'bg-[#2a2d35] border border-white/40 text-white shadow-sm'
-                      : 'bg-[#13151b] border border-white/10 text-[#d1d5db] hover:text-white hover:border-white/25'
+                      ? 'bg-[#161f33] border border-[#0066ff]/60 text-white shadow-sm'
+                      : 'bg-[#111827] border border-white/[0.08] text-[#9ca3af] hover:text-white hover:border-white/25'
                   }`}
                 >
                   {curr.code === 'USD' && <UsFlagCircle />}
@@ -277,8 +277,8 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
                 onClick={() => setIsMoreCurrenciesOpen((prev) => !prev)}
                 className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
                   !primaryCurrencies.some((c) => c.code === selectedCurrency) || isMoreCurrenciesOpen
-                    ? 'bg-[#2a2d35] border border-white/40 text-white'
-                    : 'bg-[#13151b] border border-white/10 text-[#d1d5db] hover:text-white hover:border-white/25'
+                    ? 'bg-[#161f33] border border-[#0066ff]/60 text-white'
+                    : 'bg-[#111827] border border-white/[0.08] text-[#9ca3af] hover:text-white hover:border-white/25'
                 }`}
               >
                 <span className="inline-flex items-center justify-center w-4 h-4 rounded bg-white/10 text-[10px]">
@@ -294,9 +294,9 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
               {isMoreCurrenciesOpen && (
                 <div
                   data-testid="more-currencies-popover"
-                  className="absolute left-0 top-11 z-30 w-60 rounded-2xl bg-[#161922] border border-white/15 shadow-2xl p-3 space-y-2.5"
+                  className="absolute left-0 top-11 z-30 w-60 rounded-2xl bg-[#111827] border border-white/15 shadow-2xl p-3 space-y-2.5"
                 >
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-[#9ca3af]">
                     Additional Currencies
                   </div>
                   <div className="grid grid-cols-2 gap-1.5">
@@ -311,8 +311,8 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
                         }}
                         className={`px-2.5 py-1.5 rounded-lg text-xs font-bold text-left cursor-pointer ${
                           selectedCurrency === c.code
-                            ? 'bg-[#0088ff] text-white'
-                            : 'bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white'
+                            ? 'bg-[#0066ff] text-white'
+                            : 'bg-white/5 text-[#9ca3af] hover:bg-white/10 hover:text-white'
                         }`}
                       >
                         {c.label}
@@ -326,7 +326,7 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
             <span aria-hidden="true" className="hidden sm:inline-block h-4 w-px bg-white/15 mx-1" />
 
             {/* Original BFT Promo Code Quick Switcher (SPOOKY40 / SPOOKY20) */}
-            <div className="inline-flex items-center gap-1.5 bg-[#13151b] border border-white/10 rounded-xl p-1">
+            <div className="inline-flex items-center gap-1.5 bg-[#111827] border border-white/[0.08] rounded-xl p-1">
               <Tag className="w-3.5 h-3.5 text-[#ff7b00] ml-2 shrink-0" />
               <button
                 type="button"
@@ -335,7 +335,7 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
                 className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors cursor-pointer whitespace-nowrap ${
                   activePromoCode === 'SPOOKY40' || activePromoCode === 'BFT40'
                     ? 'bg-[#ff7b00] text-[#0b0d13]'
-                    : 'text-slate-300 hover:text-white'
+                    : 'text-[#9ca3af] hover:text-white'
                 }`}
               >
                 SPOOKY40 (-40%)
@@ -347,7 +347,7 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
                 className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors cursor-pointer whitespace-nowrap ${
                   activePromoCode === 'SPOOKY20' || activePromoCode === 'BFT20'
                     ? 'bg-[#ff7b00] text-[#0b0d13]'
-                    : 'text-slate-300 hover:text-white'
+                    : 'text-[#9ca3af] hover:text-white'
                 }`}
               >
                 SPOOKY20 (-20%)
@@ -360,7 +360,7 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
               className={`px-3 py-1.5 rounded-xl border text-[11px] font-bold flex items-center gap-2 cursor-pointer transition-colors whitespace-nowrap shrink-0 ${
                 dailyWithdrawalsAddOn
                   ? 'bg-[#ff7b00]/15 border-[#ff7b00]/50 text-[#ffaa00]'
-                  : 'bg-[#13151b] border-white/10 text-slate-300 hover:text-white'
+                  : 'bg-[#111827] border-white/[0.08] text-[#9ca3af] hover:text-white'
               }`}
             >
               <input
@@ -387,7 +387,7 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
             >
               <span
                 className={`w-10 h-5 rounded-full p-0.5 transition-colors flex items-center ${
-                  showNumbers ? 'bg-[#0088ff] justify-end' : 'bg-[#2a2f3d] justify-start'
+                  showNumbers ? 'bg-[#0066ff] justify-end' : 'bg-[#2a2f3d] justify-start'
                 }`}
               >
                 <span className="w-4 h-4 rounded-full bg-white shadow-sm transition-transform" />
@@ -406,13 +406,13 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
               aria-pressed={showPhases}
               onClick={() => setShowPhases((prev) => !prev)}
               className={`flex items-center gap-2 text-xs sm:text-[13px] font-bold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                showPhases ? 'text-white' : 'text-slate-400 hover:text-white'
+                showPhases ? 'text-white' : 'text-[#9ca3af] hover:text-white'
               }`}
             >
               {showPhases ? (
                 <Eye className="w-4 h-4 text-slate-300" />
               ) : (
-                <EyeOff className="w-4 h-4 text-slate-500" />
+                <EyeOff className="w-4 h-4 text-[#9ca3af]" />
               )}
               <span>Show Phases</span>
             </button>
@@ -424,7 +424,7 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
               type="button"
               data-testid="futures-pricing-link"
               onClick={() => setShowSimulatorDrawer((prev) => !prev)}
-              className="flex items-center gap-1.5 text-xs sm:text-[13px] font-bold text-[#0088ff] hover:text-[#38a3ff] transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              className="flex items-center gap-1.5 text-xs sm:text-[13px] font-bold text-[#0066ff] hover:text-[#1a75ff] transition-colors cursor-pointer whitespace-nowrap shrink-0"
             >
               <span>{showSimulatorDrawer ? 'Hide Simulator' : 'Profit Simulator'}</span>
               <ArrowRight className="w-3.5 h-3.5" />
@@ -595,8 +595,8 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
                 <div
                   className={`relative rounded-2xl flex-1 flex flex-col justify-between transition-all duration-200 ${
                     spec.isBestValue
-                      ? 'bg-[#121318] border border-[#ff7b00]/65 shadow-[0_0_35px_rgba(255,123,0,0.12)]'
-                      : 'bg-[#121318] border border-white/[0.08] hover:border-white/20'
+                      ? 'bg-[#111827] border border-[#ff7b00]/65 shadow-[0_0_35px_rgba(255,123,0,0.12)]'
+                      : 'bg-[#111827] border border-white/[0.08] hover:border-white/20'
                   }`}
                 >
                   {/* Orange "Best Value" Top Pill Badge on our popular $10,000 Card */}
@@ -611,7 +611,7 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
                       {/* Subtle Warm Orange Top Radial Gradient inside Best Value Card */}
                       <div
                         aria-hidden="true"
-                        className="pointer-events-none absolute inset-x-0 top-0 h-32 rounded-t-2xl bg-[radial-gradient(ellipse_at_top,rgba(205,98,18,0.42)_0%,rgba(18,19,24,0)_72%)]"
+                        className="pointer-events-none absolute inset-x-0 top-0 h-32 rounded-t-2xl bg-[radial-gradient(ellipse_at_top,rgba(205,98,18,0.42)_0%,rgba(17,24,39,0)_72%)]"
                       />
                     </>
                   )}
@@ -799,7 +799,7 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
                       type="button"
                       data-testid={`start-now-btn-${spec.size}`}
                       onClick={() => handleStartNow(spec)}
-                      className="w-full py-2.5 px-3 rounded-xl bg-[#0088ff] hover:bg-[#1a96ff] active:scale-[0.99] text-white font-bold text-xs sm:text-[13px] transition-all shadow-[0_4px_14px_rgba(0,136,255,0.3)] cursor-pointer whitespace-nowrap"
+                      className="w-full py-2.5 px-3 rounded-xl bg-[#0066ff] hover:bg-[#1a75ff] active:scale-[0.99] text-white font-bold text-xs sm:text-[13px] transition-all shadow-[0_4px_14px_rgba(0,102,255,0.35)] cursor-pointer whitespace-nowrap"
                     >
                       Start now
                     </button>
@@ -809,14 +809,14 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
                 {/* Detached Bottom Footer Card: Avg. Reward */}
                 <div
                   data-testid={`avg-reward-card-${spec.size}`}
-                  className="mt-3 h-[74px] rounded-2xl bg-[#121318] border border-white/[0.08] px-3 py-2.5 flex flex-col items-center justify-center text-center"
+                  className="mt-3 h-[74px] rounded-2xl bg-[#111827] border border-white/[0.08] px-3 py-2.5 flex flex-col items-center justify-center text-center"
                 >
-                  <span className="px-2.5 py-0.5 rounded-md bg-[#222631] text-white text-xs font-extrabold tabular-nums mb-1">
+                  <span className="px-2.5 py-0.5 rounded-md bg-[#161f33] text-white text-xs font-extrabold tabular-nums mb-1">
                     {avgRewardFormatted}
                   </span>
-                  <div className="flex items-center justify-center gap-1 text-[11px] font-semibold text-[#d1d5db]">
+                  <div className="flex items-center justify-center gap-1 text-[11px] font-semibold text-[#9ca3af]">
                     <span>Avg. Reward</span>
-                    <Info className="w-3 h-3 text-slate-400 shrink-0" />
+                    <Info className="w-3 h-3 text-[#9ca3af] shrink-0" />
                   </div>
                 </div>
               </div>
@@ -834,16 +834,16 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
         )}
 
         {/* Original BFT Progression & Rulebook Summary Bar */}
-        <div className="mt-10 p-4 sm:p-5 rounded-2xl bg-[#121318] border border-white/[0.08] flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="mt-10 p-4 sm:p-5 rounded-2xl bg-[#111827] border border-white/[0.08] flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-[#0088ff]/15 border border-[#0088ff]/30 flex items-center justify-center text-[#0088ff] shrink-0">
+            <div className="w-9 h-9 rounded-xl bg-[#0066ff]/15 border border-[#0066ff]/30 flex items-center justify-center text-[#0066ff] shrink-0">
               <ShieldCheck className="w-4 h-4" />
             </div>
             <div>
               <div className="text-xs sm:text-sm font-bold text-white">
                 BFT Prop Firm Rulebook & Compliance Simulator
               </div>
-              <div className="text-[11px] sm:text-xs text-slate-400">
+              <div className="text-[11px] sm:text-xs text-[#9ca3af]">
                 Inspect 5% Max Risk Per Trade, 5 Minimum Profitable Days (≥0.5%/day), 80% → 90% Scaling Split, and Soft vs Hard Breach rules.
               </div>
             </div>
@@ -853,14 +853,14 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
             <button
               type="button"
               onClick={() => setShowSimulatorDrawer((prev) => !prev)}
-              className="px-3.5 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-200 text-xs font-bold border border-white/10 transition-colors cursor-pointer whitespace-nowrap"
+              className="px-3.5 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-white text-xs font-bold border border-white/[0.08] transition-colors cursor-pointer whitespace-nowrap"
             >
               {showSimulatorDrawer ? 'Hide Profit Simulator' : 'Open Profit Simulator'}
             </button>
             <button
               type="button"
               onClick={onOpenRules}
-              className="px-3.5 py-2 rounded-xl bg-[#0088ff]/15 hover:bg-[#0088ff]/25 text-[#38a3ff] text-xs font-bold border border-[#0088ff]/30 transition-colors cursor-pointer whitespace-nowrap"
+              className="px-3.5 py-2 rounded-xl bg-[#0066ff] hover:bg-[#1a75ff] text-white text-xs font-bold transition-colors cursor-pointer whitespace-nowrap shadow-[0_2px_10px_rgba(0,102,255,0.3)]"
             >
               Review Prop Firm Rulebook
             </button>

@@ -647,13 +647,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       data-testid="auth-modal-card"
       className={`relative w-full ${
         isPageView ? 'max-w-xl mx-auto' : 'max-w-lg'
-      } rounded-2xl bg-[#0a0a0a] border border-[#262c3a] p-5 sm:p-6 my-auto shadow-2xl`}
+      } rounded-2xl bg-[#111827] border border-white/[0.08] p-5 sm:p-6 my-auto shadow-2xl`}
     >
       {!isPageView && (
         <div className="flex justify-end mb-2 -mt-1 -mr-1">
           <button
             onClick={onClose}
-            className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 cursor-pointer transition-colors"
+            className="p-1.5 rounded-xl text-[#9ca3af] hover:text-white hover:bg-white/5 cursor-pointer transition-colors"
             aria-label="Close modal"
           >
             <X className="w-5 h-5" />
@@ -663,7 +663,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
       {/* Auth Tab Navigation: Email Sign In | Register (Sign Up) */}
       {!is2faRequired && (
-        <div className="flex bg-[#141720] border border-[#262c3a] p-1 rounded-xl mb-5 font-mono text-[11px] font-bold">
+        <div className="flex bg-[#0b0f19] border border-white/[0.08] p-1 rounded-xl mb-5 font-mono text-[11px] font-bold">
           <button
             type="button"
             data-testid="auth-tab-email-signin"
@@ -673,8 +673,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             }}
             className={`flex-1 py-2 rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${
               authTab === 'email_signin'
-                ? 'bg-[#ff8800] text-slate-950 font-black'
-                : 'text-slate-400 hover:text-white'
+                ? 'bg-[#0066ff] text-white font-black shadow-[0_2px_10px_rgba(0,102,255,0.35)]'
+                : 'text-[#9ca3af] hover:text-white'
             }`}
           >
             <Mail className="w-3.5 h-3.5" />
@@ -690,8 +690,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             }}
             className={`flex-1 py-2 rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${
               authTab === 'email_signup'
-                ? 'bg-[#ff8800] text-slate-950 font-black'
-                : 'text-slate-400 hover:text-white'
+                ? 'bg-[#0066ff] text-white font-black shadow-[0_2px_10px_rgba(0,102,255,0.35)]'
+                : 'text-[#9ca3af] hover:text-white'
             }`}
           >
             <User className="w-3.5 h-3.5" />
@@ -711,7 +711,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         </div>
         <span
           data-testid="bft-auth-badge"
-          className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded bg-[#141720] border border-[#262c3a] text-[#ff8800] text-[10px] font-mono font-bold uppercase tracking-wider mb-1.5"
+          className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded bg-[#0b0f19] border border-white/[0.08] text-[#0066ff] text-[10px] font-mono font-bold uppercase tracking-wider mb-1.5"
         >
           <ShieldCheck className="w-3 h-3" />{' '}
           {is2faRequired ? 'TWO-FACTOR VERIFICATION REQUIRED' : 'BFT Encrypted Email & Password Auth'}
@@ -723,7 +723,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             ? 'Sign In to Trader Portal'
             : 'Create Trader Account'}
         </h3>
-        <p className="text-xs text-slate-400 mt-1">
+        <p className="text-xs text-[#9ca3af] mt-1">
           {is2faRequired
             ? 'Enter your 6-digit Google Authenticator code to unlock your dashboard.'
             : authTab === 'email_signin'
@@ -749,9 +749,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           <div>
             <label
               htmlFor="signin-email"
-              className="block text-[11px] font-mono font-bold text-slate-300 mb-1 flex items-center gap-1.5"
+              className="block text-[11px] font-mono font-bold text-[#9ca3af] mb-1 flex items-center gap-1.5"
             >
-              <Mail className="w-3.5 h-3.5 text-[#ff8800]" />
+              <Mail className="w-3.5 h-3.5 text-[#0066ff]" />
               <span>Email Address *</span>
             </label>
             <input
@@ -762,16 +762,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="trader@domain.com"
-              className="w-full px-3.5 py-2.5 bg-[#0a0a0a] border border-[#262c3a] rounded-lg text-white font-mono text-xs focus:outline-none focus:border-[#ff8800]"
+              className="w-full px-3.5 py-2.5 bg-[#0b0f19] border border-white/[0.08] rounded-lg text-white font-mono text-xs focus:outline-none focus:border-[#0066ff]"
             />
           </div>
 
           <div>
             <label
               htmlFor="signin-password"
-              className="block text-[11px] font-mono font-bold text-slate-300 mb-1 flex items-center gap-1.5"
+              className="block text-[11px] font-mono font-bold text-[#9ca3af] mb-1 flex items-center gap-1.5"
             >
-              <Lock className="w-3.5 h-3.5 text-[#ff8800]" />
+              <Lock className="w-3.5 h-3.5 text-[#0066ff]" />
               <span>Password *</span>
             </label>
             <input
@@ -782,7 +782,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••••••"
-              className="w-full px-3.5 py-2.5 bg-[#0a0a0a] border border-[#262c3a] rounded-lg text-white font-mono text-xs focus:outline-none focus:border-[#ff8800]"
+              className="w-full px-3.5 py-2.5 bg-[#0b0f19] border border-white/[0.08] rounded-lg text-white font-mono text-xs focus:outline-none focus:border-[#0066ff]"
             />
           </div>
 
@@ -790,7 +790,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             type="submit"
             disabled={isSubmitting}
             data-testid="signin-submit-btn"
-            className="w-full py-3.5 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] disabled:opacity-60 text-slate-950 font-black text-xs cursor-pointer transition-colors flex items-center justify-center gap-1.5 font-mono uppercase tracking-wider mt-2"
+            className="w-full py-3.5 rounded-xl bg-[#0066ff] hover:bg-[#1a75ff] disabled:opacity-60 text-white font-black text-xs cursor-pointer transition-colors flex items-center justify-center gap-1.5 font-mono uppercase tracking-wider mt-2 shadow-[0_4px_14px_rgba(0,102,255,0.35)]"
           >
             <span>{isSubmitting ? 'Verifying Credentials...' : 'Sign In'}</span>
             <ArrowRight className="w-4 h-4 stroke-[2.5]" />
@@ -929,9 +929,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           <div>
             <label
               htmlFor="signup-fullname"
-              className="block text-[11px] font-mono font-bold text-slate-300 mb-1 flex items-center gap-1.5"
+              className="block text-[11px] font-mono font-bold text-[#9ca3af] mb-1 flex items-center gap-1.5"
             >
-              <User className="w-3.5 h-3.5 text-[#ff8800]" />
+              <User className="w-3.5 h-3.5 text-[#0066ff]" />
               <span>Full Legal Name *</span>
             </label>
             <input
@@ -942,16 +942,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
               placeholder="e.g. Jordan Vance"
-              className="w-full px-3.5 py-2.5 bg-[#0a0a0a] border border-[#262c3a] rounded-lg text-white font-mono text-xs focus:outline-none focus:border-[#ff8800]"
+              className="w-full px-3.5 py-2.5 bg-[#0b0f19] border border-white/[0.08] rounded-lg text-white font-mono text-xs focus:outline-none focus:border-[#0066ff]"
             />
           </div>
 
           <div>
             <label
               htmlFor="signup-email"
-              className="block text-[11px] font-mono font-bold text-slate-300 mb-1 flex items-center gap-1.5"
+              className="block text-[11px] font-mono font-bold text-[#9ca3af] mb-1 flex items-center gap-1.5"
             >
-              <Mail className="w-3.5 h-3.5 text-[#ff8800]" />
+              <Mail className="w-3.5 h-3.5 text-[#0066ff]" />
               <span>Email Address *</span>
             </label>
             <input
@@ -962,16 +962,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="trader@domain.com"
-              className="w-full px-3.5 py-2.5 bg-[#0a0a0a] border border-[#262c3a] rounded-lg text-white font-mono text-xs focus:outline-none focus:border-[#ff8800]"
+              className="w-full px-3.5 py-2.5 bg-[#0b0f19] border border-white/[0.08] rounded-lg text-white font-mono text-xs focus:outline-none focus:border-[#0066ff]"
             />
           </div>
 
           <div>
             <label
               htmlFor="signup-password"
-              className="block text-[11px] font-mono font-bold text-slate-300 mb-1 flex items-center gap-1.5"
+              className="block text-[11px] font-mono font-bold text-[#9ca3af] mb-1 flex items-center gap-1.5"
             >
-              <Lock className="w-3.5 h-3.5 text-[#ff8800]" />
+              <Lock className="w-3.5 h-3.5 text-[#0066ff]" />
               <span>Choose Password *</span>
             </label>
             <input
@@ -983,19 +983,19 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••••••"
-              className="w-full px-3.5 py-2.5 bg-[#0a0a0a] border border-[#262c3a] rounded-lg text-white font-mono text-xs focus:outline-none focus:border-[#ff8800]"
+              className="w-full px-3.5 py-2.5 bg-[#0b0f19] border border-white/[0.08] rounded-lg text-white font-mono text-xs focus:outline-none focus:border-[#0066ff]"
             />
           </div>
 
           {/* Mandatory Compliance Checkboxes */}
-          <div className="space-y-2.5 pt-1 font-mono text-xs text-slate-300">
+          <div className="space-y-2.5 pt-1 font-mono text-xs text-[#9ca3af]">
             <label className="flex items-start gap-2.5 cursor-pointer select-none">
               <input
                 type="checkbox"
                 data-testid="age-terms-checkbox"
                 checked={ageAgreementChecked}
                 onChange={(e) => setAgeAgreementChecked(e.target.checked)}
-                className="mt-0.5 rounded accent-[#ff8800] w-4 h-4 cursor-pointer shrink-0"
+                className="mt-0.5 rounded accent-[#0066ff] w-4 h-4 cursor-pointer shrink-0"
               />
               <span>
                 I confirm that I am 18 years old or older and accept the{' '}
@@ -1006,7 +1006,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     e.preventDefault();
                     setShowTermsModal(true);
                   }}
-                  className="text-[#ff8800] underline hover:text-[#ff9900] font-bold cursor-pointer inline-block"
+                  className="text-[#0066ff] underline hover:text-[#1a75ff] font-bold cursor-pointer inline-block"
                 >
                   Service Agreement
                 </button>
@@ -1020,7 +1020,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 data-testid="us-tax-resident-checkbox"
                 checked={usTaxResidentChecked}
                 onChange={(e) => setUsTaxResidentChecked(e.target.checked)}
-                className="mt-0.5 rounded accent-[#ff8800] w-4 h-4 cursor-pointer shrink-0"
+                className="mt-0.5 rounded accent-[#0066ff] w-4 h-4 cursor-pointer shrink-0"
               />
               <span>
                 I declare and confirm that I am not a citizen or resident of the US for tax purposes.
@@ -1032,7 +1032,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             type="submit"
             disabled={isSubmitting || !ageAgreementChecked || !usTaxResidentChecked}
             data-testid="signup-submit-btn"
-            className="w-full py-3.5 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] disabled:opacity-50 text-slate-950 font-black text-xs cursor-pointer transition-colors flex items-center justify-center gap-1.5 font-mono uppercase tracking-wider mt-2"
+            className="w-full py-3.5 rounded-xl bg-[#0066ff] hover:bg-[#1a75ff] disabled:opacity-50 text-white font-black text-xs cursor-pointer transition-colors flex items-center justify-center gap-1.5 font-mono uppercase tracking-wider mt-2 shadow-[0_4px_14px_rgba(0,102,255,0.35)]"
           >
             <span>
               {isSubmitting ? 'Creating Account...' : 'Register & Get Live Terminal Access'}
@@ -1043,7 +1043,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       )}
 
       {/* Sponsor Referral Code Input */}
-      <div className="mb-4 p-3 rounded-xl bg-[#11131a] border border-[#1e2330] space-y-2">
+      <div className="mb-4 p-3 rounded-xl bg-[#0b0f19] border border-white/[0.08] space-y-2">
         <div className="flex items-center justify-between">
           <label
             htmlFor="auth-referral-code"

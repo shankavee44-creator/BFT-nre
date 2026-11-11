@@ -128,7 +128,7 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   return (
-    <header className="sticky top-0 z-40 w-full max-w-[100vw] border-b border-white/10 bg-[#0a0a0a]/95 backdrop-blur-xl">
+    <header className="sticky top-0 z-40 w-full max-w-[100vw] border-b border-white/[0.08] bg-[#0b0f19]/95 backdrop-blur-xl">
       {/* Live Institutional Payout Ticker Feed */}
       <CryptoTickerBar onSelectPair={() => setLeaderboardOpen(true)} />
 
@@ -157,14 +157,14 @@ export const Header: React.FC<HeaderProps> = ({
                 PRIME PROP
               </span>
             </div>
-            <p className="hidden sm:block text-[10px] font-semibold text-slate-300 tracking-wide uppercase whitespace-nowrap mt-0.5">
+            <p className="hidden sm:block text-[10px] font-semibold text-[#9ca3af] tracking-wide uppercase whitespace-nowrap mt-0.5">
               Binary Funded Trader
             </p>
           </div>
         </div>
 
         {/* Center Nav Links */}
-        <nav className="hidden lg:flex items-center gap-1 bg-[#111114] border border-white/10 rounded-xl p-1">
+        <nav className="hidden lg:flex items-center gap-1 bg-[#111827] border border-white/[0.08] rounded-xl p-1">
           {[
             { id: 'home', label: 'Challenges & Pricing' },
             { id: 'terminal', label: 'Trading Terminal' },
@@ -183,12 +183,12 @@ export const Header: React.FC<HeaderProps> = ({
                 onClick={() => handleNavClick(tab.id)}
                 className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
                   currentTab === tab.id
-                    ? 'bg-[#ff8800] text-slate-950 font-extrabold'
-                    : 'text-slate-300 hover:text-white hover:bg-white/5'
+                    ? 'bg-[#0066ff] text-white font-extrabold shadow-[0_2px_10px_rgba(0,102,255,0.35)]'
+                    : 'text-[#9ca3af] hover:text-white hover:bg-white/5'
                 }`}
               >
                 <span>{tab.label}</span>
-                {isLocked && <Lock className="w-2.5 h-2.5 text-slate-500 shrink-0" />}
+                {isLocked && <Lock className="w-2.5 h-2.5 text-[#9ca3af] shrink-0" />}
               </button>
             );
           })}
@@ -201,8 +201,8 @@ export const Header: React.FC<HeaderProps> = ({
             onClick={handleToggleSound}
             className={`p-2 rounded-xl border transition-all cursor-pointer flex items-center justify-center ${
               soundActive
-                ? 'bg-[#1a130a] border-[#ff8800]/40 text-[#ffaa00]'
-                : 'bg-[#121216] border-white/10 text-slate-500 hover:text-slate-300'
+                ? 'bg-[#111827] border-[#0066ff]/40 text-[#0066ff]'
+                : 'bg-[#111827] border-white/[0.08] text-[#9ca3af] hover:text-white'
             }`}
             title={soundActive ? 'Mute Sound Effects' : 'Enable Sound Effects'}
           >
@@ -215,7 +215,7 @@ export const Header: React.FC<HeaderProps> = ({
             data-testid="header-leaderboard-btn"
             onClick={() => setLeaderboardOpen(true)}
             title="Open Daily Top 15 Leaderboard"
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[#1a130a] hover:bg-[#ff8800]/20 border border-[#ff8800]/40 text-[#ff8800] text-xs font-bold transition-all cursor-pointer whitespace-nowrap"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[#111827] hover:bg-[#161f33] border border-[#ff8800]/40 text-[#ff8800] text-xs font-bold transition-all cursor-pointer whitespace-nowrap"
           >
             <Award className="w-3.5 h-3.5 shrink-0" />
             <span className="hidden sm:inline">Leaderboard</span>
@@ -237,7 +237,7 @@ export const Header: React.FC<HeaderProps> = ({
           {userProfile.isLoggedIn && (
             <button
               onClick={onOpenWithdrawalModal}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-[#1a1c24] hover:bg-[#242834] border border-white/15 text-slate-100 text-xs font-bold transition-all cursor-pointer whitespace-nowrap"
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-[#111827] hover:bg-[#161f33] border border-white/[0.08] text-white text-xs font-bold transition-all cursor-pointer whitespace-nowrap"
             >
               <Zap className="w-3.5 h-3.5 text-[#ff8800] fill-[#ff8800]" />
               <span className="hidden sm:inline">Payout</span>
@@ -280,16 +280,16 @@ export const Header: React.FC<HeaderProps> = ({
                 type="button"
                 data-testid="header-login-btn"
                 onClick={() => onOpenAuthModal('login')}
-                className="px-2.5 sm:px-3.5 py-1.5 rounded-xl bg-[#141418] hover:bg-white/10 border border-white/15 text-xs font-bold text-white flex items-center gap-1.5 cursor-pointer whitespace-nowrap transition-colors"
+                className="px-2.5 sm:px-3.5 py-1.5 rounded-xl bg-[#111827] hover:bg-[#161f33] border border-white/[0.08] hover:border-white/20 text-xs font-bold text-white flex items-center gap-1.5 cursor-pointer whitespace-nowrap transition-colors"
               >
-                <LogIn className="w-3.5 h-3.5 text-[#ff8800] shrink-0" />
+                <LogIn className="w-3.5 h-3.5 text-[#0066ff] shrink-0" />
                 <span>Sign In</span>
               </button>
               <button
                 type="button"
                 data-testid="header-register-btn"
                 onClick={() => onOpenAuthModal('register')}
-                className="hidden sm:flex px-4 py-1.5 rounded-xl bg-[#ff8800] hover:bg-[#ffaa00] text-slate-950 text-xs font-extrabold items-center gap-1.5 cursor-pointer whitespace-nowrap transition-colors"
+                className="hidden sm:flex px-4 py-1.5 rounded-xl bg-[#0066ff] hover:bg-[#1a75ff] text-white text-xs font-extrabold items-center gap-1.5 cursor-pointer whitespace-nowrap transition-colors shadow-[0_2px_12px_rgba(0,102,255,0.35)]"
               >
                 <UserPlus className="w-3.5 h-3.5 stroke-[2.5]" />
                 <span>Register</span>
@@ -302,10 +302,10 @@ export const Header: React.FC<HeaderProps> = ({
             type="button"
             data-testid="mobile-menu-toggle-btn"
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="lg:hidden p-2 rounded-xl bg-[#141418] hover:bg-white/10 border border-white/15 text-slate-200 cursor-pointer flex items-center justify-center transition-all"
+            className="lg:hidden p-2 rounded-xl bg-[#111827] hover:bg-[#161f33] border border-white/[0.08] text-white cursor-pointer flex items-center justify-center transition-all"
             aria-label="Toggle Navigation Menu"
           >
-            {mobileMenuOpen ? <X className="w-4 h-4 text-[#ff8800]" /> : <Menu className="w-4 h-4 text-white" />}
+            {mobileMenuOpen ? <X className="w-4 h-4 text-[#0066ff]" /> : <Menu className="w-4 h-4 text-white" />}
           </button>
 
 
@@ -314,9 +314,9 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Slide-Down Mobile Drawer Menu */}
       {mobileMenuOpen && (
-        <div className="lg:hidden border-t border-white/10 bg-[#0d0d12]/98 backdrop-blur-2xl px-4 py-4 space-y-4 animate-in slide-in-from-top-4 duration-200">
+        <div className="lg:hidden border-t border-white/[0.08] bg-[#0b0f19]/98 backdrop-blur-2xl px-4 py-4 space-y-4 animate-in slide-in-from-top-4 duration-200">
           {/* Mobile Drawer Brand Header */}
-          <div className="flex items-center justify-between pb-3 border-b border-white/10">
+          <div className="flex items-center justify-between pb-3 border-b border-white/[0.08]">
             <div className="flex items-center gap-2.5">
               <BftLogo
                 imgClassName="h-9 w-auto"
@@ -332,7 +332,7 @@ export const Header: React.FC<HeaderProps> = ({
                     BFT
                   </span>
                 </div>
-                <p className="text-[10px] text-slate-400 font-mono">
+                <p className="text-[10px] text-[#9ca3af] font-mono">
                   Institutional Binary Options Prop Firm
                 </p>
               </div>
@@ -340,7 +340,7 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               type="button"
               onClick={() => setMobileMenuOpen(false)}
-              className="p-1.5 rounded-lg bg-white/5 text-slate-400 hover:text-white"
+              className="p-1.5 rounded-lg bg-white/5 text-[#9ca3af] hover:text-white"
               aria-label="Close Menu"
             >
               <X className="w-4 h-4" />
@@ -349,7 +349,7 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* User Status / Mobile Profile Popover Dropdown Menu */}
           {userProfile.isLoggedIn ? (
-            <div className="rounded-2xl bg-[#14141a] border border-white/15 overflow-hidden">
+            <div className="rounded-2xl bg-[#111827] border border-white/[0.08] overflow-hidden">
               <button
                 type="button"
                 data-testid="mobile-profile-popover-trigger"
@@ -360,7 +360,7 @@ export const Header: React.FC<HeaderProps> = ({
                   <img
                     src={userProfile.avatarUrl || BUILTIN_AVATARS[0]}
                     alt={userProfile.fullName || 'Trader'}
-                    className="w-9 h-9 rounded-xl object-cover ring-2 ring-[#ff8800] shrink-0"
+                    className="w-9 h-9 rounded-xl object-cover ring-2 ring-[#0066ff] shrink-0"
                   />
                   <div className="min-w-0">
                     <div className="text-xs font-bold text-white font-mono flex items-center gap-1.5 truncate">
@@ -375,7 +375,7 @@ export const Header: React.FC<HeaderProps> = ({
                         {userProfile.kycStatus}
                       </span>
                     </div>
-                    <div className="text-[10px] text-slate-400 font-mono mt-0.5 truncate">
+                    <div className="text-[10px] text-[#9ca3af] font-mono mt-0.5 truncate">
                       Balance:{' '}
                       <span className="text-[#00e676] font-bold">
                         ${authoritativeActiveBalance.toLocaleString('en-US', {
@@ -389,12 +389,12 @@ export const Header: React.FC<HeaderProps> = ({
                 </div>
 
                 <div className="flex items-center gap-1.5 shrink-0 ml-2">
-                  <span className="text-[10px] font-mono font-bold text-[#ff8800] uppercase hidden xs:inline">
+                  <span className="text-[10px] font-mono font-bold text-[#0066ff] uppercase hidden xs:inline">
                     {mobileProfileOpen ? 'Close Menu' : 'Profile Menu'}
                   </span>
                   <ChevronDown
-                    className={`w-4 h-4 text-slate-400 transition-transform duration-200 shrink-0 ${
-                      mobileProfileOpen ? 'rotate-180 text-[#ff8800]' : ''
+                    className={`w-4 h-4 text-[#9ca3af] transition-transform duration-200 shrink-0 ${
+                      mobileProfileOpen ? 'rotate-180 text-[#0066ff]' : ''
                     }`}
                   />
                 </div>
@@ -402,7 +402,7 @@ export const Header: React.FC<HeaderProps> = ({
 
               {/* Collapsible Mobile Profile Submenu Links */}
               {mobileProfileOpen && (
-                <div className="p-2 border-t border-white/10 bg-[#0d0d12] space-y-1 font-mono text-xs animate-in fade-in zoom-in-95 duration-150">
+                <div className="p-2 border-t border-white/[0.08] bg-[#07090e] space-y-1 font-mono text-xs animate-in fade-in zoom-in-95 duration-150">
                   <button
                     type="button"
                     data-testid="mobile-profile-details-link"
@@ -414,10 +414,10 @@ export const Header: React.FC<HeaderProps> = ({
                     className="w-full min-h-[44px] px-3 py-2.5 rounded-xl hover:bg-white/10 text-slate-200 hover:text-white flex items-center justify-between font-bold cursor-pointer touch-manipulation"
                   >
                     <div className="flex items-center gap-2.5">
-                      <User className="w-4 h-4 text-[#ff8800] shrink-0" />
+                      <User className="w-4 h-4 text-[#0066ff] shrink-0" />
                       <span>Profile & Personal Details</span>
                     </div>
-                    <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                    <ChevronRight className="w-3.5 h-3.5 text-[#9ca3af] shrink-0" />
                   </button>
 
                   <button
@@ -431,7 +431,7 @@ export const Header: React.FC<HeaderProps> = ({
                     className="w-full min-h-[44px] px-3 py-2.5 rounded-xl hover:bg-white/10 text-slate-200 hover:text-white flex items-center justify-between font-bold cursor-pointer touch-manipulation"
                   >
                     <div className="flex items-center gap-2.5">
-                      <ShieldCheck className="w-4 h-4 text-[#ff8800] shrink-0" />
+                      <ShieldCheck className="w-4 h-4 text-[#0066ff] shrink-0" />
                       <span>KYC Verification</span>
                     </div>
                     <span className="text-[9px] px-1.5 py-0.5 rounded font-black uppercase bg-[#ff8800]/20 text-[#ff8800] shrink-0">
@@ -453,7 +453,7 @@ export const Header: React.FC<HeaderProps> = ({
                       <Award className="w-4 h-4 text-amber-400 shrink-0" />
                       <span>Certificates & Badges</span>
                     </div>
-                    <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                    <ChevronRight className="w-3.5 h-3.5 text-[#9ca3af] shrink-0" />
                   </button>
 
                   <button
@@ -470,7 +470,7 @@ export const Header: React.FC<HeaderProps> = ({
                       <Lock className="w-4 h-4 text-cyan-400 shrink-0" />
                       <span>Security & 2FA Settings</span>
                     </div>
-                    <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                    <ChevronRight className="w-3.5 h-3.5 text-[#9ca3af] shrink-0" />
                   </button>
 
                   <button
@@ -487,11 +487,11 @@ export const Header: React.FC<HeaderProps> = ({
                       <Zap className="w-4 h-4 text-[#00e676] shrink-0 fill-current" />
                       <span>Withdrawals & Payouts</span>
                     </div>
-                    <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                    <ChevronRight className="w-3.5 h-3.5 text-[#9ca3af] shrink-0" />
                   </button>
 
                   {onLogout && (
-                    <div className="pt-2 border-t border-white/10 mt-1">
+                    <div className="pt-2 border-t border-white/[0.08] mt-1">
                       <button
                         type="button"
                         data-testid="mobile-logout-btn"
@@ -520,9 +520,9 @@ export const Header: React.FC<HeaderProps> = ({
                   setMobileMenuOpen(false);
                   onOpenAuthModal('login');
                 }}
-                className="py-3 px-3 rounded-xl bg-[#141418] border border-white/20 text-xs font-bold text-white font-mono flex items-center justify-center gap-1.5 min-h-[44px] touch-manipulation"
+                className="py-3 px-3 rounded-xl bg-[#111827] border border-white/[0.08] text-xs font-bold text-white font-mono flex items-center justify-center gap-1.5 min-h-[44px] touch-manipulation"
               >
-                <LogIn className="w-3.5 h-3.5 text-[#ff8800]" />
+                <LogIn className="w-3.5 h-3.5 text-[#0066ff]" />
                 <span>Sign In</span>
               </button>
               <button
@@ -531,7 +531,7 @@ export const Header: React.FC<HeaderProps> = ({
                   setMobileMenuOpen(false);
                   onOpenAuthModal('register');
                 }}
-                className="py-3 px-3 rounded-xl bg-[#ff8800] text-slate-950 text-xs font-black font-mono flex items-center justify-center gap-1.5 min-h-[44px] touch-manipulation"
+                className="py-3 px-3 rounded-xl bg-[#0066ff] hover:bg-[#1a75ff] text-white text-xs font-black font-mono flex items-center justify-center gap-1.5 min-h-[44px] touch-manipulation"
               >
                 <UserPlus className="w-3.5 h-3.5 stroke-[2.5]" />
                 <span>Register</span>
@@ -541,7 +541,7 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Compact Mobile Navigation Select Dropdown */}
           <div className="font-mono text-xs space-y-2 mb-2">
-            <label htmlFor="mobile-header-nav-select" className="text-[10px] uppercase font-mono font-bold tracking-wider text-slate-400 block">
+            <label htmlFor="mobile-header-nav-select" className="text-[10px] uppercase font-mono font-bold tracking-wider text-[#9ca3af] block">
               Quick Navigation Menu:
             </label>
             <div className="relative">
@@ -553,7 +553,7 @@ export const Header: React.FC<HeaderProps> = ({
                   setMobileMenuOpen(false);
                   handleNavClick(e.target.value);
                 }}
-                className="w-full bg-[#141418] border border-[#ff8800]/50 text-white font-mono text-xs font-black rounded-xl px-3.5 py-3 appearance-none focus:outline-none focus:border-[#ff8800] cursor-pointer"
+                className="w-full bg-[#111827] border border-[#0066ff]/50 text-white font-mono text-xs font-black rounded-xl px-3.5 py-3 appearance-none focus:outline-none focus:border-[#0066ff] cursor-pointer"
               >
                 {[
                   { id: 'home', label: 'Challenges & Pricing' },
@@ -564,12 +564,12 @@ export const Header: React.FC<HeaderProps> = ({
                   { id: 'dashboard', label: 'Trader Hub & KYC' },
                   { id: 'faq', label: 'FAQ & Support' },
                 ].map((tab) => (
-                  <option key={tab.id} value={tab.id} className="bg-[#0e0e12] text-white">
+                  <option key={tab.id} value={tab.id} className="bg-[#0b0f19] text-white">
                     {tab.label} {currentTab === tab.id ? '✓ (Active)' : ''}
                   </option>
                 ))}
               </select>
-              <ChevronDown className="w-4 h-4 text-[#ff8800] absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <ChevronDown className="w-4 h-4 text-[#0066ff] absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             </div>
           </div>
 
@@ -596,13 +596,13 @@ export const Header: React.FC<HeaderProps> = ({
                   }}
                   className={`flex items-center justify-between p-3 min-h-[44px] rounded-xl text-left transition-all cursor-pointer touch-manipulation ${
                     isActive
-                      ? 'bg-[#ff8800] text-slate-950 font-black'
-                      : 'text-slate-200 hover:bg-white/5'
+                      ? 'bg-[#0066ff] text-white font-black'
+                      : 'text-[#9ca3af] hover:text-white hover:bg-white/5'
                   }`}
                 >
                   <span className="font-bold">{tab.label}</span>
                   {isLocked ? (
-                    <span className="flex items-center gap-1 text-[10px] text-slate-400 bg-white/5 px-2 py-0.5 rounded">
+                    <span className="flex items-center gap-1 text-[10px] text-[#9ca3af] bg-white/5 px-2 py-0.5 rounded">
                       <Lock className="w-2.5 h-2.5" /> Required
                     </span>
                   ) : isActive ? (
@@ -635,13 +635,13 @@ export const Header: React.FC<HeaderProps> = ({
           )}
 
           {/* Bottom Action inside Drawer */}
-          <div className="pt-2 border-t border-white/10 flex items-center justify-between gap-2">
+          <div className="pt-2 border-t border-white/[0.08] flex items-center justify-between gap-2">
             <button
               onClick={() => {
                 setMobileMenuOpen(false);
                 onOpenChallengeModal();
               }}
-              className="flex-1 py-2.5 px-4 rounded-xl bg-gradient-to-r from-[#ff8800] to-[#ffaa00] text-slate-950 text-xs font-black font-mono flex items-center justify-center gap-1.5 cursor-pointer shadow-md"
+              className="flex-1 py-2.5 px-4 rounded-xl bg-[#0066ff] hover:bg-[#1a75ff] text-white text-xs font-black font-mono flex items-center justify-center gap-1.5 cursor-pointer shadow-md"
             >
               <span>Get Funded Evaluation</span>
               <ArrowUpRight className="w-3.5 h-3.5" />
@@ -651,8 +651,8 @@ export const Header: React.FC<HeaderProps> = ({
               onClick={handleToggleSound}
               className={`p-2.5 rounded-xl border flex items-center justify-center cursor-pointer ${
                 soundActive
-                  ? 'bg-[#1a130a] border-[#ff8800]/40 text-[#ffaa00]'
-                  : 'bg-[#121216] border-white/10 text-slate-500'
+                  ? 'bg-[#111827] border-[#0066ff]/40 text-[#0066ff]'
+                  : 'bg-[#111827] border-white/[0.08] text-[#9ca3af]'
               }`}
               title={soundActive ? 'Mute' : 'Enable Sound'}
             >
@@ -663,7 +663,7 @@ export const Header: React.FC<HeaderProps> = ({
       )}
 
       {/* Mobile Submenu Bar (Scrollable Quick Strip) */}
-      <div className="lg:hidden flex items-center gap-1 border-t border-white/10 bg-[#0d0d10] py-2 px-2 text-xs overflow-x-auto no-scrollbar">
+      <div className="lg:hidden flex items-center gap-1 border-t border-white/[0.08] bg-[#07090e] py-2 px-2 text-xs overflow-x-auto no-scrollbar">
         {[
           { id: 'home', label: 'Challenges' },
           { id: 'terminal', label: 'Terminal' },
@@ -677,8 +677,8 @@ export const Header: React.FC<HeaderProps> = ({
             onClick={() => handleNavClick(tab.id)}
             className={`px-3 py-1.5 rounded-lg font-bold text-xs whitespace-nowrap cursor-pointer flex items-center gap-1 transition-all ${
               currentTab === tab.id
-                ? 'bg-[#ff8800] text-slate-950 font-black'
-                : 'text-slate-300 hover:text-white bg-white/5'
+                ? 'bg-[#0066ff] text-white font-black'
+                : 'text-[#9ca3af] hover:text-white bg-[#111827]'
             }`}
           >
             <span>{tab.label}</span>

@@ -163,43 +163,43 @@ export const FAQSection: React.FC = () => {
   });
 
   return (
-    <section id="faq" data-testid="faq-section" className="py-16 md:py-24 relative bg-[#0a0a0a] border-b border-zinc-800/80 font-sans">
+    <section id="faq" data-testid="faq-section" className="py-16 md:py-24 relative bg-[#0b0f19] border-b border-white/[0.08] font-sans">
       <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Header */}
         <div className="text-center max-w-3xl mx-auto mb-12">
-          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-zinc-900 border border-amber-500/30 text-amber-400 text-xs font-bold mb-3 tracking-wide">
-            <HelpCircle className="w-3.5 h-3.5 text-amber-400" />
+          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#111827] border border-[#0066ff]/40 text-[#0066ff] text-xs font-bold mb-3 tracking-wide">
+            <HelpCircle className="w-3.5 h-3.5 text-[#0066ff]" />
             <span>KNOWLEDGE BASE &amp; SUPPORT DESK</span>
           </div>
           <h2 className="text-3xl sm:text-5xl font-extrabold text-white tracking-[-0.025em] leading-[1.1] mb-4">
             Frequently Asked Questions
           </h2>
-          <p className="text-zinc-300 text-base sm:text-[17px] font-normal sm:font-medium leading-relaxed">
+          <p className="text-[#9ca3af] text-base sm:text-[17px] font-normal sm:font-medium leading-relaxed">
             Everything you need to know about our binary evaluation phases, 3-minute withdrawal guarantee SLA, and risk rules.
           </p>
         </div>
 
         {/* Search Bar */}
         <div className="relative max-w-xl mx-auto mb-8">
-          <Search className="w-4 h-4 text-zinc-400 absolute left-4 top-3.5" />
+          <Search className="w-4 h-4 text-[#9ca3af] absolute left-4 top-3.5" />
           <input
             type="text"
             placeholder="Search rules, withdrawal speed, drawdown formulas..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-zinc-900 border border-zinc-800 rounded-xl py-3 pl-11 pr-10 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 shadow-inner"
+            className="w-full bg-[#111827] border border-white/[0.08] rounded-xl py-3 pl-11 pr-10 text-sm text-white placeholder-[#9ca3af] focus:outline-none focus:border-[#0066ff] focus:ring-1 focus:ring-[#0066ff] shadow-inner"
           />
           {searchQuery && (
             <button
               onClick={() => setSearchQuery('')}
-              className="absolute right-3.5 top-3 text-xs text-zinc-400 hover:text-white"
+              className="absolute right-3.5 top-3 text-xs text-[#9ca3af] hover:text-white"
             >
               Clear
             </button>
           )}
         </div>
 
-        {/* Category Filter Pills - Matte Black Segmented */}
+        {/* Category Filter Pills - FTMO Segmented */}
         <div className="flex flex-wrap items-center justify-center gap-2 mb-10">
           {categories.map((cat) => (
             <button
@@ -207,13 +207,13 @@ export const FAQSection: React.FC = () => {
               onClick={() => setActiveCategory(cat.id as any)}
               className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
                 activeCategory === cat.id
-                  ? 'bg-amber-400 text-zinc-950 font-bold shadow-md shadow-amber-500/20'
-                  : 'bg-zinc-900 text-zinc-300 hover:text-white hover:bg-zinc-800 border border-zinc-800'
+                  ? 'bg-[#0066ff] text-white font-bold shadow-[0_2px_12px_rgba(0,102,255,0.35)]'
+                  : 'bg-[#111827] text-[#9ca3af] hover:text-white hover:bg-[#161f33] border border-white/[0.08]'
               }`}
             >
               <span>{cat.label}</span>
               <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
-                activeCategory === cat.id ? 'bg-zinc-950 text-amber-400' : 'bg-zinc-800 text-zinc-300'
+                activeCategory === cat.id ? 'bg-[#07090e] text-white' : 'bg-[#07090e] text-[#9ca3af]'
               }`}>
                 {cat.count}
               </span>
@@ -221,7 +221,7 @@ export const FAQSection: React.FC = () => {
           ))}
         </div>
 
-        {/* Accordion List - Matte Black Cards with Smooth Animated Dropdowns */}
+        {/* Accordion List - FTMO Surface Cards with Smooth Animated Dropdowns */}
         <div className="space-y-3 mb-14">
           {filteredFaqs.length > 0 ? (
             filteredFaqs.map((faq) => {
@@ -232,8 +232,8 @@ export const FAQSection: React.FC = () => {
                   data-testid={`faq-item-${faq.id}`}
                   className={`rounded-2xl transition-all duration-300 border overflow-hidden ${
                     isExpanded
-                      ? 'bg-zinc-900 border-amber-500/70 shadow-xl'
-                      : 'bg-zinc-900/60 hover:bg-zinc-900 border-zinc-800/80 hover:border-zinc-700'
+                      ? 'bg-[#111827] border-[#0066ff]/60 shadow-xl'
+                      : 'bg-[#111827]/80 hover:bg-[#111827] border-white/[0.08] hover:border-white/20'
                   }`}
                 >
                   <button
@@ -244,8 +244,8 @@ export const FAQSection: React.FC = () => {
                     <div className="flex items-center gap-3">
                       <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border transition-colors duration-200 ${
                         isExpanded
-                          ? 'bg-amber-500/20 border-amber-500/40 text-amber-400'
-                          : 'bg-zinc-950 border-zinc-800 text-zinc-400'
+                          ? 'bg-[#0066ff]/20 border-[#0066ff]/40 text-[#0066ff]'
+                          : 'bg-[#07090e] border-white/[0.08] text-[#9ca3af]'
                       }`}>
                         {faq.category === 'withdrawals' ? (
                           <Zap className="w-4 h-4" />
@@ -264,13 +264,13 @@ export const FAQSection: React.FC = () => {
 
                     <div className="flex items-center gap-2 shrink-0">
                       {faq.highlight && !isExpanded && (
-                        <span className="hidden sm:inline-block text-[10px] font-mono text-amber-400 bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 rounded-full font-bold">
+                        <span className="hidden sm:inline-block text-[10px] font-mono text-[#ffaa00] bg-[#ff8800]/15 border border-[#ff8800]/30 px-2 py-0.5 rounded-full font-bold">
                           {faq.highlight}
                         </span>
                       )}
                       <ChevronDown
-                        className={`w-5 h-5 text-zinc-400 transition-transform duration-300 ease-in-out ${
-                          isExpanded ? 'rotate-180 text-amber-400' : ''
+                        className={`w-5 h-5 text-[#9ca3af] transition-transform duration-300 ease-in-out ${
+                          isExpanded ? 'rotate-180 text-[#0066ff]' : ''
                         }`}
                       />
                     </div>
@@ -283,11 +283,11 @@ export const FAQSection: React.FC = () => {
                     }`}
                   >
                     <div className="overflow-hidden">
-                      <div className="px-5 pb-5 pt-1 text-xs sm:text-sm text-zinc-200 leading-relaxed border-t border-zinc-800/70 mt-1">
+                      <div className="px-5 pb-5 pt-1 text-xs sm:text-sm text-[#9ca3af] leading-relaxed border-t border-white/[0.08] mt-1">
                         <p>{faq.answer}</p>
                         {faq.highlight && (
-                          <div className="mt-3 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-zinc-950 border border-amber-500/30 text-xs font-mono text-amber-400 font-bold">
-                            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                          <div className="mt-3 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#07090e] border border-[#ff8800]/30 text-xs font-mono text-[#ffaa00] font-bold">
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#ffaa00] animate-pulse" />
                             <span>Key Rule: {faq.highlight}</span>
                           </div>
                         )}
@@ -298,23 +298,23 @@ export const FAQSection: React.FC = () => {
               );
             })
           ) : (
-            <div className="text-center py-10 p-6 rounded-2xl bg-zinc-900 border border-zinc-800">
-              <HelpCircle className="w-8 h-8 text-zinc-500 mx-auto mb-2" />
+            <div className="text-center py-10 p-6 rounded-2xl bg-[#111827] border border-white/[0.08]">
+              <HelpCircle className="w-8 h-8 text-[#9ca3af] mx-auto mb-2" />
               <div className="text-sm font-bold text-white">No questions match your search query</div>
-              <p className="text-xs text-zinc-400 mt-1">Try keywords like "withdrawal", "30s", "drawdown", or "KYC".</p>
+              <p className="text-xs text-[#9ca3af] mt-1">Try keywords like "withdrawal", "30s", "drawdown", or "KYC".</p>
             </div>
           )}
         </div>
 
         {/* 24/7 Support Friction Reducer Card */}
-        <div className="p-6 sm:p-8 rounded-3xl bg-zinc-900 border border-zinc-800 flex flex-col sm:flex-row items-center justify-between gap-6 shadow-xl">
+        <div className="p-6 sm:p-8 rounded-3xl bg-[#111827] border border-white/[0.08] flex flex-col sm:flex-row items-center justify-between gap-6 shadow-xl">
           <div className="flex items-center gap-4 text-center sm:text-left">
-            <div className="w-12 h-12 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-md shrink-0">
+            <div className="w-12 h-12 rounded-2xl bg-[#0066ff]/15 border border-[#0066ff]/30 flex items-center justify-center text-[#0066ff] shadow-md shrink-0">
               <MessageSquare className="w-6 h-6" />
             </div>
             <div>
               <h3 className="text-lg font-black text-white">Still have questions before getting funded?</h3>
-              <p className="text-xs text-zinc-400 mt-0.5">
+              <p className="text-xs text-[#9ca3af] mt-0.5">
                 Our institutional risk desk and VIP trader concierges are available 24/7 around the clock.
               </p>
             </div>
@@ -325,9 +325,9 @@ export const FAQSection: React.FC = () => {
               href="https://t.me"
               target="_blank"
               rel="noopener noreferrer"
-              className="px-5 py-3 rounded-xl bg-amber-400 hover:bg-amber-300 text-zinc-950 font-black text-xs flex items-center gap-2 shadow-lg shadow-amber-500/20 transition-all"
+              className="px-5 py-3 rounded-xl bg-[#0066ff] hover:bg-[#1a75ff] text-white font-black text-xs flex items-center gap-2 shadow-[0_4px_14px_rgba(0,102,255,0.35)] transition-all"
             >
-              <Send className="w-4 h-4 text-zinc-950" />
+              <Send className="w-4 h-4 text-white" />
               <span>Telegram VIP Desk</span>
             </a>
           </div>

@@ -13,7 +13,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenAdminDashboard
   };
 
   return (
-    <footer className="border-t border-slate-800/80 bg-[#040814] text-slate-400 text-xs py-12 relative font-sans">
+    <footer className="border-t border-white/[0.08] bg-[#07090e] text-[#9ca3af] text-xs py-12 relative font-sans">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
           {/* Brand Info */}
@@ -33,11 +33,11 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenAdminDashboard
                 </span>
               </div>
             </div>
-            <p className="text-slate-400 text-xs leading-relaxed font-normal">
+            <p className="text-[#9ca3af] text-xs leading-relaxed font-normal">
               Institutional proprietary trading firm specializing in binary options risk evaluation, funded capital allocation, and 3-minute guaranteed instant USDT payouts.
             </p>
-            <div className="flex items-center gap-2 text-[11px] text-amber-400 font-bold">
-              <Zap className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
+            <div className="flex items-center gap-2 text-[11px] text-[#ffaa00] font-bold">
+              <Zap className="w-3.5 h-3.5 text-[#ffaa00] fill-[#ffaa00]" />
               <span>3-Min Payout SLA: Double Payout Warranty</span>
             </div>
           </div>
@@ -47,22 +47,22 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenAdminDashboard
             <h4 className="text-xs font-bold text-white uppercase tracking-wider mb-3">Evaluation Models</h4>
             <ul className="space-y-2 font-medium">
               <li>
-                <button onClick={() => onNavigate('home')} className="hover:text-amber-400 transition-colors">
-                  One-Step Challenge ($2.5k - $10k)
+                <button onClick={() => onNavigate('home')} className="hover:text-white transition-colors">
+                  One-Step Challenge ($2.5k - $100k)
                 </button>
               </li>
               <li>
-                <button onClick={() => onNavigate('home')} className="hover:text-amber-400 transition-colors">
+                <button onClick={() => onNavigate('home')} className="hover:text-white transition-colors">
                   Two-Step Challenge (Lowest Entry)
                 </button>
               </li>
               <li>
-                <button onClick={() => onNavigate('home')} className="hover:text-amber-400 transition-colors">
+                <button onClick={() => onNavigate('home')} className="hover:text-white transition-colors">
                   Instant Funded Account (No Evaluation)
                 </button>
               </li>
               <li>
-                <button onClick={() => onNavigate('withdrawals')} className="hover:text-amber-400 transition-colors">
+                <button onClick={() => onNavigate('withdrawals')} className="hover:text-white transition-colors">
                   TRC-20 Instant Withdrawal Rules
                 </button>
               </li>
@@ -74,27 +74,27 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenAdminDashboard
             <h4 className="text-xs font-bold text-white uppercase tracking-wider mb-3">Trading Guidelines</h4>
             <ul className="space-y-2 font-medium">
               <li>
-                <button onClick={() => onNavigate('rules')} className="hover:text-amber-400 transition-colors">
+                <button onClick={() => onNavigate('rules')} className="hover:text-white transition-colors">
                   30-Second Minimum Trade Duration
                 </button>
               </li>
               <li>
-                <button onClick={() => onNavigate('rules')} className="hover:text-amber-400 transition-colors">
+                <button onClick={() => onNavigate('rules')} className="hover:text-white transition-colors">
                   High-Impact News Trading Policy
                 </button>
               </li>
               <li>
-                <button onClick={() => onNavigate('rules')} className="hover:text-amber-400 transition-colors">
+                <button onClick={() => onNavigate('rules')} className="hover:text-white transition-colors">
                   Consistent Position Sizing (No 5x Spike)
                 </button>
               </li>
               <li>
-                <button onClick={() => onNavigate('rules')} className="hover:text-amber-400 transition-colors">
+                <button onClick={() => onNavigate('rules')} className="hover:text-white transition-colors">
                   Martingale &amp; Inactivity Regulations
                 </button>
               </li>
               <li>
-                <button onClick={() => onNavigate('faq')} className="text-amber-400 hover:text-amber-300 font-bold transition-colors">
+                <button onClick={() => onNavigate('faq')} className="text-[#0066ff] hover:text-[#1a75ff] font-bold transition-colors">
                   FAQ &amp; Knowledge Base
                 </button>
               </li>
@@ -105,31 +105,31 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenAdminDashboard
           <div>
             <h4 className="text-xs font-bold text-white uppercase tracking-wider mb-3">Institutional Security</h4>
             <div className="space-y-2 text-xs">
-              <div className="p-3 rounded-xl bg-[#080d1a] border border-slate-800">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block">Settlement Rail</span>
+              <div className="p-3 rounded-xl bg-[#111827] border border-white/[0.08]">
+                <span className="text-[10px] uppercase font-bold text-[#9ca3af] block">Settlement Rail</span>
                 <span className="text-emerald-400 font-bold">TRON TRC-20 Smart Contract</span>
-                <span className="text-[10px] text-slate-400 block mt-1">Average dispatch speed: 1m 42s</span>
+                <span className="text-[10px] text-[#9ca3af] block mt-1">Average dispatch speed: 1m 42s</span>
               </div>
               <button
                 onClick={scrollToTop}
-                className="w-full py-2 rounded-xl bg-[#080d1a] hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800 flex items-center justify-center gap-1.5 transition-colors font-semibold"
+                className="w-full py-2 rounded-xl bg-[#111827] hover:bg-[#161f33] text-[#9ca3af] hover:text-white border border-white/[0.08] flex items-center justify-center gap-1.5 transition-colors font-semibold cursor-pointer"
               >
                 <span>Back to Top</span>
-                <ArrowUp className="w-3.5 h-3.5 text-amber-400" />
+                <ArrowUp className="w-3.5 h-3.5 text-[#0066ff]" />
               </button>
             </div>
           </div>
         </div>
 
         {/* Regulatory & Risk Disclaimer */}
-        <div className="pt-6 border-t border-slate-800 text-[11px] leading-relaxed text-slate-400 space-y-2">
+        <div className="pt-6 border-t border-white/[0.08] text-[11px] leading-relaxed text-[#9ca3af] space-y-2">
           <div className="flex items-start gap-2">
-            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <AlertTriangle className="w-4 h-4 text-[#ffaa00] shrink-0 mt-0.5" />
             <p>
-              <strong className="text-slate-300 font-semibold">High Risk &amp; Regulatory Notice:</strong> Binary options and leveraged prop evaluations involve significant financial risk and may not be suitable for all investors. All accounts provided by Binary Funded Trader (BFT) operate with live institutional OTC market data feeds and strict drawdown protection rules. Past trading performance does not guarantee future results.
+              <strong className="text-white font-semibold">High Risk &amp; Regulatory Notice:</strong> Binary options and leveraged prop evaluations involve significant financial risk and may not be suitable for all investors. All accounts provided by Binary Funded Trader (BFT) operate with live institutional OTC market data feeds and strict drawdown protection rules. Past trading performance does not guarantee future results.
             </p>
           </div>
-          <div className="flex flex-col sm:flex-row items-center justify-between text-slate-500 pt-2 font-medium">
+          <div className="flex flex-col sm:flex-row items-center justify-between text-[#9ca3af] pt-2 font-medium">
             <span>© {new Date().getFullYear()} Binary Funded Trader (BFT) Global Capital. All rights reserved.</span>
             <div className="flex items-center gap-3">
               <span>Platform Brand Shortcode: BFT • Institutional FTMO Edition</span>
