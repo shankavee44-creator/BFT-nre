@@ -1,19 +1,35 @@
 import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
 import {
-  ShieldCheck,
   Zap,
-  Sparkles,
+  Rocket,
+  Eye,
+  EyeOff,
   ArrowRight,
-  RotateCcw,
-  Infinity as InfinityIcon,
-  Gift,
+  Info,
+  Calendar,
+  Timer,
+  Banknote,
+  CircleDollarSign,
+  Target,
+  ArrowDownToLine,
+  TrendingDown,
+  Plus,
+  ShieldCheck,
   Tag,
-  TrendingUp,
   CalendarClock,
+  ShieldAlert,
 } from 'lucide-react';
-import { ChallengeTier, AccountSize, EvaluationPackage, PromoCodeType } from '../types';
-import { PACKAGES, calculateDiscountedPrice, PROMO_CODES } from '../utils/propRules';
+import { ChallengeTier, EvaluationPackage, PromoCodeType } from '../types';
+import { PROMO_CODES } from '../utils/propRules';
+import {
+  PricingCurrencyCode,
+  PRICING_CURRENCIES,
+  getCurrencyConfig,
+  getBftCardsForTier,
+  formatFtmoCurrencyAmount,
+  formatMetricValue,
+  BftPricingCardSpec,
+} from '../utils/ftmoPricingCatalog';
 import { ProfitCalculator } from './ProfitCalculator';
 
 interface PricingTiersProps {
@@ -23,7 +39,67 @@ interface PricingTiersProps {
   onOpenRules: () => void;
 }
 
-const ACCOUNT_SIZES: AccountSize[] = [2500, 5000, 10000, 25000, 50000, 100000];
+const UsFlagCircle: React.FC = () => (
+  <svg viewBox="0 0 24 24" className="w-4 h-4 rounded-full shrink-0 overflow-hidden" aria-hidden="true">
+    <circle cx="12" cy="12" r="12" fill="#ffffff" />
+    <path
+      d="M0 3h24v2H0zm0 4h24v2H0zm0 4h24v2H0zm0 4h24v2H0zm0 4h24v2H0z"
+      fill="#d80027"
+    />
+    <rect width="12" height="12" fill="#0052b4" />
+    <circle cx="4" cy="4" r="0.9" fill="#ffffff" />
+    <circle cx="8" cy="4" r="0.9" fill="#ffffff" />
+    <circle cx="6" cy="6.5" r="0.9" fill="#ffffff" />
+    <circle cx="4" cy="9" r="0.9" fill="#ffffff" />
+    <circle cx="8" cy="9" r="0.9" fill="#ffffff" />
+  </svg>
+);
+
+const EuFlagCircle: React.FC = () => (
+  <svg viewBox="0 0 24 24" className="w-4 h-4 rounded-full shrink-0 overflow-hidden" aria-hidden="true">
+    <circle cx="12" cy="12" r="12" fill="#003399" />
+    <g fill="#ffcc00">
+      <circle cx="12" cy="5" r="1" />
+      <circle cx="12" cy="19" r="1" />
+      <circle cx="5" cy="12" r="1" />
+      <circle cx="19" cy="12" r="1" />
+      <circle cx="7" cy="7" r="1" />
+      <circle cx="17" cy="7" r="1" />
+      <circle cx="7" cy="17" r="1" />
+      <circle cx="17" cy="17" r="1" />
+    </g>
+  </svg>
+);
+
+const UkFlagCircle: React.FC = () => (
+  <svg viewBox="0 0 24 24" className="w-4 h-4 rounded-full shrink-0 overflow-hidden" aria-hidden="true">
+    <circle cx="12" cy="12" r="12" fill="#012169" />
+    <path d="M0 0L24 24M24 0L0 24" stroke="#ffffff" strokeWidth="4" />
+    <path d="M0 0L24 24M24 0L0 24" stroke="#c8102e" strokeWidth="2" />
+    <path d="M12 0V24M0 12H24" stroke="#ffffff" strokeWidth="6" />
+    <path d="M12 0V24M0 12H24" stroke="#c8102e" strokeWidth="3.5" />
+  </svg>
+);
+
+const TwoStepIcon: React.FC<{ active?: boolean }> = ({ active }) => (
+  <svg
+    viewBox="0 0 20 20"
+    className={`w-4 h-4 shrink-0 ${active ? 'text-[#0b0d13]' : 'text-white'}`}
+    fill="currentColor"
+    aria-hidden="true"
+  >
+    <path d="M3 13.5L8.5 5.5L11 9.5L17 3.5L15.5 11.5L11.5 8.5L6.5 16.5L3 13.5Z" />
+  </svg>
+);
+
+const DiscountPercentBadge: React.FC = () => (
+  <span
+    className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-[#ff7b00] text-[#0b0d13] text-[10px] font-black shrink-0"
+    aria-hidden="true"
+  >
+    %
+  </span>
+);
 
 export const PricingTiers: React.FC<PricingTiersProps> = ({
   activePromoCode,
@@ -31,391 +107,764 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
   onSelectPackage,
   onOpenRules,
 }) => {
-  const [selectedTier, setSelectedTier] = useState<ChallengeTier>('one-step');
-  const [selectedSize, setSelectedSize] = useState<AccountSize>(10000);
+  const [selectedTier, setSelectedTier] = useState<ChallengeTier>('two-step');
+  const [selectedCurrency, setSelectedCurrency] = useState<PricingCurrencyCode>('USD');
+  const [showNumbers, setShowNumbers] = useState<boolean>(true);
+  const [showPhases, setShowPhases] = useState<boolean>(true);
+  const [isMoreCurrenciesOpen, setIsMoreCurrenciesOpen] = useState<boolean>(false);
   const [dailyWithdrawalsAddOn, setDailyWithdrawalsAddOn] = useState<boolean>(false);
+  const [showSimulatorDrawer, setShowSimulatorDrawer] = useState<boolean>(false);
 
-  const tierOptions: { id: ChallengeTier; title: string; subtitle: string; badge?: string }[] = [
-    {
-      id: 'one-step',
-      title: 'One-Step Challenge',
-      subtitle: '30% Target • 10% Daily / 15% Max Loss • 5% Max Risk/Trade',
-    },
-    {
-      id: 'two-step',
-      title: 'Two-Step Challenge',
-      subtitle: '25% & 15% Targets • 8% Daily / 20% Max Loss • 5% Risk/Trade',
-    },
-    {
-      id: 'instant',
-      title: 'Instant Funded Account',
-      subtitle: 'Direct Real Account • 6% Daily / 12% Max Loss • 5% Risk/Trade',
-      badge: 'NO EVALUATION',
-    },
-  ];
+  const currencyCfg = getCurrencyConfig(selectedCurrency);
+  const cards = getBftCardsForTier(selectedTier, activePromoCode, dailyWithdrawalsAddOn);
 
-  const currentPackages = PACKAGES.filter((p) => p.tier === selectedTier);
+  const handleStartNow = (spec: BftPricingCardSpec) => {
+    onSelectPackage(spec.pkg, dailyWithdrawalsAddOn);
+  };
+
+  const primaryCurrencies = PRICING_CURRENCIES.filter((c) => c.isPrimaryPill);
+  const extraCurrencies = PRICING_CURRENCIES.filter((c) => !c.isPrimaryPill);
+  const activePromoInfo =
+    (activePromoCode && PROMO_CODES[activePromoCode]) || PROMO_CODES.SPOOKY40;
 
   return (
-    <section id="pricing" className="py-16 md:py-24 relative bg-[#0a0a0a] border-b border-white/10 overflow-hidden will-change-transform">
-      {/* Animated Ambient Pricing Background Layers */}
-      <div className="absolute inset-0 pointer-events-none overflow-hidden select-none z-0">
-        <div
-          className="absolute inset-0 bg-cover bg-center animate-pricing-bg-1"
-        />
-        <div
-          className="absolute inset-0 bg-cover bg-center animate-pricing-bg-2"
-        />
-        <div className="absolute inset-0 bg-gradient-to-b from-[#0a0a0a]/95 via-[#0a0a0a]/85 to-[#0a0a0a]/95" />
-        <div className="absolute inset-0 bg-gradient-to-r from-[#0a0a0a]/90 via-transparent to-[#0a0a0a]/90" />
-        <div className="absolute inset-0 bg-cyber-grid opacity-25 mix-blend-overlay" />
-      </div>
+    <section
+      id="pricing"
+      data-testid="ftmo-pricing-section"
+      className="pt-8 pb-20 md:pt-12 md:pb-28 relative bg-[#040507] border-b border-white/10 overflow-hidden select-none font-sans"
+    >
+      {/* Top Spotlight Beam & Conical Cyan-Blue Glow (FTMO Visual Styling) */}
+      <div className="relative max-w-[1380px] mx-auto px-4 sm:px-6 lg:px-8 z-10">
+        <div className="relative flex flex-col items-center text-center pt-6 pb-8">
+          {/* Horizontal Cyan Light Bar */}
+          <div
+            aria-hidden="true"
+            className="w-[240px] sm:w-[330px] h-[2px] bg-gradient-to-r from-cyan-400/10 via-[#00e5ff] to-cyan-400/10 shadow-[0_0_25px_#00d4ff] relative z-20"
+          />
+          {/* Conical Spotlight Glow */}
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute top-[24px] left-1/2 -translate-x-1/2 w-[360px] sm:w-[540px] h-[170px] bg-gradient-to-b from-[#00b7ff]/35 via-[#0066ff]/14 to-transparent blur-[4px] z-0"
+            style={{
+              clipPath: 'polygon(20% 0%, 80% 0%, 100% 100%, 0% 100%)',
+            }}
+          />
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute top-[10px] left-1/2 -translate-x-1/2 w-[300px] sm:w-[440px] h-[140px] bg-[#00a6ff]/20 rounded-full blur-[55px] z-0"
+          />
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
-        {/* Section Header */}
-        <div className="text-center max-w-3xl mx-auto mb-10">
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4 }}
-            className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-[#16120c] border border-[#ff8800]/50 text-[#ff8800] text-xs font-bold mb-4 font-mono"
+          {/* Main Section Heading */}
+          <h2
+            data-testid="pricing-main-heading"
+            className="relative z-10 text-3xl sm:text-5xl font-extrabold text-white tracking-[-0.025em] leading-[1.1] mt-7 text-balance font-sans"
           >
-            <Sparkles className="w-3.5 h-3.5 text-[#ff8800]" />
-            <span>BFT INSTITUTIONAL CHALLENGES — FINAL DISCOUNTED PRICING</span>
-          </motion.div>
-
-          <h2 className="text-3xl sm:text-5xl font-black text-white tracking-tight mb-4">
-            Select Your Binary Funding Model
+            Choose Your Path with BFT
           </h2>
-          <p className="text-slate-300 text-base sm:text-lg">
-            All accounts feature <strong className="text-white">80% profit split for the first 3 months</strong>, automatically upgrading to{' '}
-            <strong className="text-[#ff8800]">90% profit split + Account Scaling</strong> after Month 3.
+          <p className="relative z-10 text-[#cbd5e1] text-sm sm:text-base mt-3 font-normal sm:font-medium leading-[1.65] max-w-2xl">
+            Pick the way you start. All BFT accounts feature{' '}
+            <strong className="text-white font-semibold">80% profit split for the first 3 months</strong>, automatically upgrading to{' '}
+            <strong className="text-[#ff8800] font-semibold">90% profit split + Account Scaling</strong> after Month 3.
           </p>
-        </div>
 
-        {/* Promo Code Selector Bar */}
-        <div className="max-w-2xl mx-auto mb-8 p-3.5 rounded-2xl bg-[#111115] border border-[#ff8800]/40 flex flex-col sm:flex-row items-center justify-between gap-3">
-          <div className="flex items-center gap-2 text-xs font-mono">
-            <Tag className="w-4 h-4 text-[#ff8800]" />
-            <span className="text-slate-200 font-bold">
-              Active Promo Code ({((activePromoCode && PROMO_CODES[activePromoCode]) || PROMO_CODES.SPOOKY40).label}):
-            </span>
-          </div>
-          <div className="flex items-center gap-2 font-mono">
-            <button
-              onClick={() => onSelectPromoCode('SPOOKY40')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-black cursor-pointer transition-all ${
-                activePromoCode === 'SPOOKY40' || activePromoCode === 'BFT40'
-                  ? 'bg-[#ff8800] text-slate-950 shadow'
-                  : 'bg-[#1a1a20] text-slate-400 hover:text-white border border-white/10'
-              }`}
-            >
-              "SPOOKY40" (-40% New Users)
-            </button>
-            <button
-              onClick={() => onSelectPromoCode('SPOOKY20')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-black cursor-pointer transition-all ${
-                activePromoCode === 'SPOOKY20' || activePromoCode === 'BFT20'
-                  ? 'bg-[#ff8800] text-slate-950 shadow'
-                  : 'bg-[#1a1a20] text-slate-400 hover:text-white border border-white/10'
-              }`}
-            >
-              "SPOOKY20" (-20% Existing)
-            </button>
-          </div>
-        </div>
-
-        {/* Tier Selector Tabs */}
-        <div className="flex flex-wrap justify-center gap-2 p-1.5 bg-[#111115] border border-white/10 rounded-2xl max-w-2xl mx-auto mb-8 shadow-inner">
-          {tierOptions.map((tier) => (
-            <button
-              key={tier.id}
-              onClick={() => setSelectedTier(tier.id)}
-              className={`flex-1 min-w-[170px] py-3 px-4 rounded-xl text-xs sm:text-sm font-bold transition-all relative cursor-pointer ${
-                selectedTier === tier.id
-                  ? 'bg-gradient-to-r from-[#ff8800] to-[#ffaa00] text-slate-950 font-black shadow-lg scale-[1.02]'
-                  : 'text-slate-300 hover:text-white hover:bg-white/5'
-              }`}
-            >
-              {tier.badge && (
-                <span className="absolute -top-2.5 right-2 px-2 py-0.5 rounded-full bg-emerald-500 text-[9px] font-black tracking-wider text-slate-950 uppercase shadow">
-                  {tier.badge}
-                </span>
-              )}
-              <div className="leading-snug">{tier.title}</div>
-            </button>
-          ))}
-        </div>
-
-        {/* Daily Withdrawals Optional Add-On Toggle */}
-        <div className="max-w-xl mx-auto mb-8 p-3.5 rounded-2xl bg-[#14110d] border border-[#ff8800]/40 flex items-center justify-between gap-4">
-          <label className="flex items-center gap-3 cursor-pointer text-xs sm:text-sm text-white font-semibold">
-            <input
-              type="checkbox"
-              checked={dailyWithdrawalsAddOn}
-              onChange={(e) => setDailyWithdrawalsAddOn(e.target.checked)}
-              className="w-4 h-4 rounded accent-[#ff8800] cursor-pointer"
-            />
-            <span className="flex items-center gap-2">
-              <CalendarClock className="w-4 h-4 text-[#ffaa00] shrink-0" />
-              <span>Pay an extra 15% fee to unlock Daily Withdrawals</span>
-            </span>
-          </label>
-          <span className="text-[10px] font-mono font-bold px-2.5 py-1 rounded bg-[#ff8800]/20 text-[#ffaa00] border border-[#ff8800]/30 shrink-0">
-            {dailyWithdrawalsAddOn ? '+15% ACTIVE' : 'Standard: 7-Day Cycle'}
-          </span>
-        </div>
-
-        {/* Account Size Quick Selector Bar */}
-        <div className="flex flex-wrap items-center justify-center gap-2 mb-10">
-          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider font-mono mr-1">
-            Account Size:
-          </span>
-          {ACCOUNT_SIZES.map((size) => (
-            <motion.button
-              key={size}
-              whileTap={{ scale: 0.95 }}
-              onClick={() => setSelectedSize(size)}
-              className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-black font-mono transition-all cursor-pointer ${
-                selectedSize === size
-                  ? 'bg-gradient-to-r from-[#ff8800] to-[#ffaa00] text-slate-950 shadow-md ring-2 ring-[#ffaa00]'
-                  : 'bg-[#121216] text-slate-300 hover:text-white hover:bg-white/5 border border-white/10'
-              }`}
-            >
-              ${size >= 1000 ? `${size / 1000}k` : size} (${size.toLocaleString()})
-            </motion.button>
-          ))}
-        </div>
-
-        {/* Packages Grid */}
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={`${selectedTier}-${activePromoCode}-${dailyWithdrawalsAddOn}`}
-            initial={{ opacity: 0, y: 15 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -15 }}
-            transition={{ duration: 0.25 }}
-            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12"
+          {/* 3-Tab Challenge Type Selector: 2-Step | 1-Step | Instant (New) */}
+          <div
+            role="tablist"
+            aria-label="Challenge Type Selector"
+            className="relative z-10 mt-7 inline-flex items-center p-1.5 rounded-2xl bg-[#272c39]/90 border border-white/10 shadow-2xl backdrop-blur-md"
           >
-            {currentPackages.map((pkg, idx) => {
-              const isSelected = pkg.size === selectedSize;
-              const pricing = calculateDiscountedPrice(pkg.price, activePromoCode, dailyWithdrawalsAddOn);
+            {/* 2-Step Tab */}
+            <button
+              type="button"
+              role="tab"
+              aria-selected={selectedTier === 'two-step'}
+              data-testid="tier-tab-two-step"
+              onClick={() => setSelectedTier('two-step')}
+              className={`px-4 sm:px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0 ${
+                selectedTier === 'two-step'
+                  ? 'bg-white text-[#0b0d13] shadow-md'
+                  : 'text-white hover:bg-white/5'
+              }`}
+            >
+              <TwoStepIcon active={selectedTier === 'two-step'} />
+              <span>2-Step</span>
+            </button>
 
+            {/* 1-Step Tab */}
+            <button
+              type="button"
+              role="tab"
+              aria-selected={selectedTier === 'one-step'}
+              data-testid="tier-tab-one-step"
+              onClick={() => setSelectedTier('one-step')}
+              className={`px-4 sm:px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0 ${
+                selectedTier === 'one-step'
+                  ? 'bg-white text-[#0b0d13] shadow-md'
+                  : 'text-white hover:bg-white/5'
+              }`}
+            >
+              <Rocket
+                className={`w-4 h-4 shrink-0 ${
+                  selectedTier === 'one-step' ? 'text-[#0b0d13]' : 'text-white'
+                }`}
+              />
+              <span>1-Step</span>
+            </button>
+
+            <span aria-hidden="true" className="h-5 w-px bg-white/15 mx-0.5" />
+
+            {/* Instant Tab with green "New" badge */}
+            <button
+              type="button"
+              role="tab"
+              aria-selected={selectedTier === 'instant'}
+              data-testid="tier-tab-instant"
+              onClick={() => setSelectedTier('instant')}
+              className={`relative px-4 sm:px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0 ${
+                selectedTier === 'instant'
+                  ? 'bg-white text-[#0b0d13] shadow-md'
+                  : 'text-white hover:bg-white/5'
+              }`}
+            >
+              <span className="absolute -top-3 right-1.5 px-2 py-0.5 rounded-full bg-[#00c853] text-white text-[10px] font-extrabold tracking-wide shadow">
+                New
+              </span>
+              <Zap
+                className={`w-4 h-4 shrink-0 fill-current ${
+                  selectedTier === 'instant' ? 'text-[#0b0d13]' : 'text-white'
+                }`}
+              />
+              <span>Instant</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Filter & Controls Toolbar: Currency Pills + Promo/Daily Add-on (Left) & Show Numbers / Show Phases (Right) */}
+        <div className="border-y border-white/10 py-3.5 mb-8 flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-4 relative z-20">
+          {/* Left: USD, EUR, GBP, More + Original BFT Promo Code & Daily Withdrawals Toggles */}
+          <div className="flex flex-wrap items-center gap-2 relative">
+            {primaryCurrencies.map((curr) => {
+              const isActive = selectedCurrency === curr.code;
               return (
-                <motion.div
-                  key={pkg.id}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: idx * 0.04, duration: 0.3 }}
-                  whileHover={{ y: -5 }}
-                  onClick={() => setSelectedSize(pkg.size)}
-                  className={`relative rounded-3xl transition-all duration-300 cursor-pointer overflow-hidden p-6 sm:p-7 flex flex-col justify-between ${
-                    isSelected
-                      ? 'bg-gradient-to-b from-[#1a130b] via-[#111115] to-[#0b0b0e] border-2 border-[#ff8800]'
-                      : 'bg-[#101014] hover:bg-[#141419] border border-white/10 hover:border-[#ff8800]/50 shadow-xl'
+                <button
+                  key={curr.code}
+                  type="button"
+                  data-testid={`currency-pill-${curr.code}`}
+                  onClick={() => {
+                    setSelectedCurrency(curr.code);
+                    setIsMoreCurrenciesOpen(false);
+                  }}
+                  className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                    isActive
+                      ? 'bg-[#2a2d35] border border-white/40 text-white shadow-sm'
+                      : 'bg-[#13151b] border border-white/10 text-[#d1d5db] hover:text-white hover:border-white/25'
                   }`}
                 >
-                  {pkg.popular && (
-                    <div className="absolute top-0 right-0">
-                      <div className="bg-gradient-to-r from-[#ff8800] to-[#ffaa00] text-slate-950 text-[10px] font-black uppercase tracking-widest px-4 py-1 rounded-bl-2xl shadow-lg font-mono">
-                        ★ BEST VALUE
+                  {curr.code === 'USD' && <UsFlagCircle />}
+                  {curr.code === 'EUR' && <EuFlagCircle />}
+                  {curr.code === 'GBP' && <UkFlagCircle />}
+                  <span>{curr.label}</span>
+                </button>
+              );
+            })}
+
+            {/* More Currencies Popover Button */}
+            <div className="relative">
+              <button
+                type="button"
+                data-testid="currency-pill-more"
+                aria-expanded={isMoreCurrenciesOpen}
+                onClick={() => setIsMoreCurrenciesOpen((prev) => !prev)}
+                className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                  !primaryCurrencies.some((c) => c.code === selectedCurrency) || isMoreCurrenciesOpen
+                    ? 'bg-[#2a2d35] border border-white/40 text-white'
+                    : 'bg-[#13151b] border border-white/10 text-[#d1d5db] hover:text-white hover:border-white/25'
+                }`}
+              >
+                <span className="inline-flex items-center justify-center w-4 h-4 rounded bg-white/10 text-[10px]">
+                  <Plus className="w-3 h-3" />
+                </span>
+                <span>
+                  {!primaryCurrencies.some((c) => c.code === selectedCurrency)
+                    ? selectedCurrency
+                    : 'More'}
+                </span>
+              </button>
+
+              {isMoreCurrenciesOpen && (
+                <div
+                  data-testid="more-currencies-popover"
+                  className="absolute left-0 top-11 z-30 w-60 rounded-2xl bg-[#161922] border border-white/15 shadow-2xl p-3 space-y-2.5"
+                >
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                    Additional Currencies
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {extraCurrencies.map((c) => (
+                      <button
+                        key={c.code}
+                        type="button"
+                        data-testid={`currency-option-${c.code}`}
+                        onClick={() => {
+                          setSelectedCurrency(c.code);
+                          setIsMoreCurrenciesOpen(false);
+                        }}
+                        className={`px-2.5 py-1.5 rounded-lg text-xs font-bold text-left cursor-pointer ${
+                          selectedCurrency === c.code
+                            ? 'bg-[#0088ff] text-white'
+                            : 'bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white'
+                        }`}
+                      >
+                        {c.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <span aria-hidden="true" className="hidden sm:inline-block h-4 w-px bg-white/15 mx-1" />
+
+            {/* Original BFT Promo Code Quick Switcher (SPOOKY40 / SPOOKY20) */}
+            <div className="inline-flex items-center gap-1.5 bg-[#13151b] border border-white/10 rounded-xl p-1">
+              <Tag className="w-3.5 h-3.5 text-[#ff7b00] ml-2 shrink-0" />
+              <button
+                type="button"
+                data-testid="promo-btn-spooky40"
+                onClick={() => onSelectPromoCode('SPOOKY40')}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors cursor-pointer whitespace-nowrap ${
+                  activePromoCode === 'SPOOKY40' || activePromoCode === 'BFT40'
+                    ? 'bg-[#ff7b00] text-[#0b0d13]'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+              >
+                SPOOKY40 (-40%)
+              </button>
+              <button
+                type="button"
+                data-testid="promo-btn-spooky20"
+                onClick={() => onSelectPromoCode('SPOOKY20')}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors cursor-pointer whitespace-nowrap ${
+                  activePromoCode === 'SPOOKY20' || activePromoCode === 'BFT20'
+                    ? 'bg-[#ff7b00] text-[#0b0d13]'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+              >
+                SPOOKY20 (-20%)
+              </button>
+            </div>
+
+            {/* Original BFT Daily Withdrawals (+15%) Add-On Toggle */}
+            <label
+              data-testid="daily-withdrawals-addon-label"
+              className={`px-3 py-1.5 rounded-xl border text-[11px] font-bold flex items-center gap-2 cursor-pointer transition-colors whitespace-nowrap shrink-0 ${
+                dailyWithdrawalsAddOn
+                  ? 'bg-[#ff7b00]/15 border-[#ff7b00]/50 text-[#ffaa00]'
+                  : 'bg-[#13151b] border-white/10 text-slate-300 hover:text-white'
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={dailyWithdrawalsAddOn}
+                onChange={(e) => setDailyWithdrawalsAddOn(e.target.checked)}
+                className="w-3.5 h-3.5 rounded accent-[#ff7b00] cursor-pointer"
+              />
+              <CalendarClock className="w-3.5 h-3.5 text-[#ffaa00] shrink-0" />
+              <span>Daily Withdrawals (+15%)</span>
+            </label>
+          </div>
+
+          {/* Right: Show Numbers Switch | Show Phases Toggle | Profit Simulator -> */}
+          <div className="flex flex-wrap items-center justify-between sm:justify-end gap-4 sm:gap-5">
+            {/* Show Numbers Toggle Switch */}
+            <button
+              type="button"
+              role="switch"
+              aria-checked={showNumbers}
+              data-testid="toggle-show-numbers"
+              onClick={() => setShowNumbers((prev) => !prev)}
+              className="flex items-center gap-2.5 cursor-pointer group whitespace-nowrap shrink-0"
+            >
+              <span
+                className={`w-10 h-5 rounded-full p-0.5 transition-colors flex items-center ${
+                  showNumbers ? 'bg-[#0088ff] justify-end' : 'bg-[#2a2f3d] justify-start'
+                }`}
+              >
+                <span className="w-4 h-4 rounded-full bg-white shadow-sm transition-transform" />
+              </span>
+              <span className="text-xs sm:text-[13px] font-bold text-white group-hover:text-slate-200">
+                Show Numbers
+              </span>
+            </button>
+
+            <span aria-hidden="true" className="hidden sm:inline-block h-4 w-px bg-white/15" />
+
+            {/* Show Phases Button */}
+            <button
+              type="button"
+              data-testid="toggle-show-phases"
+              aria-pressed={showPhases}
+              onClick={() => setShowPhases((prev) => !prev)}
+              className={`flex items-center gap-2 text-xs sm:text-[13px] font-bold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                showPhases ? 'text-white' : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              {showPhases ? (
+                <Eye className="w-4 h-4 text-slate-300" />
+              ) : (
+                <EyeOff className="w-4 h-4 text-slate-500" />
+              )}
+              <span>Show Phases</span>
+            </button>
+
+            <span aria-hidden="true" className="hidden sm:inline-block h-4 w-px bg-white/15" />
+
+            {/* Profit Simulator / Rules Link */}
+            <button
+              type="button"
+              data-testid="futures-pricing-link"
+              onClick={() => setShowSimulatorDrawer((prev) => !prev)}
+              className="flex items-center gap-1.5 text-xs sm:text-[13px] font-bold text-[#0088ff] hover:text-[#38a3ff] transition-colors cursor-pointer whitespace-nowrap shrink-0"
+            >
+              <span>{showSimulatorDrawer ? 'Hide Simulator' : 'Profit Simulator'}</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Main FTMO-Styled Grid with All 6 Original BFT Packages ($100k, $50k, $25k, $10k Best Value, $5k, $2.5k) */}
+        <div
+          data-testid="ftmo-pricing-cards-grid"
+          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-[175px_repeat(6,minmax(0,1fr))] gap-4 xl:gap-2.5 items-stretch"
+        >
+          {/* Left Labels Column (Desktop XL) */}
+          <div className="hidden xl:flex flex-col justify-between pr-1">
+            <div>
+              {/* Top Header Spacer matching Account Card Header */}
+              <div className="h-[108px]" />
+
+              {/* 8 Aligned Metric Labels (including BFT's 5% Max Risk/Trade rule) */}
+              <div className="py-3 space-y-0">
+                <div className="h-[52px] flex items-center gap-2 text-[#e5e7eb] text-[12.5px] font-bold">
+                  <Target className="w-4 h-4 text-slate-400 shrink-0" />
+                  <span className="border-b border-dotted border-slate-500 pb-0.5">
+                    Profit Target
+                  </span>
+                </div>
+
+                <div className="h-[38px] flex items-center gap-2 text-[#e5e7eb] text-[12.5px] font-bold">
+                  <ArrowDownToLine className="w-4 h-4 text-slate-400 shrink-0" />
+                  <span className="border-b border-dotted border-slate-500 pb-0.5">
+                    Max Daily Loss
+                  </span>
+                </div>
+
+                <div className="h-[38px] flex items-center gap-2 text-[#e5e7eb] text-[12.5px] font-bold">
+                  <TrendingDown className="w-4 h-4 text-slate-400 shrink-0" />
+                  <span className="border-b border-dotted border-slate-500 pb-0.5">
+                    Max Loss
+                  </span>
+                </div>
+
+                <div className="h-[38px] flex items-center gap-2 text-[#e5e7eb] text-[12.5px] font-bold">
+                  <ShieldAlert className="w-4 h-4 text-slate-400 shrink-0" />
+                  <span className="border-b border-dotted border-slate-500 pb-0.5">
+                    Max Risk / Trade
+                  </span>
+                </div>
+
+                <div className="h-[38px] flex items-center gap-2 text-[#e5e7eb] text-[12.5px] font-bold">
+                  <Timer className="w-4 h-4 text-slate-400 shrink-0" />
+                  <span className="border-b border-dotted border-slate-500 pb-0.5">
+                    Min Trading days
+                  </span>
+                </div>
+
+                <div className="h-[38px] flex items-center gap-2 text-[#e5e7eb] text-[12.5px] font-bold">
+                  <Calendar className="w-4 h-4 text-slate-400 shrink-0" />
+                  <span className="border-b border-dotted border-slate-500 pb-0.5">
+                    Trading Period
+                  </span>
+                </div>
+
+                <div className="h-[38px] flex items-center gap-2 text-[#e5e7eb] text-[12.5px] font-bold">
+                  <CircleDollarSign className="w-4 h-4 text-slate-400 shrink-0" />
+                  <span className="border-b border-dotted border-slate-500 pb-0.5">
+                    Refund
+                  </span>
+                </div>
+
+                <div className="h-[38px] flex items-center gap-2 text-[#e5e7eb] text-[12.5px] font-bold">
+                  <Banknote className="w-4 h-4 text-slate-400 shrink-0" />
+                  <span className="border-b border-dotted border-slate-500 pb-0.5">
+                    Rewards Split
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Bottom Fee Label + Avg Reward Spacer */}
+            <div>
+              <div className="h-[126px] flex flex-col justify-center pr-2">
+                <span className="text-xs text-[#9ca3af] font-medium leading-relaxed">
+                  One-time refundable fee
+                  <br />
+                  ({activePromoInfo.code}: {activePromoInfo.label})
+                </span>
+              </div>
+              {/* Spacer matching detached Avg. Reward card */}
+              <div className="h-[74px] mt-3" />
+            </div>
+          </div>
+
+          {/* 6 Original BFT Pricing Cards ($100,000 | $50,000 | $25,000 | $10,000 Best Value | $5,000 | $2,500) */}
+          {cards.map((spec) => {
+            const formattedAccountSize = formatFtmoCurrencyAmount(
+              spec.size * currencyCfg.accountMultiplier,
+              currencyCfg.accountSymbol
+            );
+
+            const phase1Text =
+              spec.phase1TargetPercent > 0
+                ? formatMetricValue({
+                    size: spec.size,
+                    percent: spec.phase1TargetPercent,
+                    showNumbers,
+                    accountSymbol: currencyCfg.accountSymbol,
+                    accountMultiplier: currencyCfg.accountMultiplier,
+                  })
+                : 'None (Direct Live)';
+
+            const phase2Text =
+              spec.phase2TargetPercent !== null
+                ? formatMetricValue({
+                    size: spec.size,
+                    percent: spec.phase2TargetPercent,
+                    showNumbers,
+                    accountSymbol: currencyCfg.accountSymbol,
+                    accountMultiplier: currencyCfg.accountMultiplier,
+                  })
+                : null;
+
+            const maxDailyLossText = formatMetricValue({
+              size: spec.size,
+              percent: spec.maxDailyLossPercent,
+              showNumbers,
+              accountSymbol: currencyCfg.accountSymbol,
+              accountMultiplier: currencyCfg.accountMultiplier,
+            });
+
+            const maxLossText = formatMetricValue({
+              size: spec.size,
+              percent: spec.maxLossPercent,
+              showNumbers,
+              accountSymbol: currencyCfg.accountSymbol,
+              accountMultiplier: currencyCfg.accountMultiplier,
+            });
+
+            const maxRiskText = formatMetricValue({
+              size: spec.size,
+              percent: spec.maxRiskPerTradePercent,
+              showNumbers,
+              accountSymbol: currencyCfg.accountSymbol,
+              accountMultiplier: currencyCfg.accountMultiplier,
+            });
+
+            const finalFeeFormatted = formatFtmoCurrencyAmount(
+              spec.finalPriceUsd * currencyCfg.feeMultiplier,
+              currencyCfg.feeSymbol
+            );
+
+            const originalFeeFormatted = formatFtmoCurrencyAmount(
+              spec.originalPriceUsd * currencyCfg.feeMultiplier,
+              currencyCfg.feeSymbol
+            );
+
+            const avgRewardFormatted = formatFtmoCurrencyAmount(
+              spec.avgRewardUsd * currencyCfg.feeMultiplier,
+              currencyCfg.feeSymbol
+            );
+
+            return (
+              <div
+                key={`${spec.tier}-${spec.size}`}
+                data-testid={`pricing-column-${spec.size}`}
+                className="flex flex-col justify-between"
+              >
+                {/* Upper Main Dark Card */}
+                <div
+                  className={`relative rounded-2xl flex-1 flex flex-col justify-between transition-all duration-200 ${
+                    spec.isBestValue
+                      ? 'bg-[#121318] border border-[#ff7b00]/65 shadow-[0_0_35px_rgba(255,123,0,0.12)]'
+                      : 'bg-[#121318] border border-white/[0.08] hover:border-white/20'
+                  }`}
+                >
+                  {/* Orange "Best Value" Top Pill Badge on our popular $10,000 Card */}
+                  {spec.isBestValue && (
+                    <>
+                      <div
+                        data-testid="best-value-badge"
+                        className="absolute -top-3.5 left-1/2 -translate-x-1/2 z-20 px-3.5 py-0.5 rounded-full bg-gradient-to-r from-[#ff6a00] to-[#ff8800] text-white text-[11px] font-extrabold tracking-wide shadow-[0_2px_12px_rgba(255,115,0,0.45)] whitespace-nowrap"
+                      >
+                        Best Value
                       </div>
-                    </div>
+                      {/* Subtle Warm Orange Top Radial Gradient inside Best Value Card */}
+                      <div
+                        aria-hidden="true"
+                        className="pointer-events-none absolute inset-x-0 top-0 h-32 rounded-t-2xl bg-[radial-gradient(ellipse_at_top,rgba(205,98,18,0.42)_0%,rgba(18,19,24,0)_72%)]"
+                      />
+                    </>
                   )}
 
                   <div>
-                    <div className="flex items-center justify-between mb-3">
-                      <span className="text-[11px] font-black px-2.5 py-1 rounded-lg bg-[#ff8800]/15 text-[#ffaa00] uppercase tracking-wider font-mono border border-[#ff8800]/30">
-                        {pkg.tierName}
+                    {/* Account Size Header */}
+                    <div className="relative z-10 h-[108px] flex flex-col items-center justify-center px-3 text-center">
+                      <span className="text-[11px] text-[#9ca3af] font-medium mb-1">
+                        Account
                       </span>
-                      <span className="text-xs text-slate-400 font-mono font-bold">
-                        Code: <strong className="text-[#ffaa00]">{activePromoCode}</strong>
-                      </span>
-                    </div>
-
-                    <div className="flex items-baseline gap-2 mb-2">
-                      <div className="text-3xl sm:text-4xl font-black text-white font-mono tracking-tight">
-                        ${pkg.size.toLocaleString()}
+                      <div
+                        data-testid={`card-account-size-${spec.size}`}
+                        className="text-xl sm:text-2xl font-extrabold text-white tracking-tight tabular-nums"
+                      >
+                        {formattedAccountSize}
                       </div>
-                      <span className="text-xs text-slate-400 font-bold uppercase font-mono">
-                        Funded Capital
-                      </span>
+                      <div className="w-full border-b border-white/[0.08] mt-4" />
                     </div>
 
-                    <p className="text-xs text-slate-300 mb-5 font-medium leading-relaxed">
-                      First 3 Months: <strong className="text-emerald-400">80% Split</strong> • After 3 Months:{' '}
-                      <strong className="text-[#ffaa00]">90% Split + Scaling Plan</strong>.
-                    </p>
-
-                    {/* Final Discounted Price Box */}
-                    <div className="p-4 rounded-2xl bg-[#09090c] border border-[#ff8800]/30 mb-5 flex items-baseline justify-between shadow-inner">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] text-slate-400 uppercase font-bold font-mono">
-                            Final Price ({activePromoCode})
-                          </span>
-                          <span className="text-xs text-slate-500 line-through font-mono">
-                            ${pricing.originalPrice}
-                          </span>
-                        </div>
-                        <div className="text-2xl sm:text-3xl font-black text-[#ffaa00] font-mono mt-0.5">
-                          ${pricing.totalFinalPrice.toFixed(2)}{' '}
-                          <span className="text-xs text-white font-mono font-bold">USDT</span>
-                        </div>
-                        {dailyWithdrawalsAddOn && (
-                          <div className="text-[10px] text-emerald-400 font-mono">
-                            Includes +${pricing.dailyWithdrawalAddOnFee.toFixed(2)} Daily Withdrawals Add-On
+                    {/* 8 Metric Rows */}
+                    <div className="relative z-10 px-4 py-3 space-y-0">
+                      {/* 1. Profit Target */}
+                      <div
+                        data-testid={`card-profit-target-${spec.size}`}
+                        className="h-[52px] flex items-center justify-between xl:justify-start"
+                      >
+                        <span className="xl:hidden text-xs text-slate-400 font-medium">
+                          Profit Target
+                        </span>
+                        {spec.phase1TargetPercent === 0 ? (
+                          <div className="text-right xl:text-left">
+                            <span className="text-xs font-extrabold text-[#22e57a] uppercase tracking-wider">
+                              None (Direct Live)
+                            </span>
+                          </div>
+                        ) : showPhases && phase2Text ? (
+                          <div className="flex flex-col justify-center leading-tight text-right xl:text-left">
+                            <div className="flex items-center justify-end xl:justify-start gap-1.5">
+                              <span className="text-[10px] font-bold text-[#8e96a4] uppercase tracking-wider">
+                                P1
+                              </span>
+                              <span className="text-[11.5px] font-extrabold text-white tabular-nums">
+                                {phase1Text}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-end xl:justify-start gap-1.5 mt-1">
+                              <span className="text-[10px] font-bold text-[#8e96a4] uppercase tracking-wider">
+                                P2
+                              </span>
+                              <span className="text-[11.5px] font-extrabold text-white tabular-nums">
+                                {phase2Text}
+                              </span>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-end xl:justify-start gap-1.5">
+                            {showPhases && (
+                              <span className="text-[10px] font-bold text-[#8e96a4] uppercase tracking-wider">
+                                P1
+                              </span>
+                            )}
+                            <span className="text-xs font-extrabold text-white tabular-nums">
+                              {phase2Text && !showPhases
+                                ? `${phase1Text} / ${phase2Text}`
+                                : phase1Text}
+                            </span>
                           </div>
                         )}
                       </div>
-                      <div className="text-right flex flex-col items-end gap-1">
-                        <span className="text-[10px] text-slate-950 font-black bg-gradient-to-r from-[#ff8800] to-[#ffaa00] px-2 py-0.5 rounded font-mono">
-                          SAVE ${pricing.discountSaved.toFixed(0)}
+
+                      {/* 2. Max Daily Loss */}
+                      <div
+                        data-testid={`card-daily-loss-${spec.size}`}
+                        className="h-[38px] flex items-center justify-between xl:justify-start"
+                      >
+                        <span className="xl:hidden text-xs text-slate-400 font-medium">
+                          Max Daily Loss
                         </span>
-                        {pkg.refundOnFirstPayout && (
-                          <span className="text-[9px] text-emerald-400 font-bold flex items-center gap-1 font-mono">
-                            <Gift className="w-2.5 h-2.5" /> 100% Fee Refund
+                        <span className="text-xs font-semibold text-[#e5e7eb] tabular-nums">
+                          {maxDailyLossText}
+                        </span>
+                      </div>
+
+                      {/* 3. Max Overall Loss */}
+                      <div
+                        data-testid={`card-max-loss-${spec.size}`}
+                        className="h-[38px] flex items-center justify-between xl:justify-start"
+                      >
+                        <span className="xl:hidden text-xs text-slate-400 font-medium">
+                          Max Loss
+                        </span>
+                        <span className="text-xs font-semibold text-[#e5e7eb] tabular-nums">
+                          {maxLossText}
+                        </span>
+                      </div>
+
+                      {/* 4. Max Risk Per Trade (5%) */}
+                      <div
+                        data-testid={`card-max-risk-${spec.size}`}
+                        className="h-[38px] flex items-center justify-between xl:justify-start"
+                      >
+                        <span className="xl:hidden text-xs text-slate-400 font-medium">
+                          Max Risk / Trade
+                        </span>
+                        <span className="text-xs font-semibold text-[#ffaa00] tabular-nums">
+                          {maxRiskText}
+                        </span>
+                      </div>
+
+                      {/* 5. Min Trading days */}
+                      <div className="h-[38px] flex items-center justify-between xl:justify-start">
+                        <span className="xl:hidden text-xs text-slate-400 font-medium">
+                          Min Trading days
+                        </span>
+                        <span className="text-xs font-semibold text-[#e5e7eb]">
+                          {spec.minTradingDaysLabel}
+                        </span>
+                      </div>
+
+                      {/* 6. Trading Period */}
+                      <div className="h-[38px] flex items-center justify-between xl:justify-start">
+                        <span className="xl:hidden text-xs text-slate-400 font-medium">
+                          Trading Period
+                        </span>
+                        <span className="text-xs font-semibold text-[#e5e7eb]">
+                          {spec.tradingPeriodLabel}
+                        </span>
+                      </div>
+
+                      {/* 7. Refund */}
+                      <div className="h-[38px] flex items-center justify-between xl:justify-start">
+                        <span className="xl:hidden text-xs text-slate-400 font-medium">
+                          Refund
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs font-semibold text-[#e5e7eb]">
+                            {spec.refundLabel}
                           </span>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Exact Rules Breakdown */}
-                    <div className="space-y-2 mb-6 text-xs font-mono">
-                      <div className="flex items-center justify-between py-1 border-b border-white/10">
-                        <span className="text-slate-400">Profit Target:</span>
-                        <span className="text-white font-bold">
-                          {pkg.tier === 'instant' ? (
-                            <span className="text-emerald-400">None (Direct Real Account)</span>
-                          ) : pkg.tier === 'one-step' ? (
-                            <span className="text-[#ffaa00]">
-                              30% (${((pkg.size * 30) / 100).toLocaleString()})
+                          {spec.refundBadge && (
+                            <span className="px-1.5 py-0.5 rounded bg-[#0c3b24] text-[#22e57a] text-[10px] font-extrabold">
+                              {spec.refundBadge}
                             </span>
-                          ) : (
-                            <span className="text-[#ffaa00]">Phase 1: 25% | Phase 2: 15%</span>
                           )}
+                        </div>
+                      </div>
+
+                      {/* 8. Rewards Split (80% -> 90%) */}
+                      <div className="h-[38px] flex items-center justify-between xl:justify-start">
+                        <span className="xl:hidden text-xs text-slate-400 font-medium">
+                          Rewards Split
                         </span>
-                      </div>
-
-                      <div className="flex items-center justify-between py-1 border-b border-white/10">
-                        <span className="text-slate-400">Daily Drawdown (Soft):</span>
-                        <span className="text-[#ffaa00] font-bold">
-                          {pkg.maxDailyDrawdown ?? 10}% (${((pkg.size * (pkg.maxDailyDrawdown ?? 10)) / 100).toLocaleString()})
-                        </span>
-                      </div>
-
-                      <div className="flex items-center justify-between py-1 border-b border-white/10">
-                        <span className="text-slate-400">Max Overall Drawdown:</span>
-                        <span className="text-rose-400 font-bold">
-                          {pkg.maxOverallLoss ?? 15}% ($
-                          {((pkg.size * (pkg.maxOverallLoss ?? 15)) / 100).toLocaleString()})
-                        </span>
-                      </div>
-
-                      <div className="flex items-center justify-between py-1 border-b border-white/10">
-                        <span className="text-slate-400">Max Risk Per Trade:</span>
-                        <span className="text-rose-300 font-bold">
-                          {pkg.maxRiskPerTradePercent || 5}% (${((pkg.size * 5) / 100).toLocaleString()})
-                        </span>
-                      </div>
-
-                      <div className="flex items-center justify-between py-1 border-b border-white/10">
-                        <span className="text-slate-400">Min Profitable Days:</span>
-                        <span className="text-slate-200 font-bold">{pkg.minTradingDaysText}</span>
-                      </div>
-
-                      <div className="flex items-center justify-between py-1 border-b border-white/10">
-                        <span className="text-slate-400">Profit Split & Scaling:</span>
-                        <span className="text-emerald-400 font-bold flex items-center gap-1">
-                          <TrendingUp className="w-3 h-3" /> 80% (M1-3) → 90%
-                        </span>
-                      </div>
-
-                      <div className="flex items-center justify-between py-1">
-                        <span className="text-slate-400">Withdrawal Cycle:</span>
-                        <span className="text-[#ffaa00] font-bold">
-                          {dailyWithdrawalsAddOn ? 'Daily (Unlocked +15%)' : 'Weekly (7-Day Timer)'}
+                        <span className="text-xs font-bold text-[#22e57a]">
+                          {spec.rewardsLabel}
                         </span>
                       </div>
                     </div>
                   </div>
 
-                  {/* Buy Button */}
-                  <motion.button
-                    whileTap={{ scale: 0.97 }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onSelectPackage(pkg, dailyWithdrawalsAddOn);
-                    }}
-                    className={`w-full py-3.5 px-4 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer transition-all font-mono uppercase ${
-                      isSelected
-                        ? 'bg-gradient-to-r from-[#ff8800] to-[#ffaa00] text-slate-950 shadow-xl hover:brightness-110'
-                        : 'bg-[#18181f] hover:bg-[#22222c] text-white border border-[#ff8800]/30'
-                    }`}
-                  >
-                    <span>
-                      Buy ${pkg.size.toLocaleString()} Challenge (${pricing.totalFinalPrice.toFixed(2)})
-                    </span>
-                    <ArrowRight className="w-4 h-4 stroke-[2.5]" />
-                  </motion.button>
-                </motion.div>
-              );
-            })}
-          </motion.div>
-        </AnimatePresence>
+                  {/* Card Footer: Original & Discounted Fee + Bright Blue "Start now" CTA Button */}
+                  <div className="relative z-10 px-4 pb-5 pt-1 h-[126px] flex flex-col justify-end">
+                    <div className="w-full border-t border-white/[0.08] mb-3.5" />
 
-        {/* Challenge Progression & Certificate Callout */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-12 font-mono text-xs">
-          <div className="p-5 rounded-2xl bg-[#111115] border border-[#ff8800]/40">
-            <div className="text-[#ffaa00] font-black text-sm mb-1.5">
-              1. One-Step & Two-Step Progression
-            </div>
-            <p className="text-slate-300 font-sans text-xs leading-relaxed">
-              Passing Step 1 (or Phase 2) automatically <strong>locks the evaluation account</strong>, issues your verifiable <strong>Achievement Certificate</strong>, and deploys a clean <strong>Real Funded Account</strong> with your accumulated balance.
-            </p>
-          </div>
+                    {/* Price Row (Uses exact BFT discounted price + crossed-out original price) */}
+                    <div
+                      data-testid={`card-fee-${spec.size}`}
+                      className="flex items-center justify-center gap-1.5 mb-3 h-7"
+                    >
+                      <DiscountPercentBadge />
+                      <span
+                        className={`text-base sm:text-lg font-extrabold leading-none pb-0.5 tabular-nums ${
+                          spec.isBestValue
+                            ? 'text-[#ff7b00] border-b-2 border-dashed border-[#ff7b00]'
+                            : 'text-white'
+                        }`}
+                      >
+                        {finalFeeFormatted}
+                      </span>
+                      <span className="text-[11px] font-semibold text-[#9ca3af] line-through tabular-nums">
+                        {originalFeeFormatted}
+                      </span>
+                    </div>
 
-          <div className="p-5 rounded-2xl bg-[#111115] border border-emerald-500/40">
-            <div className="text-emerald-400 font-black text-sm mb-1.5">
-              2. 80% → 90% Scaling & 10% Payout Fee
-            </div>
-            <p className="text-slate-300 font-sans text-xs leading-relaxed">
-              Withdraw <strong>80% of profits</strong> in your first 3 months, upgrading to <strong>90% + Account Scaling</strong> after Month 3. A transparent <strong>10% Withdrawal Fee</strong> is deducted from requested payouts (you receive 90% net).
-            </p>
-          </div>
+                    {/* Bright Blue "Start now" CTA Button */}
+                    <button
+                      type="button"
+                      data-testid={`start-now-btn-${spec.size}`}
+                      onClick={() => handleStartNow(spec)}
+                      className="w-full py-2.5 px-3 rounded-xl bg-[#0088ff] hover:bg-[#1a96ff] active:scale-[0.99] text-white font-bold text-xs sm:text-[13px] transition-all shadow-[0_4px_14px_rgba(0,136,255,0.3)] cursor-pointer whitespace-nowrap"
+                    >
+                      Start now
+                    </button>
+                  </div>
+                </div>
 
-          <div className="p-5 rounded-2xl bg-[#111115] border border-rose-500/40">
-            <div className="text-rose-400 font-black text-sm mb-1.5">
-              3. Dual-Breach & 5% Max Risk/Trade
-            </div>
-            <p className="text-slate-300 font-sans text-xs leading-relaxed">
-              Daily Drawdown triggers a temporary <strong>Soft Breach</strong> (unlocks next trading day). Exceeding Max Overall Drawdown or <strong>5% Risk Per Trade</strong> triggers a Permanent <strong>Hard Breach</strong> (eligible for 10% Reset Courtesy).
-            </p>
-          </div>
+                {/* Detached Bottom Footer Card: Avg. Reward */}
+                <div
+                  data-testid={`avg-reward-card-${spec.size}`}
+                  className="mt-3 h-[74px] rounded-2xl bg-[#121318] border border-white/[0.08] px-3 py-2.5 flex flex-col items-center justify-center text-center"
+                >
+                  <span className="px-2.5 py-0.5 rounded-md bg-[#222631] text-white text-xs font-extrabold tabular-nums mb-1">
+                    {avgRewardFormatted}
+                  </span>
+                  <div className="flex items-center justify-center gap-1 text-[11px] font-semibold text-[#d1d5db]">
+                    <span>Avg. Reward</span>
+                    <Info className="w-3 h-3 text-slate-400 shrink-0" />
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
 
-        {/* Profit Potential Calculator */}
-        <ProfitCalculator onSelectPackage={(pkg) => onSelectPackage(pkg, dailyWithdrawalsAddOn)} />
+        {/* Optional Collapsible Profit Calculator */}
+        {showSimulatorDrawer && (
+          <div className="mt-10 animate-fade-in">
+            <ProfitCalculator
+              onSelectPackage={(pkg) => onSelectPackage(pkg, dailyWithdrawalsAddOn)}
+            />
+          </div>
+        )}
 
-        {/* Rules Shortcut */}
-        <div className="mt-10 p-6 rounded-2xl bg-[#111115] border border-white/10 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-md">
+        {/* Original BFT Progression & Rulebook Summary Bar */}
+        <div className="mt-10 p-4 sm:p-5 rounded-2xl bg-[#121318] border border-white/[0.08] flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-[#ff8800]/15 border border-[#ff8800]/30 flex items-center justify-center text-[#ffaa00] shrink-0">
-              <ShieldCheck className="w-5 h-5" />
+            <div className="w-9 h-9 rounded-xl bg-[#0088ff]/15 border border-[#0088ff]/30 flex items-center justify-center text-[#0088ff] shrink-0">
+              <ShieldCheck className="w-4 h-4" />
             </div>
             <div>
-              <div className="text-sm font-bold text-white">Full Prop Firm Rulebook & Compliance Simulator</div>
-              <div className="text-xs text-slate-400">
-                Inspect 5% Max Risk Per Trade, 5 Minimum Profitable Days (≥0.5%/day), and Soft vs Hard Breach mechanics.
+              <div className="text-xs sm:text-sm font-bold text-white">
+                BFT Prop Firm Rulebook & Compliance Simulator
+              </div>
+              <div className="text-[11px] sm:text-xs text-slate-400">
+                Inspect 5% Max Risk Per Trade, 5 Minimum Profitable Days (≥0.5%/day), 80% → 90% Scaling Split, and Soft vs Hard Breach rules.
               </div>
             </div>
           </div>
-          <button
-            onClick={onOpenRules}
-            className="px-4 py-2.5 rounded-xl bg-[#1a140c] hover:bg-[#241b10] text-[#ffaa00] text-xs font-bold border border-[#ff8800]/40 transition-colors shrink-0 cursor-pointer font-mono"
-          >
-            Review Prop Firm Rulebook
-          </button>
+
+          <div className="flex items-center gap-2.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => setShowSimulatorDrawer((prev) => !prev)}
+              className="px-3.5 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-200 text-xs font-bold border border-white/10 transition-colors cursor-pointer whitespace-nowrap"
+            >
+              {showSimulatorDrawer ? 'Hide Profit Simulator' : 'Open Profit Simulator'}
+            </button>
+            <button
+              type="button"
+              onClick={onOpenRules}
+              className="px-3.5 py-2 rounded-xl bg-[#0088ff]/15 hover:bg-[#0088ff]/25 text-[#38a3ff] text-xs font-bold border border-[#0088ff]/30 transition-colors cursor-pointer whitespace-nowrap"
+            >
+              Review Prop Firm Rulebook
+            </button>
+          </div>
         </div>
       </div>
     </section>

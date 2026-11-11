@@ -163,18 +163,18 @@ export const FAQSection: React.FC = () => {
   });
 
   return (
-    <section id="faq" data-testid="faq-section" className="py-16 md:py-24 relative bg-[#0a0a0a] border-b border-zinc-800/80">
+    <section id="faq" data-testid="faq-section" className="py-16 md:py-24 relative bg-[#0a0a0a] border-b border-zinc-800/80 font-sans">
       <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Header */}
         <div className="text-center max-w-3xl mx-auto mb-12">
-          <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-zinc-900 border border-amber-500/30 text-amber-400 text-xs font-bold mb-3 font-mono">
+          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-zinc-900 border border-amber-500/30 text-amber-400 text-xs font-bold mb-3 tracking-wide">
             <HelpCircle className="w-3.5 h-3.5 text-amber-400" />
-            <span>KNOWLEDGE BASE & SUPPORT DESK</span>
+            <span>KNOWLEDGE BASE &amp; SUPPORT DESK</span>
           </div>
-          <h2 className="text-3xl sm:text-5xl font-black text-white tracking-tight mb-4">
+          <h2 className="text-3xl sm:text-5xl font-extrabold text-white tracking-[-0.025em] leading-[1.1] mb-4">
             Frequently Asked Questions
           </h2>
-          <p className="text-zinc-300 text-base">
+          <p className="text-zinc-300 text-base sm:text-[17px] font-normal sm:font-medium leading-relaxed">
             Everything you need to know about our binary evaluation phases, 3-minute withdrawal guarantee SLA, and risk rules.
           </p>
         </div>

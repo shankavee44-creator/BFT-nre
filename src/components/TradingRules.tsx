@@ -23,118 +23,118 @@ export const TradingRules: React.FC = () => {
   const isDaysValid = testProfitDays >= 5;
 
   return (
-    <div className="py-16 md:py-20 relative bg-[#0a0a0a] border-b border-white/10">
+    <div className="py-16 md:py-24 relative bg-[#0a0a0a] border-b border-white/10 font-sans">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Header */}
         <div className="text-center max-w-3xl mx-auto mb-14">
-          <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-[#16120c] border border-[#ff8800]/40 text-[#ff8800] text-xs font-bold mb-3 font-mono">
+          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#16120c] border border-[#ff8800]/40 text-[#ff8800] text-xs font-bold mb-3 tracking-wide">
             <Shield className="w-3.5 h-3.5 text-[#ff8800]" />
-            <span>BFT INSTITUTIONAL RISK ENGINE & CHALLENGE SPECIFICATIONS</span>
+            <span>BFT INSTITUTIONAL RISK ENGINE &amp; CHALLENGE SPECIFICATIONS</span>
           </div>
-          <h2 className="text-3xl sm:text-5xl font-black text-white tracking-tight mb-4">
-            Strict Prop Firm Rules & Challenge Tiers
+          <h2 className="text-3xl sm:text-5xl font-extrabold text-white tracking-[-0.025em] leading-[1.1] mb-4">
+            Strict Prop Firm Rules &amp; Challenge Tiers
           </h2>
-          <p className="text-slate-300 text-base">
+          <p className="text-slate-300 text-base sm:text-[17px] font-normal sm:font-medium leading-relaxed">
             Every Binary Funded Trader account is governed by automated real-time risk guardrails, Dual-Breach protection, and verifiable certificate progression.
           </p>
         </div>
 
         {/* 3 Challenge Tier Specifications Comparison */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-14 font-mono">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-14 font-sans">
           {/* 1. One-Step Challenge */}
           <div className="p-6 rounded-3xl bg-[#111115] border border-[#ff8800]/40 shadow-xl">
-            <span className="text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded bg-[#ff8800]/20 text-[#ffaa00] border border-[#ff8800]/30">
+            <span className="text-[11px] font-extrabold uppercase tracking-wider px-2.5 py-1 rounded bg-[#ff8800]/20 text-[#ffaa00] border border-[#ff8800]/30">
               1. ONE-STEP CHALLENGE
             </span>
-            <h3 className="text-xl font-black text-white mt-3 mb-4 font-sans">Single Evaluation Phase</h3>
-            <ul className="space-y-2.5 text-xs text-slate-300">
-              <li className="flex justify-between py-1 border-b border-white/10">
+            <h3 className="text-xl font-extrabold text-white mt-3 mb-4 tracking-tight">Single Evaluation Phase</h3>
+            <ul className="space-y-2.5 text-xs sm:text-[13px] text-slate-300 font-medium">
+              <li className="flex justify-between py-1.5 border-b border-white/10">
                 <span>Profit Target:</span>
-                <strong className="text-[#ffaa00]">30%</strong>
+                <strong className="text-[#ffaa00] font-bold tabular-nums">30%</strong>
               </li>
-              <li className="flex justify-between py-1 border-b border-white/10">
+              <li className="flex justify-between py-1.5 border-b border-white/10">
                 <span>Daily Drawdown (Soft):</span>
-                <strong className="text-[#ffaa00]">10%</strong>
+                <strong className="text-[#ffaa00] font-bold tabular-nums">10%</strong>
               </li>
-              <li className="flex justify-between py-1 border-b border-white/10">
+              <li className="flex justify-between py-1.5 border-b border-white/10">
                 <span>Max Overall Drawdown:</span>
-                <strong className="text-rose-400">15%</strong>
+                <strong className="text-rose-400 font-bold tabular-nums">15%</strong>
               </li>
-              <li className="flex justify-between py-1 border-b border-white/10">
+              <li className="flex justify-between py-1.5 border-b border-white/10">
                 <span>Max Risk Per Trade:</span>
-                <strong className="text-rose-300">5%</strong>
+                <strong className="text-rose-300 font-bold tabular-nums">5%</strong>
               </li>
-              <li className="flex justify-between py-1 border-b border-white/10">
+              <li className="flex justify-between py-1.5 border-b border-white/10">
                 <span>Min Profitable Days:</span>
-                <strong className="text-emerald-400">5 Days (≥0.5%/day)</strong>
+                <strong className="text-emerald-400 font-bold tabular-nums">5 Days (≥0.5%/day)</strong>
               </li>
-              <li className="pt-2 text-[11px] font-sans text-slate-400 leading-relaxed">
-                Passing Step 1 issues a custom <strong>Achievement Certificate</strong>, locks the challenge account, and deploys a clean <strong>Real Account</strong> with accumulated balance.
+              <li className="pt-2 text-xs font-normal text-slate-400 leading-relaxed">
+                Passing Step 1 issues a custom <strong className="text-slate-200 font-semibold">Achievement Certificate</strong>, locks the challenge account, and deploys a clean <strong className="text-slate-200 font-semibold">Real Account</strong> with accumulated balance.
               </li>
             </ul>
           </div>
 
           {/* 2. Two-Step Challenge */}
           <div className="p-6 rounded-3xl bg-[#111115] border border-[#ff8800]/40 shadow-xl">
-            <span className="text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded bg-[#ff8800]/20 text-[#ffaa00] border border-[#ff8800]/30">
+            <span className="text-[11px] font-extrabold uppercase tracking-wider px-2.5 py-1 rounded bg-[#ff8800]/20 text-[#ffaa00] border border-[#ff8800]/30">
               2. TWO-STEP CHALLENGE
             </span>
-            <h3 className="text-xl font-black text-white mt-3 mb-4 font-sans">Two-Phase Verification</h3>
-            <ul className="space-y-2.5 text-xs text-slate-300">
-              <li className="flex justify-between py-1 border-b border-white/10">
+            <h3 className="text-xl font-extrabold text-white mt-3 mb-4 tracking-tight">Two-Phase Verification</h3>
+            <ul className="space-y-2.5 text-xs sm:text-[13px] text-slate-300 font-medium">
+              <li className="flex justify-between py-1.5 border-b border-white/10">
                 <span>Profit Targets:</span>
-                <strong className="text-[#ffaa00]">Phase 1: 25% | Phase 2: 15%</strong>
+                <strong className="text-[#ffaa00] font-bold tabular-nums">Phase 1: 25% | Phase 2: 15%</strong>
               </li>
-              <li className="flex justify-between py-1 border-b border-white/10">
+              <li className="flex justify-between py-1.5 border-b border-white/10">
                 <span>Daily Drawdown (Soft):</span>
-                <strong className="text-[#ffaa00]">8%</strong>
+                <strong className="text-[#ffaa00] font-bold tabular-nums">8%</strong>
               </li>
-              <li className="flex justify-between py-1 border-b border-white/10">
+              <li className="flex justify-between py-1.5 border-b border-white/10">
                 <span>Max Overall Drawdown:</span>
-                <strong className="text-rose-400">20%</strong>
+                <strong className="text-rose-400 font-bold tabular-nums">20%</strong>
               </li>
-              <li className="flex justify-between py-1 border-b border-white/10">
+              <li className="flex justify-between py-1.5 border-b border-white/10">
                 <span>Max Risk Per Trade:</span>
-                <strong className="text-rose-300">5%</strong>
+                <strong className="text-rose-300 font-bold tabular-nums">5%</strong>
               </li>
-              <li className="flex justify-between py-1 border-b border-white/10">
+              <li className="flex justify-between py-1.5 border-b border-white/10">
                 <span>Min Profitable Days:</span>
-                <strong className="text-emerald-400">5 Days (≥0.5%/day)</strong>
+                <strong className="text-emerald-400 font-bold tabular-nums">5 Days (≥0.5%/day)</strong>
               </li>
-              <li className="pt-2 text-[11px] font-sans text-slate-400 leading-relaxed">
-                Passing Phase 1 locks it and deploys Phase 2. Passing Phase 2 generates an <strong>Achievement Certificate</strong> and deploys a <strong>Real Account</strong>.
+              <li className="pt-2 text-xs font-normal text-slate-400 leading-relaxed">
+                Passing Phase 1 locks it and deploys Phase 2. Passing Phase 2 generates an <strong className="text-slate-200 font-semibold">Achievement Certificate</strong> and deploys a <strong className="text-slate-200 font-semibold">Real Account</strong>.
               </li>
             </ul>
           </div>
 
           {/* 3. Instant Funded Account */}
           <div className="p-6 rounded-3xl bg-[#111115] border border-emerald-500/40 shadow-xl">
-            <span className="text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+            <span className="text-[11px] font-extrabold uppercase tracking-wider px-2.5 py-1 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
               3. INSTANT FUNDED ACCOUNT
             </span>
-            <h3 className="text-xl font-black text-white mt-3 mb-4 font-sans">Direct Real Capital</h3>
-            <ul className="space-y-2.5 text-xs text-slate-300">
-              <li className="flex justify-between py-1 border-b border-white/10">
+            <h3 className="text-xl font-extrabold text-white mt-3 mb-4 tracking-tight">Direct Real Capital</h3>
+            <ul className="space-y-2.5 text-xs sm:text-[13px] text-slate-300 font-medium">
+              <li className="flex justify-between py-1.5 border-b border-white/10">
                 <span>Evaluation Phase:</span>
-                <strong className="text-emerald-400">None (Direct Live)</strong>
+                <strong className="text-emerald-400 font-bold">None (Direct Live)</strong>
               </li>
-              <li className="flex justify-between py-1 border-b border-white/10">
+              <li className="flex justify-between py-1.5 border-b border-white/10">
                 <span>Daily Drawdown (Soft):</span>
-                <strong className="text-[#ffaa00]">6%</strong>
+                <strong className="text-[#ffaa00] font-bold tabular-nums">6%</strong>
               </li>
-              <li className="flex justify-between py-1 border-b border-white/10">
+              <li className="flex justify-between py-1.5 border-b border-white/10">
                 <span>Max Overall Drawdown:</span>
-                <strong className="text-rose-400">12%</strong>
+                <strong className="text-rose-400 font-bold tabular-nums">12%</strong>
               </li>
-              <li className="flex justify-between py-1 border-b border-white/10">
+              <li className="flex justify-between py-1.5 border-b border-white/10">
                 <span>Max Risk Per Trade:</span>
-                <strong className="text-rose-300">5%</strong>
+                <strong className="text-rose-300 font-bold tabular-nums">5%</strong>
               </li>
-              <li className="flex justify-between py-1 border-b border-white/10">
+              <li className="flex justify-between py-1.5 border-b border-white/10">
                 <span>Profit Split:</span>
-                <strong className="text-emerald-400">80% (M1-3) → 90%</strong>
+                <strong className="text-emerald-400 font-bold tabular-nums">80% (M1-3) → 90%</strong>
               </li>
-              <li className="pt-2 text-[11px] font-sans text-slate-400 leading-relaxed">
+              <li className="pt-2 text-xs font-normal text-slate-400 leading-relaxed">
                 Skip evaluation phases completely. Trade live prop liquidity from Day 1 with weekly or optional daily withdrawals.
               </li>
             </ul>

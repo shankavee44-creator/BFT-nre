@@ -133,7 +133,7 @@ export const Header: React.FC<HeaderProps> = ({
       <CryptoTickerBar onSelectPair={() => setLeaderboardOpen(true)} />
 
       {/* Main Navigation Bar */}
-      <div className="max-w-[1440px] mx-auto px-3 sm:px-6 h-16 sm:h-18 flex items-center justify-between gap-2">
+      <div className="max-w-[1440px] mx-auto px-3 sm:px-6 h-16 sm:h-18 flex items-center justify-between gap-2 font-sans">
         {/* Brand Logo & Name */}
         <div
           onClick={() => setCurrentTab('home')}
@@ -150,14 +150,14 @@ export const Header: React.FC<HeaderProps> = ({
 
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
-              <span className="text-base sm:text-xl font-black tracking-wider text-white font-mono leading-none">
+              <span className="text-base sm:text-xl font-extrabold tracking-tight text-white leading-none">
                 BFT
               </span>
-              <span className="hidden xs:inline-block sm:inline-block text-[9px] font-bold px-1.5 py-0.5 rounded bg-[#ff8800]/15 text-[#ff8800] border border-[#ff8800]/40 uppercase tracking-widest font-mono whitespace-nowrap">
+              <span className="hidden xs:inline-block sm:inline-block text-[9px] font-bold px-1.5 py-0.5 rounded bg-[#ff8800]/15 text-[#ff8800] border border-[#ff8800]/40 uppercase tracking-wider whitespace-nowrap">
                 PRIME PROP
               </span>
             </div>
-            <p className="hidden sm:block text-[10px] font-bold text-slate-300 tracking-wide uppercase whitespace-nowrap mt-0.5">
+            <p className="hidden sm:block text-[10px] font-semibold text-slate-300 tracking-wide uppercase whitespace-nowrap mt-0.5">
               Binary Funded Trader
             </p>
           </div>
@@ -183,7 +183,7 @@ export const Header: React.FC<HeaderProps> = ({
                 onClick={() => handleNavClick(tab.id)}
                 className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
                   currentTab === tab.id
-                    ? 'bg-[#ff8800] text-slate-950 font-black'
+                    ? 'bg-[#ff8800] text-slate-950 font-extrabold'
                     : 'text-slate-300 hover:text-white hover:bg-white/5'
                 }`}
               >
@@ -227,7 +227,7 @@ export const Header: React.FC<HeaderProps> = ({
               type="button"
               data-testid="header-deposit-btn"
               onClick={onOpenDepositModal}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-[#00e676] hover:bg-[#00c853] text-slate-950 text-xs font-black transition-all cursor-pointer whitespace-nowrap"
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-[#00e676] hover:bg-[#00c853] text-slate-950 text-xs font-extrabold transition-all cursor-pointer whitespace-nowrap"
             >
               <span>+ Deposit</span>
             </button>
@@ -250,7 +250,7 @@ export const Header: React.FC<HeaderProps> = ({
               type="button"
               data-testid="header-admin-portal-btn"
               onClick={onOpenAdminDashboard}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-black transition-all cursor-pointer whitespace-nowrap shadow-md shadow-purple-600/30"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-extrabold transition-all cursor-pointer whitespace-nowrap shadow-md shadow-purple-600/30"
               title="Open Administrative Command Center"
             >
               <ShieldCheck className="w-3.5 h-3.5 fill-current" />
@@ -280,7 +280,7 @@ export const Header: React.FC<HeaderProps> = ({
                 type="button"
                 data-testid="header-login-btn"
                 onClick={() => onOpenAuthModal('login')}
-                className="px-2.5 sm:px-3.5 py-1.5 rounded-xl bg-[#141418] hover:bg-white/10 border border-white/15 text-xs font-bold text-white flex items-center gap-1.5 cursor-pointer font-mono whitespace-nowrap transition-colors"
+                className="px-2.5 sm:px-3.5 py-1.5 rounded-xl bg-[#141418] hover:bg-white/10 border border-white/15 text-xs font-bold text-white flex items-center gap-1.5 cursor-pointer whitespace-nowrap transition-colors"
               >
                 <LogIn className="w-3.5 h-3.5 text-[#ff8800] shrink-0" />
                 <span>Sign In</span>
@@ -289,7 +289,7 @@ export const Header: React.FC<HeaderProps> = ({
                 type="button"
                 data-testid="header-register-btn"
                 onClick={() => onOpenAuthModal('register')}
-                className="hidden sm:flex px-4 py-1.5 rounded-xl bg-[#ff8800] hover:bg-[#ffaa00] text-slate-950 text-xs font-black items-center gap-1.5 cursor-pointer font-mono whitespace-nowrap transition-colors"
+                className="hidden sm:flex px-4 py-1.5 rounded-xl bg-[#ff8800] hover:bg-[#ffaa00] text-slate-950 text-xs font-extrabold items-center gap-1.5 cursor-pointer whitespace-nowrap transition-colors"
               >
                 <UserPlus className="w-3.5 h-3.5 stroke-[2.5]" />
                 <span>Register</span>

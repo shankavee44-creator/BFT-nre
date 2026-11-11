@@ -89,16 +89,16 @@ export const FastestPayoutAwardBanner: React.FC<FastestPayoutAwardBannerProps> =
 
       <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 relative z-10">
         {/* Section Top Header Pill */}
-        <div className="text-center mb-6 sm:mb-10">
-          <div className="inline-flex items-center gap-1.5 px-3 sm:px-4 py-1.5 rounded-full bg-[#16120b] border border-[#ff8800]/60 text-[#ffaa00] text-[10px] sm:text-xs font-mono font-black uppercase tracking-wider shadow-lg animate-bft-entry">
+        <div className="text-center mb-6 sm:mb-10 font-sans">
+          <div className="inline-flex items-center gap-1.5 px-3.5 sm:px-4 py-1.5 rounded-full bg-[#16120b] border border-[#ff8800]/60 text-[#ffaa00] text-[10px] sm:text-xs font-bold uppercase tracking-wider shadow-lg animate-bft-entry">
             <Award className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#ff8800] fill-[#ff8800]" />
             <span>GLOBAL INDUSTRY RECOGNITION • 2026</span>
             <Sparkles className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#ffaa00]" />
           </div>
-          <h2 className="text-xl sm:text-4xl font-black text-white font-sans mt-2.5 sm:mt-3 tracking-tight">
-            Certified Excellence & Verified Payout Speed
+          <h2 className="text-2xl sm:text-4xl lg:text-[42px] font-extrabold text-white font-sans mt-3 tracking-[-0.025em] leading-[1.12]">
+            Certified Excellence &amp; Verified Payout Speed
           </h2>
-          <p className="text-[11px] sm:text-sm text-slate-400 font-mono mt-1 px-2">
+          <p className="text-xs sm:text-base text-slate-300 font-normal sm:font-medium leading-relaxed mt-2 px-2 max-w-2xl mx-auto">
             Independently audited and recognized across global institutional prop trading networks.
           </p>
         </div>
@@ -114,7 +114,7 @@ export const FastestPayoutAwardBanner: React.FC<FastestPayoutAwardBannerProps> =
           <div className="relative rounded-[16px] sm:rounded-[20px] bg-[#0a0a0d] overflow-hidden border border-white/15 flex flex-col items-center">
             
             {/* Top Floating Badge Bar with Slide Indicators */}
-            <div className="w-full bg-[#0e0c0a] border-b border-[#ff8800]/30 px-3 sm:px-6 py-2.5 sm:py-3 flex flex-wrap items-center justify-between gap-2 text-[10px] sm:text-xs font-mono">
+            <div className="w-full bg-[#0e0c0a] border-b border-[#ff8800]/30 px-3 sm:px-6 py-2.5 sm:py-3 flex flex-wrap items-center justify-between gap-2 text-[10px] sm:text-xs font-sans">
               <div className="flex items-center gap-1.5 text-[#ffaa00] font-bold tracking-wide truncate max-w-[65%] sm:max-w-none">
                 <span className="w-2 h-2 rounded-full bg-[#00e676] animate-ping shrink-0" />
                 <span key={currentSlide.id} className="animate-in fade-in duration-500 truncate">
