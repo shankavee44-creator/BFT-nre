@@ -475,18 +475,18 @@ export function getSriLankaDailyResetInfo(nowMs: number = Date.now()): {
   const hoursUntilReset = Math.floor(remainingMs / (60 * 60 * 1000));
   const minutesUntilReset = Math.floor((remainingMs % (60 * 60 * 1000)) / (60 * 1000));
 
-  let intradayScale = 1.0;
-  let sessionPhase: 'morning' | 'afternoon' | 'evening' = 'evening';
+  let intradayScale = 0.0;
+  let sessionPhase: 'morning' | 'afternoon' | 'evening' = 'morning';
 
-  if (elapsedHoursSinceReset < 6) {
+  if (elapsedHoursSinceReset < 4) {
     sessionPhase = 'morning';
-    intradayScale = 0.22 + (elapsedHoursSinceReset / 6) * 0.35;
-  } else if (elapsedHoursSinceReset < 12.5) {
+    intradayScale = (elapsedHoursSinceReset / 4) * 0.25;
+  } else if (elapsedHoursSinceReset < 12) {
     sessionPhase = 'afternoon';
-    intradayScale = 0.57 + ((elapsedHoursSinceReset - 6) / 6.5) * 0.39;
+    intradayScale = 0.25 + ((elapsedHoursSinceReset - 4) / 8) * 0.5;
   } else {
     sessionPhase = 'evening';
-    intradayScale = 0.96 + Math.min(1, (elapsedHoursSinceReset - 12.5) / 5.5) * 0.04;
+    intradayScale = 0.75 + Math.min(0.25, ((elapsedHoursSinceReset - 12) / 12) * 0.25);
   }
 
   const slTime = new Date(nowMs + SRI_LANKA_OFFSET_MS);
@@ -828,6 +828,7 @@ export function calculateUserLeaderboardPnL(params: {
   category: LeaderboardTabCategory;
   trades?: any[];
   activeAccount?: any | null;
+  accounts?: any[];
   fallbackProfitLoss?: number;
   nowMs?: number;
 }): {
@@ -840,19 +841,34 @@ export function calculateUserLeaderboardPnL(params: {
       ? getSriLankaWeeklyResetInfo(nowMs).weekStartUtcMs
       : getSriLankaDailyResetInfo(nowMs).dayStartUtcMs;
 
+  const eligibleAccounts = Array.isArray(params.accounts)
+    ? params.accounts.filter((acc) => isEligibleLeaderboardAccount(acc, params.category))
+    : [];
+
+  const activeAccountEligible = params.activeAccount
+    ? isEligibleLeaderboardAccount(params.activeAccount, params.category)
+    : true;
+
   if (Array.isArray(params.trades) && params.trades.length > 0) {
     const settled = params.trades.filter((t) => {
       if (t.status !== 'won' && t.status !== 'lost') return false;
-      if (params.activeAccount?.id && t.accountId && t.accountId !== params.activeAccount.id) {
-        return false;
+
+      const accId = t.accountId || t.account_id;
+      if (eligibleAccounts.length > 0 && accId) {
+        const belongsToEligible = eligibleAccounts.some((acc) => String(acc.id) === String(accId));
+        if (!belongsToEligible) return false;
+      } else if (params.activeAccount) {
+        if (!activeAccountEligible) return false;
+        if (accId && String(accId) !== String(params.activeAccount.id)) return false;
       }
+
       const tradeTime = Number(t.endTime || t.startTime || t.createdAt || nowMs);
       return tradeTime >= startTimeMs;
     });
 
     if (settled.length > 0) {
       const netPnL = settled.reduce((sum, t) => {
-        const inv = Number(t.investment || 0);
+        const inv = Number(t.investment || t.amount || 0);
         const payoutPct = Number(t.payoutPercentage ?? 92);
         if (t.status === 'won') {
           const explicitProfit =
@@ -874,24 +890,39 @@ export function calculateUserLeaderboardPnL(params: {
     }
   }
 
-  if (typeof params.fallbackProfitLoss === 'number' && Number.isFinite(params.fallbackProfitLoss)) {
-    return {
-      pnl: Number(params.fallbackProfitLoss.toFixed(2)),
-      tradesCount: params.fallbackProfitLoss !== 0 ? 1 : 0,
-    };
+  // If activeAccount is eligible for category, compute balance diff
+  if (params.activeAccount && activeAccountEligible) {
+    if (typeof params.activeAccount.currentBalance === 'number' && typeof params.activeAccount.initialBalance === 'number') {
+      const diff = Number(
+        (params.activeAccount.currentBalance - params.activeAccount.initialBalance).toFixed(2)
+      );
+      return { pnl: diff, tradesCount: diff !== 0 ? 1 : 0 };
+    }
+  }
+
+  // If eligible accounts list is provided and has items, sum their profit/balance diffs
+  if (eligibleAccounts.length > 0) {
+    let totalAccProfit = 0;
+    let count = 0;
+    for (const acc of eligibleAccounts) {
+      if (typeof acc.currentBalance === 'number' && typeof acc.initialBalance === 'number') {
+        totalAccProfit += Number((acc.currentBalance - acc.initialBalance).toFixed(2));
+        count++;
+      }
+    }
+    if (count > 0) {
+      return { pnl: Number(totalAccProfit.toFixed(2)), tradesCount: count };
+    }
   }
 
   if (
-    params.activeAccount &&
-    typeof params.activeAccount.currentBalance === 'number' &&
-    typeof params.activeAccount.initialBalance === 'number'
+    typeof params.fallbackProfitLoss === 'number' &&
+    Number.isFinite(params.fallbackProfitLoss) &&
+    activeAccountEligible
   ) {
-    const diff = Number(
-      (params.activeAccount.currentBalance - params.activeAccount.initialBalance).toFixed(2)
-    );
     return {
-      pnl: diff,
-      tradesCount: diff !== 0 ? 1 : 0,
+      pnl: Number(params.fallbackProfitLoss.toFixed(2)),
+      tradesCount: params.fallbackProfitLoss !== 0 ? 1 : 0,
     };
   }
 

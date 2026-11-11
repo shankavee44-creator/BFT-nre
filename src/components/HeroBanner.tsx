@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
   Zap,
   ShieldCheck,
@@ -9,9 +9,11 @@ import {
   DollarSign,
   Tag,
   UserPlus,
-  Sparkles,
 } from 'lucide-react';
 import { PromoCodeType } from '../types';
+
+export const HERO_BACKGROUND_VIDEO_SRC =
+  '/assets/aistudio/Santa_Claus_riding_sleigh_ce499b44_1080p_fa553f65.mp4';
 
 interface HeroBannerProps {
   activePromoCode: PromoCodeType;
@@ -32,29 +34,56 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
   onOpenAuthModal,
   isLoggedIn = false,
 }) => {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  useEffect(() => {
+    const vid = videoRef.current;
+    if (vid) {
+      vid.muted = true;
+      vid.defaultMuted = true;
+      vid.play().catch(() => {
+        // Autoplay fallback if browser defers until interaction
+      });
+    }
+  }, []);
+
   return (
-    <div className="relative overflow-hidden py-10 sm:py-16 md:py-24 border-b border-white/10 bg-[#0a0a0a] animate-bft-entry">
-      {/* Animated Ambient Background Layers */}
-      <div className="absolute inset-0 pointer-events-none overflow-hidden select-none">
-        {/* Layer 1 */}
-        <div
-          className="absolute inset-0 mobile-spooky-bg-1 animate-bft-bg-1 will-change-transform"
-        />
+    <section
+      data-testid="hero-section"
+      className="relative overflow-hidden py-10 sm:py-16 md:py-24 border-b border-white/10 bg-[#0a0a0a] animate-bft-entry"
+    >
+      {/* Full-Screen Background Video Container (z-0, pointer-events-none) */}
+      <div
+        data-testid="hero-video-container"
+        className="absolute inset-0 z-0 w-full h-full pointer-events-none overflow-hidden select-none"
+      >
+        <video
+          ref={videoRef}
+          data-testid="hero-background-video"
+          src={HERO_BACKGROUND_VIDEO_SRC}
+          autoPlay
+          loop
+          muted
+          playsInline
+          preload="auto"
+          className="absolute inset-0 w-full h-full object-cover pointer-events-none"
+        >
+          <source src={HERO_BACKGROUND_VIDEO_SRC} type="video/mp4" />
+        </video>
 
-        {/* Layer 2 */}
+        {/* Semi-Transparent Dark & Gradient Overlays for 100% Foreground Readability */}
         <div
-          className="absolute inset-0 mobile-spooky-bg-2 animate-bft-bg-2 will-change-transform"
+          data-testid="hero-video-overlay"
+          className="absolute inset-0 bg-black/50 pointer-events-none"
         />
-
-        {/* Dark Radial & Vertical Gradient Vignettes for High Contrast Text Legibility */}
-        <div className="absolute inset-0 bg-gradient-to-b from-[#0a0a0a]/80 via-[#0a0a0a]/65 to-[#0a0a0a]" />
-        <div className="absolute inset-0 bg-gradient-to-r from-[#0a0a0a]/80 via-transparent to-[#0a0a0a]/80" />
-        <div className="absolute inset-0 bg-cyber-grid opacity-30 mix-blend-overlay" />
+        <div className="absolute inset-0 bg-gradient-to-b from-[#0a0a0a]/65 via-black/35 to-[#0a0a0a]/90 pointer-events-none" />
+        <div className="absolute inset-0 bg-gradient-to-r from-[#0a0a0a]/60 via-transparent to-[#0a0a0a]/60 pointer-events-none" />
+        <div className="absolute inset-0 bg-cyber-grid opacity-20 mix-blend-overlay pointer-events-none" />
 
         {/* Ambient Solid Orange Accent Background */}
         <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[320px] sm:w-[600px] h-[200px] sm:h-[300px] bg-[#ff8800]/10 rounded-full blur-[120px] pointer-events-none" />
 
-        {/* Floating Spooky Ember Particles */}
+        {/* Floating Ember Particles */}
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
           <div className="absolute bottom-10 left-[10%] sm:left-[15%] w-2 h-2 rounded-full bg-[#ff8800] blur-[1px] animate-spooky-ember will-change-transform" style={{ animationDelay: '0s' }} />
           <div className="absolute bottom-20 left-[30%] sm:left-[35%] w-2.5 h-2.5 rounded-full bg-[#ffaa00] blur-[1px] animate-spooky-ember will-change-transform" style={{ animationDelay: '2s' }} />
@@ -63,7 +92,11 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
         </div>
       </div>
 
-      <div className="relative max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 text-center">
+      {/* Foreground Hero Content (z-10) */}
+      <div
+        data-testid="hero-foreground-content"
+        className="relative z-10 max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 text-center"
+      >
 
         {/* Top BFT Institutional Badge */}
         <div className="inline-flex flex-wrap items-center justify-center gap-2 px-5 py-2 rounded-full bg-[#12100e]/90 border border-[#ff8800]/60 mb-6 backdrop-blur-sm">
@@ -91,7 +124,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
         </p>
 
         {/* Active Discount Promo Codes Selector Banner */}
-        <div className="max-w-3xl mx-auto mb-8 p-4 rounded-2xl bg-[#111013] border border-[#ff8800]/40 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="max-w-3xl mx-auto mb-8 p-4 rounded-2xl bg-[#111013]/85 backdrop-blur-md border border-[#ff8800]/40 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3 text-left">
             <div className="w-10 h-10 rounded-xl bg-[#ff8800]/15 border border-[#ff8800]/40 flex items-center justify-center text-[#ff8800] shrink-0">
               <Tag className="w-5 h-5" />
@@ -112,7 +145,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
               className={`px-3.5 py-2 rounded-xl text-xs font-black transition-all cursor-pointer border ${
                 activePromoCode === 'SPOOKY40' || activePromoCode === 'BFT40'
                   ? 'bg-[#ff8800] text-slate-950 border-[#ff8800]'
-                  : 'bg-[#18181c] text-slate-300 border-white/10 hover:text-white'
+                  : 'bg-[#18181c]/90 text-slate-300 border-white/10 hover:text-white'
               }`}
             >
               SPOOKY40 (40% OFF New)
@@ -122,7 +155,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
               className={`px-3.5 py-2 rounded-xl text-xs font-black transition-all cursor-pointer border ${
                 activePromoCode === 'SPOOKY20' || activePromoCode === 'BFT20'
                   ? 'bg-[#ff8800] text-slate-950 border-[#ff8800]'
-                  : 'bg-[#18181c] text-slate-300 border-white/10 hover:text-white'
+                  : 'bg-[#18181c]/90 text-slate-300 border-white/10 hover:text-white'
               }`}
             >
               SPOOKY20 (20% OFF Existing)
@@ -133,7 +166,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
         {/* Double Payout Guarantee Card */}
         <div
           onClick={onOpenWithdrawals}
-          className="cursor-pointer max-w-2xl mx-auto mb-10 p-4 sm:p-5 rounded-2xl bg-[#111115] border-2 border-[#ff8800]/60 hover:border-[#ffaa00] transition-colors duration-200 group"
+          className="cursor-pointer max-w-2xl mx-auto mb-10 p-4 sm:p-5 rounded-2xl bg-[#111115]/85 backdrop-blur-md border-2 border-[#ff8800]/60 hover:border-[#ffaa00] transition-colors duration-200 group"
         >
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-4 text-left">
@@ -172,7 +205,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
           </button>
           <button
             onClick={onOpenTerminal}
-            className="px-8 py-4 rounded-xl bg-[#141418] hover:bg-[#1c1c22] border border-white/15 hover:border-[#ff8800]/50 text-slate-100 hover:text-white font-bold text-sm sm:text-base transition-colors cursor-pointer flex items-center gap-2"
+            className="px-8 py-4 rounded-xl bg-[#141418]/90 backdrop-blur-md hover:bg-[#1c1c22] border border-white/15 hover:border-[#ff8800]/50 text-slate-100 hover:text-white font-bold text-sm sm:text-base transition-colors cursor-pointer flex items-center gap-2"
           >
             <TrendingUp className="w-4 h-4 text-emerald-400" />
             Launch Live OTC Terminal
@@ -181,7 +214,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
             <button
               onClick={() => onOpenAuthModal('register')}
               data-testid="hero-auth-register-btn"
-              className="px-6 py-4 rounded-xl bg-[#141418] hover:bg-[#1c1c22] border border-[#ff8800]/40 text-white font-black text-sm sm:text-base transition-colors cursor-pointer flex items-center gap-2 font-mono"
+              className="px-6 py-4 rounded-xl bg-[#141418]/90 backdrop-blur-md hover:bg-[#1c1c22] border border-[#ff8800]/40 text-white font-black text-sm sm:text-base transition-colors cursor-pointer flex items-center gap-2 font-mono"
             >
               <UserPlus className="w-4 h-4 text-[#ff8800]" />
               Register Trader Account
@@ -191,7 +224,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
 
         {/* Metrics */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-5xl mx-auto">
-          <div className="p-4 rounded-xl bg-[#111115] border border-white/10 shadow-md">
+          <div className="p-4 rounded-xl bg-[#111115]/85 backdrop-blur-md border border-white/10 shadow-md">
             <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-[#ff8800]/15 text-[#ffaa00] mx-auto mb-2 border border-[#ff8800]/30">
               <DollarSign className="w-4 h-4" />
             </div>
@@ -199,7 +232,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
             <div className="text-xs font-semibold text-slate-400 mt-1">Total Trader Payouts</div>
           </div>
 
-          <div className="p-4 rounded-xl bg-[#111115] border border-white/10 shadow-md">
+          <div className="p-4 rounded-xl bg-[#111115]/85 backdrop-blur-md border border-white/10 shadow-md">
             <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-[#ff8800]/15 text-[#ffaa00] mx-auto mb-2 border border-[#ff8800]/30">
               <Clock className="w-4 h-4" />
             </div>
@@ -207,7 +240,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
             <div className="text-xs font-semibold text-slate-400 mt-1">Average Withdrawal Speed</div>
           </div>
 
-          <div className="p-4 rounded-xl bg-[#111115] border border-white/10 shadow-md">
+          <div className="p-4 rounded-xl bg-[#111115]/85 backdrop-blur-md border border-white/10 shadow-md">
             <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-emerald-500/15 text-emerald-400 mx-auto mb-2 border border-emerald-500/20">
               <Award className="w-4 h-4" />
             </div>
@@ -215,7 +248,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
             <div className="text-xs font-semibold text-slate-400 mt-1">3-Month Scaling Profit Split</div>
           </div>
 
-          <div className="p-4 rounded-xl bg-[#111115] border border-white/10 shadow-md">
+          <div className="p-4 rounded-xl bg-[#111115]/85 backdrop-blur-md border border-white/10 shadow-md">
             <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-emerald-500/15 text-emerald-400 mx-auto mb-2 border border-emerald-500/20">
               <TrendingUp className="w-4 h-4" />
             </div>
@@ -224,6 +257,6 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
           </div>
         </div>
       </div>
-    </div>
+    </section>
   );
 };
