@@ -22,6 +22,11 @@ import {
   resolveStableKycStatus,
 } from './kycVerification';
 import {
+  getIsoCountryCode,
+  getCountryNameFromIso,
+  getFlagEmojiFromIso,
+} from '../components/CountryFlagIcon';
+import {
   issueTwoFactorEmailOtp,
   verifyTwoFactorEmailOtpCode,
 } from './authOtpLogic';
@@ -316,5 +321,31 @@ test('Rule 6: Leaderboard UI is limited strictly to Top 15 traders and dynamical
   // Should return a boolean without throwing an exception
   assert.equal(typeof res, 'boolean');
 });
+
+test('Rule 7: CountryFlagIcon resolves correct ISO country codes and falls back safely if missing', () => {
+  assert.equal(getIsoCountryCode('BD'), 'bd');
+  assert.equal(getIsoCountryCode('Bangladesh'), 'bd');
+  assert.equal(getIsoCountryCode('IN'), 'in');
+  assert.equal(getIsoCountryCode('India'), 'in');
+  assert.equal(getIsoCountryCode('PK'), 'pk');
+  assert.equal(getIsoCountryCode('Pakistan'), 'pk');
+  assert.equal(getIsoCountryCode('LK'), 'lk');
+  assert.equal(getIsoCountryCode('Sri Lanka'), 'lk');
+  assert.equal(getIsoCountryCode('AE'), 'ae');
+  assert.equal(getIsoCountryCode('Dubai, UAE'), 'ae');
+  assert.equal(getIsoCountryCode('MY'), 'my');
+  assert.equal(getIsoCountryCode('Malaysia'), 'my');
+  assert.equal(getIsoCountryCode('MV'), 'mv');
+  assert.equal(getIsoCountryCode('Maldives'), 'mv');
+
+  // Missing or empty country code returns empty string (for safe neutral Globe fallback)
+  assert.equal(getIsoCountryCode(''), '');
+  assert.equal(getIsoCountryCode('   '), '');
+
+  assert.equal(getCountryNameFromIso('BD'), 'Bangladesh');
+  assert.equal(getCountryNameFromIso('MV'), 'Maldives');
+  assert.equal(getFlagEmojiFromIso('BD'), '🇧🇩');
+});
+
 
 

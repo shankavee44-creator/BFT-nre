@@ -511,6 +511,7 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
                 >
                   <CountryFlagIcon
                     country={trader.country}
+                    countryCode={trader.countryCode || trader.country_code}
                     isoCode={trader.isoCode}
                     flagEmoji={row.flag}
                     showIsoBadge={true}
@@ -561,6 +562,7 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
           <div className="col-span-3 flex items-center gap-1.5 min-w-0">
             <CountryFlagIcon
               country={userCountry === 'United States' ? 'Sri Lanka' : userCountry}
+              countryCode={userCountryIso}
               isoCode={userCountryIso}
               flagEmoji="🇱🇰"
               showIsoBadge={true}

@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
+import { Globe } from 'lucide-react';
 import { normalizeAssetSymbol } from '../utils/storage';
 
 export interface CountryFlagIconProps {
   country?: string;
   isoCode?: string;
+  countryCode?: string;
+  country_code?: string;
   flagEmoji?: string;
   className?: string;
   showIsoBadge?: boolean;
@@ -35,6 +38,7 @@ const CURRENCY_TO_ISO: Record<string, string> = {
   BDT: 'bd',
   LKR: 'lk',
   MYR: 'my',
+  MVR: 'mv',
   AED: 'ae',
   SAR: 'sa',
   TRY: 'tr',
@@ -53,10 +57,12 @@ const CURRENCY_TO_ISO: Record<string, string> = {
   NGN: 'ng',
   EGP: 'eg',
   AOA: 'ao',
+  UAH: 'ua',
+  NPR: 'np',
 };
 
 /**
- * Extracts a 2-letter ISO code from Unicode regional indicator flag emojis (e.g., 🇱🇰 -> 'lk', 🇬🇧 -> 'gb')
+ * Extracts a 2-letter ISO code from Unicode regional indicator flag emojis (e.g., 🇱🇰 -> 'lk', 🇬🇧 -> 'gb', 🇧🇩 -> 'bd')
  */
 export function extractIsoFromEmoji(emojiStr: string): string | null {
   if (!emojiStr) return null;
@@ -75,18 +81,58 @@ export function extractIsoFromEmoji(emojiStr: string): string | null {
 }
 
 /**
- * Maps country name, ISO code, currency code, or emoji string to standardized ISO 3166-1 alpha-2 lowercase code.
+ * Resolves human-readable country name from ISO 2-letter code.
+ */
+export function getCountryNameFromIso(code: string = ''): string {
+  const c = code.toLowerCase().trim();
+  switch (c) {
+    case 'bd': return 'Bangladesh';
+    case 'in': return 'India';
+    case 'pk': return 'Pakistan';
+    case 'lk': return 'Sri Lanka';
+    case 'mv': return 'Maldives';
+    case 'my': return 'Malaysia';
+    case 'ae': return 'United Arab Emirates';
+    case 'ao': return 'Angola';
+    case 'ua': return 'Ukraine';
+    case 'np': return 'Nepal';
+    case 'us': return 'United States';
+    case 'gb': return 'United Kingdom';
+    case 'sg': return 'Singapore';
+    case 'ca': return 'Canada';
+    case 'au': return 'Australia';
+    case 'de': return 'Germany';
+    case 'fr': return 'France';
+    case 'jp': return 'Japan';
+    default: return code ? code.toUpperCase() : 'Global';
+  }
+}
+
+/**
+ * Generates Unicode flag emoji from 2-letter ISO code.
+ */
+export function getFlagEmojiFromIso(code: string = ''): string {
+  if (!code || code.length !== 2) return '🌐';
+  const upper = code.toUpperCase();
+  const first = upper.charCodeAt(0) - 65 + 0x1f1e6;
+  const second = upper.charCodeAt(1) - 65 + 0x1f1e6;
+  return String.fromCodePoint(first, second);
+}
+
+/**
+ * Maps country name, ISO code, country_code field, currency code, or emoji string to standardized ISO 3166-1 alpha-2 lowercase code.
+ * Returns empty string '' if missing or unmapped to allow graceful fallback to a default global icon.
  */
 export function getIsoCountryCode(countryOrEmoji: string = ''): string {
   const input = (countryOrEmoji || '').trim();
-  if (!input) return 'us';
+  if (!input) return '';
 
-  // 1. Direct 2-letter ISO code
+  // 1. Direct 2-letter ISO code (e.g., 'BD', 'IN', 'PK', 'LK', 'AE', 'MY', 'MV', 'AO', 'UA', 'NP', etc.)
   if (input.length === 2 && /^[a-zA-Z]{2}$/.test(input)) {
     return input.toLowerCase();
   }
 
-  // 2. Direct 3-letter Currency code (e.g., GBP -> gb, JPY -> jp)
+  // 2. Direct 3-letter Currency code (e.g., BDT -> bd, INR -> in, PKR -> pk, MVR -> mv)
   if (input.length === 3 && /^[a-zA-Z]{3}$/.test(input)) {
     const upper = input.toUpperCase();
     if (CURRENCY_TO_ISO[upper]) {
@@ -102,13 +148,16 @@ export function getIsoCountryCode(countryOrEmoji: string = ''): string {
 
   // 4. Country name lookup
   const lower = input.toLowerCase();
-  if (lower === 'ao' || lower.includes('angola')) return 'ao';
-  if (lower === 'lk' || lower.includes('sri lanka')) return 'lk';
-  if (lower === 'ae' || lower.includes('uae') || lower.includes('dubai') || lower.includes('emirates')) return 'ae';
-  if (lower === 'in' || lower.includes('india')) return 'in';
-  if (lower === 'my' || lower.includes('malaysia')) return 'my';
-  if (lower === 'pk' || lower.includes('pakistan')) return 'pk';
   if (lower === 'bd' || lower.includes('bangladesh')) return 'bd';
+  if (lower === 'in' || lower.includes('india')) return 'in';
+  if (lower === 'pk' || lower.includes('pakistan')) return 'pk';
+  if (lower === 'lk' || lower.includes('sri lanka')) return 'lk';
+  if (lower === 'mv' || lower.includes('maldives')) return 'mv';
+  if (lower === 'my' || lower.includes('malaysia')) return 'my';
+  if (lower === 'ae' || lower.includes('uae') || lower.includes('dubai') || lower.includes('emirates')) return 'ae';
+  if (lower === 'ao' || lower.includes('angola')) return 'ao';
+  if (lower === 'ua' || lower.includes('ukraine')) return 'ua';
+  if (lower === 'np' || lower.includes('nepal')) return 'np';
   if (lower === 'us' || lower.includes('united states') || lower.includes('usa')) return 'us';
   if (lower === 'gb' || lower === 'uk' || lower.includes('united kingdom') || lower.includes('britain')) return 'gb';
   if (lower === 'eu' || lower.includes('europe')) return 'eu';
@@ -123,6 +172,7 @@ export function getIsoCountryCode(countryOrEmoji: string = ''): string {
   if (lower === 'nz' || lower.includes('new zealand')) return 'nz';
   if (lower === 'za' || lower.includes('south africa')) return 'za';
   if (lower === 'ng' || lower.includes('nigeria')) return 'ng';
+  if (lower === 'eg' || lower.includes('egypt')) return 'eg';
   if (lower === 'tr' || lower.includes('turkey')) return 'tr';
   if (lower === 'mx' || lower.includes('mexico')) return 'mx';
   if (lower === 'id' || lower.includes('indonesia')) return 'id';
@@ -132,7 +182,7 @@ export function getIsoCountryCode(countryOrEmoji: string = ''): string {
   if (lower === 'kr' || lower.includes('korea')) return 'kr';
   if (lower === 'cn' || lower.includes('china')) return 'cn';
 
-  return 'us';
+  return '';
 }
 
 /**
@@ -186,19 +236,41 @@ export function resolveCurrencyPairFlags(
 }
 
 /**
- * Standardized High-Quality Country Flag Component using official FlagCDN SVGs/PNGs
- * with crisp ISO 3166-1 alpha-2 badge support and zero-broken-image fallback.
+ * Standardized High-Quality Country Flag Component using official FlagCDN SVGs
+ * with ISO 3166-1 alpha-2 support, country_code mapping, and safe neutral Globe icon fallback.
  */
 export const CountryFlagIcon: React.FC<CountryFlagIconProps> = React.memo(({
   country = '',
   isoCode = '',
+  countryCode = '',
+  country_code = '',
   flagEmoji = '',
   className = 'w-5 h-3.5 rounded-[2px] shadow-sm border border-white/15 shrink-0 inline-block align-middle object-cover',
   showIsoBadge = false,
 }) => {
-  const code = getIsoCountryCode(isoCode || country || flagEmoji);
+  const rawTarget = country_code || countryCode || isoCode || country || flagEmoji;
+  const code = getIsoCountryCode(rawTarget);
   const [imgError, setImgError] = useState(false);
   const upperIso = code.toUpperCase();
+
+  // If no valid country code is resolved, fallback gracefully to a default global icon
+  if (!code) {
+    return (
+      <span className="inline-flex items-center gap-1.5 shrink-0 align-middle">
+        <span
+          className="inline-flex items-center justify-center p-0.5 rounded-[2px] bg-[#141926] border border-white/20 text-slate-300 shrink-0"
+          title={country || 'Global'}
+        >
+          <Globe className="w-3.5 h-3.5 text-slate-300" />
+        </span>
+        {showIsoBadge && (
+          <span className="px-1 py-0.2 rounded bg-white/[0.06] border border-white/10 text-[9px] font-mono font-bold text-slate-400 uppercase tracking-tight leading-none shrink-0">
+            GLOBAL
+          </span>
+        )}
+      </span>
+    );
+  }
 
   return (
     <span className="inline-flex items-center gap-1.5 shrink-0 align-middle">
