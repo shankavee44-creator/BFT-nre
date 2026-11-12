@@ -43,6 +43,10 @@ import {
   Target,
   Pencil,
   Copy,
+  Maximize2,
+  Minimize2,
+  BarChart2,
+  LineChart,
 } from 'lucide-react';
 import {
   TradingAccount,
@@ -588,6 +592,46 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   const [mobileTradesTab, setMobileTradesTab] = useState<MobileTradesTab>('trades');
   const [isMobileOhlcExpanded, setIsMobileOhlcExpanded] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(soundEngine.isEnabled());
+  const terminalRootRef = useRef<HTMLDivElement | null>(null);
+  const [isTerminalFullscreen, setIsTerminalFullscreen] = useState<boolean>(false);
+  const [leftToolbarPopover, setLeftToolbarPopover] = useState<'none' | 'timeframe' | 'chartType'>('none');
+  const [mobileToolbarPopover, setMobileToolbarPopover] = useState<'none' | 'timeframe' | 'chartType'>('none');
+
+  const handleToggleTerminalFullscreen = React.useCallback(() => {
+    soundEngine.playUiClick();
+    setIsTerminalFullscreen((prev) => {
+      const next = !prev;
+      if (typeof document !== 'undefined') {
+        if (next && !document.fullscreenElement && terminalRootRef.current?.requestFullscreen) {
+          terminalRootRef.current.requestFullscreen().catch(() => {});
+        } else if (!next && document.fullscreenElement && document.exitFullscreen) {
+          document.exitFullscreen().catch(() => {});
+        }
+      }
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const handleFsChange = () => {
+      if (document.fullscreenElement) {
+        setIsTerminalFullscreen(true);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setLeftToolbarPopover('none');
+        setMobileToolbarPopover('none');
+      }
+    };
+    document.addEventListener('fullscreenchange', handleFsChange);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFsChange);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
 
   // Real-time Price Alerts state
   const [alerts, setAlerts] = useState<PriceAlert[]>([]);
@@ -3445,7 +3489,16 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   }, []);
 
   return (
-    <div className="flex flex-col h-[100dvh] md:h-[calc(100vh-60px)] md:min-h-[720px] bg-[#0b0f19] text-slate-100 overflow-hidden hw-accelerate gpu-accelerated font-sans select-none relative">
+    <div
+      ref={terminalRootRef}
+      data-testid="trading-terminal-root"
+      data-fullscreen={isTerminalFullscreen ? 'true' : 'false'}
+      className={`flex flex-col bg-[#0b0f19] text-slate-100 overflow-hidden hw-accelerate gpu-accelerated font-sans select-none ${
+        isTerminalFullscreen
+          ? 'fixed inset-0 z-[120] w-screen h-[100dvh]'
+          : 'h-[100dvh] md:h-[calc(100vh-98px)] md:min-h-[640px] relative'
+      }`}
+    >
       {/* Global Assets Loading Overlay */}
       {isLoadingAssets && (
         <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-[#0b0f19]/98 backdrop-blur-md pointer-events-auto font-mono text-center px-6">
@@ -3478,7 +3531,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       <div
         data-testid="quotex-mobile-top-header"
         style={{ willChange: 'transform', transform: 'translateZ(0)' }}
-        className="flex md:hidden h-9 bg-[#07090e] border-b border-white/[0.08] items-center justify-between px-2 shrink-0 relative z-50 mobile-trading-controls"
+        className="flex md:hidden h-10 bg-[#131722] border-b border-[#252a3a] items-center justify-between px-2 shrink-0 relative z-50 mobile-trading-controls"
       >
         <div className="flex items-center gap-1 min-w-0">
           <button
@@ -3486,7 +3539,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               soundEngine.playUiClick();
               onNavigateTab?.('home');
             }}
-            className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-[#111827] border border-white/[0.08] text-[11px] font-mono font-bold text-slate-300 shrink-0"
+            className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-[#1c202e] border border-[#2a2e39] text-[11px] font-mono font-bold text-slate-300 shrink-0"
             title="Return to BFT Portal"
           >
             <BftLogo
@@ -3503,7 +3556,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             <button
               onClick={() => setAccountDropdownOpen(!accountDropdownOpen)}
               data-testid="mobile-account-switcher"
-              className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#141720] border border-white/10 text-[11px] font-mono"
+              className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#1c202e] border border-[#2a2e39] text-[11px] font-mono"
             >
               <div
                 className={`w-2 h-2 rounded-full ${
@@ -3641,7 +3694,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         </div>
 
         {/* Right Action Buttons */}
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1">
           <button
             type="button"
             data-testid="mobile-header-leaderboard-btn"
@@ -3649,8 +3702,8 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               soundEngine.playUiClick();
               setIsLeaderboardOpen(true);
             }}
-            className="p-1.5 rounded-lg bg-[#141720] border border-white/10 text-[#ff8800]"
-            title="Top 20 Leaderboard"
+            className="p-1.5 rounded-lg bg-[#1c202e] border border-[#2a2e39] text-[#ff8800]"
+            title="Top 15 Leaderboard"
           >
             <Trophy className="w-3.5 h-3.5" />
           </button>
@@ -3662,12 +3715,30 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               soundEngine.playUiClick();
               setIsPriceAlertModalOpen(true);
             }}
-            className="p-1.5 rounded-lg bg-[#141720] border border-white/10 text-[#ff8800] relative"
+            className="p-1.5 rounded-lg bg-[#1c202e] border border-[#2a2e39] text-[#ff8800] relative"
             title="Price Alerts"
           >
             <BellRing className="w-3.5 h-3.5" />
             {alerts.filter((a) => a.active && !a.triggered).length > 0 && (
               <span className="w-2 h-2 rounded-full bg-[#ff8800] absolute top-1 right-1 animate-ping" />
+            )}
+          </button>
+
+          <button
+            type="button"
+            data-testid="mobile-fullscreen-toggle-btn"
+            onClick={handleToggleTerminalFullscreen}
+            className={`p-1.5 rounded-lg border transition-colors ${
+              isTerminalFullscreen
+                ? 'bg-[#ff8800] border-[#ff8800] text-slate-950'
+                : 'bg-[#1c202e] border-[#2a2e39] text-slate-300'
+            }`}
+            title={isTerminalFullscreen ? 'Exit Fullscreen' : 'Fullscreen Terminal'}
+          >
+            {isTerminalFullscreen ? (
+              <Minimize2 className="w-3.5 h-3.5" />
+            ) : (
+              <Maximize2 className="w-3.5 h-3.5" />
             )}
           </button>
 
@@ -3682,7 +3753,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                 onOpenChallengeModal();
               }
             }}
-            className="px-2.5 py-1 rounded-lg bg-[#00e676] hover:bg-[#00c853] text-black font-black text-xs font-mono flex items-center gap-1 shadow-md"
+            className="px-2 py-1 rounded-lg bg-[#00c853] hover:bg-[#00e676] text-white font-black text-[11px] font-sans flex items-center gap-0.5 shadow-md"
           >
             <Plus className="w-3.5 h-3.5 stroke-[3]" />
             <span>Deposit</span>
@@ -3690,31 +3761,48 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         </div>
       </div>
 
-      {/* 1. MAIN NAVIGATION HEADER */}
-      <div className="hidden md:flex h-12 bg-[#1e222d] border-b border-[#2a2e39] flex items-center justify-between px-3 shrink-0 relative z-50">
-        {/* Left: Brand / Portal Button */}
-        <div className="flex items-center gap-2">
+      {/* 1. QUOTEX-STYLE TERMINAL TOP BAR (Desktop) */}
+      <div className="hidden md:flex h-12 bg-[#131722] border-b border-[#242836] flex items-center justify-between px-3 shrink-0 relative z-50">
+        {/* Left: BFT Brand / Portal Button + Active Terminal Mode Indicator */}
+        <div className="flex items-center gap-2.5">
           <button
             onClick={() => {
               soundEngine.playUiClick();
               onNavigateTab?.('home');
             }}
-            className="flex items-center gap-2 px-2.5 py-1 rounded-lg bg-[#161923] hover:bg-[#252a37] border border-[#2a2e39] text-xs font-mono font-bold cursor-pointer transition-colors text-slate-300 hover:text-white"
+            className="flex items-center gap-2 px-2.5 py-1 rounded-lg bg-[#1c202e] hover:bg-[#252b3d] border border-[#2a2e39] text-xs font-mono font-bold cursor-pointer transition-colors text-slate-200 hover:text-white"
             title="Return to BFT Portal"
           >
             <BftLogo
-              imgClassName="h-7 w-auto"
+              imgClassName="h-6 w-auto"
               testId="terminal-desktop-bft-logo"
               alt="BFT Bull Logo"
             />
             <span className="font-black text-white tracking-wider">BFT</span>
             <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#ff8800]/20 text-[#ff8800] font-bold">
-              TRADING TERMINAL
+              WEBTRADER
             </span>
           </button>
+
+          {/* Synchronized Market Feed Status Pill */}
+          <div
+            data-testid="live-market-feed-badge"
+            className="hidden lg:flex items-center gap-2 px-2.5 py-1 rounded-lg bg-[#181c28] border border-[#262b3c] text-[11px] font-mono select-none"
+            title={`Synchronized REST Market Engine • ${feedStatus.activePairsCount} Active Assets • Real-Time Latency: ${feedStatus.latencyMs}ms`}
+          >
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#00e676] opacity-75" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-[#00e676]" />
+            </span>
+            <span className="text-[10px] font-bold text-slate-300">
+              {feedStatus.activePairsCount}+ OTC & Live Pairs
+            </span>
+            <span className="text-slate-600">•</span>
+            <span className="text-[10px] font-black text-[#00e676]">{feedStatus.latencyMs}ms</span>
+          </div>
         </div>
 
-        {/* Right Section: Real/Demo Account Switcher, Deposit (Green), Withdrawal, Price Alerts, Sound, Profile */}
+        {/* Right Section: Price Alerts, Account Switcher, Deposit (Green), Withdrawal, Sound, Fullscreen Toggle, Profile */}
         <div className="flex items-center gap-2 shrink-0 pl-2">
           {/* Price Alert Manager Button */}
           <button
@@ -3722,7 +3810,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               soundEngine.playUiClick();
               setIsPriceAlertModalOpen(true);
             }}
-            className="relative px-2.5 py-1.5 rounded-xl bg-[#181b25] hover:bg-[#222736] border border-[#2a2e39] text-amber-400 hover:text-amber-300 text-xs font-mono flex items-center gap-1.5 transition-all cursor-pointer"
+            className="relative px-2.5 py-1.5 rounded-lg bg-[#1c202e] hover:bg-[#252b3d] border border-[#2a2e39] text-amber-400 hover:text-amber-300 text-xs font-mono flex items-center gap-1.5 transition-all cursor-pointer"
             title="Real-Time Price Alerts"
           >
             <BellRing className="w-3.5 h-3.5" />
@@ -3732,12 +3820,12 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             )}
           </button>
 
-          {/* Account Balance Switcher Dropdown (Quotex CHALLENGE vs LIVE ACCOUNT vs PERSONAL LIVE Badge) */}
+          {/* Account Balance Switcher Dropdown */}
           <div className="relative">
             <button
               onClick={() => setAccountDropdownOpen(!accountDropdownOpen)}
               data-testid="terminal-account-switcher"
-              className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#0a0a0a] hover:bg-[#141418] border border-white/15 hover:border-[#ff8800] text-xs font-mono transition-colors cursor-pointer"
+              className="flex items-center gap-2 px-3 py-1 rounded-lg bg-[#1c202e] hover:bg-[#252b3d] border border-[#2a2e39] hover:border-[#ff8800]/60 text-xs font-mono transition-colors cursor-pointer"
             >
               <div
                 className={`w-2 h-2 rounded-full ${
@@ -3745,18 +3833,16 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                     ? 'bg-rose-500 animate-pulse'
                     : isPersonalLiveAccount(effectiveAccount) || isLiveFundedAccount(effectiveAccount)
                     ? 'bg-[#00e676]'
-                    : isDemoAccount(effectiveAccount)
-                    ? 'bg-[#ff8800]'
                     : 'bg-[#ff8800]'
                 }`}
               />
-              <div className="text-left">
+              <div className="text-left leading-tight">
                 <div className="flex items-center gap-1.5">
-                  <span className="font-bold text-white text-[11px]">
+                  <span className="font-bold text-slate-300 text-[10px] uppercase tracking-wider">
                     {isPersonalLiveAccount(effectiveAccount)
-                      ? 'Personal Live Balance'
+                      ? 'LIVE ACCOUNT'
                       : isDemoAccount(effectiveAccount)
-                      ? 'Demo Mode'
+                      ? 'DEMO ACCOUNT'
                       : effectiveAccount.id}
                   </span>
                 </div>
@@ -3900,7 +3986,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             )}
           </div>
 
-          {/* Green "Deposit" Button (Direct USDT TRC-20 Depository) */}
+          {/* Green "Deposit" Button (Quotex Style) */}
           <button
             type="button"
             data-testid="terminal-deposit-btn"
@@ -3912,10 +3998,10 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                 onOpenChallengeModal();
               }
             }}
-            className="px-3.5 py-1.5 rounded-lg bg-[#00e676] hover:bg-[#00c853] text-slate-950 font-black text-xs shadow-lg hover:brightness-105 transition-all cursor-pointer font-mono flex items-center gap-1.5"
+            className="px-3.5 py-1.5 rounded-lg bg-[#00c853] hover:bg-[#00e676] text-white font-black text-xs shadow-md transition-all cursor-pointer font-sans flex items-center gap-1.5"
           >
             <Plus className="w-3.5 h-3.5 stroke-[3]" />
-            <span className="font-black uppercase tracking-wider">Deposit</span>
+            <span>Deposit</span>
           </button>
 
           {/* Instant "Withdrawal" Button */}
@@ -3924,10 +4010,9 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               soundEngine.playUiClick();
               onOpenWithdrawalModal();
             }}
-            className="px-3 py-1.5 rounded-lg bg-[#252b3b] hover:bg-[#2e364a] text-slate-200 border border-[#2a2e39] font-bold text-xs transition-all cursor-pointer font-mono flex items-center gap-1.5"
+            className="px-3 py-1.5 rounded-lg bg-[#1c202e] hover:bg-[#252b3d] text-slate-200 border border-[#2a2e39] font-bold text-xs transition-all cursor-pointer font-sans flex items-center gap-1.5"
           >
-            <Zap className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
-            <span className="hidden sm:inline">Withdrawal</span>
+            <span>Withdrawal</span>
           </button>
 
           {/* Sound FX Toggle Button */}
@@ -3935,12 +4020,32 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             onClick={handleToggleSound}
             className={`p-2 rounded-lg border transition-all cursor-pointer ${
               soundEnabled
-                ? 'bg-[#252b3b] border-cyan-500/40 text-cyan-400'
+                ? 'bg-[#1c202e] border-cyan-500/40 text-cyan-400'
                 : 'bg-[#181b25] border-[#2a2e39] text-slate-500'
             }`}
             title={soundEnabled ? 'Mute Sound Effects' : 'Enable Sound Effects'}
           >
             {soundEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
+          </button>
+
+          {/* Fullscreen Workspace Expand / Collapse Toggle Button */}
+          <button
+            type="button"
+            data-testid="terminal-fullscreen-toggle-btn"
+            onClick={handleToggleTerminalFullscreen}
+            className={`p-2 rounded-lg border transition-all cursor-pointer ${
+              isTerminalFullscreen
+                ? 'bg-[#ff8800] border-[#ff8800] text-slate-950 shadow-md'
+                : 'bg-[#1c202e] hover:bg-[#252b3d] border-[#2a2e39] text-slate-300 hover:text-white'
+            }`}
+            title={isTerminalFullscreen ? 'Exit Fullscreen (Esc)' : 'Maximize Trading Terminal Fullscreen'}
+            aria-label={isTerminalFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
+          >
+            {isTerminalFullscreen ? (
+              <Minimize2 className="w-3.5 h-3.5" />
+            ) : (
+              <Maximize2 className="w-3.5 h-3.5" />
+            )}
           </button>
 
           {/* Sleek Circular User Profile Avatar in TOP-RIGHT Corner */}
@@ -3949,7 +4054,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               soundEngine.playUiClick();
               onNavigateTab?.('dashboard');
             }}
-            className="relative flex items-center justify-center w-8 h-8 rounded-full bg-gradient-to-tr from-cyan-500 via-blue-500 to-indigo-500 text-white font-black text-xs border border-cyan-400/80 shadow-md hover:scale-105 transition-all cursor-pointer shrink-0 ml-1"
+            className="relative flex items-center justify-center w-8 h-8 rounded-full bg-gradient-to-tr from-cyan-500 via-blue-500 to-indigo-500 text-white font-black text-xs border border-cyan-400/80 shadow-md hover:scale-105 transition-all cursor-pointer shrink-0 ml-0.5"
             title="User Profile & Settings"
           >
             <span>
@@ -3957,54 +4062,27 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                 ? userProfile.fullName.slice(0, 2).toUpperCase()
                 : 'TR'}
             </span>
-            <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-[#00e676] border-2 border-[#1e222d]" />
+            <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-[#00e676] border-2 border-[#131722]" />
           </button>
         </div>
       </div>
 
-      {/* Main Trading Stage: Left Sidebar + Central Chart + Right Execution Panel */}
+      {/* Main Trading Stage: Left Action Toolbar + Central Chart + Right Execution Panel */}
       <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative min-h-0">
-        {/* 2. LEFT-SIDE ICON NAVIGATION BAR */}
-        <div className="hidden md:flex w-14 bg-[#1e222d] border-r border-[#2a2e39] flex flex-col items-center justify-between py-3 shrink-0 z-10">
-          <div className="flex flex-col items-center gap-3">
-            {/* BFT Bull Emblem / Home */}
-            <button
-              onClick={() => {
-                soundEngine.playUiClick();
-                onNavigateTab?.('home');
-              }}
-              className="w-10 h-10 rounded-xl bg-[#141720] hover:bg-[#252a37] border border-[#ff8800]/40 flex items-center justify-center shadow-md cursor-pointer transition-transform hover:scale-105"
-              title="BFT Institutional Portal"
-            >
-              <BftLogo
-                imgClassName="h-7 w-auto"
-                testId="terminal-sidebar-bft-logo"
-                alt="BFT Bull Logo"
-              />
-            </button>
-
+        {/* 2. QUOTEX-STYLE LEFT-HAND ACTION & NAVIGATION TOOLBAR */}
+        <div
+          data-testid="quotex-left-toolbar"
+          className="hidden md:flex w-14 bg-[#131722] border-r border-[#242836] flex-col items-center justify-between py-2.5 shrink-0 z-30 relative"
+        >
+          {/* Top Section: Navigation & Feature Triggers */}
+          <div className="flex flex-col items-center gap-1.5">
             {/* Trade / Terminal Icon (Active) */}
             <button
-              className="w-10 h-10 rounded-xl bg-cyan-500/15 border border-cyan-400/50 flex items-center justify-center text-cyan-400 shadow-md cursor-pointer"
+              className="w-10 h-10 rounded-lg bg-[#0066ff]/20 border border-[#0066ff]/60 flex flex-col items-center justify-center text-[#3b82f6] shadow-sm cursor-pointer"
               title="Trade Terminal"
             >
-              <Activity className="w-5 h-5" />
-            </button>
-
-            {/* Trades History Drawer Toggle */}
-            <button
-              onClick={() => {
-                soundEngine.playUiClick();
-                setIsTradesDrawerOpen(!isTradesDrawerOpen);
-              }}
-              className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer ${
-                isTradesDrawerOpen
-                  ? 'bg-[#252b3b] text-cyan-400 border border-[#2a2e39]'
-                  : 'hover:bg-[#252a37] text-slate-400 hover:text-white'
-              }`}
-              title="Toggle Bottom Trades Drawer"
-            >
-              <Layers className="w-5 h-5" />
+              <Activity className="w-4 h-4" />
+              <span className="text-[8px] font-bold uppercase tracking-tighter mt-0.5">Trade</span>
             </button>
 
             {/* Dedicated "BFT Trading Signals" Panel Button */}
@@ -4013,15 +4091,33 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                 soundEngine.playUiClick();
                 setIsSignalsDrawerOpen(!isSignalsDrawerOpen);
               }}
-              className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer relative ${
+              className={`w-10 h-10 rounded-lg flex flex-col items-center justify-center transition-all cursor-pointer relative ${
                 isSignalsDrawerOpen
                   ? 'bg-emerald-500/20 text-[#00e676] border border-[#00e676]/40'
-                  : 'hover:bg-[#252a37] text-slate-400 hover:text-white'
+                  : 'hover:bg-[#1c202e] text-slate-400 hover:text-white'
               }`}
               title="BFT Trading Signals"
             >
-              <Radio className="w-5 h-5 text-[#00e676]" />
-              <span className="w-2 h-2 rounded-full bg-[#00e676] absolute top-2 right-2 animate-ping" />
+              <Radio className="w-4 h-4 text-[#00e676]" />
+              <span className="text-[8px] font-bold uppercase tracking-tighter mt-0.5">Signals</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-[#00e676] absolute top-1.5 right-1.5 animate-ping" />
+            </button>
+
+            {/* Trades History Drawer Toggle */}
+            <button
+              onClick={() => {
+                soundEngine.playUiClick();
+                setIsTradesDrawerOpen(!isTradesDrawerOpen);
+              }}
+              className={`w-10 h-10 rounded-lg flex flex-col items-center justify-center transition-all cursor-pointer ${
+                isTradesDrawerOpen
+                  ? 'bg-[#1c202e] text-cyan-400 border border-[#2a2e39]'
+                  : 'hover:bg-[#1c202e] text-slate-400 hover:text-white'
+              }`}
+              title="Toggle Bottom Trades Drawer"
+            >
+              <Layers className="w-4 h-4" />
+              <span className="text-[8px] font-bold uppercase tracking-tighter mt-0.5">Trades</span>
             </button>
 
             {/* Tournaments & Leaderboard */}
@@ -4032,10 +4128,11 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                 soundEngine.playUiClick();
                 setIsLeaderboardOpen(true);
               }}
-              className="w-10 h-10 rounded-xl hover:bg-[#252a37] flex items-center justify-center text-slate-400 hover:text-amber-400 transition-all cursor-pointer"
-              title="Tournaments & Leaderboard"
+              className="w-10 h-10 rounded-lg hover:bg-[#1c202e] flex flex-col items-center justify-center text-slate-400 hover:text-amber-400 transition-all cursor-pointer"
+              title="Top 15 Leaderboard"
             >
-              <Trophy className="w-5 h-5" />
+              <Trophy className="w-4 h-4" />
+              <span className="text-[8px] font-bold uppercase tracking-tighter mt-0.5">Top 15</span>
             </button>
 
             {/* Copy Trading */}
@@ -4046,10 +4143,11 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                 soundEngine.playUiClick();
                 setIsCopyTradingOpen(true);
               }}
-              className="w-10 h-10 rounded-xl hover:bg-[#252a37] flex items-center justify-center text-slate-400 hover:text-[#ff8800] transition-all cursor-pointer relative"
+              className="w-10 h-10 rounded-lg hover:bg-[#1c202e] flex flex-col items-center justify-center text-slate-400 hover:text-[#ff8800] transition-all cursor-pointer relative"
               title="Copy Trading System"
             >
-              <Users className="w-5 h-5 text-[#ff8800]" />
+              <Users className="w-4 h-4 text-[#ff8800]" />
+              <span className="text-[8px] font-bold uppercase tracking-tighter mt-0.5">Copy</span>
             </button>
 
             {/* Market / Assets Catalog */}
@@ -4058,10 +4156,11 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                 soundEngine.playUiClick();
                 setIsAssetModalOpen(true);
               }}
-              className="w-10 h-10 rounded-xl hover:bg-[#252a37] flex items-center justify-center text-slate-400 hover:text-cyan-400 transition-all cursor-pointer"
+              className="w-10 h-10 rounded-lg hover:bg-[#1c202e] flex flex-col items-center justify-center text-slate-400 hover:text-cyan-400 transition-all cursor-pointer"
               title="OTC Market Assets"
             >
-              <Globe className="w-5 h-5" />
+              <Globe className="w-4 h-4" />
+              <span className="text-[8px] font-bold uppercase tracking-tighter mt-0.5">Market</span>
             </button>
 
             {/* Prop Firm Rules & Guardrails */}
@@ -4070,85 +4169,215 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                 soundEngine.playUiClick();
                 setIsRulesModalOpen(true);
               }}
-              className="w-10 h-10 rounded-xl hover:bg-[#252a37] flex items-center justify-center text-slate-400 hover:text-sky-400 transition-all cursor-pointer"
+              className="w-10 h-10 rounded-lg hover:bg-[#1c202e] flex flex-col items-center justify-center text-slate-400 hover:text-sky-400 transition-all cursor-pointer"
               title="Risk & Prop Firm Rules"
             >
-              <ShieldCheck className="w-5 h-5" />
-            </button>
-
-            {/* 3-Tier Multi-Level Affiliate System */}
-            <button
-              onClick={() => {
-                soundEngine.playUiClick();
-                onNavigateTab?.('affiliate');
-              }}
-              className="w-10 h-10 rounded-xl hover:bg-[#252a37] flex items-center justify-center text-slate-400 hover:text-purple-400 transition-all cursor-pointer relative"
-              title="3-Tier Affiliate System (10% / 5% / 2% + 8%)"
-            >
-              <Users className="w-5 h-5" />
-              <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-purple-400" />
+              <ShieldCheck className="w-4 h-4" />
+              <span className="text-[8px] font-bold uppercase tracking-tighter mt-0.5">Rules</span>
             </button>
           </div>
 
-          {/* Bottom Icons: Drawing Pencil Drawer, Indicators, Support & FAQ, User Profile */}
-          <div className="flex flex-col items-center gap-3">
-            {/* Dedicated Pencil Icon Tool Drawer Toggle */}
+          {/* Bottom Section: Quotex Left-Hand Chart Action Toolbar (Drawing Tools, Timeframes, Chart Types, Indicators) */}
+          <div
+            data-testid="quotex-left-chart-tools"
+            className="flex flex-col items-center gap-1.5 pt-2 border-t border-[#242836] w-full px-1.5 relative"
+          >
+            {/* 1. Drawing Tools Button */}
             <button
               type="button"
               data-testid="sidebar-pencil-drawer-btn"
               onClick={() => {
                 soundEngine.playUiClick();
+                setLeftToolbarPopover('none');
                 setIsDrawingDrawerOpen((prev) => !prev);
               }}
-              className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer relative ${
+              className={`w-10 h-9 rounded-lg flex flex-col items-center justify-center transition-all cursor-pointer relative ${
                 isDrawingDrawerOpen || activeDrawingTool !== 'none'
-                  ? 'bg-[#ff8800] text-slate-950 border border-[#ff8800]'
-                  : 'hover:bg-[#252a37] text-slate-400 hover:text-[#ff8800]'
+                  ? 'bg-[#ff8800] text-slate-950 border border-[#ff8800] font-black'
+                  : 'bg-[#1c202e] hover:bg-[#252b3d] border border-[#2a2e39] text-slate-300 hover:text-white'
               }`}
-              title="Drawing Tools Side-Drawer (11 Technical Tools)"
+              title="Drawing Tools (11 Technical Tools)"
             >
-              <Pencil className="w-4 h-4" />
+              <Pencil className="w-3.5 h-3.5" />
+              <span className="text-[7.5px] font-bold uppercase tracking-tighter mt-0.5">Draw</span>
               {drawings.length > 0 && (
-                <span className="absolute -top-1 -right-1 px-1 min-w-[15px] h-[15px] rounded-full bg-[#00e676] text-slate-950 font-mono font-black text-[9px] flex items-center justify-center">
+                <span className="absolute -top-1 -right-1 px-1 min-w-[14px] h-[14px] rounded-full bg-[#00e676] text-slate-950 font-mono font-black text-[8.5px] flex items-center justify-center">
                   {drawings.length}
                 </span>
               )}
             </button>
 
-            {/* Indicator Parameters */}
+            {/* 2. Chart Timeframe Selector Button (e.g., 1m) */}
+            <div className="relative">
+              <button
+                type="button"
+                data-testid="left-toolbar-timeframe-btn"
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  setIsDrawingDrawerOpen(false);
+                  setLeftToolbarPopover((prev) => (prev === 'timeframe' ? 'none' : 'timeframe'));
+                }}
+                className={`w-10 h-9 rounded-lg flex flex-col items-center justify-center transition-all cursor-pointer font-mono ${
+                  leftToolbarPopover === 'timeframe'
+                    ? 'bg-[#ff8800] text-slate-950 border border-[#ff8800] font-black'
+                    : 'bg-[#1c202e] hover:bg-[#252b3d] border border-[#2a2e39] text-[#ff8800] hover:text-white'
+                }`}
+                title={`Chart Timeframe: ${timeframe}`}
+              >
+                <span className="text-[11px] font-black leading-none">{timeframe}</span>
+                <span className="text-[7px] font-bold uppercase tracking-tighter mt-0.5 opacity-80">Time</span>
+              </button>
+
+              {leftToolbarPopover === 'timeframe' && (
+                <div
+                  data-testid="left-toolbar-timeframe-popover"
+                  className="absolute left-full bottom-0 ml-2 w-44 rounded-xl bg-[#181c27] border border-[#2a2e39] shadow-2xl p-2.5 z-50 font-mono"
+                >
+                  <div className="flex items-center justify-between pb-1.5 mb-2 border-b border-[#2a2e39]">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-300">
+                      Candle Timeframe
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setLeftToolbarPopover('none')}
+                      className="text-slate-400 hover:text-white cursor-pointer"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {(['5s', '15s', '30s', '1m', '5m', '15m', '1h', '4h', '1D'] as Timeframe[]).map((tf) => (
+                      <button
+                        key={tf}
+                        type="button"
+                        data-testid={`left-toolbar-tf-${tf}`}
+                        onClick={() => {
+                          soundEngine.playUiClick();
+                          setTimeframe(tf);
+                          setLeftToolbarPopover('none');
+                        }}
+                        className={`py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                          timeframe === tf
+                            ? 'bg-[#ff8800] text-slate-950 font-black shadow-sm'
+                            : 'bg-[#131722] hover:bg-[#252b3d] text-slate-300 hover:text-white border border-[#2a2e39]'
+                        }`}
+                      >
+                        {tf}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 3. Chart Type Selector Button (Candles, Heikin-Ashi, Area/Line, Bars) */}
+            <div className="relative">
+              <button
+                type="button"
+                data-testid="left-toolbar-chart-type-btn"
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  setIsDrawingDrawerOpen(false);
+                  setLeftToolbarPopover((prev) => (prev === 'chartType' ? 'none' : 'chartType'));
+                }}
+                className={`w-10 h-9 rounded-lg flex flex-col items-center justify-center transition-all cursor-pointer ${
+                  leftToolbarPopover === 'chartType'
+                    ? 'bg-[#ff8800] text-slate-950 border border-[#ff8800] font-black'
+                    : 'bg-[#1c202e] hover:bg-[#252b3d] border border-[#2a2e39] text-slate-300 hover:text-white'
+                }`}
+                title={`Chart Type: ${chartType}`}
+              >
+                {chartType === 'line' ? (
+                  <LineChart className="w-3.5 h-3.5" />
+                ) : (
+                  <BarChart2 className="w-3.5 h-3.5" />
+                )}
+                <span className="text-[7px] font-bold uppercase tracking-tighter mt-0.5">Chart</span>
+              </button>
+
+              {leftToolbarPopover === 'chartType' && (
+                <div
+                  data-testid="left-toolbar-chart-type-popover"
+                  className="absolute left-full bottom-0 ml-2 w-44 rounded-xl bg-[#181c27] border border-[#2a2e39] shadow-2xl p-2.5 z-50 font-mono"
+                >
+                  <div className="flex items-center justify-between pb-1.5 mb-2 border-b border-[#2a2e39]">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-300">
+                      Chart Type
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setLeftToolbarPopover('none')}
+                      className="text-slate-400 hover:text-white cursor-pointer"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                  <div className="space-y-1">
+                    {(
+                      [
+                        { id: 'candles', label: 'Candles' },
+                        { id: 'heikin-ashi', label: 'Heikin-Ashi' },
+                        { id: 'line', label: 'Area / Line' },
+                        { id: 'bars', label: 'OHLC Bars' },
+                      ] as { id: ChartType; label: string }[]
+                    ).map((ct) => (
+                      <button
+                        key={ct.id}
+                        type="button"
+                        data-testid={`left-toolbar-chart-type-${ct.id}`}
+                        onClick={() => {
+                          soundEngine.playUiClick();
+                          setChartType(ct.id);
+                          setLeftToolbarPopover('none');
+                        }}
+                        className={`w-full px-2.5 py-1.5 rounded-lg text-xs font-bold text-left flex items-center justify-between transition-all cursor-pointer ${
+                          chartType === ct.id
+                            ? 'bg-[#ff8800] text-slate-950 font-black'
+                            : 'bg-[#131722] hover:bg-[#252b3d] text-slate-300 hover:text-white border border-[#2a2e39]'
+                        }`}
+                      >
+                        <span>{ct.label}</span>
+                        {chartType === ct.id && <CheckCircle2 className="w-3.5 h-3.5" />}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 4. Technical Indicators Button */}
             <button
+              type="button"
+              data-testid="left-toolbar-indicators-btn"
               onClick={() => {
                 soundEngine.playUiClick();
+                setLeftToolbarPopover('none');
                 setIsIndicatorModalOpen(true);
               }}
-              className="w-10 h-10 rounded-xl hover:bg-[#252a37] flex items-center justify-center text-slate-400 hover:text-white transition-all cursor-pointer"
-              title="Technical Indicators"
+              className="w-10 h-9 rounded-lg bg-[#1c202e] hover:bg-[#252b3d] border border-[#2a2e39] flex flex-col items-center justify-center text-slate-300 hover:text-white transition-all cursor-pointer relative"
+              title="Technical Indicators (SMA, EMA, Bollinger, RSI, MACD)"
             >
-              <Sliders className="w-4 h-4" />
-            </button>
-
-            {/* Support / FAQ */}
-            <button
-              onClick={() => {
-                soundEngine.playUiClick();
-                onNavigateTab?.('faq');
-              }}
-              className="w-10 h-10 rounded-xl hover:bg-[#252a37] flex items-center justify-center text-slate-400 hover:text-white transition-all cursor-pointer"
-              title="Support & FAQ Desk"
-            >
-              <Headphones className="w-4 h-4" />
-            </button>
-
-            {/* Profile Hub */}
-            <button
-              onClick={() => {
-                soundEngine.playUiClick();
-                onNavigateTab?.('dashboard');
-              }}
-              className="w-10 h-10 rounded-xl hover:bg-[#252a37] flex items-center justify-center text-slate-400 hover:text-cyan-400 transition-all cursor-pointer"
-              title="Account Profile & Settings"
-            >
-              <User className="w-4 h-4" />
+              <Sliders className="w-3.5 h-3.5" />
+              <span className="text-[7px] font-bold uppercase tracking-tighter mt-0.5">Indic.</span>
+              {[
+                indicators.showSma,
+                indicators.showEma,
+                indicators.showBollinger,
+                indicators.showRsi,
+                indicators.showMacd,
+              ].filter(Boolean).length > 0 && (
+                <span className="absolute -top-1 -right-1 px-1 min-w-[14px] h-[14px] rounded-full bg-cyan-400 text-slate-950 font-mono font-black text-[8.5px] flex items-center justify-center">
+                  {
+                    [
+                      indicators.showSma,
+                      indicators.showEma,
+                      indicators.showBollinger,
+                      indicators.showRsi,
+                      indicators.showMacd,
+                    ].filter(Boolean).length
+                  }
+                </span>
+              )}
             </button>
           </div>
         </div>
@@ -4219,8 +4448,25 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
           {/* 1. TOP MULTI-ASSET SCROLLING TICKER BAR (Quotex Style) */}
           <div
             data-testid="top-multi-asset-ticker-bar"
-            className="flex items-center gap-1 md:gap-1.5 overflow-x-auto px-1.5 py-1 md:px-3 md:py-2 bg-[#07090e] border-b border-white/[0.08] shrink-0 z-25 font-mono text-xs select-none no-scrollbar mobile-trading-controls"
+            className="flex items-center gap-1 md:gap-1.5 overflow-x-auto px-1.5 py-1 md:px-2.5 md:py-1.5 bg-[#131722] border-b border-[#242836] shrink-0 z-25 font-mono text-xs select-none no-scrollbar mobile-trading-controls"
           >
+            {/* Quotex "+" Add Asset Button (Pinned on the left so it is always visible on Desktop & Mobile) */}
+            <button
+              type="button"
+              data-testid="add-asset-ticker-btn"
+              onClick={() => {
+                soundEngine.playUiClick();
+                setIsAssetModalOpen(true);
+              }}
+              className="sticky left-0 z-10 flex items-center justify-center gap-1 h-8 md:h-9 px-2.5 md:px-3 rounded-lg bg-[#3b82f6] hover:bg-[#2563eb] text-white font-bold text-xs cursor-pointer shrink-0 transition-all shadow-md"
+              title="Open Asset Selector (+)"
+            >
+              <Plus className="w-4 h-4 stroke-[3] text-white" />
+              <span className="hidden sm:inline text-[11px] font-sans font-black tracking-wide text-white">
+                + Asset
+              </span>
+            </button>
+
             {openTabs.map((tabAsset) => {
               const isTabActive =
                 normalizeTradeAssetKey(tabAsset.symbol) ===
@@ -4238,6 +4484,8 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                 activeTrades,
                 displayPrice
               );
+              const isOtcAsset =
+                tabAsset.symbol.toUpperCase().includes('OTC') || tabAsset.category === 'forex';
 
               return (
                 <div
@@ -4245,16 +4493,19 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                   data-testid={`open-asset-tab-${cleanTestKey}`}
                   data-has-active-trade={activeBadge.hasActiveTrades ? 'true' : 'false'}
                   onClick={() => handleSelectTabAsset(tabAsset)}
-                  className={`relative flex items-center gap-1 md:gap-1.5 px-2 py-0.5 md:px-3 md:py-1.5 rounded-md md:rounded-lg border transition-all cursor-pointer shrink-0 ${
+                  className={`relative flex items-center gap-1.5 md:gap-2 px-2.5 py-1 md:px-3 md:py-1.5 rounded-lg border transition-all cursor-pointer shrink-0 ${
                     isTabActive
-                      ? 'bg-[#141720] border-[#ff8800] text-white shadow-sm'
+                      ? 'bg-[#1e2334] border-[#3b82f6]/80 text-white shadow-sm'
                       : activeBadge.hasActiveTrades
                       ? activeBadge.isWinning
                         ? 'bg-[#0c1a14] hover:bg-[#11241c] border-[#00e676]/60 text-white shadow-sm'
                         : 'bg-[#1a0f13] hover:bg-[#241419] border-[#ff334b]/60 text-white shadow-sm'
-                      : 'bg-[#0e1016] hover:bg-[#141720] border-white/10 text-slate-300'
+                      : 'bg-[#181c27] hover:bg-[#1e2334] border-[#262b3c] text-slate-300'
                   }`}
                 >
+                  {isTabActive && (
+                    <span className="absolute top-0 left-2 right-2 h-[2px] rounded-full bg-[#3b82f6]" />
+                  )}
                   <div className="relative shrink-0">
                     <AssetFlagIcon
                       symbol={tabAsset.symbol}
@@ -4275,17 +4526,20 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
                   <div className="flex flex-col text-left leading-tight">
                     <div className="flex items-center gap-1">
-                      <span className="font-bold text-[10.5px] md:text-xs whitespace-nowrap">{tabAsset.symbol}</span>
+                      <span className="font-bold text-[10.5px] md:text-xs whitespace-nowrap text-white">
+                        {tabAsset.symbol}
+                      </span>
                     </div>
-                    <span className="text-[9px] md:text-[10px] text-slate-400 font-mono">
-                      {displayPrice.toFixed(tabAsset.pipDecimals)}
+                    <span className="text-[8.5px] md:text-[9.5px] text-slate-400 font-sans">
+                      {isOtcAsset ? 'OTC Market' : tabAsset.category.toUpperCase()} •{' '}
+                      <span className="font-mono">{displayPrice.toFixed(tabAsset.pipDecimals)}</span>
                     </span>
                   </div>
 
                   {activeBadge.hasActiveTrades ? (
                     <div
                       data-testid={`asset-tab-active-trade-badge-${cleanTestKey}`}
-                      className={`active-trade-badge-pulse flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[9.5px] md:text-[10px] font-mono font-black shrink-0 ml-0.5 md:ml-1 ${
+                      className={`active-trade-badge-pulse flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[9.5px] md:text-[10px] font-mono font-black shrink-0 ml-0.5 ${
                         activeBadge.isWinning
                           ? 'active-trade-badge-pulse-win bg-[#00e676]/15 border-[#00e676]/50 text-[#00e676]'
                           : 'active-trade-badge-pulse-loss bg-[#ff334b]/15 border-[#ff334b]/50 text-[#ff334b]'
@@ -4302,7 +4556,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                       <span>{activeBadge.formattedPnL}</span>
                     </div>
                   ) : (
-                    <span className="text-[10px] md:text-[11px] font-black text-[#00e676] shrink-0 ml-0.5 md:ml-1">
+                    <span className="px-1.5 py-0.5 rounded bg-[#ff8800]/15 border border-[#ff8800]/40 text-[10px] md:text-[11px] font-black text-[#ff8800] shrink-0 ml-0.5">
                       {livePayout}%
                     </span>
                   )}
@@ -4312,7 +4566,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                       type="button"
                       aria-label={`Close tab ${tabAsset.symbol}`}
                       onClick={(e) => handleCloseTab(e, tabAsset.symbol)}
-                      className="p-0.5 rounded hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer ml-0.5 md:ml-1"
+                      className="p-0.5 rounded hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer ml-0.5"
                     >
                       <X className="w-2.5 h-2.5 md:w-3 md:h-3" />
                     </button>
@@ -4320,43 +4574,6 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                 </div>
               );
             })}
-
-            <button
-              type="button"
-              data-testid="add-asset-ticker-btn"
-              onClick={() => {
-                soundEngine.playUiClick();
-                setIsAssetModalOpen(true);
-              }}
-              className="flex items-center gap-1 px-2 py-1 md:px-3 md:py-1.5 rounded-lg md:rounded-xl bg-[#141822] hover:bg-[#1e2536] border border-dashed border-[#ff8800]/50 text-[#ff8800] font-bold text-[10.5px] md:text-xs cursor-pointer shrink-0 transition-colors"
-              title="Add Asset Pair"
-            >
-              <Plus className="w-3 h-3 md:w-3.5 md:h-3.5" />
-              <span>Add Asset</span>
-            </button>
-
-            {/* Real-Time Live Synchronized 268+ Market Feed Badge */}
-            <div
-              data-testid="live-market-feed-badge"
-              className="ml-auto hidden sm:flex items-center gap-2 px-2.5 py-1 rounded-xl bg-[#141824] border border-[#2a2e39] shrink-0 text-xs font-mono select-none"
-              title={`Synchronized REST Market Engine • ${feedStatus.activePairsCount} Active Assets • Real-Time Latency: ${feedStatus.latencyMs}ms`}
-            >
-              <div className="flex items-center gap-1.5">
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#00e676] opacity-75" />
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-[#00e676]" />
-                </span>
-                <span className="text-[10px] font-black uppercase tracking-wider text-slate-200">
-                  {feedStatus.activePairsCount}+ Markets Sync
-                </span>
-              </div>
-              <span className="text-slate-600">|</span>
-              <span className="text-[10px] font-bold text-slate-400">1s Tick Engine</span>
-              <span className="text-slate-600">|</span>
-              <span className="text-[10px] font-black font-mono text-[#00e676]">
-                {feedStatus.latencyMs}ms
-              </span>
-            </div>
           </div>
 
           {/* Active Price Alert Floating Toast Notification */}
@@ -4856,13 +5073,14 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             </div>
           )}
 
-          {/* MOBILE UPPER-LEFT QUICK ACTION FLOATING BUTTONS (Tools, Indicators, Timeframe, History) */}
-          <div className="flex md:hidden absolute top-2.5 left-2.5 z-20 items-center gap-1.5 font-mono text-xs select-none">
+          {/* MOBILE UPPER-LEFT QUICK ACTION FLOATING BUTTONS (Tools, Timeframe, Chart Type, Indicators) */}
+          <div className="flex md:hidden absolute top-[110px] left-2 z-30 items-center gap-1 font-mono text-xs select-none">
             <button
               type="button"
               data-testid="mobile-chart-tools-btn"
               onClick={() => {
                 soundEngine.playUiClick();
+                setMobileToolbarPopover('none');
                 setIsDrawingDrawerOpen((prev) => !prev);
               }}
               className={`w-8 h-8 rounded-lg border flex items-center justify-center transition-colors cursor-pointer ${
@@ -4870,9 +5088,43 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                   ? 'bg-[#ff8800] border-[#ff8800] text-slate-950'
                   : 'bg-[#141722]/95 border-white/10 text-slate-200'
               }`}
-              title="Drawing Tools Side-Drawer"
+              title="Drawing Tools"
             >
               <Pencil className="w-3.5 h-3.5" />
+            </button>
+
+            <button
+              type="button"
+              data-testid="mobile-chart-timeframe-cycle-btn"
+              onClick={() => {
+                soundEngine.playUiClick();
+                const order: Timeframe[] = ['5s', '15s', '30s', '1m', '5m', '15m'];
+                const next = order[(order.indexOf(timeframe) + 1) % order.length] || '1m';
+                setTimeframe(next);
+              }}
+              className="h-8 px-2 rounded-lg bg-[#141722]/95 border border-[#ff8800]/50 text-[#ff8800] font-black text-[11px] flex items-center gap-1 cursor-pointer"
+              title="Cycle Chart Timeframe"
+            >
+              <span>{timeframe}</span>
+            </button>
+
+            <button
+              type="button"
+              data-testid="mobile-chart-type-btn"
+              onClick={() => {
+                soundEngine.playUiClick();
+                const types: ChartType[] = ['candles', 'heikin-ashi', 'line', 'bars'];
+                const next = types[(types.indexOf(chartType) + 1) % types.length] || 'candles';
+                setChartType(next);
+              }}
+              className="w-8 h-8 rounded-lg bg-[#141722]/95 border border-white/10 flex items-center justify-center text-slate-200 cursor-pointer"
+              title={`Chart Type: ${chartType}`}
+            >
+              {chartType === 'line' ? (
+                <LineChart className="w-3.5 h-3.5 text-cyan-400" />
+              ) : (
+                <BarChart2 className="w-3.5 h-3.5 text-[#ff8800]" />
+              )}
             </button>
 
             <button
@@ -4886,21 +5138,6 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               title="Technical Indicators"
             >
               <Sliders className="w-3.5 h-3.5" />
-            </button>
-
-            <button
-              type="button"
-              data-testid="mobile-chart-timeframe-cycle-btn"
-              onClick={() => {
-                soundEngine.playUiClick();
-                const order: Timeframe[] = ['5s', '15s', '30s', '1m', '5m', '15m'];
-                const next = order[(order.indexOf(timeframe) + 1) % order.length] || '1m';
-                setTimeframe(next);
-              }}
-              className="h-8 px-2.5 rounded-lg bg-[#141722]/95 border border-[#ff8800]/50 text-[#ff8800] font-black text-[11px] flex items-center gap-1 cursor-pointer"
-              title="Cycle Chart Timeframe"
-            >
-              <span>{timeframe}</span>
             </button>
           </div>
 
@@ -5528,11 +5765,11 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         {/* 4. RIGHT-SIDE QUOTEX TRADE EXECUTION & ACTIVE POSITIONS / HISTORY PANEL */}
         <div
           data-testid="quotex-right-panel"
-          className="hidden md:flex w-72 sm:w-[280px] bg-[#1c202e] border-l border-[#2a2e39] flex flex-col justify-between p-2.5 shrink-0 z-10 overflow-y-auto"
+          className="hidden md:flex w-72 sm:w-[276px] bg-[#131722] border-l border-[#242836] flex flex-col justify-between p-2.5 shrink-0 z-10 overflow-y-auto"
         >
           <div className="space-y-2">
             {/* Top Row: Selected Asset | Payout % + PENDING TRADE Toggle Switch */}
-            <div className="p-2 rounded-lg bg-[#141722] border border-[#2a2e39] space-y-1.5">
+            <div className="p-2 rounded-lg bg-[#1c202e] border border-[#2a2e39] space-y-1.5">
               <div className="flex items-center justify-between gap-1.5">
                 <button
                   type="button"
@@ -5541,13 +5778,13 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                     soundEngine.playUiClick();
                     setIsAssetModalOpen(true);
                   }}
-                  className="flex items-center gap-1 text-left hover:opacity-90 transition-opacity cursor-pointer shrink-0"
+                  className="flex items-center gap-1.5 text-left hover:opacity-90 transition-opacity cursor-pointer shrink-0"
                 >
                   <AssetFlagIcon symbol={selectedAsset.symbol} category={selectedAsset.category} flagEmoji={selectedAsset.flag} size="xs" />
-                  <span className="font-black text-white text-[11px] font-mono whitespace-nowrap">
+                  <span className="font-black text-white text-[11.5px] font-sans whitespace-nowrap">
                     {selectedAsset.symbol}
                   </span>
-                  <span className="text-[10px] font-mono font-black text-[#00e676] shrink-0 ml-0.5">
+                  <span className="text-[10.5px] font-mono font-black text-[#00e676] shrink-0">
                     {selectedAsset.payout}%
                   </span>
                   <ChevronDown className="w-3 h-3 text-slate-400 shrink-0" />
@@ -5587,45 +5824,16 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                     type="text"
                     value={pendingTriggerPrice}
                     onChange={(e) => setPendingTriggerPrice(e.target.value)}
-                    className="w-24 px-1.5 py-0.5 rounded bg-[#1c202e] border border-blue-500/40 text-white text-right font-bold text-[11px] focus:outline-none"
+                    className="w-24 px-1.5 py-0.5 rounded bg-[#131722] border border-blue-500/40 text-white text-right font-bold text-[11px] focus:outline-none"
                   />
                 </div>
               )}
             </div>
 
-            {/* TIME / EXPIRY CONTROL BOX (Slim Compact Quotex Reference) */}
-            <div className="p-1.5 rounded-lg bg-[#141722] border border-[#2a2e39] font-mono">
-              <div className="flex items-center justify-between mb-0.5 text-[9.5px]">
-                <span className="text-slate-400 font-semibold">Duration / <span className="text-blue-400 font-bold">Time</span></span>
-                <span className="text-[8.5px] text-amber-400/90 font-bold">Min 30s</span>
-              </div>
-
-              <div className="flex items-center justify-between bg-[#1c202e] border border-[#2a2e39] rounded-lg px-2 py-0.5 mb-1">
-                <button
-                  type="button"
-                  onClick={() => handleStepDuration('down')}
-                  className="w-5 h-5 rounded-md bg-[#262b3d] hover:bg-[#323950] text-slate-200 hover:text-white font-black text-xs flex items-center justify-center cursor-pointer transition-colors"
-                  title="Decrease Expiry Time"
-                >
-                  -
-                </button>
-                <div
-                  data-testid="quotex-time-display"
-                  className="flex-1 text-center font-black text-white text-xs tracking-wider"
-                >
-                  {expiryMode === 'timer' ? formatTimerDisplay(duration) : getClockExpiry(duration)}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleStepDuration('up')}
-                  className="w-5 h-5 rounded-md bg-[#262b3d] hover:bg-[#323950] text-slate-200 hover:text-white font-black text-xs flex items-center justify-center cursor-pointer transition-colors"
-                  title="Increase Expiry Time"
-                >
-                  +
-                </button>
-              </div>
-
-              <div className="flex items-center justify-between">
+            {/* TIME / EXPIRY CONTROL BOX (Quotex Style) */}
+            <div className="p-2 rounded-lg bg-[#1c202e] border border-[#2a2e39] font-mono">
+              <div className="flex items-center justify-between mb-1 text-[10px]">
+                <span className="text-slate-400 font-sans font-semibold">Time</span>
                 <button
                   type="button"
                   data-testid="switch-time-btn"
@@ -5633,69 +5841,113 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                     soundEngine.playUiClick();
                     setExpiryMode((prev) => (prev === 'timer' ? 'time' : 'timer'));
                   }}
-                  className="text-[8.5px] font-black uppercase tracking-wider text-blue-400 hover:text-blue-300 cursor-pointer transition-colors"
+                  className="text-[8.5px] font-black uppercase tracking-wider text-[#3b82f6] hover:text-blue-400 cursor-pointer transition-colors"
                 >
                   SWITCH TIME
                 </button>
+              </div>
 
-                <div className="flex items-center gap-0.5 text-[8.5px]">
-                  {[
-                    { label: '30s', val: 30 },
-                    { label: '1m', val: 60 },
-                    { label: '5m', val: 300 },
-                    { label: '15m', val: 900 },
-                  ].map((p) => (
-                    <button
-                      key={p.val}
-                      type="button"
-                      onClick={() => {
-                        soundEngine.playUiClick();
-                        setDuration(p.val);
-                      }}
-                      className={`px-1 py-0.2 rounded font-bold cursor-pointer transition-colors ${
-                        duration === p.val
-                          ? 'bg-[#ff8800] text-slate-950 font-black'
-                          : 'bg-[#1c202e] text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      {p.label}
-                    </button>
-                  ))}
+              <div className="flex items-center justify-between bg-[#131722] border border-[#2a2e39] rounded-lg px-2 py-1 mb-1.5">
+                <button
+                  type="button"
+                  onClick={() => handleStepDuration('down')}
+                  className="w-6 h-6 rounded-md bg-[#232838] hover:bg-[#2d3448] text-slate-200 hover:text-white font-black text-sm flex items-center justify-center cursor-pointer transition-colors"
+                  title="Decrease Expiry Time"
+                >
+                  -
+                </button>
+                <div
+                  data-testid="quotex-time-display"
+                  className="flex-1 text-center font-black text-white text-sm tracking-wider"
+                >
+                  {expiryMode === 'timer' ? formatTimerDisplay(duration) : getClockExpiry(duration)}
                 </div>
+                <button
+                  type="button"
+                  onClick={() => handleStepDuration('up')}
+                  className="w-6 h-6 rounded-md bg-[#232838] hover:bg-[#2d3448] text-slate-200 hover:text-white font-black text-sm flex items-center justify-center cursor-pointer transition-colors"
+                  title="Increase Expiry Time"
+                >
+                  +
+                </button>
+              </div>
+
+              <div className="grid grid-cols-4 gap-1 text-[9px]">
+                {[
+                  { label: '30s', val: 30 },
+                  { label: '1m', val: 60 },
+                  { label: '5m', val: 300 },
+                  { label: '15m', val: 900 },
+                ].map((p) => (
+                  <button
+                    key={p.val}
+                    type="button"
+                    onClick={() => {
+                      soundEngine.playUiClick();
+                      setDuration(p.val);
+                    }}
+                    className={`py-0.5 rounded font-bold cursor-pointer transition-colors ${
+                      duration === p.val
+                        ? 'bg-[#3b82f6] text-white font-black'
+                        : 'bg-[#131722] text-slate-400 hover:text-white border border-[#2a2e39]'
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
               </div>
             </div>
 
-            {/* INVESTMENT CONTROL BOX (Slim Compact Quotex Reference) */}
-            <div className="p-1.5 rounded-lg bg-[#141722] border border-[#2a2e39] font-mono">
-              <div className="flex items-center justify-between text-[9.5px] mb-0.5">
-                <span className="text-slate-400 font-semibold">Amount / <span className="text-blue-400 font-bold">Percent</span></span>
-                <span className="text-[8.5px] text-slate-400" data-testid="terminal-max-risk-label">
-                  {isPersonalLiveAccount(effectiveAccount) || isDemoAccount(effectiveAccount)
-                    ? 'Max Risk: NONE'
-                    : `Max 5%: $${(((effectiveAccount?.initialBalance || effectiveAccount?.size || 10000) * 5) / 100).toFixed(0)}`}
-                </span>
+            {/* INVESTMENT CONTROL BOX (Quotex Style) */}
+            <div className="p-2 rounded-lg bg-[#1c202e] border border-[#2a2e39] font-mono">
+              <div className="flex items-center justify-between text-[10px] mb-1">
+                <span className="text-slate-400 font-sans font-semibold">Investment</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[8.5px] text-slate-500 hidden xl:inline" data-testid="terminal-max-risk-label">
+                    {isPersonalLiveAccount(effectiveAccount) || isDemoAccount(effectiveAccount)
+                      ? 'Max Risk: NONE'
+                      : `Max 5%: $${(((effectiveAccount?.initialBalance || effectiveAccount?.size || 10000) * 5) / 100).toFixed(0)}`}
+                  </span>
+                  <button
+                    type="button"
+                    data-testid="switch-investment-btn"
+                    onClick={() => {
+                      soundEngine.playUiClick();
+                      if (investmentMode === 'usd') {
+                        setInvestmentMode('percent');
+                        setInvestment(2);
+                      } else {
+                        setInvestmentMode('usd');
+                        setInvestment(50);
+                      }
+                    }}
+                    className="text-[8.5px] font-black uppercase tracking-wider text-[#3b82f6] hover:text-blue-400 cursor-pointer transition-colors"
+                  >
+                    SWITCH ({investmentMode === 'usd' ? '$ → %' : '% → $'})
+                  </button>
+                </div>
               </div>
 
-              <div className="flex items-center justify-between bg-[#1c202e] border border-[#2a2e39] rounded-lg px-2 py-0.5 mb-1">
+              <div className="flex items-center justify-between bg-[#131722] border border-[#2a2e39] rounded-lg px-2 py-1 mb-1.5">
                 <button
                   type="button"
                   onClick={() => {
                     soundEngine.playUiClick();
                     setInvestment((v) => Math.max(1, v - (v <= 10 ? 1 : 10)));
                   }}
-                  className="w-5 h-5 rounded-md bg-[#262b3d] hover:bg-[#323950] text-slate-200 hover:text-white font-black text-xs flex items-center justify-center cursor-pointer transition-colors"
+                  className="w-6 h-6 rounded-md bg-[#232838] hover:bg-[#2d3448] text-slate-200 hover:text-white font-black text-sm flex items-center justify-center cursor-pointer transition-colors"
                   title="Decrease Investment"
                 >
                   -
                 </button>
-                <div className="flex-1 flex items-center justify-center gap-1 font-black text-white text-xs">
+                <div className="flex-1 flex items-center justify-center gap-1 font-black text-white text-sm">
                   <input
                     aria-label="Investment Amount"
                     type="number"
                     min={1}
                     value={investment}
                     onChange={(e) => setInvestment(Math.max(1, Number(e.target.value)))}
-                    className="w-12 bg-transparent text-center focus:outline-none font-black text-white"
+                    className="w-14 bg-transparent text-center focus:outline-none font-black text-white"
                   />
                   <span className="text-slate-300 text-xs font-black">
                     {investmentMode === 'usd' ? '$' : '%'}
@@ -5707,52 +5959,32 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                     soundEngine.playUiClick();
                     setInvestment((v) => v + (v < 10 ? 1 : 10));
                   }}
-                  className="w-5 h-5 rounded-md bg-[#262b3d] hover:bg-[#323950] text-slate-200 hover:text-white font-black text-xs flex items-center justify-center cursor-pointer transition-colors"
+                  className="w-6 h-6 rounded-md bg-[#232838] hover:bg-[#2d3448] text-slate-200 hover:text-white font-black text-sm flex items-center justify-center cursor-pointer transition-colors"
                   title="Increase Investment"
                 >
                   +
                 </button>
               </div>
 
-              <div className="flex items-center justify-between">
-                <button
-                  type="button"
-                  data-testid="switch-investment-btn"
-                  onClick={() => {
-                    soundEngine.playUiClick();
-                    if (investmentMode === 'usd') {
-                      setInvestmentMode('percent');
-                      setInvestment(2);
-                    } else {
+              <div className="grid grid-cols-4 gap-1 text-[9px]">
+                {[2, 10, 50, 100].map((amt) => (
+                  <button
+                    key={amt}
+                    type="button"
+                    onClick={() => {
+                      soundEngine.playUiClick();
                       setInvestmentMode('usd');
-                      setInvestment(50);
-                    }
-                  }}
-                  className="text-[8.5px] font-black uppercase tracking-wider text-blue-400 hover:text-blue-300 cursor-pointer transition-colors"
-                >
-                  SWITCH ({investmentMode === 'usd' ? '$ → %' : '% → $'})
-                </button>
-
-                <div className="flex items-center gap-0.5 text-[8.5px]">
-                  {[2, 10, 50, 100].map((amt) => (
-                    <button
-                      key={amt}
-                      type="button"
-                      onClick={() => {
-                        soundEngine.playUiClick();
-                        setInvestmentMode('usd');
-                        setInvestment(amt);
-                      }}
-                      className={`px-1 py-0.2 rounded font-bold cursor-pointer transition-colors ${
-                        investmentMode === 'usd' && investment === amt
-                          ? 'bg-[#ff8800] text-slate-950 font-black'
-                          : 'bg-[#1c202e] text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      ${amt}
-                    </button>
-                  ))}
-                </div>
+                      setInvestment(amt);
+                    }}
+                    className={`py-0.5 rounded font-bold cursor-pointer transition-colors ${
+                      investmentMode === 'usd' && investment === amt
+                        ? 'bg-[#3b82f6] text-white font-black'
+                        : 'bg-[#131722] text-slate-400 hover:text-white border border-[#2a2e39]'
+                    }`}
+                  >
+                    ${amt}
+                  </button>
+                ))}
               </div>
             </div>
 
@@ -5770,9 +6002,9 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               </div>
             )}
 
-            {/* QUOTEX ACTION BUTTONS (Slim Streamlined "Buy" -> Live Payout -> Slim Streamlined "Sell") */}
+            {/* QUOTEX ACTION BUTTONS (Prominent Green "Buy" -> Payout -> Prominent Red "Sell") */}
             {hasNoAccount ? (
-              <div className="p-2.5 rounded-lg bg-[#141722] border border-[#ff8800]/50 text-center space-y-1.5 font-mono">
+              <div className="p-2.5 rounded-lg bg-[#1c202e] border border-[#ff8800]/50 text-center space-y-1.5 font-mono">
                 <Lock className="w-4 h-4 text-[#ff8800] mx-auto" />
                 <div className="font-black text-white text-[10.5px] uppercase">Trading Panel Locked</div>
                 <p className="text-[9.5px] text-slate-300 font-sans leading-tight">
@@ -5794,8 +6026,6 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                 <p className="text-[8.5px] text-amber-200">
                   Daily loss limit reached. Paused until next reset.
                 </p>
-                {/* Simulation button removed */}
-
               </div>
             ) : isHardBreached ? (
               <div className="p-2.5 rounded-lg bg-rose-950/60 border border-rose-500/60 text-center space-y-1.5 font-mono">
@@ -5827,52 +6057,54 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                 </button>
               </div>
             ) : (
-              <div className="space-y-1.5 font-sans">
-                {/* Slim Green "Buy" Button */}
+              <div className="space-y-2 font-sans pt-0.5">
+                {/* Prominent Green "Buy" Button (Quotex Style) */}
                 <button
                   type="button"
                   data-testid="quotex-buy-btn"
                   onClick={() => handleTriggerTrade('CALL')}
-                  className="w-full py-1.5 px-3 rounded-md bg-[#00c853] hover:bg-[#00e676] active:scale-[0.99] text-white font-black text-sm flex items-center justify-between transition-all cursor-pointer shadow-sm"
+                  className="w-full py-2.5 px-3.5 rounded-lg bg-[#00c853] hover:bg-[#00e676] active:scale-[0.99] text-white font-black text-sm flex items-center justify-between transition-all cursor-pointer shadow-md shadow-emerald-500/15"
                   title="Execute Buy / Higher Order (Shortcut: [B])"
                 >
-                  <span>Buy</span>
-                  <span className="w-4.5 h-4.5 rounded-full bg-white/20 flex items-center justify-center">
-                    <TrendingUp className="w-3 h-3 text-white stroke-[3]" />
+                  <span className="tracking-wide">Buy</span>
+                  <span className="w-5 h-5 rounded-full bg-white/20 flex items-center justify-center">
+                    <TrendingUp className="w-3.5 h-3.5 text-white stroke-[3]" />
                   </span>
                 </button>
 
-                {/* Live Payout Row Display (Exact Quotex Reference Dotted Line Layout) */}
+                {/* Live Payout Indicator Display (Quotex Style) */}
                 <div
                   data-testid="quotex-payout-display"
-                  className="py-0.5 px-2 rounded bg-[#141722] border border-[#2a2e39] flex items-center justify-between text-[10px] font-mono"
+                  className="py-1.5 px-2.5 rounded-lg bg-[#1c202e] border border-[#2a2e39] flex items-center justify-between text-[11px] font-mono"
                 >
-                  <span className="text-slate-400">Payout</span>
-                  <div className="flex items-center gap-1">
-                    <span className="text-white font-black text-[11px]">
+                  <span className="text-slate-400 font-sans text-[11px]">
+                    Your payout:
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-white font-black text-xs">
                       {(
                         effectiveInvestment +
                         (effectiveInvestment * selectedAsset.payout) / 100
                       ).toFixed(2)}{' '}
                       $
                     </span>
-                    <span className="text-[9px] font-black text-[#00e676]">
-                      (+${((effectiveInvestment * selectedAsset.payout) / 100).toFixed(2)})
+                    <span className="text-[10px] font-black text-[#00e676]">
+                      (+{selectedAsset.payout}%)
                     </span>
                   </div>
                 </div>
 
-                {/* Slim Red "Sell" Button */}
+                {/* Prominent Red "Sell" Button (Quotex Style) */}
                 <button
                   type="button"
                   data-testid="quotex-sell-btn"
                   onClick={() => handleTriggerTrade('PUT')}
-                  className="w-full py-1.5 px-3 rounded-md bg-[#ff334b] hover:bg-[#ff4d63] active:scale-[0.99] text-white font-black text-sm flex items-center justify-between transition-all cursor-pointer shadow-md shadow-rose-500/15"
+                  className="w-full py-2.5 px-3.5 rounded-lg bg-[#ff334b] hover:bg-[#ff4d63] active:scale-[0.99] text-white font-black text-sm flex items-center justify-between transition-all cursor-pointer shadow-md shadow-rose-500/15"
                   title="Execute Sell / Lower Order (Shortcut: [S])"
                 >
-                  <span>Sell</span>
-                  <span className="w-4.5 h-4.5 rounded-full bg-white/20 flex items-center justify-center">
-                    <TrendingDown className="w-3 h-3 text-white stroke-[3]" />
+                  <span className="tracking-wide">Sell</span>
+                  <span className="w-5 h-5 rounded-full bg-white/20 flex items-center justify-center">
+                    <TrendingDown className="w-3.5 h-3.5 text-white stroke-[3]" />
                   </span>
                 </button>
               </div>

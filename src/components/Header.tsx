@@ -179,7 +179,6 @@ export const Header: React.FC<HeaderProps> = ({
             { id: 'terminal', label: 'Trading Terminal' },
             { id: 'rules', label: 'Prop Rules' },
             { id: 'affiliate', label: 'Affiliate' },
-            { id: 'withdrawals', label: 'Withdrawals' },
             { id: 'dashboard', label: 'Trader Hub & KYC' },
             { id: 'faq', label: 'FAQ' },
           ].map((tab) => {
