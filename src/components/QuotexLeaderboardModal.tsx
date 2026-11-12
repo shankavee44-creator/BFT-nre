@@ -34,6 +34,8 @@ import {
   fetchSelfFundedLeaderboardFromSupabase,
   subscribeToLeaderboardsRealtime,
   invokeUpsertUserLeaderboard,
+  filterCrossTableDuplicates,
+  fetchCurrentUserLeaderboardEntry,
 } from '../utils/leaderboardEngine';
 
 export type { LeaderboardTrader, LeaderboardTabCategory };
@@ -180,9 +182,8 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
         return normalizedSelf;
       };
 
-      if (activeTab === 'funded') {
-        setFundedTraders((prev) => applyRealisticStep(prev, 'funded'));
-      } else {
+      // Funded Leaderboard is a stable, locked weekly snapshot; ONLY Self-Funded Leaderboard updates live throughout the day!
+      if (activeTab === 'self_funded') {
         setSelfFundedTraders((prev) => applyRealisticStep(prev, 'self_funded'));
       }
     }, 5500);
@@ -193,20 +194,64 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
     };
   }, [isOpen, activeTab]);
 
+  const [remoteUserRecord, setRemoteUserRecord] = useState<{
+    profit: number;
+    rank: number | null;
+  } | null>(null);
+
+  const displayUserName =
+    !userName ||
+    userName.trim().toLowerCase() === 'loading' ||
+    userName.trim().toLowerCase() === 'null'
+      ? 'Trader'
+      : userName.trim();
+
+  // Safely check if the current logged-in user (e.g. Yohan Siriwardana) exists in `global_leaderboards`
+  // using `.limit(1)` so missing records return `null` cleanly instead of 404/406 errors.
+  useEffect(() => {
+    if (!isOpen || displayUserName === 'Trader') {
+      setRemoteUserRecord(null);
+      return;
+    }
+    let cancelled = false;
+    fetchCurrentUserLeaderboardEntry({ userName: displayUserName, category: activeTab }).then(
+      (entry) => {
+        if (!cancelled) {
+          setRemoteUserRecord(entry);
+        }
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, displayUserName, activeTab]);
+
   // Track the logged-in user's real performance according to the active tab timeframe:
   // - 'funded': Weekly PnL from Funded/Challenge accounts ONLY
   // - 'self_funded': Daily PnL from Self-Funded accounts ONLY (since 05:30 AM SLST today)
   const userMetrics = useMemo(() => {
-    return calculateUserLeaderboardPnL({
+    const calculated = calculateUserLeaderboardPnL({
       category: activeTab,
       trades,
       activeAccount,
       accounts,
       fallbackProfitLoss: userProfit,
     });
-  }, [activeTab, trades, activeAccount, accounts, userProfit]);
+    if (calculated.pnl === 0 && remoteUserRecord && remoteUserRecord.profit > 0) {
+      return {
+        pnl: remoteUserRecord.profit,
+        tradesCount: Math.max(1, calculated.tradesCount),
+      };
+    }
+    return calculated;
+  }, [activeTab, trades, activeAccount, accounts, userProfit, remoteUserRecord]);
 
-  const activeBaseTraders = activeTab === 'funded' ? fundedTraders : selfFundedTraders;
+  const activeBaseTraders = useMemo(() => {
+    if (activeTab === 'funded') {
+      return filterCrossTableDuplicates(fundedTraders, selfFundedTraders);
+    }
+    return filterCrossTableDuplicates(selfFundedTraders, fundedTraders);
+  }, [activeTab, fundedTraders, selfFundedTraders]);
 
   const userPosition = useMemo(() => {
     return resolveUserLeaderboardPosition(
@@ -215,7 +260,7 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
       activeBaseTraders,
       activeAccount,
       {
-        name: userName,
+        name: displayUserName,
         country: userCountry === 'United States' ? 'Sri Lanka' : userCountry,
         isoCode: userCountryIso,
         flag: '🇱🇰',
@@ -227,20 +272,20 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
     weeklyTradesCount,
     activeBaseTraders,
     activeAccount,
-    userName,
+    displayUserName,
     userCountry,
     userCountryIso,
   ]);
 
-  // Synchronize real user's live position to Supabase globally via upsert_user_leaderboard RPC
+  // Synchronize real user's live position to Supabase globally via upsert_user_leaderboard RPC only when positive profit is generated
   useEffect(() => {
-    if (!isOpen || userMetrics.pnl === undefined) return;
+    if (!isOpen || !userMetrics.pnl || userMetrics.pnl <= 0) return;
     supabase.auth.getSession().then(({ data }) => {
       const sessionUser = data?.session?.user;
       if (sessionUser?.id) {
         invokeUpsertUserLeaderboard({
           userId: sessionUser.id,
-          userName: userName,
+          userName: displayUserName,
           country: userCountry === 'United States' ? 'Sri Lanka' : userCountry,
           isoCode: userCountryIso,
           category: activeTab,
@@ -256,14 +301,28 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
     userMetrics.pnl,
     userMetrics.tradesCount,
     weeklyTradesCount,
-    userName,
+    displayUserName,
     userCountry,
     userCountryIso,
     activeAccount,
   ]);
 
   const userPnlFormatted = formatDailyProfitLoss(userMetrics.pnl);
-  const displayedTraders = userPosition.mergedTraders;
+
+  // Guarantee strict descending sorting by profit (ORDER BY profit DESC) and never inject a $0.00 user into rank #15
+  const displayedTraders = useMemo(() => {
+    const isResetZero =
+      userPosition.mergedTraders.length > 0 &&
+      userPosition.mergedTraders.every((t) => t.profit === 0);
+    return [...userPosition.mergedTraders]
+      .filter((t) => !(t.isCurrentUser && t.profit <= 0) && (isResetZero || t.profit > 0))
+      .sort((a, b) => b.profit - a.profit)
+      .slice(0, 15)
+      .map((t, idx) => ({
+        ...t,
+        rank: idx + 1,
+      }));
+  }, [userPosition.mergedTraders]);
   const currentResetSchedule =
     activeTab === 'funded'
       ? weeklyResetInfo.resetScheduleLabel
@@ -367,11 +426,25 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
           </div>
         </div>
 
-        {/* 3. Logged-In User Performance & Position Summary Card */}
-        <div className="px-3.5 py-2 sm:px-5 sm:py-3 bg-[#0e111a] border-b border-white/10 shrink-0 space-y-2">
+        {/* 3. Dedicated "Your Position" Personal Standing Card (Separate from Top 15 Table) */}
+        <div
+          data-testid="leaderboard-user-position-card"
+          className="px-3.5 py-2.5 sm:px-5 sm:py-3 bg-[#0e111a] border-b border-white/10 shrink-0 space-y-2"
+        >
           <div className="flex items-center justify-between text-[11px] sm:text-xs">
             <div className="flex items-center gap-2 min-w-0">
-              <span className="font-bold text-white truncate">{userName}</span>
+              <CountryFlagIcon
+                country={userCountry === 'United States' ? 'Sri Lanka' : userCountry}
+                countryCode={userCountryIso}
+                isoCode={userCountryIso}
+                flagEmoji="🇱🇰"
+                showIsoBadge={true}
+                className="w-5 h-3.5 rounded-[2px] shadow-sm border border-white/15 shrink-0 inline-block align-middle object-cover"
+              />
+              <span className="font-bold text-white truncate">{displayUserName}</span>
+              <span className="px-1.5 py-0.5 rounded bg-[#ff8800]/15 border border-[#ff8800]/30 text-[#ff8800] font-mono text-[9px] font-bold shrink-0">
+                YOU
+              </span>
               <span className="text-[10px] font-mono text-slate-400 shrink-0">
                 · {userAccountId}
               </span>
@@ -419,7 +492,7 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
                 data-testid="user-leaderboard-rank"
                 className="text-xs sm:text-sm font-black font-mono tabular-nums text-[#ff8800] sm:mt-0.5"
               >
-                {userPosition.isUnranked ? '1000+' : `#${userPosition.rank}`}
+                {userPosition.isUnranked ? '#1000+' : `#${userPosition.rank}`}
               </div>
             </div>
           </div>
@@ -434,7 +507,7 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
                 <span className="text-[#ff8800] font-semibold">05:30 AM SLST (UTC+5:30)</span> / 00:00 UTC.
               </p>
               <p>
-                Default user rank is <span className="font-mono text-white">1000+</span>, updating automatically into the Top 15 if your profit surpasses an active Top 15 trader.
+                Default user rank is <span className="font-mono text-white">#1000+</span>, updating automatically into the Top 15 if your profit surpasses an active Top 15 trader.
               </p>
             </div>
           )}
@@ -450,10 +523,10 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
           </div>
         </div>
 
-        {/* 5. Top 15 Traders Table Rows (NO Avatars, NO Copy Buttons) */}
+        {/* 5. Top 15 Traders Table Rows (Strictly Top 15 Database/Seed Rows) */}
         <div
           data-testid="leaderboard-traders-list"
-          className="flex-1 overflow-y-auto divide-y divide-white/[0.06] px-2 sm:px-3.5 py-1 bg-[#0a0c12]"
+          className="flex-1 overflow-y-auto divide-y divide-white/[0.06] px-2 sm:px-3.5 py-1.5 bg-[#0a0c12]"
         >
           {displayedTraders.map((trader) => {
             const row = formatCleanLeaderboardRow(trader);
@@ -534,51 +607,6 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
               </div>
             );
           })}
-        </div>
-
-        {/* 6. Sticky Bottom Logged-in User Position Bar */}
-        <div
-          data-testid="leaderboard-sticky-user-row"
-          className="px-3.5 sm:px-5 py-2.5 bg-[#121624] border-t border-white/15 grid grid-cols-12 items-center shrink-0"
-        >
-          <div className="col-span-2 flex items-center">
-            <span
-              data-testid="sticky-user-rank"
-              className="px-2 py-1 rounded-md bg-[#ff8800]/20 border border-[#ff8800]/40 text-[#ff8800] font-mono font-black text-[11px] sm:text-xs tabular-nums"
-            >
-              {userPosition.rankLabel}
-            </span>
-          </div>
-
-          <div className="col-span-4 min-w-0 pr-2 flex items-center gap-2">
-            <span className="text-xs sm:text-sm font-bold text-white truncate">
-              {userName}
-            </span>
-            <span className="px-1.5 py-0.5 rounded bg-white/10 text-slate-300 font-mono text-[9px] font-bold shrink-0">
-              YOU
-            </span>
-          </div>
-
-          <div className="col-span-3 flex items-center gap-1.5 min-w-0">
-            <CountryFlagIcon
-              country={userCountry === 'United States' ? 'Sri Lanka' : userCountry}
-              countryCode={userCountryIso}
-              isoCode={userCountryIso}
-              flagEmoji="🇱🇰"
-              showIsoBadge={true}
-              className="w-5 h-3.5 rounded-[2px] shadow-sm border border-white/15 shrink-0 inline-block align-middle object-cover"
-            />
-            <span className="hidden sm:inline text-[11px] text-slate-300 truncate">
-              {userCountry === 'United States' ? 'Sri Lanka' : userCountry}
-            </span>
-          </div>
-
-          <div
-            data-testid="sticky-user-profit"
-            className={`col-span-3 text-xs sm:text-sm font-black font-mono tabular-nums text-right ${userPnlFormatted.colorClass}`}
-          >
-            {userPnlFormatted.formatted}
-          </div>
         </div>
       </div>
     </div>

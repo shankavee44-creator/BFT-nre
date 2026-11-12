@@ -1093,7 +1093,7 @@ export const formatLeaderboardProfitLoss = formatDailyProfitLoss;
 
 export function resolveUserLeaderboardPosition(
   userProfit: number,
-  tradesCount: number = 0,
+  _tradesCount: number = 0,
   traders: LeaderboardTrader[] = WEEKLY_LEADERBOARD_TRADERS,
   account?: any | null,
   userMeta?: {
@@ -1113,54 +1113,104 @@ export function resolveUserLeaderboardPosition(
 } {
   const cleanProfit = Number.isFinite(userProfit) ? Number(userProfit.toFixed(2)) : 0;
   const { formatted: formattedProfitLoss } = formatDailyProfitLoss(cleanProfit);
+  const rawUserName = String(userMeta?.name || '').trim();
+  const safeUserName =
+    !rawUserName || rawUserName.toLowerCase() === 'loading' || rawUserName.toLowerCase() === 'null'
+      ? 'You (Active Trader)'
+      : rawUserName;
+  const userNameLower = safeUserName.toLowerCase();
 
-  // Filter out any existing currentUser entry to prevent duplicate rows
-  const cleanTraders = traders.filter(
-    (t) => !t.isCurrentUser && t.id !== 'usr_current_logged_in' && t.name !== (userMeta?.name || 'You (Active Trader)')
-  );
+  const isResetZeroList = traders.length > 0 && traders.every((t) => t.profit === 0);
 
-  const userEntry: LeaderboardTrader = {
-    id: 'usr_current_logged_in',
-    rank: 1, // temporary, will be assigned after sorting
-    name: userMeta?.name || 'You (Active Trader)',
-    country: userMeta?.country || 'Sri Lanka',
-    flag: userMeta?.flag || '🇱🇰',
-    isoCode: userMeta?.isoCode || 'LK',
-    accountTier: account?.tierName || account?.tier || 'Active Account',
-    profit: cleanProfit,
-    winRate: 80.0,
-    payoutTime: 'Instant',
-    isCurrentUser: true,
-  };
+  // Filter out any existing currentUser entry and any zero-profit rows to prevent duplicate or false #15 rows
+  const filteredTraders = traders.filter((t) => {
+    if (t.isCurrentUser || t.id === 'usr_current_logged_in') return false;
+    const tNameLower = String(t.name || '').trim().toLowerCase();
+    if (tNameLower === userNameLower) return false;
+    if (!isResetZeroList && Number(t.profit) <= 0) return false;
+    return true;
+  });
 
-  // Combine user entry with trader pool and sort all entries strictly by profit descending
-  const combined = [...cleanTraders, userEntry].sort((a, b) => b.profit - a.profit);
-  const userIndex = combined.findIndex((t) => t.isCurrentUser || t.id === 'usr_current_logged_in');
+  // Ensure we always have a full 15-trader base list by backfilling from the matching category seed pool if needed
+  const inferredCategory: LeaderboardTabCategory =
+    traders[0]?.category === 'self_funded' ? 'self_funded' : 'funded';
+  const fallbackSeedPool =
+    inferredCategory === 'self_funded'
+      ? getDynamicLeaderboardTraders({ category: 'self_funded', useEveningPeak: false })
+      : WEEKLY_LEADERBOARD_TRADERS;
 
-  if (userIndex >= 0 && userIndex < 15 && (cleanProfit > 0 || tradesCount > 0)) {
-    const userRank = userIndex + 1;
-    const mergedTop15 = combined.slice(0, 15).map((t, index) => ({
-      ...t,
-      rank: index + 1,
-    }));
+  const seenNames = new Set(filteredTraders.map((t) => String(t.name || '').trim().toLowerCase()));
+  const cleanTraders = [...filteredTraders];
 
-    return {
-      isUnranked: false,
-      rank: userRank,
-      rankLabel: `${userRank}`,
-      verifiedWeeklyProfit: cleanProfit,
-      dailyProfitLoss: cleanProfit,
-      formattedProfitLoss,
-      mergedTraders: mergedTop15,
-    };
+  for (const seed of fallbackSeedPool) {
+    if (cleanTraders.length >= 15) break;
+    const sLower = String(seed.name || '').trim().toLowerCase();
+    if (!seenNames.has(sLower) && sLower !== userNameLower) {
+      seenNames.add(sLower);
+      cleanTraders.push(seed);
+    }
   }
 
-  // User is not in top 15 (unranked)
-  const mergedTop15 = cleanTraders.slice(0, 15).map((t, index) => ({
+  cleanTraders.sort((a, b) => b.profit - a.profit);
+  const top15Base = cleanTraders.slice(0, 15).map((t, index) => ({
     ...t,
     rank: index + 1,
   }));
 
+  // If user has zero or negative profit ($0.00 or loss), NEVER inject them into the Top 15 table
+  if (cleanProfit <= 0) {
+    return {
+      isUnranked: true,
+      rank: null,
+      rankLabel: '1000+',
+      verifiedWeeklyProfit: cleanProfit,
+      dailyProfitLoss: cleanProfit,
+      formattedProfitLoss,
+      mergedTraders: top15Base,
+    };
+  }
+
+  const fifteenthProfit = top15Base.length >= 15 ? Number(top15Base[14].profit || 0) : 0;
+
+  // User only enters the Top 15 table if their positive profit strictly beats the 15th place trader
+  if (cleanProfit > fifteenthProfit) {
+    const userEntry: LeaderboardTrader = {
+      id: 'usr_current_logged_in',
+      rank: 1,
+      name: safeUserName,
+      country: userMeta?.country || 'Sri Lanka',
+      flag: userMeta?.flag || '🇱🇰',
+      isoCode: userMeta?.isoCode || 'LK',
+      accountTier: account?.tierName || account?.tier || 'Active Account',
+      profit: cleanProfit,
+      winRate: 80.0,
+      payoutTime: 'Instant',
+      isCurrentUser: true,
+    };
+
+    const combined = [...top15Base, userEntry].sort((a, b) => b.profit - a.profit);
+    const userIndex = combined.findIndex((t) => t.isCurrentUser || t.id === 'usr_current_logged_in');
+
+    if (userIndex >= 0 && userIndex < 15) {
+      const userRank = userIndex + 1;
+      const mergedTop15 = combined.slice(0, 15).map((t, index) => ({
+        ...t,
+        rank: index + 1,
+      }));
+
+      return {
+        isUnranked: false,
+        rank: userRank,
+        rankLabel: `${userRank}`,
+        verifiedWeeklyProfit: cleanProfit,
+        dailyProfitLoss: cleanProfit,
+        formattedProfitLoss,
+        mergedTraders: mergedTop15,
+      };
+    }
+  }
+
+  // User is not in top 15 (unranked)
   return {
     isUnranked: true,
     rank: null,
@@ -1168,7 +1218,7 @@ export function resolveUserLeaderboardPosition(
     verifiedWeeklyProfit: cleanProfit,
     dailyProfitLoss: cleanProfit,
     formattedProfitLoss,
-    mergedTraders: mergedTop15,
+    mergedTraders: top15Base,
   };
 }
 
@@ -1218,6 +1268,8 @@ export async function invokeUpsertUserLeaderboard(
   params: UpsertUserLeaderboardParams
 ): Promise<boolean> {
   if (!params.userId || !supabaseLeaderboardWriteAllowed) return false;
+  // Only persist to remote RPC when the user has generated positive profit
+  if (!Number.isFinite(params.profit) || params.profit <= 0) return false;
   try {
     const { data: sessionData } = await supabase.auth
       .getSession()
@@ -1229,119 +1281,106 @@ export async function invokeUpsertUserLeaderboard(
       p_user_name: params.userName || 'Active Trader',
       p_country: params.country || 'Sri Lanka',
       p_iso_code: params.isoCode || 'LK',
-      p_category: params.category,
+      p_category: params.category === 'funded' ? 'funded' : 'self-funded',
       p_profit: Number(params.profit.toFixed(2)),
       p_trades_count: params.tradesCount || 1,
       p_account_tier: params.accountTier || 'Live Account',
     };
 
     const { error: rpcError } = await supabase.rpc('upsert_user_leaderboard', payload);
-    if (!rpcError) {
-      return true;
-    }
-
-    // Direct table upsert fallback
-    const tableName =
-      params.category === 'funded' ? 'funded_leaderboard' : 'self_funded_leaderboard';
-    const nowIso = new Date().toISOString();
-    const tablePayload = {
-      user_id: params.userId,
-      trader_name: params.userName || 'Active Trader',
-      country: params.country || 'Sri Lanka',
-      iso_code: params.isoCode || 'LK',
-      category: params.category,
-      profit: Number(params.profit.toFixed(2)),
-      updated_at: nowIso,
-    };
-
-    const { error: tableError } = await supabase
-      .from(tableName)
-      .upsert(tablePayload, { onConflict: 'user_id' });
-
-    if (
-      tableError &&
-      (tableError.code === '42501' || tableError.code === '42P10' || tableError.code === 'PGRST204')
-    ) {
+    if (rpcError) {
       supabaseLeaderboardWriteAllowed = false;
+      return false;
     }
-
-    return !tableError;
+    return true;
   } catch {
+    supabaseLeaderboardWriteAllowed = false;
     return false;
   }
 }
 
 /**
- * Syncs the Self-Funded Daily Leaderboard rows to the Supabase `self_funded_leaderboard` table
- * so connected clients subscribed via Supabase Realtime receive live updates.
+ * Safely queries `global_leaderboards` for the current logged-in user (e.g., Yohan Siriwardana)
+ * using `.limit(1)` instead of `.single()` or non-existent table names so it never triggers a 404 or 406
+ * if the user record isn't immediately found in the leaderboard view.
  */
-export async function syncSelfFundedLeaderboardToSupabase(
-  traders: LeaderboardTrader[]
-): Promise<void> {
-  if (!supabaseLeaderboardWriteAllowed) return;
+export async function fetchCurrentUserLeaderboardEntry(params: {
+  userName?: string;
+  category: LeaderboardTabCategory;
+}): Promise<{ profit: number; rank: number | null } | null> {
+  const cleanName = String(params.userName || '').trim();
+  if (!cleanName || cleanName.toLowerCase() === 'trader') return null;
+
+  const typeFilter = params.category === 'funded' ? 'funded' : 'self-funded';
   try {
-    const { data: sessionData } = await supabase.auth
-      .getSession()
-      .catch(() => ({ data: { session: null } }));
-    if (!sessionData?.session) return;
+    const { data, error } = await supabase
+      .from('global_leaderboards')
+      .select('*')
+      .eq('type', typeFilter)
+      .ilike('name', cleanName)
+      .order('profit', { ascending: false })
+      .limit(1);
 
-    const nowIso = new Date().toISOString();
-    const payload = traders.slice(0, 15).map((t, idx) => ({
-      rank: idx + 1,
-      trader_name: t.name,
-      country: t.country,
-      profit: Number(t.profit.toFixed(2)),
-      updated_at: nowIso,
-    }));
-
-    const { error } = await supabase
-      .from('self_funded_leaderboard')
-      .upsert(payload, { onConflict: 'rank' });
-    if (error && (error.code === '42501' || error.code === '42P10' || error.code === 'PGRST204')) {
-      supabaseLeaderboardWriteAllowed = false;
+    if (error || !Array.isArray(data) || data.length === 0) {
+      return null;
     }
+
+    const row = data[0];
+    const profit = Number(row.profit ?? 0);
+    const rank = row.rank !== undefined && row.rank !== null ? Number(row.rank) : null;
+    return {
+      profit: Number.isFinite(profit) ? Number(profit.toFixed(2)) : 0,
+      rank: Number.isFinite(rank) && rank! > 0 ? rank : null,
+    };
   } catch {
-    // Non-blocking if RLS restricts client upserts
+    return null;
   }
 }
 
 /**
- * Syncs Funded Leaderboard Rank 1 (Mateus Domingos, Angola, $72,876.98) to Supabase `funded_leaderboard`.
+ * Enforces strict 100% name separation between Funded and Self-Funded Leaderboards.
+ * Ensures zero name overlap between the two tiers.
  */
-export async function syncFundedLeaderboardToSupabase(
-  traders: LeaderboardTrader[]
+export function filterCrossTableDuplicates(
+  targetList: LeaderboardTrader[],
+  oppositeList: LeaderboardTrader[]
+): LeaderboardTrader[] {
+  if (!Array.isArray(targetList) || targetList.length === 0) return [];
+  if (!Array.isArray(oppositeList) || oppositeList.length === 0) return targetList;
+
+  const oppositeNames = new Set(
+    oppositeList
+      .map((t) => String(t.name || '').trim().toLowerCase())
+      .filter((n) => n && n !== 'trader' && !n.includes('active trader'))
+  );
+
+  return targetList.filter((trader) => {
+    const cleanName = String(trader.name || '').trim().toLowerCase();
+    // Allow current logged-in user entry
+    if (trader.isCurrentUser || trader.id === 'usr_current_logged_in') return true;
+    return !oppositeNames.has(cleanName);
+  });
+}
+
+/**
+ * No-op client sync helpers to avoid 404 errors against read-only `global_leaderboards` view
+ * or non-existent legacy table names.
+ */
+export async function syncSelfFundedLeaderboardToSupabase(
+  _traders: LeaderboardTrader[]
 ): Promise<void> {
-  if (!supabaseLeaderboardWriteAllowed) return;
-  try {
-    const { data: sessionData } = await supabase.auth
-      .getSession()
-      .catch(() => ({ data: { session: null } }));
-    if (!sessionData?.session) return;
+  return;
+}
 
-    const nowIso = new Date().toISOString();
-    const payload = traders.slice(0, 15).map((t, idx) => ({
-      rank: idx + 1,
-      trader_name: t.name,
-      country: t.country,
-      profit: Number(t.profit.toFixed(2)),
-      updated_at: nowIso,
-    }));
-
-    const { error } = await supabase
-      .from('funded_leaderboard')
-      .upsert(payload, { onConflict: 'rank' });
-    if (error && (error.code === '42501' || error.code === '42P10' || error.code === 'PGRST204')) {
-      supabaseLeaderboardWriteAllowed = false;
-    }
-  } catch {
-    // Non-blocking
-  }
+export async function syncFundedLeaderboardToSupabase(
+  _traders: LeaderboardTrader[]
+): Promise<void> {
+  return;
 }
 
 /**
  * Checks whether a new daily cycle (05:30 AM UTC+5:30 / 00:00 UTC) has started.
- * Upon reset, clears out previous cumulative totals so each trader starts fresh from $0.00,
- * and pushes the reset state to Supabase `self_funded_leaderboard`.
+ * Upon reset, clears out previous cumulative totals so each trader starts fresh from $0.00.
  */
 export async function checkAndPerformDailySelfFundedReset(
   nowMs: number = Date.now()
@@ -1366,7 +1405,6 @@ export async function checkAndPerformDailySelfFundedReset(
       localStorage.setItem(SELF_FUNDED_DAILY_RESET_STORAGE_KEY, resetInfo.sriLankaDateIso);
     } catch {}
     const zeroTraders = createFreshZeroSelfFundedLeaderboard();
-    await syncSelfFundedLeaderboardToSupabase(zeroTraders);
     return {
       wasReset: true,
       resetDateIso: resetInfo.sriLankaDateIso,
@@ -1395,86 +1433,78 @@ export async function checkAndPerformDailySelfFundedReset(
 
 export async function fetchFundedLeaderboardFromSupabase(): Promise<LeaderboardTrader[]> {
   try {
-    let data: any[] | null = null;
-    let error: any = null;
-
-    // Try global_leaderboards view first, fallback to funded_leaderboard table
+    // Query unified view `global_leaderboards` filtered by type = 'funded' and ordered by profit DESC
     const { data: gData, error: gErr } = await supabase
       .from('global_leaderboards')
       .select('*')
-      .eq('category', 'funded')
-      .order('rank', { ascending: true })
+      .eq('type', 'funded')
+      .order('profit', { ascending: false })
       .limit(15);
 
-    if (!gErr && Array.isArray(gData) && gData.length > 0) {
-      data = gData;
-    } else {
-      const { data: fData, error: fErr } = await supabase
-        .from('funded_leaderboard')
-        .select('*')
-        .order('rank', { ascending: true })
-        .limit(15);
-      data = fData;
-      error = fErr;
-    }
-
-    if (error || !Array.isArray(data) || data.length === 0) {
+    if (gErr || !Array.isArray(gData) || gData.length === 0) {
       return getDynamicLeaderboardTraders({ category: 'funded', useEveningPeak: true });
     }
 
-    const hadLegacyYohan = data.some(
-      (r: any) => String(r.trader_name || r.name || '').trim() === 'Yohan Siriwardhana'
-    );
+    const mapped: LeaderboardTrader[] = gData
+      .map((r: any, idx: number) => {
+        const rowName = String(r.name || r.trader_name || r.username || 'Trader').trim();
+        const rawCode = String(
+          r.country_code || r.countryCode || r.iso_code || r.isoCode || r.country_iso || ''
+        ).trim();
+        const rawCountry = String(r.country || '').trim();
+        const resolvedIso = (rawCode || getIsoCountryCode(rawCountry)).toUpperCase();
+        const resolvedCountry =
+          rawCountry || (resolvedIso ? getCountryNameFromIso(resolvedIso) : 'Global');
+        const flagEmoji = r.flag || (resolvedIso ? getFlagEmojiFromIso(resolvedIso) : '🌐');
 
-    const mapped: LeaderboardTrader[] = data.map((r: any) => {
-      const rowName = String(r.trader_name || r.name || 'Trader').trim();
-      const isRank1OrYohan = Number(r.rank) === 1 || rowName === 'Yohan Siriwardhana';
-      if (isRank1OrYohan) {
         return {
-          id: 'fnd_ao_01',
-          rank: 1,
-          name: 'Mateus Domingos',
-          country: 'Angola',
-          countryCode: 'AO',
-          country_code: 'AO',
-          flag: '🇦🇴',
-          isoCode: 'AO',
-          category: 'funded',
+          id: String(r.id || `fnd_${idx + 1}`),
+          rank: idx + 1,
+          name: rowName,
+          country: resolvedCountry,
+          countryCode: resolvedIso,
+          country_code: resolvedIso,
+          flag: flagEmoji,
+          isoCode: resolvedIso,
+          category: 'funded' as LeaderboardTabCategory,
           accountTier: String(r.account_tier || r.accountTier || '$100,000 Instant Funded'),
-          profit: MATEUS_FUNDED_PROFIT,
-          winRate: Number(r.win_rate ?? r.winRate ?? 84.2),
-          payoutTime: String(r.payout_time || r.payoutTime || '1m 12s'),
+          profit: Number(r.profit ?? r.funded_profit ?? 0),
+          winRate: Number(r.win_rate ?? r.winRate ?? 80.0),
+          payoutTime: String(r.payout_time || r.payoutTime || '1m 20s'),
         };
-      }
+      })
+      .filter((t) => {
+        const lower = t.name.toLowerCase();
+        return t.profit > 0 && lower !== 'loading' && lower !== 'null' && lower !== 'trader';
+      });
 
-      const rawCode = String(r.country_code || r.countryCode || r.iso_code || r.isoCode || r.country_iso || '').trim();
-      const rawCountry = String(r.country || '').trim();
-      const resolvedIso = (rawCode || getIsoCountryCode(rawCountry)).toUpperCase();
-      const resolvedCountry = rawCountry || (resolvedIso ? getCountryNameFromIso(resolvedIso) : 'Global');
-      const flagEmoji = r.flag || (resolvedIso ? getFlagEmojiFromIso(resolvedIso) : '🌐');
-
-      return {
-        id: String(r.id || `fnd_${r.rank}`),
-        rank: Number(r.rank),
-        name: rowName,
-        country: resolvedCountry,
-        countryCode: resolvedIso,
-        country_code: resolvedIso,
-        flag: flagEmoji,
-        isoCode: resolvedIso,
-        category: 'funded',
-        accountTier: String(r.account_tier || r.accountTier || '$100,000 Instant Funded'),
-        profit: Number(r.profit ?? r.funded_profit ?? 0),
-        winRate: Number(r.win_rate ?? r.winRate ?? 80.0),
-        payoutTime: String(r.payout_time || r.payoutTime || '1m 20s'),
-      };
+    const selfFundedSample = getDynamicLeaderboardTraders({
+      category: 'self_funded',
+      useEveningPeak: true,
     });
-
-    const normalized = normalizeFundedLeaderboard(mapped, true);
-    if (hadLegacyYohan) {
-      syncFundedLeaderboardToSupabase(normalized).catch(() => {});
+    const fundedFallback = getDynamicLeaderboardTraders({
+      category: 'funded',
+      useEveningPeak: true,
+    });
+    const crossFilteredMapped = filterCrossTableDuplicates(mapped, selfFundedSample);
+    const seenFundedNames = new Set(crossFilteredMapped.map((t) => t.name.toLowerCase()));
+    for (const seed of fundedFallback) {
+      if (crossFilteredMapped.length >= 15) break;
+      const sLower = seed.name.toLowerCase();
+      if (!seenFundedNames.has(sLower)) {
+        seenFundedNames.add(sLower);
+        crossFilteredMapped.push(seed);
+      }
     }
-    return normalized;
+
+    return crossFilteredMapped
+      .sort((a, b) => b.profit - a.profit)
+      .slice(0, 15)
+      .map((t, idx) => ({
+        ...t,
+        category: 'funded' as LeaderboardTabCategory,
+        rank: idx + 1,
+      }));
   } catch {
     return getDynamicLeaderboardTraders({ category: 'funded', useEveningPeak: true });
   }
@@ -1489,119 +1519,87 @@ export async function fetchSelfFundedLeaderboardFromSupabase(
       return resetCheck.traders;
     }
 
-    const resetInfo = getSriLankaDailyResetInfo(nowMs);
-
-    // 1. Fetch seed/persisted rows from global_leaderboards view or self_funded_leaderboard table
+    // 1. Fetch rows from unified view `global_leaderboards` filtered by type = 'self-funded' and ordered by profit DESC
     let dbTraders: LeaderboardTrader[] = [];
     try {
-      let data: any[] | null = null;
-      let error: any = null;
-
       const { data: gData, error: gErr } = await supabase
         .from('global_leaderboards')
         .select('*')
-        .eq('category', 'self_funded')
-        .order('rank', { ascending: true })
+        .eq('type', 'self-funded')
+        .order('profit', { ascending: false })
         .limit(15);
 
       if (!gErr && Array.isArray(gData) && gData.length > 0) {
-        data = gData;
-      } else {
-        const { data: sData, error: sErr } = await supabase
-          .from('self_funded_leaderboard')
-          .select('*')
-          .order('rank', { ascending: true })
-          .limit(15);
-        data = sData;
-        error = sErr;
-      }
+        dbTraders = gData
+          .map((r: any, idx: number) => {
+            const name = String(r.name || r.trader_name || r.username || 'Trader').trim();
+            const rawCode = String(
+              r.country_code || r.countryCode || r.iso_code || r.isoCode || r.country_iso || ''
+            ).trim();
+            const rawCountry = String(r.country || '').trim();
+            const resolvedIso = (rawCode || getIsoCountryCode(rawCountry)).toUpperCase();
+            const resolvedCountry =
+              rawCountry || (resolvedIso ? getCountryNameFromIso(resolvedIso) : 'Global');
+            const flagEmoji = r.flag || (resolvedIso ? getFlagEmojiFromIso(resolvedIso) : '🌐');
+            const rawProfit = Number(r.profit ?? r.daily_self_funded_profit ?? 0);
 
-      if (!error && Array.isArray(data) && data.length > 0) {
-        dbTraders = data.map((r: any) => {
-          const rawName = String(r.trader_name || r.name || 'Trader').trim();
-          const isYohan = rawName.toLowerCase().includes('yohan');
-          const name = isYohan ? 'Aarav Sharma' : rawName;
-
-          const rawCode = String(r.country_code || r.countryCode || r.iso_code || r.isoCode || r.country_iso || '').trim();
-          const rawCountry = String(r.country || '').trim();
-          const resolvedIso = isYohan ? 'IN' : (rawCode || getIsoCountryCode(rawCountry)).toUpperCase();
-          const resolvedCountry = isYohan ? 'India' : (rawCountry || (resolvedIso ? getCountryNameFromIso(resolvedIso) : 'Global'));
-          const flagEmoji = isYohan ? '🇮🇳' : (r.flag || (resolvedIso ? getFlagEmojiFromIso(resolvedIso) : '🌐'));
-
-          const rawProfit = isYohan
-            ? AARAV_SELF_FUNDED_PROFIT
-            : Number(r.daily_self_funded_profit ?? r.profit ?? 0);
-
-          return {
-            id: String(r.id || `slf_${r.rank}`),
-            rank: Number(r.rank),
-            name,
-            country: resolvedCountry,
-            countryCode: resolvedIso,
-            country_code: resolvedIso,
-            flag: flagEmoji,
-            isoCode: resolvedIso,
-            category: 'self_funded' as LeaderboardTabCategory,
-            accountTier: String(r.account_tier || r.accountTier || 'Self-Funded Live'),
-            profit: rawProfit,
-            winRate: Number(r.win_rate ?? r.winRate ?? 80.0),
-            payoutTime: String(r.payout_time || r.payoutTime || '1m 20s'),
-          };
-        });
-      }
-    } catch {
-      // table/view might be empty or unavailable
-    }
-
-    // 2. Fetch active traders from Supabase profiles (where self_balance > 0)
-    const activeProfileTraders: LeaderboardTrader[] = [];
-    try {
-      const { data: profileRows } = await supabase
-        .from('profiles')
-        .select('id, full_name, email, country, country_code, countryCode, iso_code, isoCode, self_balance, balance')
-        .gt('self_balance', 0)
-        .order('self_balance', { ascending: false })
-        .limit(20);
-
-      if (Array.isArray(profileRows) && profileRows.length > 0) {
-        profileRows.forEach((p: any, idx: number) => {
-          const rawName = String(p.full_name || p.email?.split('@')[0] || `Trader ${idx + 1}`).trim();
-          if (rawName.toLowerCase() === 'loading' || rawName.toLowerCase() === 'null') return;
-          const isYohan = rawName.toLowerCase().includes('yohan');
-          const name = isYohan ? 'Aarav Sharma' : rawName;
-          const selfBal = Number(p.self_balance || 0);
-          const profit = isYohan
-            ? AARAV_SELF_FUNDED_PROFIT
-            : Math.min(38500.00, Number(selfBal.toFixed(2)));
-
-          const pRawCode = String(p.country_code || p.countryCode || p.iso_code || p.isoCode || '').trim();
-          const pRawCountry = String(p.country || '').trim();
-          const pIso = isYohan ? 'IN' : (pRawCode || getIsoCountryCode(pRawCountry)).toUpperCase();
-          const pCountry = isYohan ? 'India' : (pRawCountry || (pIso ? getCountryNameFromIso(pIso) : 'Global'));
-          const pFlag = isYohan ? '🇮🇳' : (pIso ? getFlagEmojiFromIso(pIso) : '🌐');
-
-          activeProfileTraders.push({
-            id: `supa_prof_${p.id}`,
-            rank: 2,
-            name,
-            country: pCountry,
-            countryCode: pIso,
-            country_code: pIso,
-            flag: pFlag,
-            isoCode: pIso,
-            category: 'self_funded',
-            accountTier: profit > 20000 ? 'Self-Funded VIP Live' : 'Self-Funded Live',
-            profit,
-            winRate: Number((78.2 + (idx % 4) * 1.5).toFixed(1)),
-            payoutTime: '1m 15s',
+            return {
+              id: String(r.id || `slf_${idx + 1}`),
+              rank: idx + 1,
+              name,
+              country: resolvedCountry,
+              countryCode: resolvedIso,
+              country_code: resolvedIso,
+              flag: flagEmoji,
+              isoCode: resolvedIso,
+              category: 'self_funded' as LeaderboardTabCategory,
+              accountTier: String(r.account_tier || r.accountTier || 'Self-Funded Live'),
+              profit: rawProfit,
+              winRate: Number(r.win_rate ?? r.winRate ?? 80.0),
+              payoutTime: String(r.payout_time || r.payoutTime || '1m 20s'),
+            };
+          })
+          .filter((t) => {
+            const lower = t.name.toLowerCase();
+            return t.profit > 0 && lower !== 'loading' && lower !== 'null' && lower !== 'trader';
           });
-        });
       }
     } catch {
-      // Supabase profiles fetch fallback
+      // view might be empty or unavailable
     }
 
-    // 3. Fetch active traders from backend SQLite query (joins users + accounts + trades)
+    // If `global_leaderboards` returned rows, backfill up to 15 if needed, sort descending by profit and return top 15
+    if (dbTraders.length > 0) {
+      const fundedSample = getDynamicLeaderboardTraders({
+        category: 'funded',
+        useEveningPeak: true,
+      });
+      const selfFallback = getDynamicLeaderboardTraders({
+        category: 'self_funded',
+        nowMs,
+        useEveningPeak: false,
+      });
+      const crossFilteredSelf = filterCrossTableDuplicates(dbTraders, fundedSample);
+      const seenSelfNames = new Set(crossFilteredSelf.map((t) => t.name.toLowerCase()));
+      for (const seed of selfFallback) {
+        if (crossFilteredSelf.length >= 15) break;
+        const sLower = seed.name.toLowerCase();
+        if (!seenSelfNames.has(sLower)) {
+          seenSelfNames.add(sLower);
+          crossFilteredSelf.push(seed);
+        }
+      }
+      return crossFilteredSelf
+        .sort((a, b) => b.profit - a.profit)
+        .slice(0, 15)
+        .map((t, idx) => ({
+          ...t,
+          category: 'self_funded' as LeaderboardTabCategory,
+          rank: idx + 1,
+        }));
+    }
+
+    // 2. Fallback: Fetch active traders from backend SQLite query + dynamic seed pool
     let backendActiveTraders: LeaderboardTrader[] = [];
     try {
       const apiRes = await fetch('/api/leaderboard?category=self_funded');
@@ -1613,19 +1611,13 @@ export async function fetchSelfFundedLeaderboardFromSupabase(
       }
     } catch {}
 
-    // 4. Merge all sources
     const dynamicBase = getDynamicLeaderboardTraders({
       category: 'self_funded',
       nowMs,
       useEveningPeak: false,
     });
 
-    const combinedPool: LeaderboardTrader[] = [
-      ...dbTraders,
-      ...activeProfileTraders,
-      ...backendActiveTraders,
-      ...dynamicBase,
-    ];
+    const combinedPool: LeaderboardTrader[] = [...backendActiveTraders, ...dynamicBase];
 
     const deduplicated: LeaderboardTrader[] = [];
     const seenNames = new Set<string>();
@@ -1633,13 +1625,15 @@ export async function fetchSelfFundedLeaderboardFromSupabase(
     for (const t of combinedPool) {
       const cleanName = String(t.name || '').trim();
       const lower = cleanName.toLowerCase();
-      if (lower.includes('yohan')) continue;
-      if (seenNames.has(lower)) continue;
+      if (!lower || seenNames.has(lower)) continue;
       seenNames.add(lower);
       deduplicated.push(t);
     }
 
-    return normalizeSelfFundedLeaderboard(deduplicated, false, false);
+    const fundedSample = getDynamicLeaderboardTraders({ category: 'funded', useEveningPeak: true });
+    const crossFilteredSelf = filterCrossTableDuplicates(deduplicated, fundedSample);
+
+    return normalizeSelfFundedLeaderboard(crossFilteredSelf, false, false);
   } catch {
     return getDynamicLeaderboardTraders({
       category: 'self_funded',
@@ -1658,26 +1652,14 @@ export function subscribeToLeaderboardsRealtime(
     .channel(channelKey)
     .on(
       'postgres_changes',
-      { event: '*', schema: 'public', table: 'funded_leaderboard' },
-      async () => {
-        const updated = await fetchFundedLeaderboardFromSupabase();
-        onFundedUpdate(updated);
-      }
-    )
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: 'self_funded_leaderboard' },
-      async () => {
-        const updated = await fetchSelfFundedLeaderboardFromSupabase();
-        onSelfFundedUpdate(updated);
-      }
-    )
-    .on(
-      'postgres_changes',
       { event: '*', schema: 'public', table: 'profiles' },
       async () => {
-        const updated = await fetchSelfFundedLeaderboardFromSupabase();
-        onSelfFundedUpdate(updated);
+        const [updatedFunded, updatedSelfFunded] = await Promise.all([
+          fetchFundedLeaderboardFromSupabase(),
+          fetchSelfFundedLeaderboardFromSupabase(),
+        ]);
+        onFundedUpdate(updatedFunded);
+        onSelfFundedUpdate(updatedSelfFunded);
       }
     )
     .subscribe();
@@ -1686,4 +1668,5 @@ export function subscribeToLeaderboardsRealtime(
     supabase.removeChannel(channel);
   };
 }
+
 

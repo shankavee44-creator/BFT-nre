@@ -16,6 +16,10 @@ import {
   formatDailyProfitLoss,
   resolveUserLeaderboardPosition,
   invokeUpsertUserLeaderboard,
+  filterCrossTableDuplicates,
+  fetchCurrentUserLeaderboardEntry,
+  FUNDED_TRADER_POOL,
+  SELF_FUNDED_TRADER_POOL,
 } from './leaderboardEngine';
 import {
   markKycVerifiedLock,
@@ -346,6 +350,108 @@ test('Rule 7: CountryFlagIcon resolves correct ISO country codes and falls back 
   assert.equal(getCountryNameFromIso('MV'), 'Maldives');
   assert.equal(getFlagEmojiFromIso('BD'), '🇧🇩');
 });
+
+test('Rule 8: Strict 100% Name Separation between Funded and Self-Funded Leaderboards (Zero Duplication)', () => {
+  // 1. Initial pool check: zero name overlap between seed pools
+  const fundedNames = new Set(FUNDED_TRADER_POOL.map((t) => t.name.trim().toLowerCase()));
+  const selfFundedNames = new Set(SELF_FUNDED_TRADER_POOL.map((t) => t.name.trim().toLowerCase()));
+
+  for (const name of fundedNames) {
+    assert.equal(selfFundedNames.has(name), false, `Name '${name}' exists in both funded and self-funded pools!`);
+  }
+
+  // 2. Dynamic generation check: generated lists have 0 overlapping names
+  const fundedList = getDynamicLeaderboardTraders({ category: 'funded', useEveningPeak: true });
+  const selfFundedList = getDynamicLeaderboardTraders({ category: 'self_funded', useEveningPeak: true });
+
+  const activeSelfNames = new Set(selfFundedList.map((t) => t.name.trim().toLowerCase()));
+  for (const fTrader of fundedList) {
+    assert.equal(
+      activeSelfNames.has(fTrader.name.trim().toLowerCase()),
+      false,
+      `Trader '${fTrader.name}' should not appear in both leaderboards!`
+    );
+  }
+
+  // 3. filterCrossTableDuplicates helper check
+  const duplicateInput = [
+    { ...fundedList[0], name: 'Duplicate Trader' },
+    { ...fundedList[1], name: 'Unique Funded Trader' },
+  ];
+  const oppositeTable = [
+    { ...selfFundedList[0], name: 'Duplicate Trader' },
+  ];
+
+  const filtered = filterCrossTableDuplicates(duplicateInput, oppositeTable);
+  assert.equal(filtered.length, 1);
+  assert.equal(filtered[0].name, 'Unique Funded Trader');
+});
+
+test('Rule 9: Daily Top Traders ticker feed formats top 15 daily traders strictly sorted descending by profit with win rates', () => {
+  const dailyTraders = getDynamicLeaderboardTraders({ category: 'self_funded', useEveningPeak: true });
+  assert.equal(dailyTraders.length, 15, 'Ticker must display top 15 daily traders');
+
+  // Verify strict descending order by profit
+  for (let i = 0; i < dailyTraders.length - 1; i++) {
+    assert.ok(
+      dailyTraders[i].profit >= dailyTraders[i + 1].profit,
+      `Trader ${dailyTraders[i].name} ($${dailyTraders[i].profit}) must have >= profit than ${dailyTraders[i + 1].name} ($${dailyTraders[i + 1].profit})`
+    );
+  }
+
+  // Verify fields required by ticker item display: name, profit, win rate, ISO country code
+  for (const trader of dailyTraders) {
+    assert.ok(trader.name && trader.name !== 'Trader', 'Trader name must be specified');
+    assert.ok(typeof trader.profit === 'number', 'Trader profit must be a number');
+    assert.ok(typeof trader.winRate === 'number' && trader.winRate >= 60, 'Win rate must be at least 60%');
+    assert.ok(trader.isoCode && trader.isoCode.length === 2, 'ISO country code must be 2 characters');
+  }
+});
+
+test('Rule 10: Current logged-in user (Yohan Siriwardana) lookup handles missing leaderboard records safely without 404 and resolves default or live rank', async () => {
+  // 1. Safe query helper returns null or valid object without throwing when record is not found
+  const entry = await fetchCurrentUserLeaderboardEntry({
+    userName: 'Yohan Siriwardana',
+    category: 'self_funded',
+  });
+  assert.ok(entry === null || typeof entry.profit === 'number');
+
+  // 2. Default rank (1000+) when Yohan Siriwardana has $0.00 profit (even with tradesCount > 0 or 14-item base list)
+  const selfFundedBase = getDynamicLeaderboardTraders({ category: 'self_funded', useEveningPeak: true });
+  const defaultPos = resolveUserLeaderboardPosition(
+    0,
+    5,
+    selfFundedBase.slice(0, 14),
+    { tierName: 'Self-Funded Live' },
+    { name: 'Yohan Siriwardana', country: 'Sri Lanka', isoCode: 'LK', flag: '🇱🇰' }
+  );
+  assert.equal(defaultPos.isUnranked, true);
+  assert.equal(defaultPos.rank, null);
+  assert.equal(defaultPos.rankLabel, '1000+');
+  assert.equal(defaultPos.mergedTraders.length, 15);
+  assert.ok(
+    !defaultPos.mergedTraders.some(t => t.name === 'Yohan Siriwardana' || t.isCurrentUser || t.profit <= 0),
+    'Zero-profit user must never be injected into Rank #15 of the Top 15 table'
+  );
+
+  // 3. Live rank (#2) when Yohan Siriwardana generates qualifying profit ($36,000)
+  const livePos = resolveUserLeaderboardPosition(
+    36000,
+    4,
+    selfFundedBase,
+    { tierName: 'Self-Funded VIP Live' },
+    { name: 'Yohan Siriwardana', country: 'Sri Lanka', isoCode: 'LK', flag: '🇱🇰' }
+  );
+  assert.equal(livePos.isUnranked, false);
+  assert.equal(livePos.rank, 2);
+  assert.equal(livePos.rankLabel, '2');
+  assert.equal(livePos.mergedTraders[1].name, 'Yohan Siriwardana');
+  assert.equal(livePos.mergedTraders[1].isCurrentUser, true);
+});
+
+
+
+
 
 
 

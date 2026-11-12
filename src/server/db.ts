@@ -331,9 +331,7 @@ var __defProp=Object.defineProperty;var __name=(target,value)=>__defProp(target,
   ];
 
   try {
-    db.prepare(`DELETE FROM self_funded_leaderboard WHERE name LIKE '%Yohan%' OR id = 'SLF-LB-1'`).run();
-    db.prepare(`DELETE FROM leaderboard WHERE name LIKE '%Yohan%'`).run();
-    db.prepare(`UPDATE users SET full_name = 'Aarav Sharma' WHERE full_name LIKE '%Yohan%'`).run();
+    db.prepare(`DELETE FROM self_funded_leaderboard WHERE id = 'SLF-LB-1'`).run();
   } catch {}
 
   for (const lb of selfFundedSeed) {
