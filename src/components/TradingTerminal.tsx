@@ -4207,70 +4207,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               )}
             </button>
 
-            {/* 2. Chart Timeframe Selector Button (e.g., 1m) */}
-            <div className="relative">
-              <button
-                type="button"
-                data-testid="left-toolbar-timeframe-btn"
-                onClick={() => {
-                  soundEngine.playUiClick();
-                  setIsDrawingDrawerOpen(false);
-                  setLeftToolbarPopover((prev) => (prev === 'timeframe' ? 'none' : 'timeframe'));
-                }}
-                className={`w-10 h-9 rounded-lg flex flex-col items-center justify-center transition-all cursor-pointer font-mono ${
-                  leftToolbarPopover === 'timeframe'
-                    ? 'bg-[#ff8800] text-slate-950 border border-[#ff8800] font-black'
-                    : 'bg-[#1c202e] hover:bg-[#252b3d] border border-[#2a2e39] text-[#ff8800] hover:text-white'
-                }`}
-                title={`Chart Timeframe: ${timeframe}`}
-              >
-                <span className="text-[11px] font-black leading-none">{timeframe}</span>
-                <span className="text-[7px] font-bold uppercase tracking-tighter mt-0.5 opacity-80">Time</span>
-              </button>
-
-              {leftToolbarPopover === 'timeframe' && (
-                <div
-                  data-testid="left-toolbar-timeframe-popover"
-                  className="absolute left-full bottom-0 ml-2 w-44 rounded-xl bg-[#181c27] border border-[#2a2e39] shadow-2xl p-2.5 z-50 font-mono"
-                >
-                  <div className="flex items-center justify-between pb-1.5 mb-2 border-b border-[#2a2e39]">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-300">
-                      Candle Timeframe
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setLeftToolbarPopover('none')}
-                      className="text-slate-400 hover:text-white cursor-pointer"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  </div>
-                  <div className="grid grid-cols-3 gap-1.5">
-                    {(['5s', '15s', '30s', '1m', '5m', '15m', '1h', '4h', '1D'] as Timeframe[]).map((tf) => (
-                      <button
-                        key={tf}
-                        type="button"
-                        data-testid={`left-toolbar-tf-${tf}`}
-                        onClick={() => {
-                          soundEngine.playUiClick();
-                          setTimeframe(tf);
-                          setLeftToolbarPopover('none');
-                        }}
-                        className={`py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                          timeframe === tf
-                            ? 'bg-[#ff8800] text-slate-950 font-black shadow-sm'
-                            : 'bg-[#131722] hover:bg-[#252b3d] text-slate-300 hover:text-white border border-[#2a2e39]'
-                        }`}
-                      >
-                        {tf}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* 3. Chart Type Selector Button (Candles, Heikin-Ashi, Area/Line, Bars) */}
+            {/* 2. Chart Type Selector Button (Candles, Heikin-Ashi, Area/Line, Bars) */}
             <div className="relative">
               <button
                 type="button"
