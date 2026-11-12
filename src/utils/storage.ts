@@ -340,6 +340,8 @@ export function saveProfile(profile: UserProfile): void {
           numericId: profile.numericId,
           numeric_id: profile.numeric_id,
           isLoggedIn: profile.isLoggedIn,
+          onboarding_completed: profile.onboarding_completed,
+          onboardingCompleted: profile.onboardingCompleted,
           selfBalance: profile.selfBalance,
           demoBalance: profile.demoBalance,
           fundedBalance: profile.fundedBalance,
@@ -389,6 +391,7 @@ export function loadOrCreateUserProfileByEmail(params: {
   rememberMe?: boolean;
   profileLocked?: boolean;
   isNewRegistration?: boolean;
+  onboardingCompleted?: boolean;
   selfBalance?: number;
   demoBalance?: number;
   fundedBalance?: number;
@@ -401,6 +404,12 @@ export function loadOrCreateUserProfileByEmail(params: {
         const map: Record<string, UserProfile> = JSON.parse(mapRaw);
         const existing = map[emailKey];
         if (existing) {
+          const resolvedOnboarding = Boolean(
+            params.onboardingCompleted ??
+              existing.onboarding_completed ??
+              existing.onboardingCompleted ??
+              false
+          );
           const updated: UserProfile = {
             ...existing,
             id: params.userId || existing.id,
@@ -429,6 +438,8 @@ export function loadOrCreateUserProfileByEmail(params: {
                 params.kycStatus === 'verified' ||
                 params.kycStatus === 'pending'
             ),
+            onboarding_completed: resolvedOnboarding,
+            onboardingCompleted: resolvedOnboarding,
             address: params.address || existing.address || '',
             dateOfBirth: params.dateOfBirth || existing.dateOfBirth || '',
             country: params.country || existing.country || 'United States',
@@ -445,6 +456,10 @@ export function loadOrCreateUserProfileByEmail(params: {
   } catch {
     // fallback to creating fresh profile
   }
+
+  const initialOnboarding = params.isNewRegistration
+    ? false
+    : Boolean(params.onboardingCompleted ?? false);
 
   const freshProfile: UserProfile = {
     id: params.userId || 'trader_' + Math.floor(Math.random() * 900000 + 100000),
@@ -475,6 +490,8 @@ export function loadOrCreateUserProfileByEmail(params: {
     kycBackDocumentFileName: params.kycBackDocumentFileName,
     kycSubmittedAt: params.kycSubmittedAt,
     twoFactorEnabled: false,
+    onboarding_completed: initialOnboarding,
+    onboardingCompleted: initialOnboarding,
     activeAccountId: '',
     referralCode: params.referralCode,
     referredBy: params.referredBy,

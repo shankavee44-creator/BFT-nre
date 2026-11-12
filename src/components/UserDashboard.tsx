@@ -277,6 +277,18 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     }
   }, [userProfile.profileLocked]);
 
+  useEffect(() => {
+    const handleSelectSubTab = (e: Event) => {
+      const custom = e as CustomEvent;
+      const nextSub = custom.detail?.subTab;
+      if (nextSub && ['accounts', 'kyc', 'security', 'profile', 'analytics', 'affiliate', 'certificates'].includes(nextSub)) {
+        setActiveTab(nextSub);
+      }
+    };
+    window.addEventListener('bft-select-dashboard-subtab', handleSelectSubTab);
+    return () => window.removeEventListener('bft-select-dashboard-subtab', handleSelectSubTab);
+  }, []);
+
   // Live Supabase state for Purchases, Deposits, Withdrawals & Real User Trades Ledger
   const [livePurchases, setLivePurchases] = useState<NormalizedPurchaseRecord[]>([]);
   const [supabaseDeposits, setSupabaseDeposits] = useState<any[]>([]);
@@ -2098,7 +2110,19 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               </div>
             </div>
 
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                type="button"
+                data-testid="dashboard-copy-trading-btn"
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  window.dispatchEvent(new CustomEvent('bft-open-copy-trading-modal'));
+                }}
+                className="px-3.5 py-2.5 rounded-xl bg-[#0066ff] hover:bg-[#1a75ff] text-white text-xs font-black uppercase tracking-wider flex items-center gap-1.5 cursor-pointer transition-colors"
+              >
+                <UserCheck className="w-3.5 h-3.5" />
+                <span>Copy Trading</span>
+              </button>
               <button
                 type="button"
                 data-testid="dashboard-copy-numeric-id-btn"

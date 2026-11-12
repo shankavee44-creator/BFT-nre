@@ -136,6 +136,8 @@ export interface UserProfile {
   funded_balance?: number;
   is_2fa_enabled?: boolean;
   totp_secret?: string;
+  onboarding_completed?: boolean;
+  onboardingCompleted?: boolean;
   createdAt?: string;
   [key: string]: any;
 }

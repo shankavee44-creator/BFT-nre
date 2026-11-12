@@ -1118,6 +1118,12 @@ export function applyRealtimeProfileUpdate(
     rawNumericId !== undefined && rawNumericId !== null && String(rawNumericId).trim() !== ''
       ? String(rawNumericId).trim()
       : prevProfile.numericId ?? prevProfile.numeric_id;
+  const nextOnboardingCompleted = Boolean(
+    prevProfile.onboarding_completed ||
+      prevProfile.onboardingCompleted ||
+      row.onboarding_completed === true ||
+      row.onboardingCompleted === true
+  );
 
   const bonusState = extractProfileBonusState(row, prevProfile);
   const prevBonusState = extractProfileBonusState(prevProfile);
@@ -1139,6 +1145,7 @@ export function applyRealtimeProfileUpdate(
     nextReferredBy !== prevProfile.referredBy ||
     nextLocked !== prevProfile.profileLocked ||
     nextTwoFactor !== prevProfile.twoFactorEnabled ||
+    nextOnboardingCompleted !== Boolean(prevProfile.onboarding_completed || prevProfile.onboardingCompleted) ||
     String(nextNumericId ?? '') !== String(prevProfile.numericId ?? prevProfile.numeric_id ?? '');
 
   const updatedProfile: UserProfile = profileChanged
@@ -1152,6 +1159,8 @@ export function applyRealtimeProfileUpdate(
         kycStatus: resolvedKycStatus,
         profileLocked: nextLocked,
         twoFactorEnabled: nextTwoFactor,
+        onboarding_completed: nextOnboardingCompleted,
+        onboardingCompleted: nextOnboardingCompleted,
         selfBalance: nextSelf,
         self_capital_balance: nextSelf,
         demoBalance: nextDemo,

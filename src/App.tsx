@@ -126,6 +126,13 @@ import {
 } from './utils/apiClient';
 import { resolveOrBuildUserProfile, isTwoFactorEnabledOnProfile } from './utils/authOtpLogic';
 import { broadcastSyncEvent, subscribeToSyncEvents } from './utils/crossTabSync';
+import { OnboardingTourModal } from './components/OnboardingTourModal';
+import { CopyTradingModal } from './components/CopyTradingModal';
+import {
+  shouldShowOnboardingTour,
+  clearLocalOnboardingCompleted,
+  isUserOnboardingCompleted,
+} from './utils/onboardingTour';
 import { Gift, X, UserPlus, ShieldAlert, LogIn } from 'lucide-react';
 
 export default function App() {
@@ -134,6 +141,7 @@ export default function App() {
       ? new URLSearchParams(window.location.search)
       : new URLSearchParams();
   const isAutostart = searchParams.get('autostart') === '1';
+  const forceTourParam = searchParams.get('tour') === '1';
   const requestedInitialTab = searchParams.get('tab');
 
   const [currentTab, setCurrentTab] = useState<string>(
@@ -241,6 +249,25 @@ export default function App() {
   const [authModalMode, setAuthModalMode] = useState<'login' | 'register'>('login');
   const [isAdminDashboardOpen, setIsAdminDashboardOpen] = useState(false);
   const [isGitHubSyncOpen, setIsGitHubSyncOpen] = useState(false);
+  const [isGlobalCopyTradingOpen, setIsGlobalCopyTradingOpen] = useState(false);
+  const [isOnboardingTourOpen, setIsOnboardingTourOpen] = useState<boolean>(() =>
+    shouldShowOnboardingTour({
+      profile: userProfile,
+      isAutostart,
+      forceTourParam,
+    })
+  );
+
+  useEffect(() => {
+    const handleOpenTour = () => setIsOnboardingTourOpen(true);
+    const handleOpenCopy = () => setIsGlobalCopyTradingOpen(true);
+    window.addEventListener('bft-open-onboarding-tour', handleOpenTour);
+    window.addEventListener('bft-open-copy-trading-modal', handleOpenCopy);
+    return () => {
+      window.removeEventListener('bft-open-onboarding-tour', handleOpenTour);
+      window.removeEventListener('bft-open-copy-trading-modal', handleOpenCopy);
+    };
+  }, []);
 
   // Certificate Modal state when passing Step 1 / Phase 2
   const [certificateModalState, setCertificateModalState] = useState<{
@@ -914,6 +941,10 @@ export default function App() {
         referredBy: resolvedProfile.referredBy || backendSync?.user?.referredBy || undefined,
         rememberMe: true,
         isNewRegistration: false,
+        onboardingCompleted: Boolean(
+          existingProfile?.onboarding_completed === true ||
+            sessionUser?.user_metadata?.onboarding_completed === true
+        ),
         kycStatus: backendSync?.user?.kycStatus || resolvedProfile.kycStatus,
         profileLocked: backendSync?.user?.profileLocked ?? resolvedProfile.profileLocked,
         address: backendSync?.user?.address || resolvedProfile.address,
@@ -1986,6 +2017,12 @@ export default function App() {
             setAffiliateUsers(updatedAffiliateUsers);
             saveAffiliateUsers(updatedAffiliateUsers);
           }
+          if (isNewRegistration) {
+            clearLocalOnboardingCompleted({ userId, email });
+          }
+          const serverOnboardingDone = Boolean(
+            serverUser?.onboarding_completed === true || serverUser?.onboardingCompleted === true
+          );
           const loadedOrCreatedProfile = loadOrCreateUserProfileByEmail({
             userId,
             email,
@@ -1994,6 +2031,7 @@ export default function App() {
             referredBy: referredBy || undefined,
             rememberMe,
             isNewRegistration,
+            onboardingCompleted: isNewRegistration ? false : serverOnboardingDone,
             kycStatus: serverUser?.kycStatus,
             kycDocType: serverUser?.kycDocType,
             kycDocumentNumber: serverUser?.kycDocumentNumber,
@@ -2076,8 +2114,50 @@ export default function App() {
           setProtectedRouteNotice(null);
           setIsAuthModalOpen(false);
           setCurrentTab('dashboard');
+
+          if (isNewRegistration || !isUserOnboardingCompleted(loadedOrCreatedProfile)) {
+            setIsOnboardingTourOpen(true);
+          }
         }}
       />
+
+      {/* Interactive 6-Step Onboarding & Platform Demo Tour */}
+      <OnboardingTourModal
+        isOpen={isOnboardingTourOpen}
+        onClose={() => setIsOnboardingTourOpen(false)}
+        userProfile={userProfile}
+        onUpdateProfile={handleUpdateProfile}
+        currentTab={currentTab}
+        onNavigateTab={handleNavigateTab}
+        onOpenLeaderboard={() => {
+          window.dispatchEvent(new CustomEvent('bft-open-leaderboard-modal'));
+        }}
+        onOpenDepositModal={() => setIsDepositModalOpen(true)}
+        onOpenCopyTrading={() => setIsGlobalCopyTradingOpen(true)}
+      />
+
+      {/* Global Copy Trading Modal (Accessible from Dashboard & Onboarding Tour) */}
+      {currentTab !== 'terminal' && (
+        <CopyTradingModal
+          isOpen={isGlobalCopyTradingOpen}
+          onClose={() => setIsGlobalCopyTradingOpen(false)}
+          accounts={userAccounts}
+          activeAccount={activeAccount}
+          trades={trades}
+          userProfile={userProfile}
+          onNavigateToPricing={() => {
+            setIsGlobalCopyTradingOpen(false);
+            setCurrentTab('home');
+            setTimeout(() => {
+              document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' });
+            }, 100);
+          }}
+          onOpenDepositModal={() => {
+            setIsGlobalCopyTradingOpen(false);
+            setIsDepositModalOpen(true);
+          }}
+        />
+      )}
 
       <CertificateModal
         isOpen={certificateModalState.isOpen}

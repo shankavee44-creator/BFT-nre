@@ -111,8 +111,15 @@ export const Header: React.FC<HeaderProps> = ({
     const handleToggle = (e: any) => {
       setSoundActive(e.detail.enabled);
     };
+    const handleOpenLeaderboard = () => {
+      setLeaderboardOpen(true);
+    };
     window.addEventListener('bft-sound-toggle', handleToggle);
-    return () => window.removeEventListener('bft-sound-toggle', handleToggle);
+    window.addEventListener('bft-open-leaderboard-modal', handleOpenLeaderboard);
+    return () => {
+      window.removeEventListener('bft-sound-toggle', handleToggle);
+      window.removeEventListener('bft-open-leaderboard-modal', handleOpenLeaderboard);
+    };
   }, []);
 
   const handleToggleSound = () => {
@@ -232,6 +239,22 @@ export const Header: React.FC<HeaderProps> = ({
               className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-[#00e676] hover:bg-[#00c853] text-slate-950 text-xs font-extrabold transition-all cursor-pointer whitespace-nowrap"
             >
               <span>+ Deposit</span>
+            </button>
+          )}
+
+          {/* Guided Tour Button (Visible when user is authenticated) */}
+          {userProfile.isLoggedIn && (
+            <button
+              type="button"
+              data-testid="header-onboarding-tour-btn"
+              onClick={() => {
+                soundEngine.playUiClick();
+                window.dispatchEvent(new CustomEvent('bft-open-onboarding-tour'));
+              }}
+              title="Start Interactive Platform Tour"
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-[#111827] hover:bg-[#161f33] border border-[#0066ff]/40 text-[#0066ff] text-xs font-bold transition-all cursor-pointer whitespace-nowrap"
+            >
+              <span>Tour</span>
             </button>
           )}
 

@@ -138,6 +138,7 @@ export async function ensureSupabaseProfileAndDemoAccount(params: {
       referral_code: existingProfile?.referral_code || genRefCode,
       referred_by: sponsorUuid,
       kyc_status: existingProfile?.kyc_status || 'unverified',
+      onboarding_completed: existingProfile?.onboarding_completed ?? false,
     };
 
     console.log('[Profile Creation] Upserting user record into public.profiles for ID:', userId);

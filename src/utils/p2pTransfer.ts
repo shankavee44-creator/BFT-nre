@@ -324,46 +324,26 @@ export async function fetchP2PTransfersFromSupabase(params: {
   const localList = loadLocalP2PTransferHistory(storageUserId, cleanNumId || undefined);
   const candidateList = [...localList];
 
-  if (typeof client?.from === 'function') {
+  if (typeof client?.from === 'function' && userId && UUID_REGEX.test(userId)) {
     const rawRows: Array<Record<string, any>> = [];
-    const tablesToQuery = ['balance_transfers', 'p2p_transfers'];
+    const orFilter = `sender_id.eq.${userId},receiver_id.eq.${userId}`;
 
-    for (const tableName of tablesToQuery) {
-      const filterStrategies: string[] = [];
-      if (userId && UUID_REGEX.test(userId)) {
-        // Primary query: sender_id or receiver_id matches auth.uid()
-        filterStrategies.push(`sender_id.eq.${userId},receiver_id.eq.${userId}`);
-        // Secondary fallback if legacy columns sender_user_id / receiver_user_id are used
-        filterStrategies.push(`sender_user_id.eq.${userId},receiver_user_id.eq.${userId}`);
-      }
-      if (cleanNumId && /^\d+$/.test(cleanNumId)) {
-        filterStrategies.push(
-          `sender_numeric_id.eq.${cleanNumId},receiver_numeric_id.eq.${cleanNumId}`
-        );
-      }
+    try {
+      const { data, error } = await (client.from('balance_transfers') as any)
+        .select('*')
+        .or(orFilter)
+        .order('created_at', { ascending: false })
+        .limit(100);
 
-      for (const orFilter of filterStrategies) {
-        try {
-          const { data, error } = await (client.from(tableName) as any)
-            .select('*')
-            .or(orFilter)
-            .order('created_at', { ascending: false })
-            .limit(100);
-
-          if (!error && Array.isArray(data)) {
-            for (const r of data) {
-              if (r && typeof r === 'object') {
-                rawRows.push(r);
-              }
-            }
-            if (orFilter.startsWith('sender_id.eq.')) {
-              break;
-            }
+      if (!error && Array.isArray(data)) {
+        for (const r of data) {
+          if (r && typeof r === 'object') {
+            rawRows.push(r);
           }
-        } catch {
-          // try next filter strategy
         }
       }
+    } catch {
+      // ignore offline or schema error
     }
 
     // Batch-resolve counterparty profiles from `profiles` when `balance_transfers` only stores UUIDs (`sender_id`, `receiver_id`)
