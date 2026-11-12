@@ -137,7 +137,7 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   return (
-    <header className="sticky top-0 z-40 w-full max-w-[100vw] border-b border-white/[0.08] bg-[#0b0f19]/95 backdrop-blur-xl">
+    <header className="sticky top-0 z-40 w-full max-w-[100vw] border-b border-white/[0.12] bg-[#0b0f19]">
       {/* Live Institutional Payout Ticker Feed */}
       <CryptoTickerBar onSelectPair={() => setLeaderboardOpen(true)} />
 
@@ -149,7 +149,7 @@ export const Header: React.FC<HeaderProps> = ({
           data-testid="header-brand-lockup"
           className="flex items-center gap-2 sm:gap-3 cursor-pointer group select-none shrink-0 py-1"
         >
-          <div className="relative flex items-center justify-center transition-transform group-hover:scale-105 duration-200">
+          <div className="relative flex items-center justify-center transition-transform duration-200">
             <BftLogo
               imgClassName="h-9 sm:h-10 md:h-11 w-auto"
               testId="header-bft-logo"
@@ -166,14 +166,14 @@ export const Header: React.FC<HeaderProps> = ({
                 PRIME PROP
               </span>
             </div>
-            <p className="hidden sm:block text-[10px] font-semibold text-[#9ca3af] tracking-wide uppercase whitespace-nowrap mt-0.5">
+            <p className="hidden sm:block text-[10px] font-bold text-slate-300 tracking-wide uppercase whitespace-nowrap mt-0.5">
               Binary Funded Trader
             </p>
           </div>
         </div>
 
         {/* Center Nav Links */}
-        <nav className="hidden lg:flex items-center gap-1 bg-[#111827] border border-white/[0.08] rounded-xl p-1">
+        <nav className="hidden lg:flex items-center gap-1 bg-[#111827] border border-white/[0.12] rounded-xl p-1">
           {[
             { id: 'home', label: 'Challenges & Pricing' },
             { id: 'terminal', label: 'Trading Terminal' },
@@ -189,14 +189,14 @@ export const Header: React.FC<HeaderProps> = ({
                 key={tab.id}
                 data-testid={`nav-${tab.id}-btn`}
                 onClick={() => handleNavClick(tab.id)}
-                className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all duration-200 cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
                   currentTab === tab.id
                     ? 'bg-[#0066ff] text-white font-extrabold shadow-[0_2px_10px_rgba(0,102,255,0.35)]'
-                    : 'text-[#9ca3af] hover:text-white hover:bg-white/5'
+                    : 'text-slate-200 hover:text-white hover:bg-white/10'
                 }`}
               >
                 <span>{tab.label}</span>
-                {isLocked && <Lock className="w-2.5 h-2.5 text-[#9ca3af] shrink-0" />}
+                {isLocked && <Lock className="w-2.5 h-2.5 text-slate-300 shrink-0" />}
               </button>
             );
           })}
@@ -338,7 +338,7 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Slide-Down Mobile Drawer Menu */}
       {mobileMenuOpen && (
-        <div className="lg:hidden border-t border-white/[0.08] bg-[#0b0f19]/98 backdrop-blur-2xl px-4 py-4 space-y-4 animate-in slide-in-from-top-4 duration-200">
+        <div className="lg:hidden border-t border-white/[0.12] bg-[#0b0f19] px-4 py-4 space-y-4 animate-in slide-in-from-top-4 duration-200">
           {/* Mobile Drawer Brand Header */}
           <div className="flex items-center justify-between pb-3 border-b border-white/[0.08]">
             <div className="flex items-center gap-2.5">

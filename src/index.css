@@ -11,7 +11,7 @@
   --color-ftmo-elevated: #161f33;
   --color-ftmo-blue: #0066ff;
   --color-ftmo-blue-hover: #1a75ff;
-  --color-ftmo-muted: #9ca3af;
+  --color-ftmo-muted: #cbd5e1;
 }
 
 :root {
@@ -21,12 +21,12 @@
   --ftmo-bg-deep: #07090e;
   --ftmo-surface-card: #111827;
   --ftmo-surface-elevated: #161f33;
-  --ftmo-border-subtle: rgba(255, 255, 255, 0.08);
-  --ftmo-border-hover: rgba(0, 102, 255, 0.45);
+  --ftmo-border-subtle: rgba(255, 255, 255, 0.12);
+  --ftmo-border-hover: rgba(0, 102, 255, 0.55);
   --ftmo-accent-primary: #0066ff;
   --ftmo-accent-hover: #1a75ff;
   --ftmo-text-heading: #ffffff;
-  --ftmo-text-secondary: #9ca3af;
+  --ftmo-text-secondary: #cbd5e1;
   --ftmo-status-success: #10b981;
   --ftmo-status-orange: #ff7b00;
 }
@@ -35,6 +35,7 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+  font-synthesis: none;
 }
 
 html,
@@ -71,12 +72,22 @@ body {
   font-family: 'Outfit', 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased !important;
   -moz-osx-font-smoothing: grayscale !important;
+  text-rendering: optimizeLegibility !important;
 }
 
 *, ::before, ::after {
   box-sizing: border-box;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+button,
+input,
+select,
+textarea {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 .no-scrollbar::-webkit-scrollbar {
@@ -92,29 +103,30 @@ body {
     background-color: var(--ftmo-bg-primary);
     color: var(--ftmo-text-heading);
     font-family: 'Outfit', 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-    font-weight: 400;
+    font-weight: 500;
     line-height: 1.6;
-    letter-spacing: -0.008em;
+    letter-spacing: -0.005em;
   }
 
   h1, h2, h3, h4, h5, h6, .font-display {
     font-family: 'Outfit', 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
     color: var(--ftmo-text-heading);
-    letter-spacing: -0.025em;
-    line-height: 1.12;
+    letter-spacing: -0.02em;
+    line-height: 1.14;
   }
 
   p {
     font-family: 'Plus Jakarta Sans', 'Outfit', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    font-weight: 500;
     line-height: 1.65;
-    letter-spacing: -0.005em;
+    letter-spacing: 0em;
   }
 
   code, pre, .font-mono {
     font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     font-variant-numeric: tabular-nums;
     font-feature-settings: "tnum" 1, "zero" 1;
-    letter-spacing: -0.02em;
+    letter-spacing: -0.015em;
   }
 
   /* High-DPI canvas subpixel sharpness optimization */
@@ -122,6 +134,20 @@ body {
     image-rendering: -webkit-optimize-contrast;
     text-rendering: optimizeLegibility;
   }
+}
+
+/* Strong Contrast Text Rules against #0b0f19 Dark Background */
+.text-\[\#9ca3af\],
+.text-slate-400,
+.text-zinc-400,
+.text-gray-400 {
+  color: #cbd5e1 !important;
+}
+
+.text-slate-500,
+.text-zinc-500,
+.text-gray-500 {
+  color: #94a3b8 !important;
 }
 
 /* Protect canvas elements and charting layers from forced layout transforms */
@@ -134,7 +160,7 @@ canvas,
   backface-visibility: visible !important;
 }
 
-/* Force hardware acceleration on fixed containers, modals, and layout wrappers */
+/* Avoid 3D transform / perspective on text containers to preserve crisp vector glyph rasterization */
 .hw-accelerate,
 .glass-panel,
 .trading-panel,
@@ -142,12 +168,12 @@ canvas,
 .fixed-overlay,
 .modal-overlay,
 .trade-badge {
-  transform: translateZ(0);
-  backface-visibility: hidden;
-  perspective: 1000px;
+  transform: none;
+  backface-visibility: visible;
+  perspective: none;
 }
 
-/* Touch-Scrolling & GPU-Accelerated Helpers */
+/* Touch-Scrolling Helpers */
 .touch-scroll {
   -webkit-overflow-scrolling: touch !important;
   overscroll-behavior-y: contain !important;
@@ -159,9 +185,6 @@ canvas,
   touch-action: pan-x pan-y pinch-zoom;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
-  will-change: transform;
-  transform: translateZ(0);
-  backface-visibility: hidden;
 }
 
 .tradingview-chart-container canvas,
@@ -174,9 +197,8 @@ canvas,
 .mobile-trading-controls,
 [data-testid="quotex-mobile-dock"],
 [data-testid="quotex-mobile-nav"] {
-  transform: translateZ(0);
-  will-change: transform;
-  backface-visibility: hidden;
+  transform: none;
+  will-change: auto;
 }
 
 .mobile-trading-controls button,
@@ -188,7 +210,7 @@ canvas,
 }
 
 /* =========================================================================
-   ADAPTIVE HARDWARE OPTIMIZATION: LOW-END VS HIGH-END MOBILE ENGINE
+   CRISP UI RENDERING & BLUR REDUCTION POLICY
    ========================================================================= */
 
 /* Zero touch latency across all mobile interactive controls */
@@ -202,23 +224,37 @@ select,
   -webkit-tap-highlight-color: transparent;
 }
 
-/* 1. Low-End Mobile Hardware Policy: Eliminate heavy GPU filters & throttle CPU */
-html.perf-mode-low,
-.perf-mode-low {
-  --bft-backdrop-blur: none;
-}
-
-html.perf-mode-low .backdrop-blur-2xl,
-html.perf-mode-low .backdrop-blur-xl,
-html.perf-mode-low .backdrop-blur-lg,
-html.perf-mode-low .backdrop-blur-md,
-html.perf-mode-low .backdrop-blur-sm,
-html.perf-mode-low .backdrop-blur,
-html.perf-mode-low [class*="backdrop-blur-"],
-html.perf-mode-low .glass-panel {
+/* Disable heavy Gaussian backdrop-blur across UI surfaces to prevent blurry/muddied text */
+.backdrop-blur-3xl,
+.backdrop-blur-2xl,
+.backdrop-blur-xl,
+.backdrop-blur-lg,
+.backdrop-blur-md,
+.backdrop-blur-sm,
+.backdrop-blur-xs,
+.backdrop-blur,
+[class*="backdrop-blur-"],
+.glass-panel,
+html.perf-mode-low .glass-panel,
+html.perf-mode-high .glass-panel {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
-  background-color: rgba(17, 24, 39, 0.98) !important;
+}
+
+/* Tame oversized ambient background filter blurs so they never haze foreground text */
+.blur-3xl,
+.blur-2xl,
+.blur-xl,
+[class*="blur-["] {
+  filter: none !important;
+  opacity: 0.08 !important;
+}
+
+html.perf-mode-low,
+.perf-mode-low,
+html.perf-mode-high,
+.perf-mode-high {
+  --bft-backdrop-blur: none;
 }
 
 /* Eliminate expensive multi-layered box-shadows on low-end hardware */
@@ -237,20 +273,7 @@ html.perf-mode-low .animate-bounce {
   animation: none !important;
 }
 
-/* 2. High-End Mobile Hardware Policy: Enable crisp glassmorphism & 60fps/120fps transitions */
-html.perf-mode-high,
-.perf-mode-high {
-  --bft-backdrop-blur: blur(14px);
-}
-
-html.perf-mode-high .glass-panel {
-  background: rgba(17, 24, 39, 0.92);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-/* Mobile GPU Acceleration, Unfreeze Scroll & Render Optimization (< 1024px) */
+/* Mobile Scroll & Render Optimization (< 1024px) */
 @media (max-width: 1023px) {
   * {
     -webkit-tap-highlight-color: transparent;
@@ -267,17 +290,6 @@ html.perf-mode-high .glass-panel {
     -webkit-overflow-scrolling: touch !important;
     overscroll-behavior-y: contain !important;
     touch-action: pan-y pan-x;
-  }
-
-  .hw-accelerate,
-  .tradingview-chart-container,
-  .tv-chart-container,
-  [data-testid="quotex-mobile-dock"],
-  [role="dialog"] > div,
-  .modal-overlay > div {
-    will-change: transform;
-    transform: translateZ(0);
-    backface-visibility: hidden;
   }
 }
 
@@ -304,7 +316,7 @@ html.perf-mode-high .glass-panel {
   background: transparent;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.16);
   border-radius: 10px;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
@@ -329,75 +341,73 @@ html.perf-mode-high .glass-panel {
     linear-gradient(to bottom, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
 }
 
-/* Glassmorphism Panel — Clean Crisp Institutional Surface */
+/* Crisp Solid Institutional Panel Surface (No Blur) */
 .glass-panel {
-  background: rgba(17, 24, 39, 0.92);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: #111827;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 1px solid rgba(255, 255, 255, 0.12);
 }
 
 .glass-panel-hover {
-  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: border-color 0.2s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .glass-panel-hover:hover {
-  border-color: rgba(0, 102, 255, 0.45);
-  background: rgba(22, 31, 51, 0.96);
-  transform: translateY(-2px);
+  border-color: rgba(0, 102, 255, 0.55);
+  background: #161f33;
 }
 
-/* High-End 60fps Micro-Interactions & Entry Animations */
+/* High-End 60fps Entry Animations — Reset transform to `none` at 100% for crisp text rasterization */
 @keyframes bftFadeSlideUp {
   0% {
     opacity: 0;
-    transform: translateY(10px);
   }
   100% {
     opacity: 1;
-    transform: translateY(0);
+    transform: none;
   }
 }
 
 @keyframes bftModalScaleIn {
   0% {
     opacity: 0;
-    transform: scale(0.96) translateY(6px);
   }
   100% {
     opacity: 1;
-    transform: scale(1) translateY(0);
+    transform: none;
   }
 }
 
 .animate-bft-entry {
-  animation: bftFadeSlideUp 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: bftFadeSlideUp 0.22s ease-out forwards;
 }
 
 .animate-bft-modal {
-  animation: bftModalScaleIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: bftModalScaleIn 0.18s ease-out forwards;
 }
 
 @keyframes bftFloat {
   0%, 100% {
-    transform: translateY(0px);
+    transform: none;
   }
   50% {
-    transform: translateY(-6px);
+    transform: none;
   }
 }
 
 .animate-bft-float {
-  animation: bftFloat 4s ease-in-out infinite;
+  animation: none;
 }
 
-/* Interactive Button & Card Micro-Elevation */
+/* Interactive Button & Card Transitions (No fractional scale that blurs glyph rendering) */
 button,
 [role="button"] {
-  transition: transform 0.16s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease, opacity 0.16s ease;
+  transition: background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease, opacity 0.16s ease;
 }
 
 button:active:not(:disabled),
 [role="button"]:active:not(:disabled) {
-  transform: scale(0.98);
+  transform: none;
 }
 
 /* Marquee Animation for Live Ticker */
@@ -561,25 +571,23 @@ button:active:not(:disabled),
   animation: pricingBgCrossFade2 18s ease-in-out infinite;
 }
 
-/* GPU-Efficient Compositor-Only Pulsing Animation for Active Trade Indicator Badges */
+/* Crisp Pulsing Animation for Active Trade Indicator Badges (Opacity only, no fractional text scaling) */
 @keyframes activeTradeBadgePulse {
   0%, 100% {
-    transform: translateZ(0) scale3d(1, 1, 1);
     opacity: 1;
   }
   50% {
-    transform: translateZ(0) scale3d(1.035, 1.035, 1);
-    opacity: 0.86;
+    opacity: 0.88;
   }
 }
 
 @keyframes activeTradeDotPulse {
   0% {
-    transform: translateZ(0) scale3d(0.95, 0.95, 1);
+    transform: scale(0.95);
     opacity: 0.85;
   }
   75%, 100% {
-    transform: translateZ(0) scale3d(1.75, 1.75, 1);
+    transform: scale(1.75);
     opacity: 0;
   }
 }
@@ -587,10 +595,6 @@ button:active:not(:disabled),
 .active-trade-badge-pulse,
 .pulse-active-trade-badge {
   animation: activeTradeBadgePulse 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-  will-change: transform, opacity;
-  transform: translateZ(0);
-  backface-visibility: hidden;
-  contain: layout style;
 }
 
 .active-trade-badge-pulse-win {
@@ -603,9 +607,6 @@ button:active:not(:disabled),
 
 .active-trade-dot-pulse {
   animation: activeTradeDotPulse 1.6s cubic-bezier(0, 0, 0.2, 1) infinite;
-  will-change: transform, opacity;
-  transform: translateZ(0);
-  backface-visibility: hidden;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -621,7 +622,6 @@ button:active:not(:disabled),
 .bft-accordion-grid {
   display: grid;
   transition: grid-template-rows 220ms cubic-bezier(0.16, 1, 0.3, 1), opacity 180ms ease-out;
-  will-change: grid-template-rows, opacity;
 }
 
 .bft-accordion-open {
@@ -649,12 +649,12 @@ button:active:not(:disabled),
 }
 
 .bft-touch-scale {
-  transition: transform 140ms cubic-bezier(0.16, 1, 0.3, 1), background-color 140ms ease, border-color 140ms ease;
+  transition: background-color 140ms ease, border-color 140ms ease;
   touch-action: manipulation;
 }
 
 .bft-touch-scale:active {
-  transform: scale3d(0.965, 0.965, 1);
+  transform: none;
 }
 
 .bft-snap-strip {

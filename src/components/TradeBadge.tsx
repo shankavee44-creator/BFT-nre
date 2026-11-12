@@ -37,7 +37,6 @@ export const TradeBadge: React.FC<TradeBadgeProps> = React.memo(({
         left: `${left + 15}px`,
         minWidth: '120px',
         boxShadow: '0 8px 24px rgba(0,0,0,0.7)',
-        transform: 'translateZ(0)',
       }}
     >
       <div className="flex items-center justify-between gap-2.5">

@@ -83,22 +83,21 @@ export const FastestPayoutAwardBanner: React.FC<FastestPayoutAwardBannerProps> =
 
   return (
     <section className="py-8 sm:py-20 bg-[#07090e] border-b border-white/[0.08] relative overflow-hidden">
-      {/* Background Subtle Cyber Grid & Ambient Highlights */}
-      <div className="absolute inset-0 bg-cyber-grid opacity-30 pointer-events-none" />
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[300px] sm:w-[600px] h-[200px] sm:h-[300px] bg-[#0066ff]/10 rounded-full blur-[100px] pointer-events-none animate-pulse" />
+      {/* Background Subtle Cyber Grid */}
+      <div className="absolute inset-0 bg-cyber-grid opacity-20 pointer-events-none" />
 
       <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 relative z-10">
         {/* Section Top Header Pill */}
         <div className="text-center mb-6 sm:mb-10 font-sans">
-          <div className="inline-flex items-center gap-1.5 px-3.5 sm:px-4 py-1.5 rounded-full bg-[#111827] border border-[#ff8800]/60 text-[#ffaa00] text-[10px] sm:text-xs font-bold uppercase tracking-wider shadow-lg animate-bft-entry">
+          <div className="inline-flex items-center gap-1.5 px-3.5 sm:px-4 py-1.5 rounded-full bg-[#111827] border border-[#ff8800]/60 text-[#ffaa00] text-[10px] sm:text-xs font-bold uppercase tracking-wider shadow-lg">
             <Award className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#ff8800] fill-[#ff8800]" />
             <span>GLOBAL INDUSTRY RECOGNITION • 2026</span>
             <Sparkles className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#ffaa00]" />
           </div>
-          <h2 className="text-2xl sm:text-4xl lg:text-[42px] font-extrabold text-white font-sans mt-3 tracking-[-0.025em] leading-[1.12]">
+          <h2 className="text-2xl sm:text-4xl lg:text-[42px] font-extrabold text-white font-sans mt-3 tracking-[-0.02em] leading-[1.12]">
             Certified Excellence &amp; Verified Payout Speed
           </h2>
-          <p className="text-xs sm:text-base text-[#9ca3af] font-normal sm:font-medium leading-relaxed mt-2 px-2 max-w-2xl mx-auto">
+          <p className="text-xs sm:text-base text-slate-200 font-medium leading-relaxed mt-2 px-2 max-w-2xl mx-auto">
             Independently audited and recognized across global institutional prop trading networks.
           </p>
         </div>
@@ -168,7 +167,7 @@ export const FastestPayoutAwardBanner: React.FC<FastestPayoutAwardBannerProps> =
                 <button
                   type="button"
                   onClick={handlePrev}
-                  className="absolute left-2 sm:left-4 top-1/2 -translate-y-1/2 w-8 sm:w-12 h-8 sm:h-12 rounded-xl sm:rounded-2xl bg-[#111827]/90 hover:bg-[#0066ff] text-white border border-white/15 flex items-center justify-center transition-all shadow-2xl cursor-pointer opacity-75 hover:opacity-100 backdrop-blur-md active:scale-95 z-25"
+                  className="absolute left-2 sm:left-4 top-1/2 -translate-y-1/2 w-8 sm:w-12 h-8 sm:h-12 rounded-xl sm:rounded-2xl bg-[#111827] hover:bg-[#0066ff] text-white border border-white/20 flex items-center justify-center transition-all shadow-2xl cursor-pointer z-25"
                   title="Previous Award"
                 >
                   <ChevronLeft className="w-4 h-4 sm:w-6 sm:h-6 stroke-[2.5]" />
@@ -176,15 +175,15 @@ export const FastestPayoutAwardBanner: React.FC<FastestPayoutAwardBannerProps> =
                 <button
                   type="button"
                   onClick={handleNext}
-                  className="absolute right-2 sm:right-4 top-1/2 -translate-y-1/2 w-8 sm:w-12 h-8 sm:h-12 rounded-xl sm:rounded-2xl bg-[#111827]/90 hover:bg-[#0066ff] text-white border border-white/15 flex items-center justify-center transition-all shadow-2xl cursor-pointer opacity-75 hover:opacity-100 backdrop-blur-md active:scale-95 z-25"
+                  className="absolute right-2 sm:right-4 top-1/2 -translate-y-1/2 w-8 sm:w-12 h-8 sm:h-12 rounded-xl sm:rounded-2xl bg-[#111827] hover:bg-[#0066ff] text-white border border-white/20 flex items-center justify-center transition-all shadow-2xl cursor-pointer z-25"
                   title="Next Award"
                 >
                   <ChevronRight className="w-4 h-4 sm:w-6 sm:h-6 stroke-[2.5]" />
                 </button>
 
                 {/* Floating SLA Proof / Badge */}
-                <div className="absolute top-2.5 right-2.5 sm:top-6 sm:right-6 bg-[#0b0f19]/95 backdrop-blur-md border border-[#ff8800]/80 text-white px-2.5 py-1 sm:px-3.5 sm:py-2 rounded-lg sm:rounded-xl flex items-center gap-1.5 text-[10px] sm:text-xs font-mono font-black shadow-2xl z-20">
-                  <Zap className="w-3 h-3 sm:w-4 sm:h-4 text-[#ff8800] fill-[#ff8800] animate-bounce" />
+                <div className="absolute top-2.5 right-2.5 sm:top-6 sm:right-6 bg-[#0b0f19] border border-[#ff8800]/80 text-white px-2.5 py-1 sm:px-3.5 sm:py-2 rounded-lg sm:rounded-xl flex items-center gap-1.5 text-[10px] sm:text-xs font-mono font-black shadow-2xl z-20">
+                  <Zap className="w-3 h-3 sm:w-4 sm:h-4 text-[#ff8800] fill-[#ff8800]" />
                   <span key={currentSlide.id} className="animate-in fade-in duration-300">
                     {currentSlide.slaProof}
                   </span>

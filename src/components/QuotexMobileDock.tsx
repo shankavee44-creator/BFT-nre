@@ -76,8 +76,7 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = React.memo(({
   return (
     <div
       data-testid="quotex-mobile-dock"
-      style={{ willChange: 'transform', transform: 'translateZ(0)' }}
-      className="md:hidden fixed bottom-[48px] left-0 right-0 z-40 bg-[#0e1015]/99 border-t border-white/15 px-2 py-1 shrink-0 font-mono select-none w-full max-w-[100vw] overflow-x-hidden hw-accelerate gpu-accelerated mobile-trading-controls shadow-[0_-8px_24px_rgba(0,0,0,0.9)] space-y-1"
+      className="md:hidden fixed bottom-[48px] left-0 right-0 z-40 bg-[#0e1015] border-t border-white/15 px-2 py-1 shrink-0 font-mono select-none w-full max-w-[100vw] overflow-x-hidden mobile-trading-controls shadow-[0_-8px_24px_rgba(0,0,0,0.9)] space-y-1"
     >
       {/* 1. Compact Asset Selector, Inline Payout Pill & Pending Switch */}
       <div className="flex items-center justify-between gap-1.5">

@@ -71,25 +71,13 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
           <source src={HERO_BACKGROUND_VIDEO_SRC} type="video/mp4" />
         </video>
 
-        {/* Semi-Transparent Dark & Gradient Overlays for 100% Foreground Readability */}
+        {/* High-Contrast Dark Scrims for 100% Foreground Readability */}
         <div
           data-testid="hero-video-overlay"
-          className="absolute inset-0 bg-[#07090e]/55 pointer-events-none"
+          className="absolute inset-0 bg-[#07090e]/75 pointer-events-none"
         />
-        <div className="absolute inset-0 bg-gradient-to-b from-[#0b0f19]/75 via-[#07090e]/40 to-[#0b0f19]/95 pointer-events-none" />
-        <div className="absolute inset-0 bg-gradient-to-r from-[#0b0f19]/65 via-transparent to-[#0b0f19]/65 pointer-events-none" />
-        <div className="absolute inset-0 bg-cyber-grid opacity-20 mix-blend-overlay pointer-events-none" />
-
-        {/* Ambient FTMO Blue & Warm Accent Background */}
-        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[320px] sm:w-[600px] h-[200px] sm:h-[300px] bg-[#0066ff]/15 rounded-full blur-[120px] pointer-events-none" />
-
-        {/* Floating Ember Particles */}
-        <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          <div className="absolute bottom-10 left-[10%] sm:left-[15%] w-2 h-2 rounded-full bg-[#ff8800] blur-[1px] animate-spooky-ember will-change-transform" style={{ animationDelay: '0s' }} />
-          <div className="absolute bottom-20 left-[30%] sm:left-[35%] w-2.5 h-2.5 rounded-full bg-[#ffaa00] blur-[1px] animate-spooky-ember will-change-transform" style={{ animationDelay: '2s' }} />
-          <div className="absolute bottom-12 left-[60%] sm:left-[65%] w-1.5 h-1.5 rounded-full bg-[#ff8800] blur-[1px] animate-spooky-ember will-change-transform" style={{ animationDelay: '4s' }} />
-          <div className="absolute bottom-16 left-[85%] sm:left-[82%] w-2 h-2 rounded-full bg-[#ffbb00] blur-[1px] animate-spooky-ember will-change-transform" style={{ animationDelay: '1.5s' }} />
-        </div>
+        <div className="absolute inset-0 bg-gradient-to-b from-[#0b0f19]/85 via-[#07090e]/65 to-[#0b0f19] pointer-events-none" />
+        <div className="absolute inset-0 bg-cyber-grid opacity-15 pointer-events-none" />
       </div>
 
       {/* Foreground Hero Content (z-10) */}
@@ -98,7 +86,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
         className="relative z-10 max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 text-center font-sans"
       >
         {/* Top BFT Institutional Badge */}
-        <div className="inline-flex flex-wrap items-center justify-center gap-2 px-5 py-2 rounded-full bg-[#111827]/90 border border-[#ff8800]/60 mb-6 backdrop-blur-md">
+        <div className="inline-flex flex-wrap items-center justify-center gap-2 px-5 py-2 rounded-full bg-[#111827] border border-[#ff8800]/60 mb-6">
           <Zap className="w-4 h-4 text-[#ff8800] fill-[#ff8800]" />
           <span className="text-xs sm:text-sm font-extrabold tracking-wider text-[#ff8800] uppercase">
             BFT INSTITUTIONAL PROP • 80% → 90% SCALING SPLIT
@@ -110,14 +98,14 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
         </div>
 
         {/* Brand Headline */}
-        <h1 className="text-3xl sm:text-5xl lg:text-6xl font-extrabold tracking-[-0.025em] text-white max-w-4xl mx-auto leading-[1.08] mb-5 font-sans">
+        <h1 className="text-3xl sm:text-5xl lg:text-6xl font-extrabold tracking-[-0.02em] text-white max-w-4xl mx-auto leading-[1.1] mb-5 font-sans">
           Trade Binary Options With{' '}
           <span className="text-[#ff8800]">
             Institutional Prop Capital
           </span>
         </h1>
 
-        <p className="text-sm sm:text-base lg:text-lg text-[#9ca3af] max-w-2xl mx-auto mb-6 font-normal sm:font-medium leading-relaxed">
+        <p className="text-sm sm:text-base lg:text-lg text-slate-200 max-w-2xl mx-auto mb-6 font-medium leading-relaxed">
           Get funded up to <strong className="text-white font-bold">$100,000</strong> with{' '}
           <strong className="text-[#ff8800] font-bold">Binary Funded Trader (BFT)</strong>. Withdraw{' '}
           <strong className="text-emerald-400 font-bold">80% profit split</strong> in your first 3 months, automatically scaling to{' '}
@@ -125,7 +113,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
         </p>
 
         {/* Active Discount Promo Codes Selector Banner */}
-        <div className="max-w-3xl mx-auto mb-8 p-4 rounded-2xl bg-[#111827]/90 backdrop-blur-md border border-[#ff8800]/40 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="max-w-3xl mx-auto mb-8 p-4 rounded-2xl bg-[#111827] border border-[#ff8800]/40 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3 text-left">
             <div className="w-10 h-10 rounded-xl bg-[#ff8800]/15 border border-[#ff8800]/40 flex items-center justify-center text-[#ff8800] shrink-0">
               <Tag className="w-5 h-5" />
@@ -134,7 +122,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
               <div className="text-xs font-bold text-[#ff8800] uppercase tracking-wider">
                 Live Promotional Discount Applied to Packages Below
               </div>
-              <div className="text-xs text-[#9ca3af] font-normal">
+              <div className="text-xs text-slate-200 font-medium">
                 Click a code to toggle live discounted package pricing across all tiers:
               </div>
             </div>
@@ -146,7 +134,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
               className={`px-3.5 py-2 rounded-xl text-xs font-extrabold transition-all cursor-pointer border ${
                 activePromoCode === 'SPOOKY40' || activePromoCode === 'BFT40'
                   ? 'bg-[#ff8800] text-slate-950 border-[#ff8800]'
-                  : 'bg-[#0b0f19]/90 text-[#9ca3af] border-white/[0.08] hover:text-white'
+                  : 'bg-[#0b0f19] text-slate-200 border-white/[0.12] hover:text-white'
               }`}
             >
               SPOOKY40 (40% OFF New)
@@ -156,7 +144,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
               className={`px-3.5 py-2 rounded-xl text-xs font-extrabold transition-all cursor-pointer border ${
                 activePromoCode === 'SPOOKY20' || activePromoCode === 'BFT20'
                   ? 'bg-[#ff8800] text-slate-950 border-[#ff8800]'
-                  : 'bg-[#0b0f19]/90 text-[#9ca3af] border-white/[0.08] hover:text-white'
+                  : 'bg-[#0b0f19] text-slate-200 border-white/[0.12] hover:text-white'
               }`}
             >
               SPOOKY20 (20% OFF Existing)
@@ -167,7 +155,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
         {/* Double Payout Guarantee Card */}
         <div
           onClick={onOpenWithdrawals}
-          className="cursor-pointer max-w-2xl mx-auto mb-10 p-4 sm:p-5 rounded-2xl bg-[#111827]/90 backdrop-blur-md border-2 border-[#ff8800]/60 hover:border-[#ffaa00] transition-colors duration-200 group"
+          className="cursor-pointer max-w-2xl mx-auto mb-10 p-4 sm:p-5 rounded-2xl bg-[#111827] border-2 border-[#ff8800]/60 hover:border-[#ffaa00] transition-colors duration-200 group"
         >
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-4 text-left">
@@ -206,7 +194,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
           </button>
           <button
             onClick={onOpenTerminal}
-            className="px-8 py-4 rounded-xl bg-[#111827]/90 backdrop-blur-md hover:bg-[#161f33] border border-white/[0.08] hover:border-white/25 text-white font-bold text-sm sm:text-base transition-colors cursor-pointer flex items-center gap-2"
+            className="px-8 py-4 rounded-xl bg-[#111827] hover:bg-[#161f33] border border-white/[0.12] hover:border-white/25 text-white font-bold text-sm sm:text-base transition-colors cursor-pointer flex items-center gap-2"
           >
             <TrendingUp className="w-4 h-4 text-emerald-400" />
             <span>Launch Live OTC Terminal</span>
@@ -215,7 +203,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
             <button
               onClick={() => onOpenAuthModal('register')}
               data-testid="hero-auth-register-btn"
-              className="px-6 py-4 rounded-xl bg-[#111827]/90 backdrop-blur-md hover:bg-[#161f33] border border-[#0066ff]/40 hover:border-[#0066ff] text-white font-extrabold text-sm sm:text-base transition-colors cursor-pointer flex items-center gap-2"
+              className="px-6 py-4 rounded-xl bg-[#111827] hover:bg-[#161f33] border border-[#0066ff]/50 hover:border-[#0066ff] text-white font-extrabold text-sm sm:text-base transition-colors cursor-pointer flex items-center gap-2"
             >
               <UserPlus className="w-4 h-4 text-[#0066ff]" />
               <span>Register Trader Account</span>
@@ -225,36 +213,36 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
 
         {/* Metrics */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-5xl mx-auto">
-          <div className="p-4 sm:p-5 rounded-2xl bg-[#111827]/90 backdrop-blur-md border border-white/[0.08] shadow-md">
+          <div className="p-4 sm:p-5 rounded-2xl bg-[#111827] border border-white/[0.12] shadow-md">
             <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-[#0066ff]/15 text-[#0066ff] mx-auto mb-2.5 border border-[#0066ff]/30">
               <DollarSign className="w-4 h-4" />
             </div>
             <div className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight tabular-nums">$4,850,000+</div>
-            <div className="text-xs font-medium text-[#9ca3af] mt-1">Total Trader Payouts</div>
+            <div className="text-xs font-semibold text-slate-200 mt-1">Total Trader Payouts</div>
           </div>
 
-          <div className="p-4 sm:p-5 rounded-2xl bg-[#111827]/90 backdrop-blur-md border border-white/[0.08] shadow-md">
+          <div className="p-4 sm:p-5 rounded-2xl bg-[#111827] border border-white/[0.12] shadow-md">
             <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-[#ff8800]/15 text-[#ffaa00] mx-auto mb-2.5 border border-[#ff8800]/30">
               <Clock className="w-4 h-4" />
             </div>
             <div className="text-2xl sm:text-3xl font-extrabold text-[#ffaa00] tracking-tight tabular-nums">1m 42s</div>
-            <div className="text-xs font-medium text-[#9ca3af] mt-1">Average Withdrawal Speed</div>
+            <div className="text-xs font-semibold text-slate-200 mt-1">Average Withdrawal Speed</div>
           </div>
 
-          <div className="p-4 sm:p-5 rounded-2xl bg-[#111827]/90 backdrop-blur-md border border-white/[0.08] shadow-md">
+          <div className="p-4 sm:p-5 rounded-2xl bg-[#111827] border border-white/[0.12] shadow-md">
             <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-emerald-500/15 text-emerald-400 mx-auto mb-2.5 border border-emerald-500/20">
               <Award className="w-4 h-4" />
             </div>
             <div className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight tabular-nums">80% → 90%</div>
-            <div className="text-xs font-medium text-[#9ca3af] mt-1">3-Month Scaling Profit Split</div>
+            <div className="text-xs font-semibold text-slate-200 mt-1">3-Month Scaling Profit Split</div>
           </div>
 
-          <div className="p-4 sm:p-5 rounded-2xl bg-[#111827]/90 backdrop-blur-md border border-white/[0.08] shadow-md">
+          <div className="p-4 sm:p-5 rounded-2xl bg-[#111827] border border-white/[0.12] shadow-md">
             <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-emerald-500/15 text-emerald-400 mx-auto mb-2.5 border border-emerald-500/20">
               <TrendingUp className="w-4 h-4" />
             </div>
             <div className="text-2xl sm:text-3xl font-extrabold text-emerald-400 tracking-tight tabular-nums">17% + 8%</div>
-            <div className="text-xs font-medium text-[#9ca3af] mt-1">Package &amp; Payout Affiliate</div>
+            <div className="text-xs font-semibold text-slate-200 mt-1">Package &amp; Payout Affiliate</div>
           </div>
         </div>
       </div>

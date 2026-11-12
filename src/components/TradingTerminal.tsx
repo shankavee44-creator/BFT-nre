@@ -5032,21 +5032,6 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
             <button
               type="button"
-              data-testid="mobile-chart-timeframe-cycle-btn"
-              onClick={() => {
-                soundEngine.playUiClick();
-                const order: Timeframe[] = ['5s', '15s', '30s', '1m', '5m', '15m'];
-                const next = order[(order.indexOf(timeframe) + 1) % order.length] || '1m';
-                setTimeframe(next);
-              }}
-              className="h-8 px-2 rounded-lg bg-[#141722]/95 border border-[#ff8800]/50 text-[#ff8800] font-black text-[11px] flex items-center gap-1 cursor-pointer"
-              title="Cycle Chart Timeframe"
-            >
-              <span>{timeframe}</span>
-            </button>
-
-            <button
-              type="button"
               data-testid="mobile-chart-type-btn"
               onClick={() => {
                 soundEngine.playUiClick();

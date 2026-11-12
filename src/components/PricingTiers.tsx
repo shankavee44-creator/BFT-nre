@@ -139,39 +139,27 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
           {/* Horizontal Cyan Light Bar */}
           <div
             aria-hidden="true"
-            className="w-[240px] sm:w-[330px] h-[2px] bg-gradient-to-r from-cyan-400/10 via-[#00e5ff] to-cyan-400/10 shadow-[0_0_25px_#00d4ff] relative z-20"
-          />
-          {/* Conical Spotlight Glow */}
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute top-[24px] left-1/2 -translate-x-1/2 w-[360px] sm:w-[540px] h-[170px] bg-gradient-to-b from-[#00b7ff]/35 via-[#0066ff]/14 to-transparent blur-[4px] z-0"
-            style={{
-              clipPath: 'polygon(20% 0%, 80% 0%, 100% 100%, 0% 100%)',
-            }}
-          />
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute top-[10px] left-1/2 -translate-x-1/2 w-[300px] sm:w-[440px] h-[140px] bg-[#0066ff]/20 rounded-full blur-[55px] z-0"
+            className="w-[240px] sm:w-[330px] h-[2px] bg-gradient-to-r from-cyan-400/10 via-[#00e5ff] to-cyan-400/10 relative z-20"
           />
 
           {/* Main Section Heading */}
           <h2
             data-testid="pricing-main-heading"
-            className="relative z-10 text-3xl sm:text-5xl font-extrabold text-white tracking-[-0.025em] leading-[1.1] mt-7 text-balance font-sans"
+            className="relative z-10 text-3xl sm:text-5xl font-extrabold text-white tracking-[-0.02em] leading-[1.12] mt-7 text-balance font-sans"
           >
             Choose Your Path with BFT
           </h2>
-          <p className="relative z-10 text-[#9ca3af] text-sm sm:text-base mt-3 font-normal sm:font-medium leading-[1.65] max-w-2xl">
+          <p className="relative z-10 text-slate-200 text-sm sm:text-base mt-3 font-medium leading-[1.65] max-w-2xl">
             Pick the way you start. All BFT accounts feature{' '}
-            <strong className="text-white font-semibold">80% profit split for the first 3 months</strong>, automatically upgrading to{' '}
-            <strong className="text-[#ff8800] font-semibold">90% profit split + Account Scaling</strong> after Month 3.
+            <strong className="text-white font-bold">80% profit split for the first 3 months</strong>, automatically upgrading to{' '}
+            <strong className="text-[#ff8800] font-bold">90% profit split + Account Scaling</strong> after Month 3.
           </p>
 
           {/* 3-Tab Challenge Type Selector: 2-Step | 1-Step | Instant (New) */}
           <div
             role="tablist"
             aria-label="Challenge Type Selector"
-            className="relative z-10 mt-7 inline-flex items-center p-1.5 rounded-2xl bg-[#111827]/95 border border-white/[0.08] shadow-2xl backdrop-blur-md"
+            className="relative z-10 mt-7 inline-flex items-center p-1.5 rounded-2xl bg-[#111827] border border-white/[0.12] shadow-2xl"
           >
             {/* 2-Step Tab */}
             <button
