@@ -1107,47 +1107,52 @@ export function resolveUserLeaderboardPosition(
   const cleanProfit = Number.isFinite(userProfit) ? Number(userProfit.toFixed(2)) : 0;
   const { formatted: formattedProfitLoss } = formatDailyProfitLoss(cleanProfit);
 
-  const top15 = traders.slice(0, 15);
-  const lowestTop15Profit = top15.length > 0 ? top15[top15.length - 1].profit : Infinity;
+  // Filter out any existing currentUser entry to prevent duplicate rows
+  const cleanTraders = traders.filter(
+    (t) => !t.isCurrentUser && t.id !== 'usr_current_logged_in' && t.name !== (userMeta?.name || 'You (Active Trader)')
+  );
 
-  if (cleanProfit > 0 && cleanProfit > lowestTop15Profit) {
-    const higherTraders = top15.filter((t) => t.profit >= cleanProfit);
-    const exactRank = higherTraders.length + 1;
+  const userEntry: LeaderboardTrader = {
+    id: 'usr_current_logged_in',
+    rank: 1, // temporary, will be assigned after sorting
+    name: userMeta?.name || 'You (Active Trader)',
+    country: userMeta?.country || 'Sri Lanka',
+    flag: userMeta?.flag || '🇱🇰',
+    isoCode: userMeta?.isoCode || 'LK',
+    accountTier: account?.tierName || account?.tier || 'Active Account',
+    profit: cleanProfit,
+    winRate: 80.0,
+    payoutTime: 'Instant',
+    isCurrentUser: true,
+  };
 
-    if (exactRank <= 15) {
-      const userEntry: LeaderboardTrader = {
-        id: 'usr_current_logged_in',
-        rank: exactRank,
-        name: userMeta?.name || 'You (Active Trader)',
-        country: userMeta?.country || 'Sri Lanka',
-        flag: userMeta?.flag || '🇱🇰',
-        isoCode: userMeta?.isoCode || 'LK',
-        accountTier: account?.tierName || 'Active Account',
-        profit: cleanProfit,
-        winRate: 80.0,
-        payoutTime: 'Instant',
-        isCurrentUser: true,
-      };
+  // Combine user entry with trader pool and sort all entries strictly by profit descending
+  const combined = [...cleanTraders, userEntry].sort((a, b) => b.profit - a.profit);
+  const userIndex = combined.findIndex((t) => t.isCurrentUser || t.id === 'usr_current_logged_in');
 
-      const lowerTraders = top15.filter((t) => t.profit < cleanProfit);
-      const mergedTraders = [...higherTraders, userEntry, ...lowerTraders]
-        .slice(0, 15)
-        .map((t, index) => ({
-          ...t,
-          rank: index + 1,
-        }));
+  if (userIndex >= 0 && userIndex < 15 && (cleanProfit > 0 || tradesCount > 0)) {
+    const userRank = userIndex + 1;
+    const mergedTop15 = combined.slice(0, 15).map((t, index) => ({
+      ...t,
+      rank: index + 1,
+    }));
 
-      return {
-        isUnranked: false,
-        rank: exactRank,
-        rankLabel: `${exactRank}`,
-        verifiedWeeklyProfit: cleanProfit,
-        dailyProfitLoss: cleanProfit,
-        formattedProfitLoss,
-        mergedTraders,
-      };
-    }
+    return {
+      isUnranked: false,
+      rank: userRank,
+      rankLabel: `${userRank}`,
+      verifiedWeeklyProfit: cleanProfit,
+      dailyProfitLoss: cleanProfit,
+      formattedProfitLoss,
+      mergedTraders: mergedTop15,
+    };
   }
+
+  // User is not in top 15 (unranked)
+  const mergedTop15 = cleanTraders.slice(0, 15).map((t, index) => ({
+    ...t,
+    rank: index + 1,
+  }));
 
   return {
     isUnranked: true,
@@ -1156,7 +1161,7 @@ export function resolveUserLeaderboardPosition(
     verifiedWeeklyProfit: cleanProfit,
     dailyProfitLoss: cleanProfit,
     formattedProfitLoss,
-    mergedTraders: top15,
+    mergedTraders: mergedTop15,
   };
 }
 
@@ -1186,6 +1191,78 @@ export function formatCleanLeaderboardRow(trader: LeaderboardTrader): {
 
 const SELF_FUNDED_DAILY_RESET_STORAGE_KEY = 'bft_self_funded_daily_reset_date_v2';
 let supabaseLeaderboardWriteAllowed = true;
+
+export interface UpsertUserLeaderboardParams {
+  userId: string;
+  userName?: string;
+  country?: string;
+  isoCode?: string;
+  category: LeaderboardTabCategory;
+  profit: number;
+  tradesCount?: number;
+  accountTier?: string;
+}
+
+/**
+ * Invokes the Supabase stored procedure `upsert_user_leaderboard` for a real user,
+ * falling back to direct table upsert if the RPC routine is unavailable.
+ */
+export async function invokeUpsertUserLeaderboard(
+  params: UpsertUserLeaderboardParams
+): Promise<boolean> {
+  if (!params.userId || !supabaseLeaderboardWriteAllowed) return false;
+  try {
+    const { data: sessionData } = await supabase.auth
+      .getSession()
+      .catch(() => ({ data: { session: null } }));
+    if (!sessionData?.session) return false;
+
+    const payload = {
+      p_user_id: params.userId,
+      p_user_name: params.userName || 'Active Trader',
+      p_country: params.country || 'Sri Lanka',
+      p_iso_code: params.isoCode || 'LK',
+      p_category: params.category,
+      p_profit: Number(params.profit.toFixed(2)),
+      p_trades_count: params.tradesCount || 1,
+      p_account_tier: params.accountTier || 'Live Account',
+    };
+
+    const { error: rpcError } = await supabase.rpc('upsert_user_leaderboard', payload);
+    if (!rpcError) {
+      return true;
+    }
+
+    // Direct table upsert fallback
+    const tableName =
+      params.category === 'funded' ? 'funded_leaderboard' : 'self_funded_leaderboard';
+    const nowIso = new Date().toISOString();
+    const tablePayload = {
+      user_id: params.userId,
+      trader_name: params.userName || 'Active Trader',
+      country: params.country || 'Sri Lanka',
+      iso_code: params.isoCode || 'LK',
+      category: params.category,
+      profit: Number(params.profit.toFixed(2)),
+      updated_at: nowIso,
+    };
+
+    const { error: tableError } = await supabase
+      .from(tableName)
+      .upsert(tablePayload, { onConflict: 'user_id' });
+
+    if (
+      tableError &&
+      (tableError.code === '42501' || tableError.code === '42P10' || tableError.code === 'PGRST204')
+    ) {
+      supabaseLeaderboardWriteAllowed = false;
+    }
+
+    return !tableError;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Syncs the Self-Funded Daily Leaderboard rows to the Supabase `self_funded_leaderboard` table

@@ -3,6 +3,7 @@ import type { BinaryTrade, BinaryOptionDirection } from '../types/index.ts';
 import { liveMarketFeed } from './liveMarketFeed.ts';
 import { getAssetMarketState } from './priceFeedEngine.ts';
 import { getIsCopyExecutedTradesTableAvailable, setIsCopyExecutedTradesTableAvailable, resolveCopyExecutedTradesSchema } from './copyTradingSync.ts';
+import { invokeUpsertUserLeaderboard } from './leaderboardEngine.ts';
 
 /**
  * UUID validator utility (RFC 4122 standard).
@@ -1065,6 +1066,16 @@ export async function updateSupabaseTrade(
       if (!error) {
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('bft-supabase-trade-synced', { detail: { type: 'UPDATE', trade } }));
+        }
+        const accountType = resolveSupabaseAccountType(trade);
+        if (accountType !== 'DEMO') {
+          const category = accountType === 'SELF_FUNDED' ? 'self_funded' : 'funded';
+          const pnlVal = Number(trade.pnl || 0);
+          invokeUpsertUserLeaderboard({
+            userId: effectiveUserId,
+            category,
+            profit: Math.max(0, pnlVal),
+          }).catch(() => {});
         }
         return true;
       }

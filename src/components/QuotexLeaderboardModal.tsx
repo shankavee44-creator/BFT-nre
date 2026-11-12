@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { soundEngine } from '../utils/soundEffects';
 import { CountryFlagIcon } from './CountryFlagIcon';
+import { supabase } from '../utils/supabase';
 import {
   LeaderboardTrader,
   LeaderboardTabCategory,
@@ -32,6 +33,7 @@ import {
   fetchFundedLeaderboardFromSupabase,
   fetchSelfFundedLeaderboardFromSupabase,
   subscribeToLeaderboardsRealtime,
+  invokeUpsertUserLeaderboard,
 } from '../utils/leaderboardEngine';
 
 export type { LeaderboardTrader, LeaderboardTabCategory };
@@ -228,6 +230,36 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
     userName,
     userCountry,
     userCountryIso,
+  ]);
+
+  // Synchronize real user's live position to Supabase globally via upsert_user_leaderboard RPC
+  useEffect(() => {
+    if (!isOpen || userMetrics.pnl === undefined) return;
+    supabase.auth.getSession().then(({ data }) => {
+      const sessionUser = data?.session?.user;
+      if (sessionUser?.id) {
+        invokeUpsertUserLeaderboard({
+          userId: sessionUser.id,
+          userName: userName,
+          country: userCountry === 'United States' ? 'Sri Lanka' : userCountry,
+          isoCode: userCountryIso,
+          category: activeTab,
+          profit: userMetrics.pnl,
+          tradesCount: userMetrics.tradesCount || weeklyTradesCount || 1,
+          accountTier: activeAccount?.tierName || activeAccount?.tier || 'Live Account',
+        }).catch(() => {});
+      }
+    });
+  }, [
+    isOpen,
+    activeTab,
+    userMetrics.pnl,
+    userMetrics.tradesCount,
+    weeklyTradesCount,
+    userName,
+    userCountry,
+    userCountryIso,
+    activeAccount,
   ]);
 
   const userPnlFormatted = formatDailyProfitLoss(userMetrics.pnl);

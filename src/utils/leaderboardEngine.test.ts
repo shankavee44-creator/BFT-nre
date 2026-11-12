@@ -15,6 +15,7 @@ import {
   calculateUserWeeklyPnL,
   formatDailyProfitLoss,
   resolveUserLeaderboardPosition,
+  invokeUpsertUserLeaderboard,
 } from './leaderboardEngine';
 import {
   markKycVerifiedLock,
@@ -263,4 +264,57 @@ test('Rule 5: Newly added or active traders are placed and visible on the Self-F
   // Total 15 traders
   assert.equal(normalized.length, 15);
 });
+
+test('Rule 6: Leaderboard UI is limited strictly to Top 15 traders and dynamically inserts qualifying real users with global persistence helper', async () => {
+  const baseSelfFunded = getDynamicLeaderboardTraders({ category: 'self_funded', useEveningPeak: true });
+
+  // 1. Check top 15 limit on base list
+  assert.equal(baseSelfFunded.length, 15);
+
+  // 2. Real user with qualifying profit ($35,000) should be dynamically inserted into top 15 at rank 2
+  const userPosQualifying = resolveUserLeaderboardPosition(
+    35000,
+    5,
+    baseSelfFunded,
+    { tierName: 'Self-Funded VIP Live' },
+    { name: 'Kavita Patel', country: 'India', isoCode: 'IN', flag: '🇮🇳' }
+  );
+
+  assert.equal(userPosQualifying.isUnranked, false);
+  assert.equal(userPosQualifying.rank, 2);
+  assert.equal(userPosQualifying.rankLabel, '2');
+  assert.equal(userPosQualifying.mergedTraders.length, 15, 'Merged list must contain exactly 15 traders');
+  assert.equal(userPosQualifying.mergedTraders[1].name, 'Kavita Patel');
+  assert.equal(userPosQualifying.mergedTraders[1].profit, 35000);
+  assert.equal(userPosQualifying.mergedTraders[1].rank, 2);
+
+  // 3. Real user with low/unqualifying profit ($50) remains unranked with 15 traders in merged list
+  const userPosLow = resolveUserLeaderboardPosition(
+    50,
+    1,
+    baseSelfFunded,
+    { tierName: 'Self-Funded Live' },
+    { name: 'Sameer Sen', country: 'India', isoCode: 'IN', flag: '🇮🇳' }
+  );
+
+  assert.equal(userPosLow.isUnranked, true);
+  assert.equal(userPosLow.rank, null);
+  assert.equal(userPosLow.rankLabel, '1000+');
+  assert.equal(userPosLow.mergedTraders.length, 15);
+
+  // 4. Test invokeUpsertUserLeaderboard function execution
+  const res = await invokeUpsertUserLeaderboard({
+    userId: 'usr_test_123',
+    userName: 'Kavita Patel',
+    country: 'India',
+    isoCode: 'IN',
+    category: 'self_funded',
+    profit: 35000,
+    tradesCount: 5,
+    accountTier: 'Self-Funded VIP Live',
+  });
+  // Should return a boolean without throwing an exception
+  assert.equal(typeof res, 'boolean');
+});
+
 
