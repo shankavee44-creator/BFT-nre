@@ -19,6 +19,7 @@ import {
   Loader2,
   Building2,
   ChevronRight,
+  Upload,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { EvaluationPackage, TradingAccount, PromoCodeType, UserProfile } from '../types';
@@ -35,9 +36,16 @@ import {
   NormalizedPurchaseRecord,
   evaluateDepositStatusWithExpiry,
   formatDepositCountdown,
+  isBankTransferDeposit,
 } from '../config/directDeposit';
-import { apiPurchaseAccount, apiVerifyCryptoDeposits, apiCreateNowPaymentsPayment } from '../utils/apiClient';
+import {
+  apiPurchaseAccount,
+  apiVerifyCryptoDeposits,
+  apiCreateNowPaymentsPayment,
+  apiSubmitCryptoDeposit,
+} from '../utils/apiClient';
 import { supabase } from '../utils/supabase';
+import { submitCryptoDepositToSupabaseTable } from '../utils/depositBonus';
 import {
   insertSupabaseTradingAccount,
 } from '../utils/supabaseRealtimeSync';
@@ -166,11 +174,27 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   const [savedDepositRecord, setSavedDepositRecord] = useState<any | null>(null);
   const [activeReferralCode, setActiveReferralCode] = useState<string | null>(null);
   const [txHashInput, setTxHashInput] = useState<string>('');
+  const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [receiptPreviewUrl, setReceiptPreviewUrl] = useState<string | null>(null);
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [qrImgFailed, setQrImgFailed] = useState<boolean>(false);
   const [isVerifyingTronGrid, setIsVerifyingTronGrid] = useState<boolean>(false);
   const [tronGridStatusNote, setTronGridStatusNote] = useState<string | null>(null);
   const [nowTickMs, setNowTickMs] = useState<number>(() => Date.now());
+
+  const handleReceiptFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setReceiptFile(file);
+    setPaymentError(null);
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (typeof reader.result === 'string') {
+        setReceiptPreviewUrl(reader.result);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
 
   useEffect(() => {
     setPromoCode(activePromoCode);
@@ -264,7 +288,14 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       return;
     }
 
-    // Commercial Bank Manual Transfer flow
+    // Bank Transfer (Manual Screenshot Upload) validation
+    if (selectedPayCurrency === 'commercial_bank' && !receiptFile && !receiptPreviewUrl) {
+      setPaymentError(
+        'Please upload a payment receipt image or screenshot before submitting your Bank Transfer.'
+      );
+      return;
+    }
+
     handleExecutePayment();
   };
 
@@ -297,14 +328,53 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     setStep('verifying');
 
     try {
+      const isBankTransfer = selectedPayCurrency === 'commercial_bank';
+      const resolvedTxHash =
+        txHashInput.trim() ||
+        (receiptFile ? `SLIP:${receiptFile.name}` : undefined);
+
+      let uploadedReceiptUrl: string | undefined = receiptPreviewUrl || undefined;
+      let supaRowId: string | undefined;
+
+      if (isBankTransfer) {
+        const supaDepositRes = await submitCryptoDepositToSupabaseTable({
+          userId: userProfile?.id,
+          userEmail: userProfile?.email,
+          userName: userProfile?.fullName,
+          amount: finalPrice,
+          packageName,
+          sku: packageSku,
+          accountType,
+          walletAddress: 'Commercial Bank of Ceylon - 8174001908 (A.D.H.W Kumari)',
+          network: 'Bank Transfer',
+          paymentMethod: 'bank_transfer',
+          receiptFile,
+          receiptPreviewUrl: receiptPreviewUrl || undefined,
+          txHash: resolvedTxHash,
+          status: 'pending',
+        });
+
+        uploadedReceiptUrl =
+          supaDepositRes.receiptUrl ||
+          supaDepositRes.screenshotUrl ||
+          receiptPreviewUrl ||
+          undefined;
+        supaRowId = supaDepositRes.row?.id;
+      }
+
       const cryptoPayload = buildCryptoDepositPayload({
         userId: userProfile?.id || undefined,
-        walletAddress: trc20Address,
+        walletAddress: isBankTransfer
+          ? 'Commercial Bank of Ceylon - 8174001908 (A.D.H.W Kumari)'
+          : trc20Address,
         amount: finalPrice,
         packageName,
         sku: packageSku,
         accountType,
-        txHash: txHashInput.trim() || undefined,
+        network: isBankTransfer ? 'Bank Transfer' : 'TRC-20',
+        paymentMethod: isBankTransfer ? 'bank_transfer' : 'crypto',
+        receiptUrl: uploadedReceiptUrl || null,
+        txHash: resolvedTxHash,
       });
 
       const res = await apiPurchaseAccount({
@@ -319,8 +389,24 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         price: finalPrice,
         referralCode: activeReferralCode,
         dailyWithdrawalsUnlocked: unlockDailyWithdrawals,
-        txHash: txHashInput.trim() || undefined,
+        txHash: resolvedTxHash,
       });
+
+      if (isBankTransfer && uploadedReceiptUrl) {
+        await apiSubmitCryptoDeposit({
+          userId: userProfile?.id,
+          email: userProfile?.email,
+          amount: finalPrice,
+          packageName,
+          sku: packageSku,
+          accountType,
+          walletAddress: 'Commercial Bank of Ceylon - 8174001908 (A.D.H.W Kumari)',
+          network: 'Bank Transfer',
+          receiptUrl: uploadedReceiptUrl,
+          txHash: resolvedTxHash,
+          status: 'pending',
+        }).catch(() => {});
+      }
 
       if (!res.ok) {
         throw new Error(
@@ -329,7 +415,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       }
 
       const isVerifiedPaid = Boolean(
-        res.verified &&
+        !isBankTransfer &&
+          res.verified &&
           (res.status === 'completed' || res.status === 'active') &&
           res.account
       );
@@ -343,25 +430,34 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       }
 
       const createdAtIso = new Date().toISOString();
-      const finalPurchaseRecord = mapPurchaseRecord(
-        res.purchase || {
-          id: res.deposit?.id || `PUR-${Date.now().toString(36).toUpperCase()}`,
-          user_id: userProfile?.id || 'usr_bft_001',
-          account_id: isVerifiedPaid ? res.account?.id || null : null,
-          package_id: packageSku,
-          package_name: packageName,
-          package_sku: packageSku,
-          amount: finalPrice,
-          package_amount: finalPrice,
-          account_type: accountType,
-          status: isVerifiedPaid ? 'completed' : 'pending',
-          created_at: createdAtIso,
-        }
-      );
+      const finalPurchaseRecord = mapPurchaseRecord({
+        ...(res.purchase || {}),
+        id:
+          supaRowId ||
+          res.deposit?.id ||
+          res.purchase?.id ||
+          `PUR-${Date.now().toString(36).toUpperCase()}`,
+        user_id: userProfile?.id || 'usr_bft_001',
+        account_id: isVerifiedPaid ? res.account?.id || null : null,
+        package_id: packageSku,
+        package_name: packageName,
+        package_sku: packageSku,
+        amount: finalPrice,
+        package_amount: finalPrice,
+        account_type: accountType,
+        payment_method: isBankTransfer ? 'bank_transfer' : 'crypto',
+        receipt_url: uploadedReceiptUrl || null,
+        status: isVerifiedPaid ? 'completed' : 'pending',
+        created_at: createdAtIso,
+      });
 
-      const depositRecord = res.deposit || {
-        ...cryptoPayload,
+      const depositRecord = {
+        ...(res.deposit || cryptoPayload),
         id: finalPurchaseRecord.id,
+        payment_method: isBankTransfer ? 'bank_transfer' : 'crypto',
+        network: isBankTransfer ? 'Bank Transfer' : res.deposit?.network || 'TRC-20',
+        receipt_url: uploadedReceiptUrl || null,
+        screenshot_url: uploadedReceiptUrl || null,
         status: isVerifiedPaid ? 'completed' : 'pending',
         created_at: Date.now(),
         expires_at: Date.now() + DEPOSIT_EXPIRY_MS,
@@ -400,8 +496,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         setNowTickMs(Date.now());
         setStep('pending_verification');
         setTronGridStatusNote(
-          res.message ||
-            'Order logged as PENDING. Account provisioning will finalize automatically upon bank verification.'
+          isBankTransfer ? 'Transaction Pending' : res.message || 'Transaction Pending'
         );
       }
     } catch (err: any) {
@@ -722,25 +817,101 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
 
             {/* If Commercial Bank is selected */}
             {selectedPayCurrency === 'commercial_bank' && (
-              <div className="p-4 rounded-2xl bg-[#111827] border border-white/[0.08] mb-4 space-y-2 text-xs font-mono">
-                <div className="flex items-center gap-2 text-blue-400 font-bold mb-1">
-                  <Building2 className="w-4 h-4" /> Commercial Bank of Ceylon
+              <div className="p-4 rounded-2xl bg-[#111827] border border-white/[0.08] mb-4 space-y-3 text-xs font-mono">
+                <div className="flex items-center gap-2 text-blue-400 font-bold">
+                  <Building2 className="w-4 h-4" /> Commercial Bank of Ceylon (Bank Transfer)
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-[#9ca3af]">Account Name:</span>
-                  <span className="text-white font-bold">A.D.H.W Kumari</span>
+                <div className="space-y-1.5">
+                  <div className="flex justify-between">
+                    <span className="text-[#9ca3af]">Account Name:</span>
+                    <span className="text-white font-bold">A.D.H.W Kumari</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-[#9ca3af]">Account Number:</span>
+                    <span className="text-[#ffaa00] font-bold">8174001908</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-[#9ca3af]">LKR Deposit Rate:</span>
+                    <span className="text-white">$1 USD = 350.44 LKR</span>
+                  </div>
+                  <div className="flex justify-between pt-1 border-t border-white/[0.08] text-emerald-400 font-bold">
+                    <span>Required LKR Amount:</span>
+                    <span>
+                      Rs. {(finalPrice * 350.44).toLocaleString('en-US', { maximumFractionDigits: 2 })} LKR
+                    </span>
+                  </div>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-[#9ca3af]">Account Number:</span>
-                  <span className="text-[#ffaa00] font-bold">8174001908</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-[#9ca3af]">LKR Deposit Rate:</span>
-                  <span className="text-white">$1 USD = 350.44 LKR</span>
-                </div>
-                <div className="flex justify-between pt-1 border-t border-white/[0.08] text-emerald-400 font-bold">
-                  <span>Required LKR Amount:</span>
-                  <span>Rs. {(finalPrice * 350.44).toLocaleString('en-US', { maximumFractionDigits: 2 })} LKR</span>
+
+                {/* Required Payment Receipt Screenshot Upload */}
+                <div className="pt-2.5 border-t border-white/10 space-y-2 font-sans">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <Upload className="w-3.5 h-3.5 text-[#0066ff]" />
+                      <span>Upload Payment Receipt Screenshot</span>
+                    </label>
+                    <span className="text-[10px] font-mono text-amber-400 font-bold uppercase">
+                      Required
+                    </span>
+                  </div>
+
+                  <label
+                    data-testid="challenge-bank-receipt-label"
+                    className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-[#0b0f19] hover:bg-[#161f33] border border-dashed border-[#0066ff]/50 text-xs text-slate-200 cursor-pointer transition-colors"
+                  >
+                    <Upload className="w-4 h-4 text-[#0066ff] shrink-0" />
+                    <span className="truncate font-medium">
+                      {receiptFile ? receiptFile.name : 'Choose payment receipt screenshot...'}
+                    </span>
+                    <input
+                      type="file"
+                      data-testid="challenge-bank-receipt-input"
+                      accept="image/*,.pdf"
+                      onChange={handleReceiptFileChange}
+                      className="hidden"
+                    />
+                  </label>
+
+                  {receiptPreviewUrl && (
+                    <div
+                      data-testid="challenge-bank-receipt-preview"
+                      className="flex items-center justify-between gap-2.5 p-2 rounded-xl bg-[#0b0f19] border border-white/10"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <img
+                          src={receiptPreviewUrl}
+                          alt="Payment Receipt Preview"
+                          className="w-10 h-10 rounded-lg object-cover border border-white/15 shrink-0"
+                        />
+                        <div className="min-w-0">
+                          <div className="text-xs font-bold text-white truncate">
+                            {receiptFile?.name || 'Receipt Screenshot Attached'}
+                          </div>
+                          <div className="text-[10px] text-emerald-400 font-mono">
+                            Ready to upload to deposit_receipts
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setReceiptFile(null);
+                          setReceiptPreviewUrl(null);
+                        }}
+                        className="text-[11px] text-slate-400 hover:text-rose-400 px-2 py-1 rounded cursor-pointer"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  )}
+
+                  <input
+                    type="text"
+                    data-testid="challenge-bank-reference-input"
+                    value={txHashInput}
+                    onChange={(e) => setTxHashInput(e.target.value)}
+                    placeholder="Bank Reference / Slip Number (Optional)"
+                    className="w-full px-3 py-2 rounded-xl bg-[#0b0f19] border border-white/10 focus:border-[#0066ff] text-xs text-white font-mono outline-none"
+                  />
                 </div>
               </div>
             )}
@@ -774,7 +945,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                 </>
               ) : selectedPayCurrency === 'commercial_bank' ? (
                 <>
-                  <span>Submit Commercial Bank Transfer Order</span>
+                  <span>Submit Bank Transfer &amp; Receipt</span>
                   <ArrowRight className="w-4 h-4 stroke-[2.5]" />
                 </>
               ) : (
@@ -793,137 +964,203 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
               <RefreshCw className="w-8 h-8 text-[#00e676] animate-spin" />
             </div>
             <h3 className="text-xl font-bold text-white mb-2 font-mono">
-              Recording Pending USDT (TRC-20) Deposit...
+              {selectedPayCurrency === 'commercial_bank'
+                ? 'Uploading Receipt & Recording Deposit...'
+                : 'Recording Pending USDT (TRC-20) Deposit...'}
             </h3>
             <p className="text-xs text-slate-300 max-w-xs mx-auto leading-relaxed mb-6 font-mono">
-              Logging transaction (${finalPrice.toFixed(2)} USDT · {packageSku}) to
-              crypto_deposits &amp; transactions and checking Cryptomus / TRC-20 gateway...
+              {selectedPayCurrency === 'commercial_bank'
+                ? `Uploading payment receipt to deposit_receipts and saving your $${finalPrice.toFixed(2)} USD (${packageSku}) deposit...`
+                : `Logging transaction ($${finalPrice.toFixed(2)} USDT · ${packageSku}) to crypto_deposits & transactions...`}
             </p>
           </div>
         )}
 
         {step === 'pending_verification' && (
           <div data-testid="payment-pending-verification-view">
-            <div className="text-center mb-5">
-              <div
-                className={`w-16 h-16 rounded-full border-2 flex items-center justify-center mx-auto mb-4 ${
-                  expiryState.effectiveStatus === 'failed'
-                    ? 'bg-rose-950/80 border-rose-500 text-rose-400'
-                    : 'bg-amber-950/80 border-[#ff8800] text-[#ff8800]'
-                }`}
-              >
-                {expiryState.effectiveStatus === 'failed' ? (
-                  <Ban className="w-8 h-8" />
-                ) : (
-                  <Clock className="w-8 h-8 animate-pulse" />
-                )}
-              </div>
-              <div
-                className={`text-xs font-mono font-bold uppercase ${
-                  expiryState.effectiveStatus === 'failed' ? 'text-rose-400' : 'text-[#ff8800]'
-                }`}
-              >
-                crypto_deposits &amp; transactions · Status: {expiryState.effectiveStatus}
-              </div>
-              <h3 className="text-xl font-black text-white mt-1">
-                {expiryState.effectiveStatus === 'failed'
-                  ? 'Payment Expired (1-Hour Timeout)'
-                  : 'Awaiting Blockchain / Gateway Confirmation'}
-              </h3>
-              <p className="text-xs text-slate-300 mt-1 leading-relaxed">
-                {expiryState.effectiveStatus === 'failed'
-                  ? 'This deposit remained pending for over 60 minutes without network confirmation and was automatically marked as FAILED.'
-                  : 'Security Notice: Funded & challenge accounts are NEVER provisioned on an unverified click. Your account will activate automatically once Cryptomus or the TRC-20 blockchain confirms your payment.'}
-              </p>
-            </div>
+            {selectedPayCurrency === 'commercial_bank' ||
+            isBankTransferDeposit(savedDepositRecord) ? (
+              <div>
+                <div className="text-center mb-5">
+                  <div className="w-16 h-16 rounded-full border-2 bg-amber-950/80 border-[#ff8800] text-[#ff8800] flex items-center justify-center mx-auto mb-4">
+                    <Clock className="w-8 h-8 animate-pulse" />
+                  </div>
+                  <div className="text-xs font-mono font-bold uppercase text-[#ff8800]">
+                    Status: Pending
+                  </div>
+                  <h3 className="text-xl font-black text-white mt-1">
+                    Transaction Pending
+                  </h3>
+                  <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                    Your Bank Transfer deposit and payment receipt for {packageName} have been submitted.
+                  </p>
+                </div>
 
-            {tronGridStatusNote && (
-              <div
-                data-testid="payment-gateway-status-note"
-                className={`mb-4 p-3 rounded-xl border text-[11px] font-mono ${
-                  expiryState.effectiveStatus === 'failed'
-                    ? 'bg-rose-950/60 border-rose-500/40 text-rose-200'
-                    : 'bg-amber-950/50 border-[#ff8800]/40 text-amber-200'
-                }`}
-              >
-                {tronGridStatusNote}
-              </div>
-            )}
+                <div className="p-4 rounded-xl bg-[#111115] border border-white/15 mb-5 space-y-2.5 font-mono tabular-nums text-xs">
+                  <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                    <span className="text-slate-400 font-sans">Order ID</span>
+                    <span className="text-white font-bold">
+                      {savedDepositRecord?.id || 'PENDING'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                    <span className="text-slate-400 font-sans">Package &amp; SKU</span>
+                    <span className="text-slate-200 font-bold">
+                      {packageName} ({packageSku})
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                    <span className="text-slate-400 font-sans">Payment Method</span>
+                    <span className="text-blue-400 font-bold">Bank Transfer</span>
+                  </div>
+                  <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                    <span className="text-slate-400 font-sans">Amount</span>
+                    <span className="text-[#00e676] font-bold">${finalPrice.toFixed(2)} USD</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400 font-sans">Transaction Status</span>
+                    <span
+                      data-testid="purchase-deposit-status"
+                      className="px-2.5 py-0.5 rounded text-[10px] font-black uppercase border bg-[#ff8800]/20 text-[#ff8800] border-[#ff8800]/40"
+                    >
+                      Pending
+                    </span>
+                  </div>
+                </div>
 
-            <div className="p-4 rounded-xl bg-[#111115] border border-white/15 mb-5 space-y-2.5 font-mono tabular-nums text-xs">
-              <div className="flex items-center justify-between pb-2 border-b border-white/10">
-                <span className="text-slate-400 font-sans">Order ID</span>
-                <span className="text-white font-bold">
-                  {savedDepositRecord?.id || 'PENDING'}
-                </span>
-              </div>
-              <div className="flex items-center justify-between pb-2 border-b border-white/10">
-                <span className="text-slate-400 font-sans">Package &amp; SKU</span>
-                <span className="text-slate-200 font-bold">
-                  {packageName} ({packageSku})
-                </span>
-              </div>
-              <div className="flex items-center justify-between pb-2 border-b border-white/10">
-                <span className="text-slate-400 font-sans">Required Transfer</span>
-                <span className="text-[#00e676] font-bold">${finalPrice.toFixed(2)} USDT</span>
-              </div>
-              <div className="flex items-center justify-between pb-2 border-b border-white/10">
-                <span className="text-slate-400 font-sans">Live Transaction Status</span>
-                <span
-                  data-testid="purchase-deposit-status"
-                  className={`px-2 py-0.5 rounded text-[10px] font-black uppercase border ${
-                    expiryState.effectiveStatus === 'failed'
-                      ? 'bg-rose-500/20 text-rose-400 border-rose-500/40'
-                      : 'bg-[#ff8800]/20 text-[#ff8800] border-[#ff8800]/40'
-                  }`}
-                >
-                  {expiryState.effectiveStatus}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-slate-400 font-sans">1-Hour Expiry Window</span>
-                <span
-                  data-testid="payment-expiry-countdown"
-                  className={`font-bold ${
-                    expiryState.effectiveStatus === 'failed'
-                      ? 'text-rose-400'
-                      : 'text-[#ffaa00]'
-                  }`}
-                >
-                  {expiryState.effectiveStatus === 'failed'
-                    ? '00:00 (EXPIRED -> FAILED)'
-                    : `${formatDepositCountdown(expiryState.remainingMs)} remaining`}
-                </span>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-2.5">
-              {expiryState.effectiveStatus !== 'failed' && (
                 <button
                   type="button"
-                  onClick={handleVerifyOnTronGrid}
-                  disabled={isVerifyingTronGrid}
-                  data-testid="verify-trongrid-purchase-btn"
-                  className="w-full py-3 px-4 rounded-xl bg-[#00e676] hover:bg-[#00c853] disabled:opacity-60 text-slate-950 font-mono text-xs font-black flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                  onClick={onClose}
+                  data-testid="close-pending-payment-btn"
+                  className="w-full py-3 px-4 rounded-xl bg-white/10 hover:bg-white/15 text-slate-200 font-mono text-xs font-bold flex items-center justify-center gap-2 cursor-pointer transition-colors"
                 >
-                  <RefreshCw className={`w-4 h-4 ${isVerifyingTronGrid ? 'animate-spin' : ''}`} />
-                  <span>
-                    {isVerifyingTronGrid
-                      ? 'Checking Cryptomus / TronGrid Node...'
-                      : 'Verify Blockchain Confirmation Now'}
-                  </span>
+                  <span>Close &amp; View in Dashboard</span>
                 </button>
-              )}
+              </div>
+            ) : (
+              <div>
+                <div className="text-center mb-5">
+                  <div
+                    className={`w-16 h-16 rounded-full border-2 flex items-center justify-center mx-auto mb-4 ${
+                      expiryState.effectiveStatus === 'failed'
+                        ? 'bg-rose-950/80 border-rose-500 text-rose-400'
+                        : 'bg-amber-950/80 border-[#ff8800] text-[#ff8800]'
+                    }`}
+                  >
+                    {expiryState.effectiveStatus === 'failed' ? (
+                      <Ban className="w-8 h-8" />
+                    ) : (
+                      <Clock className="w-8 h-8 animate-pulse" />
+                    )}
+                  </div>
+                  <div
+                    className={`text-xs font-mono font-bold uppercase ${
+                      expiryState.effectiveStatus === 'failed' ? 'text-rose-400' : 'text-[#ff8800]'
+                    }`}
+                  >
+                    crypto_deposits &amp; transactions · Status: {expiryState.effectiveStatus}
+                  </div>
+                  <h3 className="text-xl font-black text-white mt-1">
+                    {expiryState.effectiveStatus === 'failed'
+                      ? 'Payment Expired (1-Hour Timeout)'
+                      : 'Awaiting Blockchain / Gateway Confirmation'}
+                  </h3>
+                  <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                    {expiryState.effectiveStatus === 'failed'
+                      ? 'This deposit remained pending for over 60 minutes without network confirmation and was automatically marked as FAILED.'
+                      : 'Security Notice: Funded & challenge accounts are NEVER provisioned on an unverified click. Your account will activate automatically once Cryptomus or the TRC-20 blockchain confirms your payment.'}
+                  </p>
+                </div>
 
-              <button
-                type="button"
-                onClick={onClose}
-                data-testid="close-pending-payment-btn"
-                className="w-full py-3 px-4 rounded-xl bg-white/10 hover:bg-white/15 text-slate-200 font-mono text-xs font-bold flex items-center justify-center gap-2 cursor-pointer transition-colors"
-              >
-                <span>Close &amp; Monitor in Deposit History</span>
-              </button>
-            </div>
+                {tronGridStatusNote && (
+                  <div
+                    data-testid="payment-gateway-status-note"
+                    className={`mb-4 p-3 rounded-xl border text-[11px] font-mono ${
+                      expiryState.effectiveStatus === 'failed'
+                        ? 'bg-rose-950/60 border-rose-500/40 text-rose-200'
+                        : 'bg-amber-950/50 border-[#ff8800]/40 text-amber-200'
+                    }`}
+                  >
+                    {tronGridStatusNote}
+                  </div>
+                )}
+
+                <div className="p-4 rounded-xl bg-[#111115] border border-white/15 mb-5 space-y-2.5 font-mono tabular-nums text-xs">
+                  <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                    <span className="text-slate-400 font-sans">Order ID</span>
+                    <span className="text-white font-bold">
+                      {savedDepositRecord?.id || 'PENDING'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                    <span className="text-slate-400 font-sans">Package &amp; SKU</span>
+                    <span className="text-slate-200 font-bold">
+                      {packageName} ({packageSku})
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                    <span className="text-slate-400 font-sans">Required Transfer</span>
+                    <span className="text-[#00e676] font-bold">${finalPrice.toFixed(2)} USDT</span>
+                  </div>
+                  <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                    <span className="text-slate-400 font-sans">Live Transaction Status</span>
+                    <span
+                      data-testid="purchase-deposit-status"
+                      className={`px-2 py-0.5 rounded text-[10px] font-black uppercase border ${
+                        expiryState.effectiveStatus === 'failed'
+                          ? 'bg-rose-500/20 text-rose-400 border-rose-500/40'
+                          : 'bg-[#ff8800]/20 text-[#ff8800] border-[#ff8800]/40'
+                      }`}
+                    >
+                      {expiryState.effectiveStatus}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400 font-sans">1-Hour Expiry Window</span>
+                    <span
+                      data-testid="payment-expiry-countdown"
+                      className={`font-bold ${
+                        expiryState.effectiveStatus === 'failed'
+                          ? 'text-rose-400'
+                          : 'text-[#ffaa00]'
+                      }`}
+                    >
+                      {expiryState.effectiveStatus === 'failed'
+                        ? '00:00 (EXPIRED -> FAILED)'
+                        : `${formatDepositCountdown(expiryState.remainingMs)} remaining`}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-2.5">
+                  {expiryState.effectiveStatus !== 'failed' && (
+                    <button
+                      type="button"
+                      onClick={handleVerifyOnTronGrid}
+                      disabled={isVerifyingTronGrid}
+                      data-testid="verify-trongrid-purchase-btn"
+                      className="w-full py-3 px-4 rounded-xl bg-[#00e676] hover:bg-[#00c853] disabled:opacity-60 text-slate-950 font-mono text-xs font-black flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                    >
+                      <RefreshCw className={`w-4 h-4 ${isVerifyingTronGrid ? 'animate-spin' : ''}`} />
+                      <span>
+                        {isVerifyingTronGrid
+                          ? 'Checking Cryptomus / TronGrid Node...'
+                          : 'Verify Blockchain Confirmation Now'}
+                      </span>
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    data-testid="close-pending-payment-btn"
+                    className="w-full py-3 px-4 rounded-xl bg-white/10 hover:bg-white/15 text-slate-200 font-mono text-xs font-bold flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                  >
+                    <span>Close &amp; Monitor in Deposit History</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 

@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { apiGetDepositHistory } from '../utils/apiClient';
 import { supabase } from '../utils/supabase';
+import { loadLocalCryptoDepositsMirror } from '../utils/depositBonus';
 
 interface DepositHistoryTableProps {
   userId?: string;
@@ -38,34 +39,51 @@ export const DepositHistoryTable: React.FC<DepositHistoryTableProps> = ({
         records = res.cryptoDeposits || res.deposits || res.transactions || [];
       }
 
-      // 2. Fetch from Supabase for any newly created deposits if userId is a valid UUID
-      const isUuid = userId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId);
-      if (supabase && isUuid) {
-        try {
-          const { data, error } = await supabase
-            .from('crypto_deposits')
-            .select('*')
-            .eq('user_id', userId)
-            .order('created_at', { ascending: false })
-            .limit(30);
-
-          if (!error && Array.isArray(data)) {
-            const combinedMap = new Map<string, any>();
-            // Add DB records first
-            for (const r of records) {
-              combinedMap.set(String(r.id), r);
-            }
-            // Merge Supabase rows
-            for (const s of data) {
-              combinedMap.set(String(s.id), {
-                ...combinedMap.get(String(s.id)),
-                ...s,
-              });
-            }
-            records = Array.from(combinedMap.values());
-          }
-        } catch {}
+      const combinedMap = new Map<string, any>();
+      for (const r of records) {
+        if (r?.id) combinedMap.set(String(r.id), r);
       }
+
+      // 2. Fetch from Supabase (`crypto_deposits` and `deposits`) if userId is a valid UUID
+      const isUuid =
+        userId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId);
+      if (supabase && isUuid) {
+        for (const table of ['crypto_deposits', 'deposits']) {
+          try {
+            const { data, error } = await (supabase.from(table) as any)
+              .select('*')
+              .eq('user_id', userId)
+              .order('created_at', { ascending: false })
+              .limit(30);
+
+            if (!error && Array.isArray(data)) {
+              for (const s of data) {
+                combinedMap.set(String(s.id), {
+                  ...combinedMap.get(String(s.id)),
+                  ...s,
+                });
+              }
+            }
+          } catch {}
+        }
+      }
+
+      // 3. Also include local mirror rows for this user so newly submitted Bank Transfer deposits appear immediately
+      const mirrorRows = loadLocalCryptoDepositsMirror();
+      for (const m of mirrorRows) {
+        if (!userId || String(m.user_id) === String(userId)) {
+          const existing = combinedMap.get(String(m.id));
+          combinedMap.set(String(m.id), {
+            ...m,
+            ...existing,
+            status: existing?.status || m.status,
+            receipt_url: existing?.receipt_url || m.receipt_url || m.screenshot_url,
+            payment_method: existing?.payment_method || m.payment_method,
+          });
+        }
+      }
+
+      records = Array.from(combinedMap.values());
 
       // Sort by newest created_at
       records.sort((a, b) => {
@@ -110,11 +128,11 @@ export const DepositHistoryTable: React.FC<DepositHistoryTableProps> = ({
 
   const renderStatusBadge = (rawStatus: string) => {
     const s = String(rawStatus || 'pending').toLowerCase();
-    if (s === 'completed' || s === 'finished' || s === 'active' || s === 'paid') {
+    if (s === 'completed' || s === 'finished' || s === 'active' || s === 'paid' || s === 'approved') {
       return (
         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
           <CheckCircle2 className="w-3 h-3" />
-          <span>Finished</span>
+          <span>Approved</span>
         </span>
       );
     }
@@ -126,11 +144,11 @@ export const DepositHistoryTable: React.FC<DepositHistoryTableProps> = ({
         </span>
       );
     }
-    if (s === 'failed' || s === 'expired' || s === 'cancelled') {
+    if (s === 'failed' || s === 'expired' || s === 'cancelled' || s === 'rejected' || s === 'declined') {
       return (
         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30">
           <XCircle className="w-3 h-3" />
-          <span className="capitalize">{s}</span>
+          <span className="capitalize">{s === 'declined' ? 'Rejected' : s}</span>
         </span>
       );
     }

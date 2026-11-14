@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import {
   X,
   TrendingUp,
@@ -129,8 +130,6 @@ export const QuotexSignalsDrawer: React.FC<QuotexSignalsDrawerProps> = ({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [expandedSignalId, setExpandedSignalId] = useState<string | null>('BFT-SIG-01');
 
-  if (!isOpen) return null;
-
   const handleRefresh = () => {
     soundEngine.playUiClick();
     setIsRefreshing(true);
@@ -149,9 +148,29 @@ export const QuotexSignalsDrawer: React.FC<QuotexSignalsDrawerProps> = ({
   const filteredSignals = signals.filter((s) => (filter === 'ALL' ? true : s.direction === filter));
 
   return (
-    <div className="fixed inset-x-0 bottom-0 top-9 md:inset-y-0 md:left-14 md:right-auto z-50 w-full md:w-84 bg-[#181b25] border-r border-[#2a2e39] shadow-2xl flex flex-col animate-in slide-in-from-left duration-200 font-sans select-none">
-      {/* Header */}
-      <div className="p-3 sm:p-4 bg-[#131722] border-b border-[#2a2e39] flex items-center justify-between">
+    <AnimatePresence>
+      {isOpen && (
+        <motion.div
+          key="signals-drawer-backdrop"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+          className="fixed inset-0 md:absolute md:inset-y-0 md:left-14 md:right-0 z-40 flex items-stretch justify-start bg-black/50 font-sans overflow-hidden select-none"
+          onClick={onClose}
+        >
+          <motion.div
+            key="signals-drawer-panel"
+            data-testid="quotex-signals-drawer"
+            initial={{ x: '-100%' }}
+            animate={{ x: 0 }}
+            exit={{ x: '-100%' }}
+            transition={{ type: 'tween', duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full sm:w-80 md:w-[340px] h-full bg-[#181b25] border-r border-[#2a2e39] shadow-[16px_0_48px_rgba(0,0,0,0.8)] flex flex-col will-change-transform"
+          >
+            {/* Header */}
+            <div className="p-3 sm:p-4 bg-[#131722] border-b border-[#2a2e39] flex items-center justify-between">
         <div className="flex items-center gap-2.5">
           <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-cyan-500/20 border border-cyan-400/40 flex items-center justify-center text-cyan-400 shadow-md">
             <Cpu className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-cyan-400" />
@@ -317,6 +336,9 @@ export const QuotexSignalsDrawer: React.FC<QuotexSignalsDrawerProps> = ({
           );
         })}
       </div>
-    </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 };

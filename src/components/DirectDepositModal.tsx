@@ -414,19 +414,30 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
     e.preventDefault();
     if (!activeMethod) return;
 
+    const isBankTransfer =
+      activeMethod.id === 'commercial_bank' || Boolean(activeMethod.bankDetails);
+
+    if (isBankTransfer && !receiptFile && !receiptPreviewUrl) {
+      setSubmissionError(
+        'Please upload a payment receipt image or screenshot to complete your Bank Transfer submission.'
+      );
+      return;
+    }
+
     setIsSubmitting(true);
     setSubmissionError(null);
 
     try {
-      const targetAddress = activeMethod.walletAddress ||
+      const targetAddress =
+        activeMethod.walletAddress ||
         (activeMethod.bankDetails
           ? `${activeMethod.bankDetails.bankName} - ${activeMethod.bankDetails.accountNumber} (${activeMethod.bankDetails.accountName})`
           : '');
 
-      const networkDisplay = activeMethod.name;
+      const networkDisplay = isBankTransfer ? 'Bank Transfer' : activeMethod.name;
+      const paymentMethodCode = isBankTransfer ? 'bank_transfer' : 'crypto';
 
       const bonusAmountGranted = bonusApplied ? numericAmount : 0;
-      const requiredTurnoverAmount = bonusApplied ? numericAmount * 100 : 0;
       const resolvedPackageName = bonusApplied
         ? `Self-Funded Deposit via ${networkDisplay} ($${numericAmount.toFixed(2)} + $${bonusAmountGranted.toFixed(2)} BFT100 Bonus)`
         : `Self-Funded Deposit via ${networkDisplay} ($${numericAmount.toFixed(2)})`;
@@ -435,11 +446,9 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
         : `DEPOSIT_${activeMethod.id.toUpperCase()}`;
       const resolvedTxHash =
         txHashInput.trim() ||
-        (receiptFile
-          ? `SLIP:${receiptFile.name}`
-          : undefined);
+        (receiptFile ? `SLIP:${receiptFile.name}` : undefined);
 
-      // 1. Upload screenshot to Supabase Storage (`deposit-receipts`) and insert into `crypto_deposits` table
+      // 1. Upload screenshot to Supabase Storage (`deposit_receipts`) and insert into `deposits` & `crypto_deposits`
       const supaDepositRes = await submitCryptoDepositToSupabaseTable({
         userId: userProfile?.id,
         userEmail: userProfile?.email,
@@ -451,6 +460,7 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
         accountId: activeAccount?.id || 'BFT-PERS-LIVE',
         walletAddress: targetAddress,
         network: networkDisplay,
+        paymentMethod: paymentMethodCode,
         receiptFile,
         receiptPreviewUrl: receiptPreviewUrl || undefined,
         txHash: resolvedTxHash,
@@ -458,7 +468,11 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
         status: 'pending',
       });
 
-      const finalScreenshotUrl = supaDepositRes.screenshotUrl || receiptPreviewUrl || undefined;
+      const finalScreenshotUrl =
+        supaDepositRes.receiptUrl ||
+        supaDepositRes.screenshotUrl ||
+        receiptPreviewUrl ||
+        undefined;
 
       // 2. Also record in backend API for full dual-store parity
       await apiSubmitCryptoDeposit({
@@ -495,11 +509,11 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
 
       setSubmissionSuccess(
         bonusApplied
-          ? `Deposit proof for $${numericAmount.toFixed(2)} via ${networkDisplay} submitted with 100% First Deposit Bonus (+$${bonusAmountGranted.toFixed(2)} using code ${BFT100_BONUS_CODE})! Required bonus turnover: $${requiredTurnoverAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (100x).`
-          : `Deposit proof for $${numericAmount.toFixed(2)} via ${networkDisplay} submitted to crypto_deposits! Our finance team will verify and credit your account shortly.`
+          ? `Transaction Pending — Status: Pending ($${numericAmount.toFixed(2)} USD + $${bonusAmountGranted.toFixed(2)} ${BFT100_BONUS_CODE} Bonus)`
+          : `Transaction Pending — Status: Pending ($${numericAmount.toFixed(2)} USD via ${networkDisplay})`
       );
     } catch (err: any) {
-      setSubmissionError(err?.message || 'Failed to submit deposit proof. Please try again.');
+      setSubmissionError(err?.message || 'Failed to submit deposit receipt. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -1332,13 +1346,54 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
                     />
                   </div>
 
+                  {receiptPreviewUrl && (
+                    <div
+                      data-testid="deposit-receipt-preview-box"
+                      className="flex items-center justify-between gap-3 p-2.5 rounded-[5px] bg-[#1e222f] border border-[#363e54]"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <img
+                          src={receiptPreviewUrl}
+                          alt="Payment Receipt Preview"
+                          className="w-10 h-10 rounded object-cover border border-white/15 shrink-0"
+                        />
+                        <div className="min-w-0">
+                          <div className="text-xs font-bold text-white truncate">
+                            {receiptFile?.name || 'Payment Receipt Attached'}
+                          </div>
+                          <div className="text-[10px] text-emerald-400">
+                            Ready for upload to deposit_receipts
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setReceiptFile(null);
+                          setReceiptPreviewUrl(null);
+                        }}
+                        className="text-[11px] text-slate-400 hover:text-rose-400 px-2 py-1 rounded cursor-pointer"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  )}
+
                   {submissionSuccess && (
                     <div
                       data-testid="deposit-submission-success"
-                      className="p-3 rounded-md bg-emerald-500/15 border border-emerald-500/30 text-xs text-emerald-300 flex items-center gap-2"
+                      className="p-3.5 rounded-md bg-amber-500/15 border border-amber-500/35 text-xs text-amber-200 flex items-center justify-between gap-3"
                     >
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                      <span>{submissionSuccess}</span>
+                      <div className="flex items-center gap-2">
+                        <Clock className="w-4 h-4 text-amber-400 shrink-0" />
+                        <span className="font-bold text-white">{submissionSuccess}</span>
+                      </div>
+                      <span
+                        data-testid="deposit-trader-pending-badge"
+                        className="px-2.5 py-1 rounded bg-amber-500/20 border border-amber-500/40 text-amber-300 font-mono text-[10px] font-black uppercase shrink-0"
+                      >
+                        Pending
+                      </span>
                     </div>
                   )}
 
@@ -1355,7 +1410,7 @@ export const DirectDepositModal: React.FC<DirectDepositModalProps> = ({
                       disabled={isSubmitting}
                       className="px-5 py-2 rounded-[5px] bg-[#12b76a] hover:bg-[#10a35e] disabled:opacity-50 text-white font-bold text-xs transition-colors cursor-pointer"
                     >
-                      {isSubmitting ? 'Submitting...' : 'Submit Payment Proof'}
+                      {isSubmitting ? 'Submitting...' : 'Submit Payment Receipt'}
                     </button>
                   </div>
                 </form>

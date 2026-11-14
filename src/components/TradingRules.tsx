@@ -234,7 +234,7 @@ export const TradingRules: React.FC = () => {
           </div>
         </div>
 
-        {/* Institutional 3-Tier Affiliate & Direct Payout Bonus Schedule */}
+        {/* Institutional Dual Affiliate & Turnover Commission Schedule */}
         <div
           data-testid="rules-affiliate-schedule"
           className="p-6 sm:p-8 rounded-3xl bg-[#111827] border border-white/[0.08]"
@@ -245,42 +245,42 @@ export const TradingRules: React.FC = () => {
             </div>
             <div>
               <h3 className="text-lg font-bold text-white">
-                3-Tier Affiliate & Direct Payout Bonus Schedule
+                Dual Affiliate Commission Structure (Funded & Self-Funded Turnover)
               </h3>
               <p className="text-xs text-[#9ca3af]">
-                Transparent multi-level referral commissions on challenge purchases plus real-time direct referral withdrawal bonuses.
+                Multi-level commissions on Funded Challenge purchases (Basic & VIP tiers) plus automatic 5% / 7% commissions on Self-Funded trading turnover.
               </p>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 font-mono text-xs">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 font-mono text-xs">
             <div className="p-4 rounded-xl bg-[#07090e] border border-emerald-500/30">
               <div className="text-emerald-400 font-black uppercase text-[11px] mb-1">
-                Level 1 (Direct Referrals)
+                Level 1 (Direct Ref)
               </div>
-              <div className="text-2xl font-black text-white mb-1">10%</div>
+              <div className="text-2xl font-black text-white mb-1">10% / 15%</div>
               <p className="text-[11px] text-[#9ca3af] font-sans">
-                Instant 10% commission on all challenge and instant funded purchases by direct referrals.
+                10% Basic (15% VIP after 1,000 active funded traders) on direct referral challenge purchases.
               </p>
             </div>
 
             <div className="p-4 rounded-xl bg-[#07090e] border border-cyan-500/30">
               <div className="text-cyan-400 font-black uppercase text-[11px] mb-1">
-                Level 2 (Sub-Referrals)
+                Level 2 (Sub-Ref)
               </div>
-              <div className="text-2xl font-black text-white mb-1">5%</div>
+              <div className="text-2xl font-black text-white mb-1">5% / 8%</div>
               <p className="text-[11px] text-[#9ca3af] font-sans">
-                5% commission on challenge purchases completed by your Level 2 sub-referral network.
+                5% Basic (8% VIP) commission on challenge purchases by your Level 2 sub-referral network.
               </p>
             </div>
 
             <div className="p-4 rounded-xl bg-[#07090e] border border-purple-500/30">
               <div className="text-purple-400 font-black uppercase text-[11px] mb-1">
-                Level 3 (Extended Tier)
+                Level 3 (Network)
               </div>
-              <div className="text-2xl font-black text-white mb-1">2%</div>
+              <div className="text-2xl font-black text-white mb-1">2% / 5%</div>
               <p className="text-[11px] text-[#9ca3af] font-sans">
-                2% commission on challenge purchases across your Level 3 extended trader tier.
+                2% Basic (5% VIP) commission across your Level 3 extended trader network.
               </p>
             </div>
 
@@ -288,9 +288,19 @@ export const TradingRules: React.FC = () => {
               <div className="text-[#ff8800] font-black uppercase text-[11px] mb-1">
                 Direct Payout Bonus
               </div>
-              <div className="text-2xl font-black text-[#ffaa00] mb-1">+8%</div>
+              <div className="text-2xl font-black text-[#ffaa00] mb-1">8% / 10%</div>
               <p className="text-[11px] text-[#9ca3af] font-sans">
-                Extra 8% commission earned in real-time on direct referrals' profit withdrawal amounts.
+                8% Basic (10% VIP + $10K Milestone) earned on direct referrals&apos; profit withdrawals.
+              </p>
+            </div>
+
+            <div className="p-4 rounded-xl bg-[#07090e] border border-[#0ecb81]/50">
+              <div className="text-[#0ecb81] font-black uppercase text-[11px] mb-1">
+                Self-Funded Turnover
+              </div>
+              <div className="text-2xl font-black text-[#0ecb81] mb-1">5% → 7%</div>
+              <p className="text-[11px] text-[#9ca3af] font-sans">
+                5% of trading turnover for your first 200 referred traders; 7% from your 201st trader onwards.
               </p>
             </div>
           </div>

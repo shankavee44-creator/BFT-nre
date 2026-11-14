@@ -5,9 +5,17 @@ import type {
   AffiliateStats,
   ChallengeTier,
   ReferredUser,
+  AffiliateReferralDetail,
 } from '../types/index.ts';
 
-export type { UserAccount, ReferralRecord, AffiliatePayout, AffiliateStats, ReferredUser };
+export type {
+  UserAccount,
+  ReferralRecord,
+  AffiliatePayout,
+  AffiliateStats,
+  ReferredUser,
+  AffiliateReferralDetail,
+};
 
 // ==========================================
 // 1. COOKIE & CLIENT PERSISTENCE (30-DAY TTL)
@@ -370,6 +378,21 @@ export const VIP_TIER_RATES = {
 export const COMMISSION_RATES = BASIC_TIER_RATES;
 export const VIP_ACTIVE_TRADERS_THRESHOLD = 1000;
 export const VIP_MILESTONE_REWARD_AMOUNT = 10000;
+
+// ==========================================
+// 4B. SELF-FUNDED TURNOVER TIER CONSTANTS
+// ==========================================
+// First 200 referred traders (1st to 200th): 5% commission from trading turnover
+// After 200 completed traders (from the 201st trader onwards): 7% commission from trading turnover
+export const SELF_FUNDED_TURNOVER_THRESHOLD = 200;
+export const SELF_FUNDED_TURNOVER_BASIC_RATE = 0.05;
+export const SELF_FUNDED_TURNOVER_UPGRADED_RATE = 0.07;
+
+export const SELF_FUNDED_TURNOVER_RATES = {
+  BASIC_RATE: SELF_FUNDED_TURNOVER_BASIC_RATE, // 5% for traders #1 - #200
+  UPGRADED_RATE: SELF_FUNDED_TURNOVER_UPGRADED_RATE, // 7% for traders #201+
+  UPGRADE_THRESHOLD: SELF_FUNDED_TURNOVER_THRESHOLD, // 200 completed referred traders
+};
 
 export interface ProcessCommissionsResult {
   newReferrals: ReferralRecord[];
@@ -1392,4 +1415,352 @@ function generateSampleTxHash(): string {
   }
   return hash;
 }
+
+// ============================================================================
+// 8. SELF-FUNDED TURNOVER COMMISSION & QUOTEX-STYLE REFERRAL DETAILS ENGINE
+// ============================================================================
+
+/**
+ * Determines the Self-Funded Turnover commission rate for a specific referred trader:
+ * - First 200 referred traders (traderIndex 1 to 200): 5% (0.05) of trading turnover
+ * - After 200 completed traders (from the 201st trader onwards, traderIndex >= 201): 7% (0.07) of trading turnover
+ */
+export function getSelfFundedTurnoverRateForTraderIndex(
+  traderIndex1Based: number,
+  completedTradersCount?: number
+): number {
+  const safeIndex = Math.max(1, Math.floor(Number(traderIndex1Based) || 1));
+  if (safeIndex > SELF_FUNDED_TURNOVER_THRESHOLD) {
+    return SELF_FUNDED_TURNOVER_UPGRADED_RATE;
+  }
+  if (
+    typeof completedTradersCount === 'number' &&
+    completedTradersCount > SELF_FUNDED_TURNOVER_THRESHOLD &&
+    safeIndex > SELF_FUNDED_TURNOVER_THRESHOLD
+  ) {
+    return SELF_FUNDED_TURNOVER_UPGRADED_RATE;
+  }
+  return SELF_FUNDED_TURNOVER_BASIC_RATE;
+}
+
+/**
+ * Calculates the turnover commission earned from a specific referred trader based on the 5% / 7% tier rules.
+ */
+export function calculateReferralTurnoverCommission(
+  totalTradeTurnover: number,
+  traderIndex1Based: number,
+  completedTradersCount?: number
+): {
+  rate: number;
+  ratePercent: number;
+  commissionEarned: number;
+  isUpgradedTier: boolean;
+  tierLabel: '5% Tier (1–200)' | '7% Tier (201+)';
+} {
+  const safeTurnover = Math.max(0, Number(totalTradeTurnover) || 0);
+  const rate = getSelfFundedTurnoverRateForTraderIndex(traderIndex1Based, completedTradersCount);
+  const ratePercent = Math.round(rate * 100);
+  const commissionEarned = Number((safeTurnover * rate).toFixed(2));
+  const isUpgradedTier = rate >= SELF_FUNDED_TURNOVER_UPGRADED_RATE;
+  return {
+    rate,
+    ratePercent,
+    commissionEarned,
+    isUpgradedTier,
+    tierLabel: isUpgradedTier ? '7% Tier (201+)' : '5% Tier (1–200)',
+  };
+}
+
+/**
+ * Computes the affiliate's progress toward unlocking the 7% Self-Funded Turnover tier (unlocked after 200 completed traders).
+ */
+export function getSelfFundedTurnoverTierStatus(completedTradersCount: number): {
+  completedTradersCount: number;
+  threshold: number;
+  currentRate: number;
+  currentRatePercent: number;
+  nextRatePercent: number;
+  is7PercentUnlocked: boolean;
+  remainingToUpgrade: number;
+  progressPercent: number;
+} {
+  const safeCount = Math.max(0, Math.floor(Number(completedTradersCount) || 0));
+  const is7PercentUnlocked = safeCount >= SELF_FUNDED_TURNOVER_THRESHOLD;
+  const currentRate = is7PercentUnlocked
+    ? SELF_FUNDED_TURNOVER_UPGRADED_RATE
+    : SELF_FUNDED_TURNOVER_BASIC_RATE;
+  const remainingToUpgrade = Math.max(0, SELF_FUNDED_TURNOVER_THRESHOLD - safeCount);
+  const progressPercent = Math.min(
+    100,
+    Number(((safeCount / SELF_FUNDED_TURNOVER_THRESHOLD) * 100).toFixed(1))
+  );
+
+  return {
+    completedTradersCount: safeCount,
+    threshold: SELF_FUNDED_TURNOVER_THRESHOLD,
+    currentRate,
+    currentRatePercent: Math.round(currentRate * 100),
+    nextRatePercent: Math.round(SELF_FUNDED_TURNOVER_UPGRADED_RATE * 100),
+    is7PercentUnlocked,
+    remainingToUpgrade,
+    progressPercent,
+  };
+}
+
+/**
+ * Normalizes a raw row from Supabase `affiliate_referral_details` (or backend/local referral sources)
+ * into a clean `AffiliateReferralDetail` record with automatic 5% / 7% turnover commission calculation.
+ */
+export function normalizeAffiliateReferralDetailRow(
+  row: Record<string, any>,
+  index0Based: number = 0,
+  completedTradersCount?: number
+): AffiliateReferralDetail {
+  const explicitTraderIndex = Number(
+    row.trader_index ?? row.traderIndex ?? row.referral_order ?? row.rank_index ?? index0Based + 1
+  );
+  const traderIndex = Number.isFinite(explicitTraderIndex) && explicitTraderIndex >= 1
+    ? Math.floor(explicitTraderIndex)
+    : index0Based + 1;
+
+  const referredUserId = String(
+    row.referred_user_id ?? row.referredUserId ?? row.user_id ?? row.trader_id ?? row.id ?? `trd_${traderIndex}`
+  ).trim();
+
+  const referrerId = String(
+    row.referrer_id ?? row.referrerId ?? row.sponsor_id ?? row.affiliate_id ?? row.referred_by ?? ''
+  ).trim();
+
+  const rawName = String(
+    row.referral_name ??
+      row.referralName ??
+      row.referred_user_name ??
+      row.full_name ??
+      row.fullName ??
+      row.trader_name ??
+      row.name ??
+      ''
+  ).trim();
+
+  const email = String(row.email ?? row.referred_user_email ?? '').trim() || undefined;
+  const referralName =
+    rawName ||
+    (email ? email.split('@')[0] : `Trader #${String(traderIndex).padStart(3, '0')}`);
+
+  const rawCodeOrId = String(
+    row.referral_code ??
+      row.referralCodeOrId ??
+      row.trader_code ??
+      row.display_id ??
+      ''
+  ).trim();
+
+  const shortCleanId = referredUserId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toUpperCase();
+  const referralCodeOrId = rawCodeOrId || (shortCleanId ? `UID-${shortCleanId}` : `UID-${100000 + traderIndex}`);
+
+  const accountBalance = Math.max(
+    0,
+    Number(
+      Number(
+        row.account_balance ??
+          row.accountBalance ??
+          row.live_balance ??
+          row.self_balance ??
+          row.current_balance ??
+          row.balance ??
+          0
+      ).toFixed(2)
+    ) || 0
+  );
+
+  const bonusAmount = Math.max(
+    0,
+    Number(
+      Number(
+        row.bonus_amount ??
+          row.bonusAmount ??
+          row.active_bonus ??
+          row.deposit_bonus ??
+          row.bonus ??
+          0
+      ).toFixed(2)
+    ) || 0
+  );
+
+  const totalTradeTurnover = Math.max(
+    0,
+    Number(
+      Number(
+        row.total_trade_turnover ??
+          row.totalTradeTurnover ??
+          row.trade_turnover ??
+          row.trading_turnover ??
+          row.total_turnover ??
+          row.turnover ??
+          row.total_volume ??
+          0
+      ).toFixed(2)
+    ) || 0
+  );
+
+  // Automatically calculate turnover commission based on the 5% (1-200) / 7% (201+) tier rules
+  const calc = calculateReferralTurnoverCommission(
+    totalTradeTurnover,
+    traderIndex,
+    completedTradersCount
+  );
+
+  // If the database row already stores commission_earned and totalTradeTurnover is 0, preserve db value;
+  // otherwise use the strict 5% / 7% turnover formula so it is always accurate.
+  const dbCommission = Number(
+    row.commission_earned ?? row.commissionEarned ?? row.turnover_commission ?? 0
+  );
+  const commissionEarned =
+    totalTradeTurnover > 0
+      ? calc.commissionEarned
+      : Math.max(0, Number(dbCommission.toFixed(2)) || 0);
+
+  const challengeCommissionEarned = Math.max(
+    0,
+    Number(
+      Number(row.challenge_commission_earned ?? row.challengeCommissionEarned ?? 0).toFixed(2)
+    ) || 0
+  );
+
+  const joinedAt = String(
+    row.joined_at ?? row.joinedAt ?? row.created_at ?? row.createdAt ?? new Date().toISOString()
+  );
+
+  const statusRaw = String(row.status ?? (totalTradeTurnover > 0 || accountBalance > 0 ? 'completed' : 'active')).toLowerCase();
+  const status =
+    statusRaw === 'completed' || statusRaw === 'active' || statusRaw === 'pending'
+      ? statusRaw
+      : 'active';
+
+  return {
+    id: String(row.id ?? `ARD-${referredUserId}-${traderIndex}`),
+    referrerId,
+    referredUserId,
+    referralName,
+    referralCodeOrId,
+    email,
+    traderIndex,
+    accountBalance,
+    bonusAmount,
+    totalTradeTurnover,
+    turnoverCommissionRate: calc.rate,
+    commissionEarned,
+    challengeCommissionEarned,
+    accountType: row.account_type ?? row.accountType ?? 'self_funded',
+    status,
+    joinedAt,
+  };
+}
+
+/**
+ * Merges `affiliate_referral_details` rows with any referred network users & commission records
+ * so every referred user appears in the Quotex-style Detailed Referral Table with accurate
+ * Live Account Balance, Bonus Amount, Total Trade Turnover, and 5%/7% Commission Earned.
+ */
+export function buildDetailedReferralList(params: {
+  sponsorId: string;
+  rawDetailRows?: Array<Record<string, any>>;
+  networkNodes?: ReferredUser[];
+  referralsList?: ReferralRecord[];
+  completedTradersOverride?: number;
+}): AffiliateReferralDetail[] {
+  const {
+    sponsorId,
+    rawDetailRows = [],
+    networkNodes = [],
+    referralsList = [],
+    completedTradersOverride,
+  } = params;
+
+  const byUserId = new Map<string, Record<string, any>>();
+
+  // 1. Seed from `affiliate_referral_details` rows first (authoritative)
+  for (const row of rawDetailRows) {
+    if (!row) continue;
+    const uid = String(
+      row.referred_user_id ?? row.referredUserId ?? row.user_id ?? row.trader_id ?? row.id ?? ''
+    ).trim();
+    if (!uid) continue;
+    byUserId.set(uid, { ...row, referred_user_id: uid });
+  }
+
+  // 2. Enrich or add direct/network referred users from `networkNodes`
+  for (const node of networkNodes) {
+    if (!node || !node.id) continue;
+    const existing = byUserId.get(node.id);
+    const purchaseAmt = Number(node.latestPurchase?.amount || 0);
+    const derivedBalance = Number(
+      (node as any).accountBalance ?? (node as any).selfBalance ?? 0
+    );
+    const derivedBonus = Number((node as any).bonusAmount ?? 0);
+    const derivedTurnover = Number(
+      (node as any).totalTradeTurnover ?? (node as any).totalVolume ?? 0
+    );
+    if (!existing) {
+      byUserId.set(node.id, {
+        referred_user_id: node.id,
+        referrer_id: sponsorId,
+        referral_name: node.fullName || 'Trader',
+        email: node.email,
+        account_balance: derivedBalance,
+        bonus_amount: derivedBonus,
+        total_trade_turnover: derivedTurnover,
+        status: purchaseAmt > 0 || derivedTurnover > 0 ? 'completed' : 'active',
+        joined_at: node.joinedDate || new Date().toISOString(),
+      });
+    } else {
+      if (!existing.referral_name && node.fullName) {
+        existing.referral_name = node.fullName;
+      }
+      if (!existing.email && node.email) {
+        existing.email = node.email;
+      }
+    }
+  }
+
+  // 3. Also check `referralsList` for any direct referred traders not yet in the map
+  for (const ref of referralsList) {
+    if (!ref || !ref.referredUserId || ref.referredUserId === sponsorId) continue;
+    if (ref.referrerId && sponsorId && ref.referrerId !== sponsorId) continue;
+    const existing = byUserId.get(ref.referredUserId);
+    if (!existing) {
+      byUserId.set(ref.referredUserId, {
+        referred_user_id: ref.referredUserId,
+        referrer_id: sponsorId,
+        referral_name: ref.referredUserName || 'Trader',
+        email: ref.referredUserEmail,
+        account_balance: 0,
+        bonus_amount: 0,
+        total_trade_turnover: 0,
+        challenge_commission_earned: Number(ref.commissionAmount || 0),
+        status: 'active',
+        joined_at: ref.createdAt || ref.date || new Date().toISOString(),
+      });
+    } else {
+      existing.challenge_commission_earned =
+        Number(existing.challenge_commission_earned || 0) + Number(ref.commissionAmount || 0);
+    }
+  }
+
+  const combinedRows = Array.from(byUserId.values());
+  const completedCount =
+    typeof completedTradersOverride === 'number'
+      ? completedTradersOverride
+      : combinedRows.filter(
+          (r) =>
+            Number(r.total_trade_turnover ?? r.totalTradeTurnover ?? 0) > 0 ||
+            Number(r.account_balance ?? r.accountBalance ?? 0) > 0 ||
+            String(r.status || '').toLowerCase() === 'completed'
+        ).length;
+
+  return combinedRows.map((row, idx) =>
+    normalizeAffiliateReferralDetailRow(row, idx, completedCount)
+  );
+}
+
 

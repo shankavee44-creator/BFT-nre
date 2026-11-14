@@ -361,6 +361,7 @@ html.perf-mode-low .animate-bounce {
 @keyframes bftFadeSlideUp {
   0% {
     opacity: 0;
+    transform: translate3d(0, 10px, 0);
   }
   100% {
     opacity: 1;
@@ -371,6 +372,7 @@ html.perf-mode-low .animate-bounce {
 @keyframes bftModalScaleIn {
   0% {
     opacity: 0;
+    transform: scale(0.97) translate3d(0, 6px, 0);
   }
   100% {
     opacity: 1;
@@ -378,12 +380,77 @@ html.perf-mode-low .animate-bounce {
   }
 }
 
+@keyframes bftBackdropFadeIn {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes bftSlideInRight {
+  0% {
+    opacity: 0.65;
+    transform: translate3d(100%, 0, 0);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes bftSlideInLeft {
+  0% {
+    opacity: 0.65;
+    transform: translate3d(-100%, 0, 0);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes bftSlideInBottom {
+  0% {
+    opacity: 0.65;
+    transform: translate3d(0, 100%, 0);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
 .animate-bft-entry {
-  animation: bftFadeSlideUp 0.22s ease-out forwards;
+  animation: bftFadeSlideUp 0.22s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
 .animate-bft-modal {
-  animation: bftModalScaleIn 0.18s ease-out forwards;
+  animation: bftModalScaleIn 0.2s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.animate-fade-in,
+.animate-in.fade-in {
+  animation: bftBackdropFadeIn 0.2s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.animate-slide-in-right,
+.animate-in.slide-in-from-right {
+  animation: bftSlideInRight 0.28s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  will-change: transform, opacity;
+}
+
+.animate-slide-in-left,
+.animate-in.slide-in-from-left {
+  animation: bftSlideInLeft 0.26s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  will-change: transform, opacity;
+}
+
+.animate-slide-in-bottom,
+.animate-in.slide-in-from-bottom-full {
+  animation: bftSlideInBottom 0.26s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  will-change: transform, opacity;
 }
 
 @keyframes bftFloat {

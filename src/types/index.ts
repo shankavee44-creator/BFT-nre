@@ -287,6 +287,25 @@ export interface ReferredUser {
   [key: string]: any;
 }
 
+export interface AffiliateReferralDetail {
+  id: string;
+  referrerId: string;
+  referredUserId: string;
+  referralName: string;
+  referralCodeOrId: string;
+  email?: string;
+  traderIndex: number; // 1-based referral sequence index (1-200 = 5%, 201+ = 7%)
+  accountBalance: number; // Live account balance ($)
+  bonusAmount: number; // Active bonus amount ($)
+  totalTradeTurnover: number; // Cumulative trading turnover ($)
+  turnoverCommissionRate: number; // 0.05 (first 200 traders) or 0.07 (201st+ trader)
+  commissionEarned: number; // Automatically calculated from turnover * rate ($)
+  challengeCommissionEarned?: number; // Any funded challenge purchase/withdrawal commission ($)
+  accountType?: 'self_funded' | 'funded' | 'dual';
+  status: 'active' | 'completed' | 'pending' | string;
+  joinedAt: string;
+}
+
 export interface AffiliatePayout {
   id: string;
   userId?: string;
@@ -327,5 +346,16 @@ export interface AffiliateStats {
   currentTier: 'basic' | 'vip' | string;
   milestoneBonusEarned: number;
   milestoneProgressPercent: number;
+  // Self-Funded Turnover Tier fields
+  turnoverTradersCount?: number;
+  completedTurnoverTradersCount?: number;
+  currentTurnoverRate?: number;
+  turnoverUpgradeThreshold?: number;
+  remainingTo7PercentTier?: number;
+  turnoverProgressPercent?: number;
+  is7PercentTurnoverUnlocked?: boolean;
+  totalNetworkTurnover?: number;
+  totalTurnoverCommission?: number;
   [key: string]: any;
 }
+

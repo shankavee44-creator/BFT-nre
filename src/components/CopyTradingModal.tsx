@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import {
   Users,
   Trophy,
@@ -267,6 +268,7 @@ interface CopyTradingModalProps {
   userProfile?: UserProfile;
   onNavigateToPricing?: () => void;
   onOpenDepositModal?: () => void;
+  dockedInTerminal?: boolean;
 }
 
 interface MasterTraderCardItemProps {
@@ -543,6 +545,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
   userProfile,
   onNavigateToPricing,
   onOpenDepositModal,
+  dockedInTerminal = false,
 }) => {
   const [mainViewMode, setMainViewMode] = useState<'leaderboard' | 'my_subscriptions'>('leaderboard');
   const [activeTab, setActiveTab] = useState<'instant_funded' | 'self_capital'>('instant_funded');
@@ -1001,8 +1004,6 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
     return () => window.removeEventListener('bft-copy-subscription-stopped', handleStopped);
   }, []);
 
-  if (!isOpen) return null;
-
   const displayedTraders =
     !searchQuery.trim() && socialFilterOption === 'top_24h'
       ? getRotatedTop24hTraders(rotationInfo.rotationSlot * ROTATION_INTERVAL_MS, combinedPool)
@@ -1457,16 +1458,33 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
   };
 
   return (
-    <div
-      data-testid="copy-trading-modal"
-      className="fixed inset-0 z-50 flex items-stretch justify-end bg-black/55 backdrop-blur-[2px] animate-fade-in font-sans overflow-hidden"
-      onClick={onClose}
-    >
-      {/* Main Social Trading Panel (Matches Screenshot 2 with 100% fidelity) */}
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="relative w-full sm:w-[375px] md:w-[390px] h-full bg-[#1c202e] shadow-[-12px_0_40px_rgba(0,0,0,0.75)] flex flex-col border-l border-[#2c3246] overflow-hidden select-none"
-      >
+    <AnimatePresence>
+      {isOpen && (
+        <motion.div
+          key="copy-trading-backdrop"
+          data-testid="copy-trading-modal"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+          className={
+            dockedInTerminal
+              ? 'fixed inset-0 md:absolute md:inset-y-0 md:left-14 md:right-0 z-40 flex items-stretch justify-end bg-black/55 font-sans overflow-hidden'
+              : 'fixed inset-0 z-[80] flex items-stretch justify-end bg-black/60 font-sans overflow-hidden'
+          }
+          onClick={onClose}
+        >
+          {/* Main Social Trading Panel (Smooth Slide-In from Right) */}
+          <motion.div
+            key="copy-trading-panel"
+            data-testid="copy-trading-drawer-panel"
+            initial={{ x: '100%' }}
+            animate={{ x: 0 }}
+            exit={{ x: '100%' }}
+            transition={{ type: 'tween', duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+            onClick={(e) => e.stopPropagation()}
+            className="relative w-full sm:w-[375px] md:w-[395px] h-full bg-[#1c202e] shadow-[-16px_0_48px_rgba(0,0,0,0.85)] flex flex-col border-l border-[#2c3246] overflow-hidden select-none will-change-transform"
+          >
         {/* 1. Header: Dark container with centered "Social Trading" title */}
         <div className="bg-[#252a3a] border-b border-[#181c27] px-3.5 h-12 flex items-center justify-between shrink-0 relative">
           <button
@@ -1652,8 +1670,17 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
         </div>
 
         {/* Collapsible Search / Account / Provider Drawer (Accessible when Search icon is clicked) */}
-        {isToolsDrawerOpen && (
-          <div className="bg-[#181c28] border-b border-[#2a3042] px-3.5 py-2.5 space-y-2 shrink-0">
+        <AnimatePresence initial={false}>
+          {isToolsDrawerOpen && (
+            <motion.div
+              key="social-tools-drawer"
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+              className="bg-[#181c28] border-b border-[#2a3042] overflow-hidden shrink-0"
+            >
+              <div className="px-3.5 py-2.5 space-y-2">
             <div className="relative">
               <Search className="w-3.5 h-3.5 text-[#7c87a2] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
@@ -1713,8 +1740,10 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
                 + Become Master
               </button>
             </div>
-          </div>
-        )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* 3. Section Tag: Small centered sub-header "REAL TRADING" in uppercase gray/white text */}
         <div
@@ -1945,7 +1974,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
             )}
           </div>
         )}
-      </div>
+        </motion.div>
 
       {/* 2. Trader Profile Modal UI */}
       {viewingTrader && (() => {
@@ -1981,7 +2010,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
         return (
           <div
             data-testid="trader-profile-detail-modal"
-            className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-5 bg-black/65 backdrop-blur-[2px] animate-fade-in"
+            className="fixed inset-0 z-[90] flex items-center justify-center p-3 sm:p-5 bg-black/65 animate-fade-in"
             onClick={(e) => {
               e.stopPropagation();
               setViewingTrader(null);
@@ -1989,7 +2018,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
           >
             <div
               onClick={(e) => e.stopPropagation()}
-              className="w-full max-w-[650px] bg-[#1f2433] border border-[#2d3448] rounded-xl p-5 sm:p-7 shadow-[0_25px_70px_rgba(0,0,0,0.85)] text-white max-h-[94vh] overflow-y-auto"
+              className="w-full max-w-[650px] bg-[#1f2433] border border-[#2d3448] rounded-xl p-5 sm:p-7 shadow-[0_25px_70px_rgba(0,0,0,0.85)] text-white max-h-[94vh] overflow-y-auto animate-bft-modal"
             >
               {/* Modal Header: Trader Profile with close (X) button */}
               <div className="flex items-center justify-between gap-4">
@@ -2355,13 +2384,13 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
       {showRiskConfigModal && (
         <div
           data-testid="quick-copy-allocation-modal"
-          className="fixed inset-0 z-[70] flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-xl animate-fade-in"
+          className="fixed inset-0 z-[95] flex items-center justify-center p-3 sm:p-4 bg-black/85 animate-fade-in"
           onClick={() => setShowRiskConfigModal(null)}
         >
           <div
             data-testid="copy-risk-config-modal"
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-lg bg-[#0B0E17] border border-slate-700 rounded-3xl p-5 sm:p-7 shadow-2xl space-y-4 sm:space-y-5 max-h-[92vh] overflow-y-auto"
+            className="w-full max-w-lg bg-[#0B0E17] border border-slate-700 rounded-3xl p-5 sm:p-7 shadow-2xl space-y-4 sm:space-y-5 max-h-[92vh] overflow-y-auto animate-bft-modal"
           >
             {/* Modal Header */}
             <div className="flex items-center justify-between border-b border-slate-800 pb-3 sm:pb-4">
@@ -2625,12 +2654,12 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
       {showProviderModal && (
         <div
           data-testid="provider-registration-modal"
-          className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/85 backdrop-blur-xl animate-fade-in"
+          className="fixed inset-0 z-[95] flex items-center justify-center p-4 bg-black/85 animate-fade-in"
           onClick={() => setShowProviderModal(false)}
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md bg-[#0B0E17] border border-slate-700 rounded-3xl p-6 sm:p-7 shadow-2xl space-y-5"
+            className="w-full max-w-md bg-[#0B0E17] border border-slate-700 rounded-3xl p-6 sm:p-7 shadow-2xl space-y-5 animate-bft-modal"
           >
             <div className="flex items-center justify-between border-b border-slate-800 pb-4">
               <h3 className="text-base sm:text-lg font-black text-white flex items-center gap-2 uppercase">
@@ -2748,12 +2777,12 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
       {showEligibilityModal && (
         <div
           data-testid="copier-eligibility-modal"
-          className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/85 backdrop-blur-xl animate-fade-in"
+          className="fixed inset-0 z-[95] flex items-center justify-center p-4 bg-black/85 animate-fade-in"
           onClick={() => setShowEligibilityModal(null)}
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md bg-[#0B0E17] border border-rose-500/40 rounded-3xl p-6 sm:p-7 shadow-2xl text-center space-y-5"
+            className="w-full max-w-md bg-[#0B0E17] border border-rose-500/40 rounded-3xl p-6 sm:p-7 shadow-2xl text-center space-y-5 animate-bft-modal"
           >
             <div className="w-14 h-14 rounded-2xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center mx-auto text-rose-400">
               <ShieldAlert className="w-7 h-7" />
@@ -2803,7 +2832,7 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
       {toastNotice && (
         <div
           data-testid="copy-trading-toast"
-          className={`fixed top-5 left-1/2 -translate-x-1/2 z-[100] px-5 py-3.5 rounded-2xl font-mono font-bold text-xs shadow-2xl flex items-center gap-2.5 max-w-xl border ${
+          className={`fixed top-5 left-1/2 -translate-x-1/2 z-[110] px-5 py-3.5 rounded-2xl font-mono font-bold text-xs shadow-2xl flex items-center gap-2.5 max-w-xl border ${
             toastNotice.type === 'error'
               ? 'bg-rose-950/95 border-rose-500 text-rose-100'
               : 'bg-[#00F5A0] border-emerald-300 text-[#07080B]'
@@ -2817,6 +2846,8 @@ export const CopyTradingModal: React.FC<CopyTradingModalProps> = ({
           <span>{toastNotice.text}</span>
         </div>
       )}
-    </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 };

@@ -2853,7 +2853,11 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                               <span>ID: {String(dep.id).slice(0, 8)}...</span>
                               {depStatus === 'pending' && (
                                 <span className="text-[#ffaa00] font-bold">
-                                  • 1h Timer: {formatDepositCountdown(evalDep.remainingMs)}
+                                  {String(dep.payment_method || dep.network || '')
+                                    .toLowerCase()
+                                    .includes('bank')
+                                    ? '• Transaction Pending'
+                                    : `• 1h Timer: ${formatDepositCountdown(evalDep.remainingMs)}`}
                                 </span>
                               )}
                               {isDepFailed && (
@@ -2861,14 +2865,14 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                                   • Expired (&gt;1h timeout)
                                 </span>
                               )}
-                              {dep.slip_url && (
+                              {(dep.slip_url || dep.receipt_url || dep.screenshot_url) && (
                                 <a
-                                  href={dep.slip_url}
+                                  href={dep.slip_url || dep.receipt_url || dep.screenshot_url}
                                   target="_blank"
                                   rel="noreferrer"
                                   className="text-cyan-400 hover:underline flex items-center gap-0.5"
                                 >
-                                  View Slip ↗
+                                  View Receipt ↗
                                 </a>
                               )}
                             </div>
@@ -2889,7 +2893,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                   <h4 className="text-xs font-bold uppercase text-white flex items-center gap-1.5">
                     <Zap className="w-4 h-4 text-[#ff8800]" /> Withdrawals ({supabaseWithdrawals.length})
                   </h4>
-                  <span className="text-[10px] text-slate-400">Manual Approval</span>
+                  <span className="text-[10px] text-slate-400">Payout Records</span>
                 </div>
 
                 {supabaseWithdrawals.length === 0 ? (

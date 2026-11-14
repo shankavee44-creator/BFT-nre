@@ -353,8 +353,10 @@ test('Rule 5 (Supabase profiles Table Integration): Fetches and updates bonus_ba
   assert.equal(fetchedState.isTurnoverCompleted, false);
 });
 
-test('Rule 6 (Crypto Deposits & Admin Portal Integration): Uploads screenshot to deposit-receipts bucket, inserts into crypto_deposits with screenshot_url, and fetches/approves in Admin Portal', async () => {
+test('Rule 6 (Crypto & Bank Transfer Deposits & Admin Portal Integration): Uploads screenshot to deposit_receipts bucket, inserts into deposits & crypto_deposits with payment_method and receipt_url, and approves Self-Capital & Challenge orders', async () => {
   const cryptoDepositRows: any[] = [];
+  const depositsTableRows: any[] = [];
+  const tradingAccountsRows: any[] = [];
   let dbProfileRow: Record<string, any> = {
     id: baseProfile.id,
     email: baseProfile.email,
@@ -387,7 +389,8 @@ test('Rule 6 (Crypto Deposits & Admin Portal Integration): Uploads screenshot to
       },
     },
     from: (table: string) => {
-      if (table === 'crypto_deposits') {
+      if (table === 'crypto_deposits' || table === 'deposits') {
+        const targetArr = table === 'crypto_deposits' ? cryptoDepositRows : depositsTableRows;
         return {
           insert: (payload: Record<string, any>) => ({
             select: async () => {
@@ -396,24 +399,38 @@ test('Rule 6 (Crypto Deposits & Admin Portal Integration): Uploads screenshot to
                 ...payload,
                 created_at: '2026-11-10T09:30:00.000Z',
               };
-              cryptoDepositRows.unshift(created);
+              targetArr.unshift(created);
               return { data: [created], error: null };
             },
           }),
           select: () => ({
             order: async () => ({
-              data: [...cryptoDepositRows],
+              data: [...targetArr],
               error: null,
             }),
           }),
           update: (payload: Record<string, any>) => ({
             eq: async (_col: string, val: any) => {
-              const idx = cryptoDepositRows.findIndex((r) => String(r.id) === String(val));
+              const idx = targetArr.findIndex((r) => String(r.id) === String(val));
               if (idx >= 0) {
-                cryptoDepositRows[idx] = { ...cryptoDepositRows[idx], ...payload };
+                targetArr[idx] = { ...targetArr[idx], ...payload };
               }
-              return { data: cryptoDepositRows[idx] ? [cryptoDepositRows[idx]] : [], error: null };
+              return { data: targetArr[idx] ? [targetArr[idx]] : [], error: null };
             },
+          }),
+        };
+      }
+
+      if (table === 'trading_accounts' || table === 'user_purchases') {
+        return {
+          insert: (payload: Record<string, any>) => ({
+            select: async () => {
+              tradingAccountsRows.push(payload);
+              return { data: [payload], error: null };
+            },
+          }),
+          update: (_payload: Record<string, any>) => ({
+            eq: async () => ({ data: [], error: null }),
           }),
         };
       }
@@ -446,59 +463,88 @@ test('Rule 6 (Crypto Deposits & Admin Portal Integration): Uploads screenshot to
   };
 
   const mockBlob = new Blob(['fake-image-bytes'], { type: 'image/png' });
-  (mockBlob as any).name = 'payment_proof.png';
+  (mockBlob as any).name = 'bank_receipt.png';
 
-  // 1. Submit crypto deposit with screenshot and BFT100 bonus code
+  // 1. Submit Bank Transfer deposit with receipt screenshot to `deposit_receipts` bucket
+  assert.equal(DEPOSIT_RECEIPTS_BUCKET, 'deposit_receipts');
   const submitRes = await submitCryptoDepositToSupabaseTable({
     userId: baseProfile.id,
     userEmail: baseProfile.email,
     userName: baseProfile.fullName,
     amount: 300,
-    packageName: 'Self-Funded Deposit via USDT (TRC-20) ($300.00 + $300.00 BFT100 Bonus)',
-    sku: 'DEPOSIT_USDT_TRC20_BFT100',
+    packageName: 'Self-Funded Deposit via Bank Transfer ($300.00 + $300.00 BFT100 Bonus)',
+    sku: 'DEPOSIT_COMMERCIAL_BANK_BFT100',
     accountType: 'self_funded',
     accountId: 'BFT-PERS-101',
-    walletAddress: 'TLLn2X85UrcgYa4Cn3CCfHnspUg5asBVDo',
-    network: 'USDT (TRC-20)',
+    walletAddress: 'Commercial Bank of Ceylon - 8174001908 (A.D.H.W Kumari)',
+    network: 'Bank Transfer',
+    paymentMethod: 'bank_transfer',
     receiptFile: mockBlob,
-    txHash: '0xabc123def456',
+    txHash: 'SLIP:bank_receipt.png',
     bonusCode: 'BFT100',
     status: 'pending',
     supabaseClient: fakeSupabase,
   });
 
   assert.equal(submitRes.ok, true);
-  assert.equal(uploadedBucketName, DEPOSIT_RECEIPTS_BUCKET);
-  assert.match(uploadedFilePath, /payment_proof\.png$/);
+  assert.equal(uploadedBucketName, 'deposit_receipts');
+  assert.match(uploadedFilePath, /bank_receipt\.png$/);
   assert.match(
-    submitRes.screenshotUrl || '',
-    /https:\/\/example\.supabase\.co\/storage\/v1\/object\/public\/deposit-receipts\//
+    submitRes.receiptUrl || '',
+    /https:\/\/example\.supabase\.co\/storage\/v1\/object\/public\/deposit_receipts\//
   );
   assert.equal(cryptoDepositRows.length, 1);
-  assert.equal(cryptoDepositRows[0].screenshot_url, submitRes.screenshotUrl);
-  assert.equal(cryptoDepositRows[0].receipt_url, submitRes.screenshotUrl);
-  assert.equal(cryptoDepositRows[0].status, 'pending');
+  assert.equal(depositsTableRows.length, 1);
+  assert.equal(depositsTableRows[0].payment_method, 'bank_transfer');
+  assert.equal(depositsTableRows[0].receipt_url, submitRes.receiptUrl);
+  assert.equal(depositsTableRows[0].status, 'pending');
 
-  // 2. Fetch pending deposits for Admin Portal from `crypto_deposits`
+  // 2. Fetch pending deposits for Admin Portal from `deposits` & `crypto_deposits`
   const adminList = await fetchAdminCryptoDepositsFromSupabase({
     supabaseClient: fakeSupabase,
   });
   assert.equal(adminList.length, 1);
   assert.equal(adminList[0].id, '88889999-1111-4222-8333-444455556666');
-  assert.equal(adminList[0].screenshot_url, submitRes.screenshotUrl);
-  assert.equal(adminList[0].receipt_url, submitRes.screenshotUrl);
+  assert.equal(adminList[0].payment_method, 'bank_transfer');
+  assert.equal(adminList[0].receipt_url, submitRes.receiptUrl);
   assert.equal(adminList[0].amount, 300);
 
-  // 3. Approve deposit in Admin Portal -> updates crypto_deposits status to 'approved' and credits profiles
+  // 3. Approve Self-Capital Bank Transfer deposit in Admin Portal -> updates status to 'approved' and credits profiles
   const approveRes = await approveAdminCryptoDepositInSupabase({
     deposit: adminList[0],
     supabaseClient: fakeSupabase,
   });
   assert.equal(approveRes.ok, true);
   assert.equal(cryptoDepositRows[0].status, 'approved');
+  assert.equal(depositsTableRows[0].status, 'approved');
   assert.equal(dbProfileRow.self_balance, 350); // $50 + $300 deposit
   assert.equal(dbProfileRow.bonus_balance, 300); // 100% BFT100 bonus
   assert.equal(dbProfileRow.total_turnover_required, 30000); // 100x bonus turnover
   assert.equal(dbProfileRow.has_used_bft100, true);
+
+  // 4. Approve a Challenge Bank Transfer deposit -> activates/provisions a Funded Challenge trading_accounts record
+  const challengeApproveRes = await approveAdminCryptoDepositInSupabase({
+    deposit: {
+      id: '99990000-1111-4222-8333-444455557777',
+      user_id: baseProfile.id,
+      user_email: baseProfile.email,
+      amount: 89,
+      package_name: '2-Step Pro Challenge ($10,000)',
+      package_sku: 'CHALLENGE_PRO_10000',
+      sku: 'CHALLENGE_PRO_10000',
+      account_type: 'challenge',
+      payment_method: 'bank_transfer',
+      status: 'pending',
+      created_at: '2026-11-10T10:00:00.000Z',
+    },
+    supabaseClient: fakeSupabase,
+  });
+  assert.equal(challengeApproveRes.ok, true);
+  assert.ok(challengeApproveRes.provisionedAccount);
+  assert.equal(challengeApproveRes.provisionedAccount?.size, 10000);
+  assert.equal(challengeApproveRes.provisionedAccount?.tier, 'pro');
+  assert.equal(challengeApproveRes.provisionedAccount?.status, 'active');
+  assert.equal(tradingAccountsRows.length, 1);
 });
+
 

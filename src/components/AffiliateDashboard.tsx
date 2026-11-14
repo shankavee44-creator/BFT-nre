@@ -24,6 +24,7 @@ import {
   Zap,
   Info,
   Gift,
+  TrendingUp,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -97,6 +98,17 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
 
   const [milestoneClaimSuccess, setMilestoneClaimSuccess] = useState<string | null>(null);
   const [milestoneClaimError, setMilestoneClaimError] = useState<string | null>(null);
+  const [turnoverStats, setTurnoverStats] = useState<{
+    completedTradersCount: number;
+    totalTurnover: number;
+    totalTurnoverCommission: number;
+    currentRatePercent: number;
+  }>({
+    completedTradersCount: 0,
+    totalTurnover: 0,
+    totalTurnoverCommission: 0,
+    currentRatePercent: 5,
+  });
 
   // Query Supabase referral_commissions & network count + subscribe to real-time changes
   useEffect(() => {
@@ -414,43 +426,66 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
       style={{ touchAction: 'pan-y' }}
       className="space-y-6 sm:space-y-8 font-sans w-full max-w-full overflow-y-visible touch-pan-y"
     >
-      {/* 1. HERO BANNER WITH CURRENT TIER STATUS */}
-      <div className="relative rounded-3xl bg-[#111115] border border-[#ff8800]/40 p-6 sm:p-8 overflow-hidden">
+      {/* 1. HERO BANNER WITH DUAL COMMISSION STRUCTURE STATUS */}
+      <div className="relative rounded-3xl bg-[#0b0f19] border border-[#ff8800]/40 p-6 sm:p-8 overflow-hidden">
         <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-          <div className="space-y-2 max-w-2xl">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#ff8800]/15 border border-[#ff8800]/40 text-[#ff8800] text-xs font-mono font-bold">
-              {stats.isVipUnlocked ? (
-                <>
-                  <Crown className="w-3.5 h-3.5 text-amber-400" />
-                  <span className="text-amber-300">VIP AFFILIATE TIER ACTIVE (15% / 8% / 5% + 10%)</span>
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>BASIC AFFILIATE TIER (10% / 5% / 2% + 8%)</span>
-                </>
-              )}
+          <div className="space-y-2.5 max-w-2xl">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#ff8800]/15 border border-[#ff8800]/40 text-[#ff8800] text-xs font-mono font-bold">
+                {stats.isVipUnlocked ? (
+                  <>
+                    <Crown className="w-3.5 h-3.5 text-amber-400" />
+                    <span className="text-amber-300">FUNDED VIP TIER (15% / 8% / 5% + 10% WD)</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>FUNDED BASIC TIER (10% / 5% / 2% + 8% WD)</span>
+                  </>
+                )}
+              </div>
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#0ecb81]/15 border border-[#0ecb81]/40 text-[#0ecb81] text-xs font-mono font-bold">
+                <TrendingUp className="w-3.5 h-3.5" />
+                <span>
+                  SELF-FUNDED TURNOVER: {turnoverStats.currentRatePercent}% (5% 1–200 • 7% 201+)
+                </span>
+              </div>
             </div>
             <h2 className="text-2xl sm:text-4xl font-black text-white tracking-tight">
-              "Let's trade, profit, and earn more together"
+              &ldquo;Let&apos;s trade, profit, and earn more together&rdquo;
             </h2>
-            <p className="text-sm text-slate-300 leading-relaxed">
-              Earn generous multi-level challenge commissions on funded account purchases across 3 tiers, plus direct payout bonuses whenever your direct referrals withdraw trading profits. Reach 1,000 active funded traders to unlock the prestigious <strong>VIP Tier</strong> and a <strong>$10,000 Cash Reward</strong>!
+            <p className="text-sm text-slate-200 leading-relaxed">
+              Earn from our <strong className="text-white">Dual Affiliate Commission Structure</strong>: multi-level commissions on <strong className="text-[#ffaa00]">Funded Challenge Purchases</strong> (Basic 10%/5%/2% + 8% WD; VIP 15%/8%/5% + 10% WD + $10,000 Milestone after 1,000 active funded traders) AND <strong className="text-[#0ecb81]">Self-Funded Trading Turnover</strong> (<strong className="text-[#0ecb81]">5%</strong> for your first 200 referred traders, increasing to <strong className="text-amber-400">7%</strong> from your 201st trader onwards).
             </p>
           </div>
 
-          <div className="flex items-center gap-3 p-4 rounded-2xl bg-[#0a0a0d] border border-[#ff8800]/40 shrink-0">
-            <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-slate-950 ${stats.isVipUnlocked ? 'bg-gradient-to-br from-amber-400 to-yellow-500' : 'bg-[#ff8800]'}`}>
-              {stats.isVipUnlocked ? <Crown className="w-6 h-6 stroke-[2.5]" /> : <Award className="w-6 h-6 stroke-[2.5]" />}
+          <div className="flex flex-col sm:flex-row lg:flex-col gap-3 shrink-0">
+            <div className="flex items-center gap-3 p-3.5 rounded-2xl bg-[#111726] border border-[#ff8800]/40">
+              <div className={`w-11 h-11 rounded-xl flex items-center justify-center text-slate-950 shrink-0 ${stats.isVipUnlocked ? 'bg-gradient-to-br from-amber-400 to-yellow-500' : 'bg-[#ff8800]'}`}>
+                {stats.isVipUnlocked ? <Crown className="w-5 h-5 stroke-[2.5]" /> : <Award className="w-5 h-5 stroke-[2.5]" />}
+              </div>
+              <div>
+                <div className="text-[10px] uppercase font-bold text-slate-300 font-mono">
+                  Funded Challenge Tier ({stats.isVipUnlocked ? 'VIP' : 'Basic'})
+                </div>
+                <div className="text-sm font-black text-white">
+                  {stats.isVipUnlocked ? '15% L1 • 8% L2 • 5% L3 + 10% WD' : '10% L1 • 5% L2 • 2% L3 + 8% WD'}
+                </div>
+              </div>
             </div>
-            <div>
-              <div className="text-[10px] uppercase font-bold text-slate-400 font-mono">
-                {stats.isVipUnlocked ? 'VIP Tier Rates' : 'Basic Tier Rates'}
+
+            <div className="flex items-center gap-3 p-3.5 rounded-2xl bg-[#111726] border border-[#0ecb81]/40">
+              <div className="w-11 h-11 rounded-xl bg-[#0ecb81] flex items-center justify-center text-slate-950 shrink-0">
+                <Percent className="w-5 h-5 stroke-[2.5]" />
               </div>
-              <div className="text-base font-black text-white">
-                {stats.isVipUnlocked ? '15% L1 • 8% L2 • 5% L3 + 10% WD' : '10% L1 • 5% L2 • 2% L3 + 8% WD'}
+              <div>
+                <div className="text-[10px] uppercase font-bold text-slate-300 font-mono">
+                  Self-Funded Turnover Tier
+                </div>
+                <div className="text-sm font-black text-[#0ecb81]">
+                  5% (First 200) → 7% (201st+ Trader)
+                </div>
               </div>
-              <div className="text-[11px] text-emerald-400 font-mono font-bold">● Real-Time Supabase Ledger Sync</div>
             </div>
           </div>
         </div>
@@ -788,17 +823,89 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
                 <td className="py-3.5 px-4 font-mono font-black text-amber-300">$10,000 USD</td>
                 <td className="py-3.5 px-4 font-mono text-right text-amber-400 font-bold">One-Time Instant Bonus</td>
               </tr>
+              <tr className="hover:bg-white/5 bg-[#0ecb81]/[0.04]">
+                <td className="py-3.5 px-4 font-bold text-white flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-[#0ecb81]" />
+                  <span>Self-Funded Trading Turnover Commission (New)</span>
+                </td>
+                <td className="py-3.5 px-4 font-mono font-bold text-[#0ecb81]">5% (First 200 Traders)</td>
+                <td className="py-3.5 px-4 font-mono font-black text-amber-400">7% (201st+ Trader Onwards)</td>
+                <td className="py-3.5 px-4 font-mono text-right text-[#0ecb81] font-bold">+40% Turnover Boost</td>
+              </tr>
               <tr className="hover:bg-white/5">
                 <td className="py-3.5 px-4 font-bold text-white flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-slate-400" />
                   <span>Historical Rate Isolation</span>
                 </td>
-                <td className="py-3.5 px-4 text-xs text-slate-400">Default for all registrations</td>
+                <td className="py-3.5 px-4 text-xs text-slate-300">Default for all registrations</td>
                 <td className="py-3.5 px-4 text-xs text-amber-200">Applies to all new signups after VIP</td>
-                <td className="py-3.5 px-4 font-mono text-right text-slate-400 text-xs">Protects rate stability</td>
+                <td className="py-3.5 px-4 font-mono text-right text-slate-300 text-xs">Protects rate stability</td>
               </tr>
             </tbody>
           </table>
+        </div>
+      </div>
+
+      {/* 3B. SELF-FUNDED TURNOVER TIER OVERVIEW CARD (5% FIRST 200 TRADERS -> 7% 201+ TRADERS) */}
+      <div
+        data-testid="self-funded-turnover-tier-card"
+        className="rounded-3xl bg-[#0b0f19] border border-[#0ecb81]/30 p-5 sm:p-7 shadow-xl"
+      >
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-5">
+          <div>
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#0ecb81]/15 text-[#0ecb81] border border-[#0ecb81]/30 text-[11px] font-mono font-black mb-2">
+              <TrendingUp className="w-3.5 h-3.5" />
+              <span>SELF-FUNDED TURNOVER COMMISSION STRUCTURE</span>
+            </div>
+            <h3 className="text-lg sm:text-xl font-black text-white">
+              Earn Up to 7% From Referred Traders&apos; Total Trading Turnover
+            </h3>
+            <p className="text-xs text-slate-300 mt-1 max-w-3xl leading-relaxed">
+              In addition to Funded Challenge commissions, you earn automatic turnover commissions from every Self-Funded Live trader you refer—calculated directly from their live trading volume.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-3 px-4 py-3 rounded-2xl bg-[#111726] border border-white/10 shrink-0 font-mono">
+            <div>
+              <div className="text-[10px] uppercase text-slate-400">Completed Turnover Traders</div>
+              <div className="text-lg font-black text-white">
+                {turnoverStats.completedTradersCount} <span className="text-xs text-slate-400">/ 200</span>
+              </div>
+            </div>
+            <div className="h-8 w-px bg-white/10" />
+            <div>
+              <div className="text-[10px] uppercase text-slate-400">Active Rate</div>
+              <div className="text-lg font-black text-[#0ecb81]">{turnoverStats.currentRatePercent}%</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="p-4 sm:p-5 rounded-2xl bg-[#111726] border border-[#0ecb81]/30 flex items-start justify-between gap-4">
+            <div className="space-y-1.5">
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-[#0ecb81]/15 text-[#0ecb81] text-[10px] font-mono font-bold uppercase">
+                Standard Turnover Tier • Traders #1 – #200
+              </div>
+              <h4 className="text-base font-black text-white">First 200 Referred Traders</h4>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                Earn an automatic <strong className="text-[#0ecb81]">5% commission</strong> from the total trading turnover generated by your first 200 referred traders.
+              </p>
+            </div>
+            <div className="text-3xl font-black text-[#0ecb81] font-mono shrink-0">5%</div>
+          </div>
+
+          <div className="p-4 sm:p-5 rounded-2xl bg-[#111726] border border-amber-500/40 flex items-start justify-between gap-4">
+            <div className="space-y-1.5">
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-amber-500/20 text-amber-300 text-[10px] font-mono font-bold uppercase">
+                Pro Turnover Tier • Trader #201 Onwards
+              </div>
+              <h4 className="text-base font-black text-white">After 200 Completed Traders (201st+)</h4>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                Once you complete 200 referred traders, your commission rate increases to <strong className="text-amber-400">7% of trading turnover</strong> from the 201st trader onwards.
+              </p>
+            </div>
+            <div className="text-3xl font-black text-amber-400 font-mono shrink-0">7%</div>
+          </div>
         </div>
       </div>
 
@@ -954,7 +1061,6 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
                 type="button"
                 onClick={() => {
                   setPayoutMethod('USDT (TRC-20)');
-                  setPayoutDetails('TYsDj4BmVp8QW8r6F32Xnm9ZkE4G1A7L2');
                 }}
                 className={`py-2.5 px-3 rounded-xl border text-xs font-mono font-bold flex items-center justify-center gap-2 cursor-pointer ${
                   payoutMethod === 'USDT (TRC-20)'
@@ -969,7 +1075,6 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
                 type="button"
                 onClick={() => {
                   setPayoutMethod('Bank Transfer');
-                  setPayoutDetails('IBAN: GB29BARC20201538492019 / Alex Mercer');
                 }}
                 className={`py-2.5 px-3 rounded-xl border text-xs font-mono font-bold flex items-center justify-center gap-2 cursor-pointer ${
                   payoutMethod === 'Bank Transfer'
@@ -1171,7 +1276,10 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
         referralLink={referralLink}
         referralCode={referralCode}
         onNetworkLoaded={(count) => {
-          if (count > 0) setReferredNetworkCount(count);
+          setReferredNetworkCount(count);
+        }}
+        onTurnoverStatsLoaded={(tStats) => {
+          setTurnoverStats(tStats);
         }}
       />
 

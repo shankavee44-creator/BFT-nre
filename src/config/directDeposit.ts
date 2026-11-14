@@ -10,7 +10,8 @@ export type CryptoDepositStatus =
   | 'active'
   | 'failed'
   | 'approved'
-  | 'declined';
+  | 'declined'
+  | 'rejected';
 
 /**
  * 1-Hour (60-minute) strict expiry timeout for unconfirmed pending crypto deposits.
@@ -98,6 +99,7 @@ export interface CryptoDepositRecordInput {
   accountId?: string | null;
   walletAddress?: string;
   network?: string;
+  paymentMethod?: string;
   receiptUrl?: string;
   amount: number;
   packageName: string;
@@ -288,19 +290,46 @@ export function parseDepositCreatedAtMs(
 }
 
 /**
+ * Pure helper: checks whether a deposit record is a Bank Transfer deposit (`payment_method: 'bank_transfer'`).
+ */
+export function isBankTransferDeposit(
+  deposit: Record<string, any> | null | undefined
+): boolean {
+  if (!deposit || typeof deposit !== 'object') return false;
+  const pm = String(
+    deposit.payment_method ?? deposit.paymentMethod ?? deposit.network ?? deposit.network_type ?? ''
+  )
+    .trim()
+    .toLowerCase();
+  return (
+    pm === 'bank_transfer' ||
+    pm === 'commercial_bank' ||
+    pm === 'bank' ||
+    pm.includes('bank transfer') ||
+    pm.includes('commercial bank')
+  );
+}
+
+/**
  * Pure helper: checks whether a deposit has remained in `pending` status for >= 1 hour (60 minutes)
- * without network confirmation.
+ * without network confirmation. Bank Transfer deposits do NOT auto-expire after 1 hour.
  */
 export function isCryptoDepositExpired(
   deposit: {
     status?: string | null;
     created_at?: number | string | null;
     createdAt?: number | string | null;
+    payment_method?: string | null;
+    paymentMethod?: string | null;
+    network?: string | null;
   } | null | undefined,
   nowMs: number = Date.now(),
   expiryWindowMs: number = DEPOSIT_EXPIRY_MS
 ): boolean {
   if (!deposit || typeof deposit !== 'object') return false;
+  if (isBankTransferDeposit(deposit as Record<string, any>)) {
+    return false;
+  }
   const rawStatus = String(deposit.status ?? 'pending').trim().toLowerCase();
   const normalizedStatus = normalizeCryptoDepositStatus(rawStatus, 'pending');
   if (normalizedStatus !== 'pending') {
@@ -455,6 +484,7 @@ export function buildCryptoDepositPayload(input: CryptoDepositRecordInput) {
     account_type: accountType,
     currency: 'USDT',
     network: input.network || 'TRC-20',
+    payment_method: input.paymentMethod || null,
     receipt_url: input.receiptUrl || (input as any).screenshotUrl || null,
     screenshot_url: (input as any).screenshotUrl || input.receiptUrl || null,
     tx_hash: input.txHash ? String(input.txHash).trim() : null,
@@ -472,6 +502,7 @@ export function buildSupabaseCryptoDepositRow(input: CryptoDepositRecordInput) {
     package_sku: payload.package_sku,
     account_type: payload.account_type,
     status: payload.status,
+    ...(payload.payment_method ? { payment_method: payload.payment_method } : {}),
     ...(input.network ? { network: payload.network, network_type: payload.network } : {}),
     ...(payload.receipt_url
       ? {
@@ -528,6 +559,8 @@ export interface NormalizedPurchaseRecord {
   package_amount: number;
   account_type: CryptoDepositAccountType;
   status: CryptoDepositStatus;
+  payment_method?: string | null;
+  receipt_url?: string | null;
   tx_hash: string | null;
   account_id: string | null;
   created_at: string;
@@ -583,7 +616,8 @@ export function buildSupabaseUserPurchasePayload(input: UserPurchaseRecordInput)
 /**
  * Pure helper: normalizes a raw row from `user_purchases`, `crypto_deposits`, or `/api/purchases`
  * into a unified `NormalizedPurchaseRecord` for real-time UI rendering.
- * Also applies the 1-hour expiry rule: any `pending` record older than 60 minutes is normalized to `failed`.
+ * Also applies the 1-hour expiry rule: any `pending` record older than 60 minutes is normalized to `failed`
+ * (except Bank Transfer deposits which remain pending until Admin approval).
  */
 export function mapPurchaseRecord(
   row: Record<string, any> | null | undefined,
@@ -633,11 +667,19 @@ export function mapPurchaseRecord(
 
   const initialStatus = normalizeCryptoDepositStatus(r.status, 'completed');
   const isExpired = isCryptoDepositExpired(
-    { status: initialStatus, created_at: r.created_at ?? r.createdAt },
+    {
+      status: initialStatus,
+      created_at: r.created_at ?? r.createdAt,
+      payment_method: r.payment_method ?? r.paymentMethod,
+      network: r.network ?? r.network_type,
+    },
     nowMs,
     expiryWindowMs
   );
   const status: CryptoDepositStatus = isExpired ? 'failed' : initialStatus;
+  const resolvedPaymentMethod = isBankTransferDeposit(r)
+    ? 'bank_transfer'
+    : r.payment_method || r.paymentMethod || r.network || null;
 
   return {
     id: String(r.id || `PUR-${nowMs}-${Math.random().toString(36).slice(2, 6)}`),
@@ -649,6 +691,8 @@ export function mapPurchaseRecord(
     package_amount: packageAmount || amount,
     account_type: accountType,
     status,
+    payment_method: resolvedPaymentMethod,
+    receipt_url: r.receipt_url || r.screenshot_url || r.proof_url || null,
     tx_hash: r.tx_hash || r.txHash ? String(r.tx_hash || r.txHash) : null,
     account_id: r.account_id || r.accountId ? String(r.account_id || r.accountId) : null,
     created_at: createdIso,

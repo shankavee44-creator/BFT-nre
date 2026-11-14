@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import {
   TrendingUp,
   TrendingDown,
@@ -4087,8 +4088,12 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
             {/* Dedicated "BFT Trading Signals" Panel Button */}
             <button
+              type="button"
+              data-testid="desktop-signals-btn"
               onClick={() => {
                 soundEngine.playUiClick();
+                setIsDrawingDrawerOpen(false);
+                setIsCopyTradingOpen(false);
                 setIsSignalsDrawerOpen(!isSignalsDrawerOpen);
               }}
               className={`w-10 h-10 rounded-lg flex flex-col items-center justify-center transition-all cursor-pointer relative ${
@@ -4141,9 +4146,15 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               data-testid="desktop-copy-trading-btn"
               onClick={() => {
                 soundEngine.playUiClick();
-                setIsCopyTradingOpen(true);
+                setIsSignalsDrawerOpen(false);
+                setIsDrawingDrawerOpen(false);
+                setIsCopyTradingOpen((prev) => !prev);
               }}
-              className="w-10 h-10 rounded-lg hover:bg-[#1c202e] flex flex-col items-center justify-center text-slate-400 hover:text-[#ff8800] transition-all cursor-pointer relative"
+              className={`w-10 h-10 rounded-lg flex flex-col items-center justify-center transition-all cursor-pointer relative ${
+                isCopyTradingOpen
+                  ? 'bg-[#ff8800]/20 text-[#ff8800] border border-[#ff8800]/50'
+                  : 'hover:bg-[#1c202e] text-slate-400 hover:text-[#ff8800]'
+              }`}
               title="Copy Trading System"
             >
               <Users className="w-4 h-4 text-[#ff8800]" />
@@ -4189,6 +4200,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               onClick={() => {
                 soundEngine.playUiClick();
                 setLeftToolbarPopover('none');
+                setIsSignalsDrawerOpen(false);
                 setIsDrawingDrawerOpen((prev) => !prev);
               }}
               className={`w-10 h-9 rounded-lg flex flex-col items-center justify-center transition-all cursor-pointer relative ${
@@ -4530,13 +4542,29 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
           )}
 
           {/* SLEEK TECHNICAL ANALYSIS DRAWING TOOLS & INDICATORS SIDE-DRAWER MENU */}
-          {isDrawingDrawerOpen && (
-            <div
-              data-testid="drawing-tools-side-drawer"
-              className="absolute top-0 left-0 bottom-0 z-30 w-72 sm:w-80 bg-[#0d1017]/98 border-r border-[#262b38] flex flex-col font-mono text-xs text-slate-200 select-none"
-            >
-              {/* Drawer Header */}
-              <div className="px-3.5 py-3 border-b border-[#222735] flex items-center justify-between bg-[#121620]">
+          <AnimatePresence>
+            {isDrawingDrawerOpen && (
+              <motion.div
+                key="drawing-tools-backdrop"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+                className="absolute inset-0 z-30 flex items-stretch justify-start bg-black/35 overflow-hidden"
+                onClick={() => setIsDrawingDrawerOpen(false)}
+              >
+                <motion.div
+                  key="drawing-tools-side-drawer"
+                  data-testid="drawing-tools-side-drawer"
+                  initial={{ x: '-100%' }}
+                  animate={{ x: 0 }}
+                  exit={{ x: '-100%' }}
+                  transition={{ type: 'tween', duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+                  onClick={(e) => e.stopPropagation()}
+                  className="w-72 sm:w-80 h-full bg-[#0d1017]/98 border-r border-[#262b38] shadow-[16px_0_40px_rgba(0,0,0,0.75)] flex flex-col font-mono text-xs text-slate-200 select-none will-change-transform"
+                >
+                  {/* Drawer Header */}
+                  <div className="px-3.5 py-3 border-b border-[#222735] flex items-center justify-between bg-[#121620]">
                 <div className="flex items-center gap-2">
                   <div className="w-7 h-7 rounded-lg bg-[#ff8800]/15 border border-[#ff8800]/50 flex items-center justify-center text-[#ff8800]">
                     <Pencil className="w-3.5 h-3.5" />
@@ -4913,8 +4941,10 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                   </button>
                 </div>
               )}
-            </div>
-          )}
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           {/* FLOATING ON-CHART DRAWING OBJECT CUSTOMIZATION & MOVE/DELETE BAR */}
           {selectedDrawing && (
@@ -5620,33 +5650,45 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
           </div>
 
           {/* Bottom Collapsible Trades & History Drawer (Slide-Up Sheet on Mobile with Backdrop Overlay) */}
-          {isTradesDrawerOpen && (
-            <div
-              data-testid="mobile-trades-history-panel-wrapper"
-              className="fixed inset-0 z-[60] bg-black/65 backdrop-blur-sm md:static md:z-auto md:bg-transparent md:backdrop-blur-none flex flex-col justify-end"
-              onClick={() => setIsTradesDrawerOpen(false)}
-            >
-              <div
-                className="w-full max-h-[75vh] md:max-h-60 border-t border-white/15 bg-[#0e1016] rounded-t-2xl md:rounded-none shrink-0 overflow-hidden shadow-2xl animate-in slide-in-from-bottom-full duration-200"
-                onClick={(e) => e.stopPropagation()}
+          <AnimatePresence>
+            {isTradesDrawerOpen && (
+              <motion.div
+                key="trades-drawer-backdrop"
+                data-testid="mobile-trades-history-panel-wrapper"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+                className="fixed inset-0 z-[60] bg-black/65 md:static md:z-auto md:bg-transparent flex flex-col justify-end"
+                onClick={() => setIsTradesDrawerOpen(false)}
               >
-                {/* Grab handle indicator for mobile sheet */}
-                <div className="w-12 h-1 bg-white/20 rounded-full mx-auto my-2 md:hidden" />
-                <TradingDrawer
-                  account={{ ...effectiveAccount, equity: liveEquity }}
-                  trades={trades}
-                  currentPrice={currentPrice}
-                  onDoubleUp={handleDoubleUp}
-                  initialTab={mobileTradesTab === 'history' ? 'history' : 'open'}
-                  onTabChange={(tab) => {
-                    if (tab === 'open') setMobileTradesTab('trades');
-                    else if (tab === 'history') setMobileTradesTab('history');
-                  }}
-                  onClose={() => setIsTradesDrawerOpen(false)}
-                />
-              </div>
-            </div>
-          )}
+                <motion.div
+                  key="trades-drawer-sheet"
+                  initial={{ y: '100%' }}
+                  animate={{ y: 0 }}
+                  exit={{ y: '100%' }}
+                  transition={{ type: 'tween', duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+                  className="w-full max-h-[75vh] md:max-h-60 border-t border-white/15 bg-[#0e1016] rounded-t-2xl md:rounded-none shrink-0 overflow-hidden shadow-2xl will-change-transform"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {/* Grab handle indicator for mobile sheet */}
+                  <div className="w-12 h-1 bg-white/20 rounded-full mx-auto my-2 md:hidden" />
+                  <TradingDrawer
+                    account={{ ...effectiveAccount, equity: liveEquity }}
+                    trades={trades}
+                    currentPrice={currentPrice}
+                    onDoubleUp={handleDoubleUp}
+                    initialTab={mobileTradesTab === 'history' ? 'history' : 'open'}
+                    onTabChange={(tab) => {
+                      if (tab === 'open') setMobileTradesTab('trades');
+                      else if (tab === 'history') setMobileTradesTab('history');
+                    }}
+                    onClose={() => setIsTradesDrawerOpen(false)}
+                  />
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
         </div>
 
@@ -6058,6 +6100,30 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             />
           </div>
         </div>
+
+        {/* Dedicated BFT Trading Signals Side-Over Panel (Docked beside Left Toolbar on Desktop) */}
+        <QuotexSignalsDrawer
+          isOpen={isSignalsDrawerOpen}
+          onClose={() => setIsSignalsDrawerOpen(false)}
+          onApplySignal={(asset, dir, dur) => {
+            handleSelectTabAsset(asset);
+            setDuration(dur);
+            executeTradeAction(dir, asset, dur);
+          }}
+        />
+
+        {/* Copy Trading Side-Over Panel (Docked cleanly inside Trading Workspace on Desktop) */}
+        <CopyTradingModal
+          isOpen={isCopyTradingOpen}
+          onClose={() => setIsCopyTradingOpen(false)}
+          accounts={accounts || []}
+          activeAccount={effectiveAccount}
+          trades={trades}
+          userProfile={userProfile}
+          onNavigateToPricing={onNavigateToPricing}
+          onOpenDepositModal={onOpenDepositModal}
+          dockedInTerminal={true}
+        />
       </div>
 
       {/* 5. LIVE BOTTOM STATUS BAR (Drawdown & Capital Metrics - Desktop Only) */}
@@ -6256,17 +6322,6 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         />
       )}
 
-      {/* Dedicated BFT Trading Signals Panel */}
-      <QuotexSignalsDrawer
-        isOpen={isSignalsDrawerOpen}
-        onClose={() => setIsSignalsDrawerOpen(false)}
-        onApplySignal={(asset, dir, dur) => {
-          handleSelectTabAsset(asset);
-          setDuration(dur);
-          executeTradeAction(dir, asset, dur);
-        }}
-      />
-
       {/* Quotex Leaderboard Modal */}
       <QuotexLeaderboardModal
         isOpen={isLeaderboardOpen}
@@ -6280,18 +6335,6 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         userAccountId={effectiveAccount.id || 'ACTIVE'}
         activeAccount={effectiveAccount}
         trades={trades}
-      />
-
-      {/* Copy Trading Modal */}
-      <CopyTradingModal
-        isOpen={isCopyTradingOpen}
-        onClose={() => setIsCopyTradingOpen(false)}
-        accounts={accounts || []}
-        activeAccount={effectiveAccount}
-        trades={trades}
-        userProfile={userProfile}
-        onNavigateToPricing={onNavigateToPricing}
-        onOpenDepositModal={onOpenDepositModal}
       />
 
       {/* Indicator Settings Modal */}
