@@ -138,6 +138,18 @@ export interface UserProfile {
   totp_secret?: string;
   onboarding_completed?: boolean;
   onboardingCompleted?: boolean;
+  affiliate_profile_locked?: boolean;
+  affiliateProfileLocked?: boolean;
+  social_platform_type?: string;
+  social_platform_links?: string[];
+  affiliate_social_platform?: string;
+  affiliateSocialPlatform?: string;
+  affiliate_social_links?: string[];
+  affiliateSocialLinks?: string[];
+  affiliate_social_submitted_at?: string;
+  affiliateSocialSubmittedAt?: string;
+  is_country_manager_applied?: boolean;
+  country_manager_status?: string;
   createdAt?: string;
   [key: string]: any;
 }
@@ -280,6 +292,7 @@ export interface ReferredPurchaseItem {
   sku?: string;
   amount: number;
   accountType?: string;
+  status?: string;
   createdAt?: string;
 }
 
@@ -291,6 +304,9 @@ export interface ReferredUser {
   joinedDate?: string;
   level: 1 | 2 | 3 | number;
   hasPurchased?: boolean;
+  hasActiveFunded?: boolean;
+  hasActiveSelfCapitalDeposit?: boolean;
+  selfCapitalDepositAmount?: number;
   totalVolume?: number;
   totalCommissionGenerated?: number;
   latestPurchase?: ReferredPurchaseItem;
@@ -308,17 +324,20 @@ export interface AffiliateReferralDetail {
   referralName: string;
   referralCodeOrId: string;
   email?: string;
-  traderIndex: number; // 1-based referral sequence index (1-200 = 5%, 201+ = 7%)
+  traderIndex: number; // 1-based active self-funded trader sequence index (1-200 = 5%, 201+ = 7%, 0 = registered without active deposit)
   accountBalance: number; // Live account balance ($)
   bonusAmount: number; // Active bonus amount ($)
   totalTradeTurnover: number; // Cumulative trading turnover ($)
-  turnoverCommissionRate: number; // 0.05 (first 200 traders) or 0.07 (201st+ trader)
+  turnoverCommissionRate: number; // 0.05 (first 200 active deposited traders) or 0.07 (201st+ trader)
   commissionEarned: number; // Automatically calculated from turnover * rate ($)
   challengeCommissionEarned?: number; // Any funded challenge purchase/withdrawal commission ($)
   accountType?: 'self_funded' | 'funded' | 'dual';
+  hasActiveSelfCapitalDeposit?: boolean;
+  selfCapitalDepositAmount?: number;
+  hasActiveFundedChallenge?: boolean;
   accountCount?: number;
   purchasedAccounts?: ReferredPurchaseItem[];
-  status: 'active' | 'completed' | 'pending' | string;
+  status: 'active' | 'completed' | 'pending' | 'registered' | string;
   joinedAt: string;
 }
 
@@ -351,6 +370,11 @@ export interface AffiliateStats {
   level1Count: number;
   level2Count: number;
   level3Count: number;
+  registeredLevel1Count?: number;
+  registeredLevel2Count?: number;
+  registeredLevel3Count?: number;
+  totalRegisteredReferrals?: number;
+  activeDepositedCount?: number;
   activeTradersCount: number;
   activeFundedCount: number;
   totalPurchasedAccountsCount?: number;
@@ -375,4 +399,33 @@ export interface AffiliateStats {
   totalTurnoverCommission?: number;
   [key: string]: any;
 }
+
+export interface AffiliateSocialSubmission {
+  id?: string;
+  userId: string;
+  userName?: string;
+  userEmail?: string;
+  platformType: string;
+  socialLinks: string[];
+  affiliateProfileLocked: boolean;
+  submittedAt: string;
+}
+
+export interface CountryManagerApplication {
+  id: string;
+  userId: string;
+  userEmail?: string;
+  fullName: string;
+  targetCountry: string;
+  telegramHandle: string;
+  estimatedAudienceSize: string;
+  marketingStrategy: string;
+  socialLinks: string[];
+  totalReferralsCount?: number;
+  status: 'pending' | 'approved' | 'rejected' | string;
+  adminNotes?: string;
+  createdAt: string;
+  reviewedAt?: string;
+}
+
 

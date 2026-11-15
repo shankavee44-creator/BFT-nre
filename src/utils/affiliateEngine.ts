@@ -402,21 +402,174 @@ export interface ProcessCommissionsResult {
   updatedUsers: UserAccount[];
 }
 
+const INACTIVE_PURCHASE_STATUSES = new Set([
+  'pending',
+  'failed',
+  'declined',
+  'rejected',
+  'expired',
+  'cancelled',
+  'canceled',
+  'unpaid',
+  'void',
+  'registered',
+  'breached',
+  'hard-breached',
+  'soft-breached',
+]);
+
 /**
- * An "Active Trader" counts ONLY when a referred user actually purchases a Funded Account.
- * Free/demo registrations with $0 amount or no purchase do NOT count.
+ * Returns true when an account, deposit, or purchase record has an active/completed status
+ * (strictly excludes pending, failed, declined, expired, breached, or unregistered states).
  */
-export function isUserActiveFunded(
-  user: { id: string; email?: string; fullName?: string; latestPurchase?: { name: string; sku?: string; amount: number } },
-  purchasesList?: Array<any>,
-  referralsList?: ReferralRecord[]
-): boolean {
-  const purchase = resolveReferredUserPurchase(user, purchasesList, referralsList);
-  return Boolean(purchase && Number(purchase.amount) > 0);
+export function isPurchaseOrAccountActive(status?: string | null): boolean {
+  const normalized = String(status ?? '').trim().toLowerCase();
+  if (!normalized) return true;
+  if (INACTIVE_PURCHASE_STATUSES.has(normalized)) return false;
+  return true;
 }
 
 /**
- * Counts unique referred users who hold an active purchased Funded Account (Instant Funded or Challenge).
+ * Returns true if the purchase/account/deposit item represents a Self-Funded (Self-Capital / Personal Live) account or deposit.
+ */
+export function isSelfFundedAccountOrDeposit(item: Record<string, any> | null | undefined): boolean {
+  if (!item) return false;
+  const acctType = String(
+    item.accountType ?? item.account_type ?? item.accountCategory ?? item.account_category ?? item.tier ?? ''
+  )
+    .trim()
+    .toLowerCase();
+  if (
+    acctType === 'self_funded' ||
+    acctType === 'self-funded' ||
+    acctType === 'personal' ||
+    acctType === 'personal_live' ||
+    acctType === 'self_capital'
+  ) {
+    return true;
+  }
+  const sku = String(item.sku ?? item.packageSku ?? item.package_sku ?? '').trim().toUpperCase();
+  if (sku.startsWith('BFT-SELF') || sku.startsWith('PERS')) {
+    return true;
+  }
+  const name = String(item.name ?? item.packageName ?? item.package_name ?? item.tierName ?? item.tier_name ?? '').trim();
+  if (
+    /self[-\s]*funded|self[-\s]*capital|personal\s*live/i.test(name) &&
+    !/1[-\s]*step|2[-\s]*step|one[-\s]*step|two[-\s]*step|instant\s*funded|evaluation/i.test(name)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Returns true if the purchase/account item represents a Funded Challenge account
+ * (Two-Step, One-Step, or Instant Funded — excluding Demo and Self-Funded Live deposits).
+ */
+export function isFundedChallengeItem(item: Record<string, any> | null | undefined): boolean {
+  if (!item) return false;
+  const acctType = String(
+    item.accountType ?? item.account_type ?? item.accountCategory ?? item.account_category ?? item.tier ?? ''
+  )
+    .trim()
+    .toLowerCase();
+  const name = String(item.name ?? item.packageName ?? item.package_name ?? item.tierName ?? item.tier_name ?? '').trim();
+  if (acctType === 'demo' || /\bdemo\b/i.test(name)) return false;
+  if (isSelfFundedAccountOrDeposit(item)) return false;
+  if (/payout bonus|withdrawal|royalty/i.test(name)) return false;
+  return Number(item.amount ?? item.package_amount ?? item.price ?? item.size ?? 0) > 0;
+}
+
+/**
+ * Strictly determines whether a referred trader has an Active Self-Capital Deposit
+ * (registration alone or challenge-only purchases without an active self-capital deposit do NOT qualify).
+ */
+export function isReferralActiveSelfCapitalDeposited(row: Record<string, any> | null | undefined): boolean {
+  if (!row) return false;
+  const rowStatus = String(row.status ?? '').trim().toLowerCase();
+  if (INACTIVE_PURCHASE_STATUSES.has(rowStatus)) {
+    return false;
+  }
+  if (row.hasActiveSelfCapitalDeposit === true || row.has_active_self_capital_deposit === true) {
+    return true;
+  }
+  if (row.hasActiveSelfCapitalDeposit === false || row.has_active_self_capital_deposit === false) {
+    return false;
+  }
+
+  const explicitSelfDeposit = Number(
+    row.selfCapitalDeposit ??
+      row.self_capital_deposit ??
+      row.selfCapitalDepositAmount ??
+      row.self_capital_deposit_amount ??
+      row.deposited_capital ??
+      0
+  );
+  if (Number.isFinite(explicitSelfDeposit) && explicitSelfDeposit > 0) {
+    return true;
+  }
+
+  const accts = Array.isArray(row.purchasedAccounts)
+    ? row.purchasedAccounts
+    : Array.isArray(row.purchased_accounts)
+    ? row.purchased_accounts
+    : Array.isArray(row.purchases)
+    ? row.purchases
+    : [];
+
+  if (
+    accts.some(
+      (a: any) =>
+        isSelfFundedAccountOrDeposit(a) &&
+        Number(a.amount ?? a.package_amount ?? 0) > 0 &&
+        isPurchaseOrAccountActive(a.status)
+    )
+  ) {
+    return true;
+  }
+
+  // If this row comes directly from affiliate_referral_details (self-funded live balance/turnover > 0)
+  // and is NOT purely a 'funded' challenge record, live self-funded balance or turnover indicates active deposit.
+  const acctType = String(row.account_type ?? row.accountType ?? '').trim().toLowerCase();
+  const liveBalance = Number(
+    row.account_balance ?? row.accountBalance ?? row.live_balance ?? row.self_balance ?? row.current_balance ?? row.balance ?? 0
+  );
+  const turnover = Number(
+    row.total_trade_turnover ?? row.totalTradeTurnover ?? row.trade_turnover ?? row.trading_turnover ?? row.total_turnover ?? row.turnover ?? row.total_volume ?? 0
+  );
+  if (acctType !== 'funded' && acctType !== 'challenge' && (liveBalance > 0 || turnover > 0)) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * An "Active Funded Trader" counts ONLY when a referred user holds at least one ACTIVE purchased Funded Challenge account.
+ * Free/demo registrations ($0), pending/failed orders, or self-funded-only accounts do NOT count toward Funded Challenge tier limits.
+ */
+export function isUserActiveFunded(
+  user: {
+    id: string;
+    email?: string;
+    fullName?: string;
+    latestPurchase?: ReferredPurchaseItem;
+    purchases?: ReferredPurchaseItem[];
+  },
+  purchasesList?: Array<any>,
+  referralsList?: ReferralRecord[]
+): boolean {
+  const allPurchases = resolveReferredUserPurchases(user, purchasesList, referralsList);
+  return allPurchases.some(
+    (p) =>
+      Number(p.amount) > 0 &&
+      isFundedChallengeItem(p) &&
+      isPurchaseOrAccountActive(p.status)
+  );
+}
+
+/**
+ * Counts unique referred users who hold at least one active purchased Funded Challenge Account (Instant Funded or Challenge).
  */
 export function countActiveFundedReferrals(params: {
   sponsorId: string;
@@ -991,6 +1144,7 @@ export function resolveReferredUserPurchases(
 
   const items: ReferredPurchaseItem[] = [];
   const seenKeys = new Set<string>();
+  let directPurchaseEndIdx = 0;
 
   const pushUnique = (item: ReferredPurchaseItem, sourceKind: 'purchase' | 'node' | 'commission') => {
     const amt = Number(item.amount || 0);
@@ -998,26 +1152,46 @@ export function resolveReferredUserPurchases(
 
     const cleanAccId = item.accountId ? String(item.accountId).trim() : '';
     const cleanId = item.id ? String(item.id).trim() : '';
+    const isSyntheticAccountFallback = cleanId.startsWith('TA-');
 
-    // Avoid duplicating the exact same DB row or same linked account
-    if (cleanAccId && items.some((x) => x.accountId && x.accountId === cleanAccId)) return;
+    // Never duplicate the exact same purchase/deposit record ID
     if (cleanId && items.some((x) => x.id && x.id === cleanId)) return;
 
-    // Only synthesize from commission/node fallback if there's no un-linked matching entry from direct purchases
+    // For synthetic trading_accounts fallback items (`TA-...`), skip only if that accountId is already represented
+    if (isSyntheticAccountFallback && cleanAccId && items.some((x) => x.accountId && x.accountId === cleanAccId)) {
+      return;
+    }
+
+    // If we already have a synthetic `TA-` item for cleanAccId and a real purchase row arrives with the same accountId,
+    // upgrade/replace the synthetic row cleanly rather than showing duplicates.
+    if (!isSyntheticAccountFallback && cleanAccId) {
+      const syntheticIdx = items.findIndex(
+        (x) => x.id && x.id.startsWith('TA-') && x.accountId === cleanAccId
+      );
+      if (syntheticIdx !== -1) {
+        items[syntheticIdx] = {
+          ...item,
+          status: item.status || items[syntheticIdx].status || 'active',
+        };
+        if (cleanId) seenKeys.add(`id:${cleanId}`);
+        return;
+      }
+    }
+
     if (sourceKind === 'commission') {
       const keyNoTs = `${item.name}|${amt}`;
-      // Note: commission records are often L1/L2/L3 copies OR represent purchases without user_purchases rows.
-      // Dedup L1/L2/L3 duplicates by timestamp/name/amount within 5s or exact id/key.
       const commKey = `comm|${keyNoTs}|${item.createdAt ? String(item.createdAt).slice(0, 16) : ''}`;
       if (seenKeys.has(commKey)) return;
       seenKeys.add(commKey);
     } else if (sourceKind === 'node') {
-      // Only compare against items that came from direct purchase rows (not other distinct node.purchases rows)
-      const matchedFromDirectPurchases = items
-        .slice(0, directPurchaseEndIdx)
-        .some((x) => x.name === item.name && Math.abs(x.amount - amt) < 0.01);
-      if (matchedFromDirectPurchases) {
-        return;
+      // Only skip if node item has NO distinct id and NO distinct accountId AND already matches direct purchases
+      if (!cleanId && !cleanAccId) {
+        const matchedFromDirectPurchases = items
+          .slice(0, directPurchaseEndIdx)
+          .some((x) => x.name === item.name && Math.abs(x.amount - amt) < 0.01);
+        if (matchedFromDirectPurchases) {
+          return;
+        }
       }
     }
 
@@ -1025,7 +1199,7 @@ export function resolveReferredUserPurchases(
     items.push(item);
   };
 
-  // 1. Direct purchase rows
+  // 1. Direct purchase / deposit / trading_account rows
   for (const p of purchases) {
     if (!p) continue;
     const pUserId = String(p.userId || p.user_id || '').trim();
@@ -1049,13 +1223,14 @@ export function resolveReferredUserPurchases(
         sku: rawSku,
         amount,
         accountType: p.account_type || p.accountType,
+        status: p.status ? String(p.status) : 'completed',
         createdAt: p.created_at || p.createdAt,
       },
       'purchase'
     );
   }
 
-  const directPurchaseEndIdx = items.length;
+  directPurchaseEndIdx = items.length;
 
   // 2. Pre-populated node.purchases / node.latestPurchase
   if (Array.isArray(user.purchases)) {
@@ -1070,6 +1245,7 @@ export function resolveReferredUserPurchases(
           sku: np.sku || 'BFT-PKG',
           amount: Number(np.amount),
           accountType: np.accountType,
+          status: np.status ? String(np.status) : 'completed',
           createdAt: np.createdAt,
         },
         'node'
@@ -1090,19 +1266,21 @@ export function resolveReferredUserPurchases(
         sku: user.latestPurchase.sku || 'BFT-PKG',
         amount: Number(user.latestPurchase.amount),
         accountType: user.latestPurchase.accountType,
+        status: user.latestPurchase.status ? String(user.latestPurchase.status) : 'completed',
         createdAt: user.latestPurchase.createdAt,
       },
       'node'
     );
   }
 
-  // 3. Commission ledger fallback if no direct purchases were found yet (or additional purchase commissions exist)
+  // 3. Commission ledger fallback if no direct purchases were found yet
   if (items.length === 0) {
     for (const r of referrals) {
       if (
         r.commissionType !== 'withdrawal' &&
         r.sourceType !== 'withdrawal' &&
         Number(r.packagePrice) > 0 &&
+        isPurchaseOrAccountActive(r.status) &&
         (r.referredUserId === user.id ||
           (user.fullName &&
             r.referredUserName &&
@@ -1120,6 +1298,7 @@ export function resolveReferredUserPurchases(
             name: formattedLabel !== 'No Purchase' ? formattedLabel : (r.packageName || 'Challenge Package'),
             sku: r.packageTier ? `BFT-${String(r.packageTier).toUpperCase()}` : 'BFT-PKG',
             amount: Number(r.packagePrice),
+            status: 'completed',
             createdAt: r.createdAt || r.date,
           },
           'commission'
@@ -1151,7 +1330,7 @@ export function resolveReferredUserPurchase(
 
 /**
  * Builds the complete 3-tier ReferredUser[] network tree (L1, L2, L3) for a sponsor,
- * merging nodes from Supabase/backend/local users and preserving ALL purchased accounts per trader.
+ * merging nodes from Supabase/backend/local users and preserving ALL purchased accounts/wallets per trader.
  */
 export function buildReferredNetworkTree(params: {
   sponsorId: string;
@@ -1167,26 +1346,61 @@ export function buildReferredNetworkTree(params: {
 
   const nodeMap = new Map<string, ReferredUser>();
 
-  // 1. Add external nodes (from Supabase or backend API)
-  for (const ext of externalNodes) {
-    if (!ext || !ext.id) continue;
-    const allPurchases = resolveReferredUserPurchases(ext, purchases, referrals);
+  const enrichNodeFlags = (
+    baseNode: ReferredUser,
+    allPurchases: ReferredPurchaseItem[]
+  ): ReferredUser => {
+    const activePurchases = allPurchases.filter(
+      (p) => Number(p.amount) > 0 && isPurchaseOrAccountActive(p.status)
+    );
+    const hasActiveFunded = activePurchases.some((p) => isFundedChallengeItem(p));
+    const selfDepositSum = Number(
+      activePurchases
+        .filter((p) => isSelfFundedAccountOrDeposit(p))
+        .reduce((s, p) => s + Number(p.amount || 0), 0)
+        .toFixed(2)
+    );
+    const hasActiveSelfCapitalDeposit =
+      selfDepositSum > 0 ||
+      Boolean(baseNode.hasActiveSelfCapitalDeposit) ||
+      Number(baseNode.selfCapitalDepositAmount || 0) > 0;
+
     const totalPurchaseAmount = Number(
       allPurchases.reduce((s, p) => s + Number(p.amount || 0), 0).toFixed(2)
     );
-    const explicitAcctCount = Number(ext.accountCount || 0);
-    const accountCount = Math.max(allPurchases.length, explicitAcctCount);
-    nodeMap.set(ext.id, {
-      ...ext,
-      id: ext.id,
-      fullName: ext.fullName || 'Trader',
-      level: ext.level,
+    const accountCount = Math.max(allPurchases.length, Number(baseNode.accountCount || 0));
+
+    return {
+      ...baseNode,
+      hasPurchased: activePurchases.length > 0,
+      hasActiveFunded,
+      hasActiveSelfCapitalDeposit,
+      selfCapitalDepositAmount:
+        selfDepositSum > 0 ? selfDepositSum : Number(baseNode.selfCapitalDepositAmount || 0),
       latestPurchase: allPurchases[0],
       purchases: allPurchases,
       accountCount,
       totalPurchaseAmount:
-        totalPurchaseAmount > 0 ? totalPurchaseAmount : Number(ext.totalPurchaseAmount || 0),
-    });
+        totalPurchaseAmount > 0 ? totalPurchaseAmount : Number(baseNode.totalPurchaseAmount || 0),
+    };
+  };
+
+  // 1. Add external nodes (from Supabase or backend API)
+  for (const ext of externalNodes) {
+    if (!ext || !ext.id) continue;
+    const allPurchases = resolveReferredUserPurchases(ext, purchases, referrals);
+    nodeMap.set(
+      ext.id,
+      enrichNodeFlags(
+        {
+          ...ext,
+          id: ext.id,
+          fullName: ext.fullName || 'Trader',
+          level: ext.level,
+        },
+        allPurchases
+      )
+    );
   }
 
   // 2. Traverse local 3-tier user tree strictly for sponsorId (no mock user fallbacks)
@@ -1211,21 +1425,19 @@ export function buildReferredNetworkTree(params: {
       purchases,
       referrals
     );
-    const totalPurchaseAmount = Number(
-      allPurchases.reduce((s, p) => s + Number(p.amount || 0), 0).toFixed(2)
+    nodeMap.set(
+      u.id,
+      enrichNodeFlags(
+        {
+          ...(existing || {}),
+          id: u.id,
+          fullName: existing?.fullName && existing.fullName !== 'Trader' ? existing.fullName : u.name,
+          email: existing?.email || u.email,
+          level: existing?.level || level,
+        },
+        allPurchases
+      )
     );
-    nodeMap.set(u.id, {
-      ...(existing || {}),
-      id: u.id,
-      fullName: existing?.fullName && existing.fullName !== 'Trader' ? existing.fullName : u.name,
-      email: existing?.email || u.email,
-      level: existing?.level || level,
-      latestPurchase: allPurchases[0],
-      purchases: allPurchases,
-      accountCount: Math.max(allPurchases.length, Number(existing?.accountCount || 0)),
-      totalPurchaseAmount:
-        totalPurchaseAmount > 0 ? totalPurchaseAmount : Number(existing?.totalPurchaseAmount || 0),
-    });
   };
 
   if (externalNodes.length === 0 || effectiveSponsorIds.has(sponsorId)) {
@@ -1244,13 +1456,7 @@ export function buildReferredNetworkTree(params: {
         level,
       };
       const allPurchases = resolveReferredUserPurchases(node, purchases, referrals);
-      node.latestPurchase = allPurchases[0];
-      node.purchases = allPurchases;
-      node.accountCount = allPurchases.length;
-      node.totalPurchaseAmount = Number(
-        allPurchases.reduce((s, p) => s + Number(p.amount || 0), 0).toFixed(2)
-      );
-      nodeMap.set(node.id, node);
+      nodeMap.set(node.id, enrichNodeFlags(node, allPurchases));
     }
   }
 
@@ -1492,8 +1698,115 @@ export function calculateAffiliateStats(
   };
 }
 
+export const AFFILIATE_MIN_WITHDRAWAL = 100;
+export const AFFILIATE_MIN_ACTIVE_TRADERS = 15;
+export const COUNTRY_MANAGER_REFERRALS_GUIDELINE = 200;
+export const FRIDAY_ONLY_WITHDRAWAL_NOTICE = 'Withdrawals are only available on Fridays.';
+
+export interface AffiliateWithdrawalEligibility {
+  isFriday: boolean;
+  isMinTradersMet: boolean;
+  isMinAmountMet: boolean;
+  isSufficientBalance: boolean;
+  canSubmit: boolean;
+  activeTradersCount: number;
+  minActiveTraders: number;
+  minWithdrawal: number;
+  fridayNotice: string | null;
+  tradersWarning: string | null;
+  amountError: string | null;
+  blockingReason: string | null;
+}
+
 /**
- * Creates an affiliate payout request with $50 minimum threshold.
+ * Counts unique referred traders who hold an active Funded Challenge OR an active Self-Capital Deposit.
+ * Empty ($0) registrations and pending/failed orders never count.
+ */
+export function countCombinedActiveReferrals(networkNodes: ReferredUser[] = []): number {
+  const uniqueIds = new Set<string>();
+  for (const node of networkNodes) {
+    if (!node || !node.id) continue;
+    const purchases =
+      Array.isArray(node.purchases) && node.purchases.length > 0
+        ? node.purchases
+        : node.latestPurchase
+        ? [node.latestPurchase]
+        : [];
+    const hasAnyActivePurchase = purchases.some(
+      (p) => Number(p?.amount || 0) > 0 && isPurchaseOrAccountActive(p?.status)
+    );
+    if (
+      Boolean(node.hasActiveFunded) ||
+      Boolean(node.hasActiveSelfCapitalDeposit) ||
+      hasAnyActivePurchase
+    ) {
+      uniqueIds.add(String(node.id));
+    }
+  }
+  return uniqueIds.size;
+}
+
+/**
+ * Evaluates all strict Affiliate Withdrawal rules:
+ * 1. Friday-only schedule (now.getDay() === 5)
+ * 2. Minimum 15 active trading referrals (combined Funded Challenge OR Self-Funded active deposits)
+ * 3. Minimum $100.00 withdrawal amount and sufficient available balance
+ */
+export function evaluateAffiliateWithdrawalEligibility(params: {
+  amount: number;
+  availableBalance: number;
+  activeTradersCount: number;
+  now?: Date;
+}): AffiliateWithdrawalEligibility {
+  const now = params.now instanceof Date ? params.now : new Date();
+  const safeAmount = Number(params.amount) || 0;
+  const safeBalance = Math.max(0, Number(params.availableBalance) || 0);
+  const safeActiveCount = Math.max(0, Math.floor(Number(params.activeTradersCount) || 0));
+
+  const isFriday = now.getDay() === 5;
+  const isMinTradersMet = safeActiveCount >= AFFILIATE_MIN_ACTIVE_TRADERS;
+  const isMinAmountMet = safeAmount >= AFFILIATE_MIN_WITHDRAWAL;
+  const isSufficientBalance =
+    safeBalance >= AFFILIATE_MIN_WITHDRAWAL && safeAmount <= safeBalance;
+
+  const fridayNotice = isFriday ? null : FRIDAY_ONLY_WITHDRAWAL_NOTICE;
+  const tradersWarning = isMinTradersMet
+    ? null
+    : `Minimum ${AFFILIATE_MIN_ACTIVE_TRADERS} active trading referrals required (currently ${safeActiveCount}/${AFFILIATE_MIN_ACTIVE_TRADERS} combined across Funded Challenges & Self-Funded active deposits).`;
+
+  let amountError: string | null = null;
+  if (safeBalance < AFFILIATE_MIN_WITHDRAWAL) {
+    amountError = `Minimum withdrawal threshold is $${AFFILIATE_MIN_WITHDRAWAL}.00 (available balance: $${safeBalance.toFixed(2)}).`;
+  } else if (!isMinAmountMet) {
+    amountError = `Minimum withdrawal amount is $${AFFILIATE_MIN_WITHDRAWAL}.00.`;
+  } else if (safeAmount > safeBalance) {
+    amountError = `Amount exceeds your available balance ($${safeBalance.toFixed(2)}).`;
+  }
+
+  const blockingReason = tradersWarning || fridayNotice || amountError || null;
+  const canSubmit = isFriday && isMinTradersMet && isMinAmountMet && isSufficientBalance;
+
+  return {
+    isFriday,
+    isMinTradersMet,
+    isMinAmountMet,
+    isSufficientBalance,
+    canSubmit,
+    activeTradersCount: safeActiveCount,
+    minActiveTraders: AFFILIATE_MIN_ACTIVE_TRADERS,
+    minWithdrawal: AFFILIATE_MIN_WITHDRAWAL,
+    fridayNotice,
+    tradersWarning,
+    amountError,
+    blockingReason,
+  };
+}
+
+/**
+ * Creates an affiliate payout request enforcing:
+ * - Minimum $100.00 threshold
+ * - Minimum 15 combined active trading referrals
+ * - Friday-only withdrawal window
  */
 export function requestAffiliatePayout(params: {
   userId: string;
@@ -1502,18 +1815,39 @@ export function requestAffiliatePayout(params: {
   details: string;
   payouts?: AffiliatePayout[];
   referrals?: ReferralRecord[];
+  activeTradersCount?: number;
+  now?: Date;
 }): { success: boolean; error?: string; payout?: AffiliatePayout; updatedPayouts?: AffiliatePayout[] } {
   const { userId, amount, method, details } = params;
+  const stats = calculateAffiliateStats(userId, params.referrals, params.payouts);
+  const resolvedActiveCount =
+    typeof params.activeTradersCount === 'number'
+      ? Math.max(0, Math.floor(params.activeTradersCount))
+      : stats.activeFundedCount;
 
-  if (amount < 50) {
-    return { success: false, error: 'Minimum payout threshold is $50.00' };
+  const eligibility = evaluateAffiliateWithdrawalEligibility({
+    amount,
+    availableBalance: stats.availableBalance,
+    activeTradersCount: resolvedActiveCount,
+    now: params.now,
+  });
+
+  if (eligibility.tradersWarning) {
+    return { success: false, error: eligibility.tradersWarning };
+  }
+
+  if (!eligibility.isFriday) {
+    return { success: false, error: FRIDAY_ONLY_WITHDRAWAL_NOTICE };
+  }
+
+  if (!eligibility.isMinAmountMet) {
+    return { success: false, error: `Minimum payout threshold is $${AFFILIATE_MIN_WITHDRAWAL}.00` };
   }
 
   if (!details || details.trim().length < 5) {
     return { success: false, error: 'Valid payment destination details are required' };
   }
 
-  const stats = calculateAffiliateStats(userId, params.referrals, params.payouts);
   if (amount > stats.availableBalance) {
     return {
       success: false,
@@ -1531,8 +1865,8 @@ export function requestAffiliatePayout(params: {
     network: method,
     details: details.trim(),
     status: 'completed', // Auto-completed via fast TRC-20 contract
-    requestedAt: new Date().toISOString(),
-    processedAt: new Date().toISOString(),
+    requestedAt: (params.now || new Date()).toISOString(),
+    processedAt: (params.now || new Date()).toISOString(),
     txHash: method === 'USDT (TRC-20)' ? generateSampleTxHash() : undefined,
   };
 
@@ -1618,10 +1952,16 @@ export function calculateReferralTurnoverCommission(
 }
 
 /**
- * Computes the affiliate's progress toward unlocking the 7% Self-Funded Turnover tier (unlocked after 200 completed traders).
+ * Computes the affiliate's progress toward unlocking the 7% Self-Funded Turnover tier
+ * Strictly counts ONLY referrals who have an Active Self-Capital Deposit (never empty signups).
  */
-export function getSelfFundedTurnoverTierStatus(completedTradersCount: number): {
+export function getSelfFundedTurnoverTierStatus(
+  activeDepositedCount: number,
+  totalRegisteredReferrals?: number
+): {
   completedTradersCount: number;
+  activeDepositedCount: number;
+  totalRegisteredReferrals: number;
   threshold: number;
   currentRate: number;
   currentRatePercent: number;
@@ -1630,7 +1970,11 @@ export function getSelfFundedTurnoverTierStatus(completedTradersCount: number): 
   remainingToUpgrade: number;
   progressPercent: number;
 } {
-  const safeCount = Math.max(0, Math.floor(Number(completedTradersCount) || 0));
+  const safeCount = Math.max(0, Math.floor(Number(activeDepositedCount) || 0));
+  const safeRegistered = Math.max(
+    safeCount,
+    Math.floor(Number(totalRegisteredReferrals ?? safeCount) || 0)
+  );
   const is7PercentUnlocked = safeCount >= SELF_FUNDED_TURNOVER_THRESHOLD;
   const currentRate = is7PercentUnlocked
     ? SELF_FUNDED_TURNOVER_UPGRADED_RATE
@@ -1643,6 +1987,8 @@ export function getSelfFundedTurnoverTierStatus(completedTradersCount: number): 
 
   return {
     completedTradersCount: safeCount,
+    activeDepositedCount: safeCount,
+    totalRegisteredReferrals: safeRegistered,
     threshold: SELF_FUNDED_TURNOVER_THRESHOLD,
     currentRate,
     currentRatePercent: Math.round(currentRate * 100),
@@ -1656,21 +2002,27 @@ export function getSelfFundedTurnoverTierStatus(completedTradersCount: number): 
 /**
  * Normalizes a raw row from Supabase `affiliate_referral_details` (or backend/local referral sources)
  * into a clean `AffiliateReferralDetail` record with automatic 5% / 7% turnover commission calculation.
+ * Strictly requires an Active Self-Capital Deposit to receive an active trader sequence index or 7% progression.
  */
 export function normalizeAffiliateReferralDetailRow(
   row: Record<string, any>,
   index0Based: number = 0,
-  completedTradersCount?: number
+  activeDepositedTotalCount?: number
 ): AffiliateReferralDetail {
-  const explicitTraderIndex = Number(
-    row.trader_index ?? row.traderIndex ?? row.referral_order ?? row.rank_index ?? index0Based + 1
+  const hasActiveSelfCapitalDeposit = isReferralActiveSelfCapitalDeposited(row);
+
+  const rawExplicitIndex = Number(
+    row.trader_index ?? row.traderIndex ?? row.referral_order ?? row.rank_index ?? 0
   );
-  const traderIndex = Number.isFinite(explicitTraderIndex) && explicitTraderIndex >= 1
-    ? Math.floor(explicitTraderIndex)
-    : index0Based + 1;
+  // Only active self-capital deposited traders earn a ranked position (1..200 = 5%, 201+ = 7%)
+  const traderIndex = hasActiveSelfCapitalDeposit
+    ? Number.isFinite(rawExplicitIndex) && rawExplicitIndex >= 1
+      ? Math.floor(rawExplicitIndex)
+      : index0Based + 1
+    : 0;
 
   const referredUserId = String(
-    row.referred_user_id ?? row.referredUserId ?? row.user_id ?? row.trader_id ?? row.id ?? `trd_${traderIndex}`
+    row.referred_user_id ?? row.referredUserId ?? row.user_id ?? row.trader_id ?? row.id ?? `trd_${index0Based + 1}`
   ).trim();
 
   const referrerId = String(
@@ -1691,7 +2043,11 @@ export function normalizeAffiliateReferralDetailRow(
   const email = String(row.email ?? row.referred_user_email ?? '').trim() || undefined;
   const referralName =
     rawName ||
-    (email ? email.split('@')[0] : `Trader #${String(traderIndex).padStart(3, '0')}`);
+    (email
+      ? email.split('@')[0]
+      : traderIndex > 0
+      ? `Trader #${String(traderIndex).padStart(3, '0')}`
+      : `Registered User`);
 
   const rawCodeOrId = String(
     row.referral_code ??
@@ -1702,7 +2058,8 @@ export function normalizeAffiliateReferralDetailRow(
   ).trim();
 
   const shortCleanId = referredUserId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toUpperCase();
-  const referralCodeOrId = rawCodeOrId || (shortCleanId ? `UID-${shortCleanId}` : `UID-${100000 + traderIndex}`);
+  const referralCodeOrId =
+    rawCodeOrId || (shortCleanId ? `UID-${shortCleanId}` : `UID-${100000 + index0Based + 1}`);
 
   const accountBalance = Math.max(
     0,
@@ -1749,22 +2106,29 @@ export function normalizeAffiliateReferralDetailRow(
     ) || 0
   );
 
-  // Automatically calculate turnover commission based on the 5% (1-200) / 7% (201+) tier rules
-  const calc = calculateReferralTurnoverCommission(
-    totalTradeTurnover,
-    traderIndex,
-    completedTradersCount
-  );
+  // Automatically calculate turnover commission based strictly on active self-deposited trader rank
+  const calc = hasActiveSelfCapitalDeposit
+    ? calculateReferralTurnoverCommission(
+        totalTradeTurnover,
+        traderIndex,
+        activeDepositedTotalCount
+      )
+    : {
+        rate: SELF_FUNDED_TURNOVER_BASIC_RATE,
+        ratePercent: 5,
+        commissionEarned: 0,
+        isUpgradedTier: false,
+        tierLabel: '5% Tier (1–200)' as const,
+      };
 
-  // If the database row already stores commission_earned and totalTradeTurnover is 0, preserve db value;
-  // otherwise use the strict 5% / 7% turnover formula so it is always accurate.
   const dbCommission = Number(
     row.commission_earned ?? row.commissionEarned ?? row.turnover_commission ?? 0
   );
-  const commissionEarned =
-    totalTradeTurnover > 0
-      ? calc.commissionEarned
-      : Math.max(0, Number(dbCommission.toFixed(2)) || 0);
+  const commissionEarned = !hasActiveSelfCapitalDeposit
+    ? 0
+    : totalTradeTurnover > 0
+    ? calc.commissionEarned
+    : Math.max(0, Number(dbCommission.toFixed(2)) || 0);
 
   const challengeCommissionEarned = Math.max(
     0,
@@ -1773,18 +2137,80 @@ export function normalizeAffiliateReferralDetailRow(
     ) || 0
   );
 
+  const purchasedAccounts = Array.isArray(row.purchasedAccounts)
+    ? row.purchasedAccounts
+    : Array.isArray(row.purchased_accounts)
+    ? row.purchased_accounts
+    : undefined;
+
+  const selfDepositFromAccts = Array.isArray(purchasedAccounts)
+    ? Number(
+        purchasedAccounts
+          .filter(
+            (a: any) =>
+              isSelfFundedAccountOrDeposit(a) &&
+              Number(a.amount ?? 0) > 0 &&
+              isPurchaseOrAccountActive(a.status)
+          )
+          .reduce((s: number, a: any) => s + Number(a.amount || 0), 0)
+          .toFixed(2)
+      )
+    : 0;
+
+  const selfCapitalDepositAmount = Math.max(
+    0,
+    Number(
+      row.selfCapitalDepositAmount ??
+        row.self_capital_deposit ??
+        row.selfCapitalDeposit ??
+        selfDepositFromAccts ??
+        0
+    ) || (hasActiveSelfCapitalDeposit ? accountBalance : 0)
+  );
+
+  const hasActiveFundedChallenge = Boolean(
+    row.hasActiveFundedChallenge ??
+      row.has_active_funded_challenge ??
+      (Array.isArray(purchasedAccounts) &&
+        purchasedAccounts.some(
+          (a: any) =>
+            Number(a.amount ?? 0) > 0 &&
+            isFundedChallengeItem(a) &&
+            isPurchaseOrAccountActive(a.status)
+        ))
+  );
+
+  const hasPendingSelfDeposit =
+    !hasActiveSelfCapitalDeposit &&
+    Array.isArray(purchasedAccounts) &&
+    purchasedAccounts.some(
+      (a: any) =>
+        isSelfFundedAccountOrDeposit(a) &&
+        String(a.status || '').toLowerCase() === 'pending'
+    );
+
   const joinedAt = String(
     row.joined_at ?? row.joinedAt ?? row.created_at ?? row.createdAt ?? new Date().toISOString()
   );
 
-  const statusRaw = String(row.status ?? (totalTradeTurnover > 0 || accountBalance > 0 ? 'completed' : 'active')).toLowerCase();
-  const status =
-    statusRaw === 'completed' || statusRaw === 'active' || statusRaw === 'pending'
-      ? statusRaw
-      : 'active';
+  const statusRaw = String(row.status ?? '').trim().toLowerCase();
+  const status = hasActiveSelfCapitalDeposit
+    ? totalTradeTurnover > 0 || statusRaw === 'completed'
+      ? 'completed'
+      : 'active'
+    : hasPendingSelfDeposit || statusRaw === 'pending'
+    ? 'pending'
+    : 'registered';
+
+  const derivedAccountType: 'self_funded' | 'funded' | 'dual' =
+    hasActiveSelfCapitalDeposit && hasActiveFundedChallenge
+      ? 'dual'
+      : hasActiveFundedChallenge && !hasActiveSelfCapitalDeposit
+      ? 'funded'
+      : (row.account_type ?? row.accountType ?? 'self_funded');
 
   return {
-    id: String(row.id ?? `ARD-${referredUserId}-${traderIndex}`),
+    id: String(row.id ?? `ARD-${referredUserId}-${traderIndex || index0Based + 1}`),
     referrerId,
     referredUserId,
     referralName,
@@ -1797,25 +2223,67 @@ export function normalizeAffiliateReferralDetailRow(
     turnoverCommissionRate: calc.rate,
     commissionEarned,
     challengeCommissionEarned,
-    accountType: row.account_type ?? row.accountType ?? 'self_funded',
+    accountType: derivedAccountType,
+    hasActiveSelfCapitalDeposit,
+    selfCapitalDepositAmount,
+    hasActiveFundedChallenge,
     accountCount:
       Number(row.account_count ?? row.accountCount ?? 0) ||
-      (Array.isArray(row.purchasedAccounts) ? row.purchasedAccounts.length : 0) ||
-      (Array.isArray(row.purchased_accounts) ? row.purchased_accounts.length : 0),
-    purchasedAccounts: Array.isArray(row.purchasedAccounts)
-      ? row.purchasedAccounts
-      : Array.isArray(row.purchased_accounts)
-      ? row.purchased_accounts
-      : undefined,
+      (Array.isArray(purchasedAccounts) ? purchasedAccounts.length : 0),
+    purchasedAccounts,
     status,
     joinedAt,
   };
 }
 
 /**
+ * Computes aggregated Self-Funded Turnover summary metrics with strict separation between
+ * Total Registered Referrals vs Active Self-Capital Deposited Accounts.
+ */
+export function computeSelfFundedSummary(
+  details: AffiliateReferralDetail[]
+): {
+  totalRegisteredReferrals: number;
+  activeDepositedCount: number;
+  completedCount: number;
+  totalBalance: number;
+  totalBonus: number;
+  totalTurnover: number;
+  totalTurnoverCommission: number;
+  tierStatus: ReturnType<typeof getSelfFundedTurnoverTierStatus>;
+} {
+  const totalRegisteredReferrals = details.length;
+  const activeDepositedCount = details.filter(
+    (d) => d.hasActiveSelfCapitalDeposit === true
+  ).length;
+  const totalBalance = details.reduce((s, r) => s + Number(r.accountBalance || 0), 0);
+  const totalBonus = details.reduce((s, r) => s + Number(r.bonusAmount || 0), 0);
+  const totalTurnover = details.reduce((s, r) => s + Number(r.totalTradeTurnover || 0), 0);
+  const totalTurnoverCommission = details.reduce(
+    (s, r) => s + Number(r.commissionEarned || 0),
+    0
+  );
+  const tierStatus = getSelfFundedTurnoverTierStatus(
+    activeDepositedCount,
+    totalRegisteredReferrals
+  );
+
+  return {
+    totalRegisteredReferrals,
+    activeDepositedCount,
+    completedCount: activeDepositedCount,
+    totalBalance: Number(totalBalance.toFixed(2)),
+    totalBonus: Number(totalBonus.toFixed(2)),
+    totalTurnover: Number(totalTurnover.toFixed(2)),
+    totalTurnoverCommission: Number(totalTurnoverCommission.toFixed(2)),
+    tierStatus,
+  };
+}
+
+/**
  * Merges `affiliate_referral_details` rows with any referred network users & commission records
  * so every referred user appears in the Quotex-style Detailed Referral Table with accurate
- * Live Account Balance, Bonus Amount, Total Trade Turnover, and 5%/7% Commission Earned.
+ * Active Self-Capital Deposit qualification, Live Account Balance, Bonus Amount, Turnover, and 5%/7% Commission.
  */
 export function buildDetailedReferralList(params: {
   sponsorId: string;
@@ -1848,12 +2316,12 @@ export function buildDetailedReferralList(params: {
   for (const node of networkNodes) {
     if (!node || !node.id) continue;
     const existing = byUserId.get(node.id);
-    const purchaseAmt = Number(node.totalPurchaseAmount || node.latestPurchase?.amount || 0);
-    const nodePurchases = Array.isArray(node.purchases) && node.purchases.length > 0
-      ? node.purchases
-      : node.latestPurchase
-      ? [node.latestPurchase]
-      : [];
+    const nodePurchases =
+      Array.isArray(node.purchases) && node.purchases.length > 0
+        ? node.purchases
+        : node.latestPurchase
+        ? [node.latestPurchase]
+        : [];
     const nodeAcctCount = Math.max(Number(node.accountCount || 0), nodePurchases.length);
     const derivedBalance = Number(
       (node as any).accountBalance ?? (node as any).selfBalance ?? 0
@@ -1862,6 +2330,31 @@ export function buildDetailedReferralList(params: {
     const derivedTurnover = Number(
       (node as any).totalTradeTurnover ?? (node as any).totalVolume ?? 0
     );
+
+    const activeSelfDepositAmount = Number(
+      nodePurchases
+        .filter(
+          (p) =>
+            isSelfFundedAccountOrDeposit(p) &&
+            Number(p.amount) > 0 &&
+            isPurchaseOrAccountActive(p.status)
+        )
+        .reduce((s, p) => s + Number(p.amount || 0), 0)
+        .toFixed(2)
+    );
+    const nodeHasActiveSelfDeposit =
+      Boolean(node.hasActiveSelfCapitalDeposit) ||
+      activeSelfDepositAmount > 0 ||
+      Number(node.selfCapitalDepositAmount || 0) > 0;
+    const nodeHasActiveFunded =
+      Boolean(node.hasActiveFunded) ||
+      nodePurchases.some(
+        (p) =>
+          Number(p.amount) > 0 &&
+          isFundedChallengeItem(p) &&
+          isPurchaseOrAccountActive(p.status)
+      );
+
     if (!existing) {
       byUserId.set(node.id, {
         referred_user_id: node.id,
@@ -1871,9 +2364,25 @@ export function buildDetailedReferralList(params: {
         account_balance: derivedBalance,
         bonus_amount: derivedBonus,
         total_trade_turnover: derivedTurnover,
+        self_capital_deposit:
+          activeSelfDepositAmount > 0
+            ? activeSelfDepositAmount
+            : Number(node.selfCapitalDepositAmount || 0),
+        has_active_self_capital_deposit: nodeHasActiveSelfDeposit,
+        has_active_funded_challenge: nodeHasActiveFunded,
+        account_type:
+          nodeHasActiveSelfDeposit && nodeHasActiveFunded
+            ? 'dual'
+            : nodeHasActiveFunded
+            ? 'funded'
+            : 'self_funded',
         account_count: nodeAcctCount,
         purchased_accounts: nodePurchases,
-        status: purchaseAmt > 0 || derivedTurnover > 0 ? 'completed' : 'active',
+        status: nodeHasActiveSelfDeposit
+          ? derivedTurnover > 0
+            ? 'completed'
+            : 'active'
+          : 'registered',
         joined_at: node.joinedDate || new Date().toISOString(),
       });
     } else {
@@ -1887,8 +2396,21 @@ export function buildDetailedReferralList(params: {
         Number(existing.account_count || 0),
         nodeAcctCount
       );
-      if (!Array.isArray(existing.purchased_accounts) || nodePurchases.length > existing.purchased_accounts.length) {
+      if (
+        !Array.isArray(existing.purchased_accounts) ||
+        nodePurchases.length > existing.purchased_accounts.length
+      ) {
         existing.purchased_accounts = nodePurchases;
+      }
+      if (nodeHasActiveSelfDeposit) {
+        existing.has_active_self_capital_deposit = true;
+        existing.self_capital_deposit = Math.max(
+          Number(existing.self_capital_deposit || 0),
+          activeSelfDepositAmount || Number(node.selfCapitalDepositAmount || 0)
+        );
+      }
+      if (nodeHasActiveFunded) {
+        existing.has_active_funded_challenge = true;
       }
     }
   }
@@ -1907,9 +2429,13 @@ export function buildDetailedReferralList(params: {
         account_balance: 0,
         bonus_amount: 0,
         total_trade_turnover: 0,
+        account_type: 'funded',
+        has_active_funded_challenge:
+          Number(ref.packagePrice || 0) > 0 && isPurchaseOrAccountActive(ref.status),
+        has_active_self_capital_deposit: false,
         account_count: Number(ref.packagePrice || 0) > 0 ? 1 : 0,
         challenge_commission_earned: Number(ref.commissionAmount || 0),
-        status: 'active',
+        status: 'registered',
         joined_at: ref.createdAt || ref.date || new Date().toISOString(),
       });
     } else {
@@ -1919,19 +2445,194 @@ export function buildDetailedReferralList(params: {
   }
 
   const combinedRows = Array.from(byUserId.values());
-  const completedCount =
+
+  // Assign sequential active traderIndex ONLY to referrals who have an Active Self-Capital Deposit
+  let activeRankCursor = 0;
+  const enrichedWithActiveFlag = combinedRows.map((row) => {
+    const isActiveDeposited = isReferralActiveSelfCapitalDeposited(row);
+    const explicitIndex = Number(
+      row.trader_index ?? row.traderIndex ?? row.referral_order ?? row.rank_index ?? 0
+    );
+    let assignedIndex = 0;
+    if (isActiveDeposited) {
+      if (Number.isFinite(explicitIndex) && explicitIndex >= 1) {
+        assignedIndex = Math.floor(explicitIndex);
+        activeRankCursor = Math.max(activeRankCursor, assignedIndex);
+      } else {
+        activeRankCursor += 1;
+        assignedIndex = activeRankCursor;
+      }
+    }
+    return {
+      ...row,
+      has_active_self_capital_deposit: isActiveDeposited,
+      trader_index: assignedIndex,
+    };
+  });
+
+  const activeDepositedCount =
     typeof completedTradersOverride === 'number'
       ? completedTradersOverride
-      : combinedRows.filter(
-          (r) =>
-            Number(r.total_trade_turnover ?? r.totalTradeTurnover ?? 0) > 0 ||
-            Number(r.account_balance ?? r.accountBalance ?? 0) > 0 ||
-            String(r.status || '').toLowerCase() === 'completed'
-        ).length;
+      : enrichedWithActiveFlag.filter((r) => r.has_active_self_capital_deposit).length;
 
-  return combinedRows.map((row, idx) =>
-    normalizeAffiliateReferralDetailRow(row, idx, completedCount)
+  return enrichedWithActiveFlag.map((row, idx) =>
+    normalizeAffiliateReferralDetailRow(row, idx, activeDepositedCount)
   );
 }
+
+// ============================================================================
+// 9. SOCIAL MEDIA SUBMISSION LOCK & COUNTRY MANAGER APPLICATION VALIDATORS
+// ============================================================================
+
+export const AFFILIATE_SOCIAL_PLATFORMS = [
+  'YouTube',
+  'Telegram',
+  'TikTok',
+  'Instagram',
+  'X (Twitter)',
+  'Facebook',
+  'Discord / Community',
+  'Website / Blog',
+] as const;
+
+export function normalizeSocialLinksList(links: Array<string | null | undefined> | string): string[] {
+  const rawList = Array.isArray(links)
+    ? links
+    : String(links || '')
+        .split(/[\n,]+/)
+        .map((s) => s.trim());
+  const deduped: string[] = [];
+  const seen = new Set<string>();
+  for (const item of rawList) {
+    const clean = String(item || '').trim();
+    if (!clean) continue;
+    const key = clean.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      deduped.push(clean);
+    }
+  }
+  return deduped;
+}
+
+export function validateAffiliateSocialSubmission(params: {
+  platformType: string;
+  links: Array<string | null | undefined>;
+  alreadyLocked?: boolean;
+}): {
+  valid: boolean;
+  error?: string;
+  platformType: string;
+  socialLinks: string[];
+} {
+  if (params.alreadyLocked) {
+    return {
+      valid: false,
+      error: 'Your affiliate marketing profile is already Verified & Locked and cannot be edited.',
+      platformType: String(params.platformType || '').trim(),
+      socialLinks: [],
+    };
+  }
+  const platformType = String(params.platformType || '').trim();
+  if (!platformType) {
+    return {
+      valid: false,
+      error: 'Please select your primary Social Media / Marketing Platform.',
+      platformType: '',
+      socialLinks: [],
+    };
+  }
+  const socialLinks = normalizeSocialLinksList(params.links);
+  if (socialLinks.length === 0) {
+    return {
+      valid: false,
+      error: 'Please enter at least one Group, Page, or Channel link.',
+      platformType,
+      socialLinks: [],
+    };
+  }
+  for (const link of socialLinks) {
+    if (link.length < 4 || (!link.includes('.') && !link.startsWith('@') && !link.startsWith('http'))) {
+      return {
+        valid: false,
+        error: `Please provide a valid link or channel URL (invalid entry: "${link}").`,
+        platformType,
+        socialLinks: [],
+      };
+    }
+  }
+  return {
+    valid: true,
+    platformType,
+    socialLinks,
+  };
+}
+
+export function validateCountryManagerApplication(params: {
+  fullName: string;
+  targetCountry: string;
+  telegramHandle: string;
+  estimatedAudienceSize: string | number;
+  marketingStrategy: string;
+  socialLinks: Array<string | null | undefined> | string;
+}): {
+  valid: boolean;
+  error?: string;
+  normalized?: {
+    fullName: string;
+    targetCountry: string;
+    telegramHandle: string;
+    estimatedAudienceSize: string;
+    marketingStrategy: string;
+    socialLinks: string[];
+  };
+} {
+  const fullName = String(params.fullName || '').trim();
+  const targetCountry = String(params.targetCountry || '').trim();
+  const rawTelegram = String(params.telegramHandle || '').trim();
+  const telegramHandle = rawTelegram
+    ? rawTelegram.startsWith('@')
+      ? rawTelegram
+      : `@${rawTelegram}`
+    : '';
+  const estimatedAudienceSize = String(params.estimatedAudienceSize ?? '').trim();
+  const marketingStrategy = String(params.marketingStrategy || '').trim();
+  const socialLinks = normalizeSocialLinksList(params.socialLinks);
+
+  if (fullName.length < 2) {
+    return { valid: false, error: 'Please enter your Full Name.' };
+  }
+  if (targetCountry.length < 2) {
+    return { valid: false, error: 'Please enter your Target Country.' };
+  }
+  if (telegramHandle.length < 3) {
+    return { valid: false, error: 'Please enter a valid Telegram Handle (e.g., @yourhandle).' };
+  }
+  if (!estimatedAudienceSize) {
+    return { valid: false, error: 'Please specify your Estimated Audience / Community Size.' };
+  }
+  if (marketingStrategy.length < 15) {
+    return {
+      valid: false,
+      error: 'Please provide a brief Marketing Strategy description (at least 15 characters).',
+    };
+  }
+  if (socialLinks.length === 0) {
+    return { valid: false, error: 'Please provide at least one relevant Social Link.' };
+  }
+
+  return {
+    valid: true,
+    normalized: {
+      fullName,
+      targetCountry,
+      telegramHandle,
+      estimatedAudienceSize,
+      marketingStrategy,
+      socialLinks,
+    },
+  };
+}
+
 
 

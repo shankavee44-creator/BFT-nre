@@ -306,3 +306,136 @@ test('Affiliate multi-account purchase tracking counts & displays all accounts p
   assert.equal(details[0].accountCount, 2);
   assert.equal(details[0].purchasedAccounts?.length, 2);
 });
+
+test('Network tree preserves multiple deposits sharing a wallet accountId and multiple challenges across L1, L2, and L3', () => {
+  const purchases = [
+    // L1 user: 2 self-funded deposits on same wallet account_id + 2 identical challenges
+    {
+      id: 'DEP-L1-1',
+      account_id: 'BFT-PERS-L1',
+      user_id: 'l1_user',
+      package_name: 'Self-Funded Live Deposit',
+      package_sku: 'BFT-SELF-500',
+      amount: 500,
+      account_type: 'self_funded',
+      status: 'completed',
+      created_at: '2026-11-14T10:00:00Z',
+    },
+    {
+      id: 'DEP-L1-2',
+      account_id: 'BFT-PERS-L1',
+      user_id: 'l1_user',
+      package_name: 'Self-Funded Live Deposit',
+      package_sku: 'BFT-SELF-250',
+      amount: 250,
+      account_type: 'self_funded',
+      status: 'pending',
+      created_at: '2026-11-15T10:00:00Z',
+    },
+    {
+      id: 'CHAL-L1-1',
+      account_id: 'BFT-2S-L1-A',
+      user_id: 'l1_user',
+      package_name: '$10K Two-Step Challenge',
+      package_sku: 'BFT-2S-10K',
+      amount: 99,
+      account_type: 'challenge',
+      status: 'active',
+      created_at: '2026-11-15T11:00:00Z',
+    },
+    // Synthetic TA fallback for BFT-PERS-L1 should merge with real purchase rather than duplicating, while TA for BFT-1S-L2-B remains
+    {
+      id: 'TA-BFT-PERS-L1',
+      account_id: 'BFT-PERS-L1',
+      user_id: 'l1_user',
+      package_name: 'Self-Funded Live',
+      package_sku: 'BFT-SELF-500',
+      amount: 500,
+      account_type: 'self_funded',
+      status: 'active',
+      created_at: '2026-11-14T10:00:00Z',
+    },
+    // L2 user: 2 challenges + 1 self-funded deposit
+    {
+      id: 'CHAL-L2-1',
+      account_id: 'BFT-2S-L2-A',
+      user_id: 'l2_user',
+      package_name: '$25K Instant Funded',
+      package_sku: 'BFT-IF-25K',
+      amount: 250,
+      account_type: 'challenge',
+      status: 'completed',
+      created_at: '2026-11-15T12:00:00Z',
+    },
+    {
+      id: 'TA-BFT-1S-L2-B',
+      account_id: 'BFT-1S-L2-B',
+      user_id: 'l2_user',
+      package_name: '$50K 1-Step Challenge',
+      package_sku: 'BFT-1S-50K',
+      amount: 279,
+      account_type: 'challenge',
+      status: 'active',
+      created_at: '2026-11-15T12:30:00Z',
+    },
+    // L3 user: 2 separate self-funded wallets
+    {
+      id: 'DEP-L3-1',
+      account_id: 'BFT-PERS-L3-1',
+      user_id: 'l3_user',
+      package_name: 'Self-Funded Live Deposit',
+      package_sku: 'BFT-SELF-1000',
+      amount: 1000,
+      account_type: 'self_funded',
+      status: 'completed',
+      created_at: '2026-11-15T13:00:00Z',
+    },
+    {
+      id: 'DEP-L3-2',
+      account_id: 'BFT-PERS-L3-2',
+      user_id: 'l3_user',
+      package_name: 'Self-Funded Live Deposit',
+      package_sku: 'BFT-SELF-300',
+      amount: 300,
+      account_type: 'self_funded',
+      status: 'active',
+      created_at: '2026-11-15T13:30:00Z',
+    },
+  ];
+
+  const tree = buildReferredNetworkTree({
+    sponsorId: 'root_sponsor',
+    externalNodes: [
+      { id: 'l1_user', fullName: 'L1 Multi User', email: 'l1@bft.io', level: 1 },
+      { id: 'l2_user', fullName: 'L2 Multi User', email: 'l2@bft.io', level: 2 },
+      { id: 'l3_user', fullName: 'L3 Multi User', email: 'l3@bft.io', level: 3 },
+    ],
+    purchasesList: purchases,
+    referralsList: [],
+  });
+
+  assert.equal(tree.length, 3);
+
+  const l1 = tree.find((n) => n.id === 'l1_user')!;
+  assert.equal(l1.purchases?.length, 3);
+  assert.equal(l1.accountCount, 3);
+  assert.equal(l1.hasActiveFunded, true);
+  assert.equal(l1.hasActiveSelfCapitalDeposit, true);
+  assert.equal(l1.selfCapitalDepositAmount, 500); // pending $250 deposit excluded from active self deposit sum
+  assert.deepEqual(
+    l1.purchases?.map((p) => p.status),
+    ['completed', 'pending', 'active']
+  );
+
+  const l2 = tree.find((n) => n.id === 'l2_user')!;
+  assert.equal(l2.purchases?.length, 2);
+  assert.equal(l2.hasActiveFunded, true);
+  assert.equal(l2.hasActiveSelfCapitalDeposit, false);
+
+  const l3 = tree.find((n) => n.id === 'l3_user')!;
+  assert.equal(l3.purchases?.length, 2);
+  assert.equal(l3.hasActiveFunded, false);
+  assert.equal(l3.hasActiveSelfCapitalDeposit, true);
+  assert.equal(l3.selfCapitalDepositAmount, 1300);
+});
+

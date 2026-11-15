@@ -25,6 +25,16 @@ import {
   Info,
   Gift,
   TrendingUp,
+  Lock,
+  Globe,
+  Link2,
+  Plus,
+  Trash2,
+  Megaphone,
+  Calendar,
+  X,
+  ExternalLink,
+  ShieldAlert,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -32,6 +42,8 @@ import {
   ReferralRecord,
   AffiliatePayout,
   AffiliateStats,
+  AffiliateSocialSubmission,
+  CountryManagerApplication,
 } from '../types';
 import {
   calculateAffiliateStats,
@@ -44,9 +56,23 @@ import {
   VIP_MILESTONE_REWARD_AMOUNT,
   BASIC_TIER_RATES,
   VIP_TIER_RATES,
+  AFFILIATE_MIN_WITHDRAWAL,
+  AFFILIATE_MIN_ACTIVE_TRADERS,
+  COUNTRY_MANAGER_REFERRALS_GUIDELINE,
+  FRIDAY_ONLY_WITHDRAWAL_NOTICE,
+  AFFILIATE_SOCIAL_PLATFORMS,
+  evaluateAffiliateWithdrawalEligibility,
+  validateAffiliateSocialSubmission,
+  validateCountryManagerApplication,
 } from '../utils/affiliateEngine';
 import { soundEngine } from '../utils/soundEffects';
-import { apiGetAffiliateDashboard } from '../utils/apiClient';
+import {
+  apiGetAffiliateDashboard,
+  apiGetAffiliateSocialProfile,
+  apiSubmitAffiliateSocialProfile,
+  apiGetCountryManagerApplications,
+  apiSubmitCountryManagerApplication,
+} from '../utils/apiClient';
 import { supabase } from '../utils/supabase';
 import { ReferralNetworkList } from './ReferralNetworkList';
 import { TablePagination } from './TablePagination';
@@ -83,7 +109,7 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
     setCommPage(1);
   }, [filterLevel]);
 
-  const [payoutAmount, setPayoutAmount] = useState<number>(50);
+  const [payoutAmount, setPayoutAmount] = useState<number>(AFFILIATE_MIN_WITHDRAWAL);
   const [payoutMethod, setPayoutMethod] = useState<'USDT (TRC-20)' | 'Bank Transfer'>('USDT (TRC-20)');
   const [payoutDetails, setPayoutDetails] = useState('');
   const [payoutError, setPayoutError] = useState<string | null>(null);
@@ -99,16 +125,71 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
   const [milestoneClaimSuccess, setMilestoneClaimSuccess] = useState<string | null>(null);
   const [milestoneClaimError, setMilestoneClaimError] = useState<string | null>(null);
   const [turnoverStats, setTurnoverStats] = useState<{
+    totalRegisteredReferrals: number;
+    activeDepositedCount: number;
     completedTradersCount: number;
     totalTurnover: number;
     totalTurnoverCommission: number;
     currentRatePercent: number;
+    activeFundedCount?: number;
+    activeCombinedTradersCount?: number;
   }>({
+    totalRegisteredReferrals: 0,
+    activeDepositedCount: 0,
     completedTradersCount: 0,
     totalTurnover: 0,
     totalTurnoverCommission: 0,
     currentRatePercent: 5,
+    activeFundedCount: 0,
   });
+
+  // Social Media & Platform Submission (One-Time Lock)
+  const [socialSubmission, setSocialSubmission] = useState<AffiliateSocialSubmission | null>(() => {
+    const isLocked = Boolean(userProfile.affiliate_profile_locked ?? userProfile.affiliateProfileLocked);
+    const plat =
+      userProfile.social_platform_type ||
+      userProfile.affiliate_social_platform ||
+      userProfile.affiliateSocialPlatform ||
+      '';
+    const links =
+      userProfile.social_platform_links ||
+      userProfile.affiliate_social_links ||
+      userProfile.affiliateSocialLinks ||
+      [];
+    if (isLocked && plat && links.length > 0) {
+      return {
+        userId: userProfile.id,
+        userName: userProfile.fullName,
+        userEmail: userProfile.email,
+        platformType: plat,
+        socialLinks: links,
+        affiliateProfileLocked: true,
+        submittedAt:
+          userProfile.affiliate_social_submitted_at ||
+          userProfile.affiliateSocialSubmittedAt ||
+          new Date().toISOString(),
+      };
+    }
+    return null;
+  });
+  const [socialPlatform, setSocialPlatform] = useState<string>('YouTube');
+  const [socialLinkInputs, setSocialLinkInputs] = useState<string[]>(['']);
+  const [socialError, setSocialError] = useState<string | null>(null);
+  const [socialSuccess, setSocialSuccess] = useState<string | null>(null);
+  const [isSubmittingSocial, setIsSubmittingSocial] = useState(false);
+
+  // BFT Country Manager Application Modal & Records
+  const [countryManagerApps, setCountryManagerApps] = useState<CountryManagerApplication[]>([]);
+  const [showCmModal, setShowCmModal] = useState(false);
+  const [cmFullName, setCmFullName] = useState<string>(userProfile.fullName || '');
+  const [cmTargetCountry, setCmTargetCountry] = useState<string>('');
+  const [cmTelegramHandle, setCmTelegramHandle] = useState<string>('');
+  const [cmAudienceSize, setCmAudienceSize] = useState<string>('');
+  const [cmMarketingStrategy, setCmMarketingStrategy] = useState<string>('');
+  const [cmSocialLinksText, setCmSocialLinksText] = useState<string>('');
+  const [cmError, setCmError] = useState<string | null>(null);
+  const [cmSuccess, setCmSuccess] = useState<string | null>(null);
+  const [isSubmittingCm, setIsSubmittingCm] = useState(false);
 
   // Query Supabase referral_commissions & network count + subscribe to real-time changes
   useEffect(() => {
@@ -177,6 +258,22 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
 
     async function fetchAffiliateData() {
       try {
+        // Immediately load local/SQLite social lock & Country Manager status without blocking on Supabase profile lookup
+        Promise.all([
+          apiGetAffiliateSocialProfile({ userId: targetUserId, email: userProfile.email }),
+          apiGetCountryManagerApplications({ userId: targetUserId, email: userProfile.email }),
+        ])
+          .then(([socialRes, cmRes]) => {
+            if (!isMounted) return;
+            if (socialRes?.ok && socialRes.submission) {
+              setSocialSubmission(socialRes.submission);
+            }
+            if (cmRes?.ok && Array.isArray(cmRes.applications)) {
+              setCountryManagerApps(cmRes.applications);
+            }
+          })
+          .catch(() => {});
+
         let validUuid: string | null = null;
         if (targetUserId && UUID_REGEX.test(targetUserId)) {
           validUuid = targetUserId;
@@ -258,6 +355,23 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
             setBackendActiveFundedCount(activeCount);
           }
         }
+        // 4. Load Social Submission Lock Status & Country Manager Applications
+        try {
+          const [socialRes, cmRes] = await Promise.all([
+            apiGetAffiliateSocialProfile({ userId: validUuid || targetUserId, email: userProfile.email }),
+            apiGetCountryManagerApplications({ userId: validUuid || targetUserId, email: userProfile.email }),
+          ]);
+          if (isMounted) {
+            if (socialRes?.ok && socialRes.submission) {
+              setSocialSubmission(socialRes.submission);
+            }
+            if (cmRes?.ok && Array.isArray(cmRes.applications)) {
+              setCountryManagerApps(cmRes.applications);
+            }
+          }
+        } catch {
+          // ignore
+        }
       } catch (err) {
         console.warn('Affiliate data sync notice:', err);
       }
@@ -268,11 +382,12 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
     const commChannel = supabase
       .channel(`realtime:referral_commissions:${targetUserId || 'session'}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'referral_commissions' }, fetchAffiliateData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'country_manager_applications' }, fetchAffiliateData)
       .subscribe();
 
     const profileChannel = supabase
       .channel(`realtime:profiles:${targetUserId || 'session'}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'profiles' }, fetchAffiliateData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, fetchAffiliateData)
       .subscribe();
 
     const handleLocalUpdate = () => {
@@ -299,15 +414,23 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
     backendReferrals: backendCommissions,
   });
 
-  // Calculate unique active funded traders (referrals who made an actual funded package purchase with amount > 0)
+  // Calculate unique active funded traders (strictly referrals who hold active purchased challenge accounts)
   const uniqueFundedBuyersCount = new Set(
     allMergedCommissions
-      .filter((c) => c.commissionType !== 'withdrawal' && Number(c.packagePrice) > 0)
+      .filter(
+        (c) =>
+          c.commissionType !== 'withdrawal' &&
+          Number(c.packagePrice) > 0 &&
+          !/self[-\s]*funded|personal\s*live/i.test(String(c.packageName || '')) &&
+          String(c.status || 'paid').toLowerCase() !== 'pending' &&
+          String(c.status || 'paid').toLowerCase() !== 'failed'
+      )
       .map((c) => c.referredUserId)
   ).size;
 
   const effectiveActiveFundedCount = Math.max(
     backendActiveFundedCount,
+    turnoverStats.activeFundedCount ?? 0,
     uniqueFundedBuyersCount
   );
 
@@ -318,6 +441,29 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
     undefined,
     undefined,
     effectiveActiveFundedCount
+  );
+
+  const combinedActiveTradersCount =
+    typeof turnoverStats.activeCombinedTradersCount === 'number'
+      ? turnoverStats.activeCombinedTradersCount
+      : Math.max(stats.activeFundedCount, turnoverStats.activeDepositedCount);
+
+  const totalReferralsForCm = Math.max(
+    referredNetworkCount,
+    turnoverStats.totalRegisteredReferrals,
+    stats.totalReferralsCount
+  );
+
+  const withdrawalEligibility = evaluateAffiliateWithdrawalEligibility({
+    amount: payoutAmount,
+    availableBalance: stats.availableBalance,
+    activeTradersCount: combinedActiveTradersCount,
+  });
+
+  const isSocialProfileLocked = Boolean(
+    socialSubmission?.affiliateProfileLocked ||
+      userProfile.affiliate_profile_locked ||
+      userProfile.affiliateProfileLocked
   );
 
   const handleCopyLink = () => {
@@ -362,14 +508,18 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
     setPayoutError(null);
     setPayoutSuccess(null);
 
-    const today = new Date();
-    if (today.getDay() !== 5) {
-      setPayoutError('Withdrawals are only allowed on Fridays.');
+    if (withdrawalEligibility.tradersWarning) {
+      setPayoutError(withdrawalEligibility.tradersWarning);
       return;
     }
 
-    if (payoutAmount < 50) {
-      setPayoutError('Minimum withdrawal threshold is $50.00 USDT');
+    if (!withdrawalEligibility.isFriday) {
+      setPayoutError(FRIDAY_ONLY_WITHDRAWAL_NOTICE);
+      return;
+    }
+
+    if (payoutAmount < AFFILIATE_MIN_WITHDRAWAL) {
+      setPayoutError(`Minimum withdrawal threshold is $${AFFILIATE_MIN_WITHDRAWAL}.00 USDT`);
       return;
     }
 
@@ -396,6 +546,7 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
         details: payoutDetails,
         referrals: allMergedCommissions,
         payouts,
+        activeTradersCount: combinedActiveTradersCount,
       });
 
       setIsSubmittingPayout(false);
@@ -406,11 +557,105 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
         setPayoutSuccess(
           `Payout of $${payoutAmount.toFixed(2)} submitted! Processed via TRC-20 Smart Contract.`
         );
-        setPayoutAmount(Math.min(50, Math.max(0, stats.availableBalance - payoutAmount)));
+        setPayoutAmount(
+          Math.max(
+            AFFILIATE_MIN_WITHDRAWAL,
+            Number(Math.max(0, stats.availableBalance - payoutAmount).toFixed(2))
+          )
+        );
       } else {
         setPayoutError(res.error || 'Failed to submit payout request');
       }
-    }, 1000);
+    }, 600);
+  };
+
+  const handleSubmitSocialProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSocialError(null);
+    setSocialSuccess(null);
+
+    const validation = validateAffiliateSocialSubmission({
+      platformType: socialPlatform,
+      links: socialLinkInputs,
+      alreadyLocked: isSocialProfileLocked,
+    });
+
+    if (!validation.valid) {
+      setSocialError(validation.error || 'Please check your marketing channel links.');
+      return;
+    }
+
+    setIsSubmittingSocial(true);
+    soundEngine.playUiClick();
+    const res = await apiSubmitAffiliateSocialProfile({
+      userId: resolvedSupabaseUuid || userProfile.id,
+      userName: userProfile.fullName,
+      userEmail: userProfile.email,
+      platformType: validation.platformType,
+      socialLinks: validation.socialLinks,
+    });
+    setIsSubmittingSocial(false);
+
+    if (res.ok && res.submission) {
+      soundEngine.playTradeWin();
+      setSocialSubmission(res.submission);
+      setSocialSuccess(
+        res.message || 'Marketing channels submitted and permanently Verified & Locked.'
+      );
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('bft-affiliate-updated'));
+      }
+    } else {
+      setSocialError(res.error || 'Failed to submit social marketing profile.');
+    }
+  };
+
+  const handleSubmitCountryManager = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCmError(null);
+    setCmSuccess(null);
+
+    const validation = validateCountryManagerApplication({
+      fullName: cmFullName,
+      targetCountry: cmTargetCountry,
+      telegramHandle: cmTelegramHandle,
+      estimatedAudienceSize: cmAudienceSize,
+      marketingStrategy: cmMarketingStrategy,
+      socialLinks: cmSocialLinksText,
+    });
+
+    if (!validation.valid || !validation.normalized) {
+      setCmError(validation.error || 'Please complete all required application fields.');
+      return;
+    }
+
+    setIsSubmittingCm(true);
+    soundEngine.playUiClick();
+    const res = await apiSubmitCountryManagerApplication({
+      userId: resolvedSupabaseUuid || userProfile.id,
+      userEmail: userProfile.email,
+      ...validation.normalized,
+      totalReferralsCount: totalReferralsForCm,
+    });
+    setIsSubmittingCm(false);
+
+    if (res.ok && res.application) {
+      soundEngine.playTradeWin();
+      setCountryManagerApps((prev) => [res.application!, ...prev]);
+      setCmSuccess(
+        res.message || 'BFT Country Manager application submitted! Our Partner Desk will review it shortly.'
+      );
+      setCmTargetCountry('');
+      setCmTelegramHandle('');
+      setCmAudienceSize('');
+      setCmMarketingStrategy('');
+      setCmSocialLinksText('');
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('bft-affiliate-updated'));
+      }
+    } else {
+      setCmError(res.error || 'Failed to submit Country Manager application.');
+    }
   };
 
   const filteredReferrals = allMergedCommissions.filter((r) => {
@@ -861,18 +1106,29 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
               Earn Up to 7% From Referred Traders&apos; Total Trading Turnover
             </h3>
             <p className="text-xs text-slate-300 mt-1 max-w-3xl leading-relaxed">
-              In addition to Funded Challenge commissions, you earn automatic turnover commissions from every Self-Funded Live trader you refer—calculated directly from their live trading volume.
+              In addition to Funded Challenge commissions, you earn automatic turnover commissions from every Self-Funded Live trader you refer.{' '}
+              <strong className="text-white">Only referrals with an Active Self-Capital Deposit</strong> count toward the 200-trader threshold to unlock the 7% tier—registered-only accounts ($0) do not count.
             </p>
           </div>
 
-          <div className="flex items-center gap-3 px-4 py-3 rounded-2xl bg-[#111726] border border-white/10 shrink-0 font-mono">
+          <div
+            data-testid="dashboard-self-funded-metrics-pill"
+            className="flex flex-wrap items-center gap-4 px-4 py-3 rounded-2xl bg-[#111726] border border-white/10 shrink-0 font-mono"
+          >
             <div>
-              <div className="text-[10px] uppercase text-slate-400">Completed Turnover Traders</div>
-              <div className="text-lg font-black text-white">
-                {turnoverStats.completedTradersCount} <span className="text-xs text-slate-400">/ 200</span>
+              <div className="text-[10px] uppercase text-slate-400">Total Registered Referrals</div>
+              <div data-testid="dashboard-total-registered-referrals" className="text-lg font-black text-slate-200">
+                {Math.max(turnoverStats.totalRegisteredReferrals, referredNetworkCount)}
               </div>
             </div>
-            <div className="h-8 w-px bg-white/10" />
+            <div className="h-8 w-px bg-white/10 hidden sm:block" />
+            <div>
+              <div className="text-[10px] uppercase text-[#0ecb81]">Active Deposited Accounts</div>
+              <div data-testid="dashboard-active-deposited-accounts" className="text-lg font-black text-white">
+                {turnoverStats.activeDepositedCount} <span className="text-xs text-slate-400">/ 200</span>
+              </div>
+            </div>
+            <div className="h-8 w-px bg-white/10 hidden sm:block" />
             <div>
               <div className="text-[10px] uppercase text-slate-400">Active Rate</div>
               <div className="text-lg font-black text-[#0ecb81]">{turnoverStats.currentRatePercent}%</div>
@@ -949,7 +1205,10 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
           </div>
         </div>
 
-        <div className="p-5 rounded-2xl bg-[#111115] border border-white/10">
+        <div
+          data-testid="active-funded-referrals-metric-card"
+          className="p-5 rounded-2xl bg-[#111115] border border-white/10"
+        >
           <div className="flex items-center justify-between text-slate-400 text-xs font-mono mb-2">
             <span>Active Funded Referrals</span>
             <Users className="w-4 h-4 text-[#ffaa00]" />
@@ -957,7 +1216,9 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
           <div className="text-3xl font-black text-white font-mono">
             {stats.activeFundedCount} Traders
           </div>
-          <div className="text-[11px] text-slate-400 mt-2">Hold purchased Instant Funded or Challenge</div>
+          <div className="text-[11px] text-slate-400 mt-2">
+            Active Challenge buyers only ({Math.max(referredNetworkCount, turnoverStats.totalRegisteredReferrals)} registered total)
+          </div>
         </div>
       </div>
 
@@ -1033,13 +1294,74 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
       {/* 6. PAYOUT FORM & AUDIT TABLE */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         <div className="lg:col-span-5 rounded-3xl bg-[#111115] border border-white/10 p-6 shadow-xl">
-          <h3 className="text-base font-black text-white flex items-center gap-2 mb-2">
+          <h3 className="text-base font-black text-white flex items-center gap-2 mb-1.5">
             <Wallet className="w-5 h-5 text-[#ffaa00]" />
             <span>Withdraw Affiliate Earnings</span>
           </h3>
-          <p className="text-xs text-slate-400 mb-5">
-            Instant TRC-20 USDT or Bank Transfer settlement (Min $50.00).
+          <p className="text-xs text-slate-400 mb-4">
+            TRC-20 USDT or Bank Transfer settlement (Min ${AFFILIATE_MIN_WITHDRAWAL}.00 • Min {AFFILIATE_MIN_ACTIVE_TRADERS} Active Traders • Fridays Only).
           </p>
+
+          {/* Strict Withdrawal Eligibility Checklist */}
+          <div className="mb-4 p-3.5 rounded-2xl bg-[#09090d] border border-white/10 space-y-2.5 text-xs font-mono">
+            <div className="flex items-center justify-between">
+              <span className="text-slate-400">Minimum Withdrawal:</span>
+              <span
+                className={`font-black ${
+                  stats.availableBalance >= AFFILIATE_MIN_WITHDRAWAL ? 'text-emerald-400' : 'text-amber-400'
+                }`}
+              >
+                ${AFFILIATE_MIN_WITHDRAWAL}.00 min
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <span className="text-slate-400">Active Referrals (Funded + Self):</span>
+              <span
+                data-testid="affiliate-active-traders-count"
+                className={`font-black ${
+                  withdrawalEligibility.isMinTradersMet ? 'text-emerald-400' : 'text-rose-400'
+                }`}
+              >
+                {combinedActiveTradersCount} / {AFFILIATE_MIN_ACTIVE_TRADERS} Active
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <span className="text-slate-400">Payout Schedule:</span>
+              <span
+                className={`font-black flex items-center gap-1 ${
+                  withdrawalEligibility.isFriday ? 'text-emerald-400' : 'text-amber-400'
+                }`}
+              >
+                <Calendar className="w-3.5 h-3.5" />
+                <span>{withdrawalEligibility.isFriday ? 'Friday Window Open' : 'Fridays Only'}</span>
+              </span>
+            </div>
+          </div>
+
+          {!withdrawalEligibility.isMinTradersMet && (
+            <div
+              data-testid="affiliate-active-traders-gate"
+              className="mb-3 p-3 rounded-xl bg-rose-950/60 border border-rose-500/40 text-rose-200 text-xs flex items-start gap-2 leading-relaxed"
+            >
+              <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+              <div>
+                <strong className="text-rose-300 font-bold block">Active Traders Requirement Not Met</strong>
+                <span>{withdrawalEligibility.tradersWarning}</span>
+              </div>
+            </div>
+          )}
+
+          {!withdrawalEligibility.isFriday && (
+            <div
+              data-testid="affiliate-friday-notice"
+              className="mb-4 p-3 rounded-xl bg-amber-950/50 border border-amber-500/40 text-amber-200 text-xs flex items-center gap-2 font-mono font-bold"
+            >
+              <Clock className="w-4 h-4 text-amber-400 shrink-0" />
+              <span>{FRIDAY_ONLY_WITHDRAWAL_NOTICE}</span>
+            </div>
+          )}
 
           {payoutSuccess && (
             <div className="mb-4 p-3 rounded-xl bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 text-xs flex items-center gap-2">
@@ -1089,12 +1411,13 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
 
             <div>
               <label className="text-xs font-mono text-slate-300 font-bold block mb-1">
-                Amount (USD)
+                Amount (USD — Min ${AFFILIATE_MIN_WITHDRAWAL}.00)
               </label>
               <input
                 type="number"
-                min="50"
-                max={stats.availableBalance}
+                data-testid="affiliate-withdrawal-amount-input"
+                min={AFFILIATE_MIN_WITHDRAWAL}
+                max={Math.max(AFFILIATE_MIN_WITHDRAWAL, stats.availableBalance)}
                 value={payoutAmount}
                 onChange={(e) => setPayoutAmount(Number(e.target.value))}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-[#09090c] border border-white/15 text-white font-mono text-sm focus:outline-none focus:border-[#ff8800]"
@@ -1107,19 +1430,30 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
               </label>
               <input
                 type="text"
+                data-testid="affiliate-withdrawal-details-input"
                 value={payoutDetails}
                 onChange={(e) => setPayoutDetails(e.target.value)}
+                placeholder={
+                  payoutMethod === 'USDT (TRC-20)'
+                    ? 'TRC-20 USDT wallet address'
+                    : 'Bank Name / Account Number / IBAN'
+                }
                 className="w-full px-3.5 py-2.5 rounded-xl bg-[#09090c] border border-white/15 text-white font-mono text-xs focus:outline-none focus:border-[#ff8800]"
               />
             </div>
 
             <button
               type="submit"
-              disabled={isSubmittingPayout || stats.availableBalance < 50}
-              className="w-full py-3.5 rounded-2xl bg-[#ff8800] hover:bg-[#ffaa00] text-slate-950 font-black text-xs font-mono uppercase tracking-wide flex items-center justify-center gap-2 cursor-pointer transition-colors"
+              data-testid="request-affiliate-withdrawal-btn"
+              disabled={!withdrawalEligibility.canSubmit || isSubmittingPayout}
+              className="w-full py-3.5 rounded-2xl bg-[#ff8800] hover:bg-[#ffaa00] disabled:opacity-45 disabled:cursor-not-allowed text-slate-950 font-black text-xs font-mono uppercase tracking-wide flex items-center justify-center gap-2 cursor-pointer transition-colors"
             >
               <ArrowUpRight className="w-4 h-4 stroke-[3]" />
-              <span>Withdraw ${payoutAmount.toFixed(2)} Now</span>
+              <span>
+                {isSubmittingPayout
+                  ? 'Processing Request...'
+                  : 'Request Withdrawal'}
+              </span>
             </button>
           </form>
         </div>
@@ -1269,6 +1603,310 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
         </div>
       </div>
 
+      {/* =====================================================================
+          7. SOCIAL MEDIA SUBMISSION (ONE-TIME LOCK) & COUNTRY MANAGER BANNER
+         ===================================================================== */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* Left: Social Media & Marketing Channel Submission (One-Time Lock) */}
+        <div
+          data-testid="affiliate-social-submission-section"
+          className="lg:col-span-6 rounded-3xl bg-[#0b0f19] border border-white/10 p-6 sm:p-7 shadow-xl flex flex-col justify-between"
+        >
+          <div>
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-lg bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 text-[11px] font-mono font-bold">
+                <Share2 className="w-3.5 h-3.5" />
+                <span>PROMOTIONAL CHANNELS VERIFICATION</span>
+              </div>
+              {isSocialProfileLocked && (
+                <span
+                  data-testid="affiliate-social-locked-badge"
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-mono font-black"
+                >
+                  <Lock className="w-3.5 h-3.5" />
+                  <span>Verified &amp; Locked</span>
+                </span>
+              )}
+            </div>
+
+            <h3 className="text-lg font-black text-white mb-1.5">
+              Submit Where You Market BFT
+            </h3>
+            <p className="text-xs text-slate-300 leading-relaxed mb-4">
+              {isSocialProfileLocked
+                ? 'Your affiliate marketing channels are permanently Verified & Locked for compliance review by our Admin Desk.'
+                : 'Submit your primary social media platform and Group, Page, or Channel links. Once submitted, this record is permanently locked for admin review.'}
+            </p>
+
+            {socialSuccess && (
+              <div className="mb-4 p-3 rounded-xl bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 text-xs flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                <span>{socialSuccess}</span>
+              </div>
+            )}
+
+            {socialError && (
+              <div className="mb-4 p-3 rounded-xl bg-rose-950/60 border border-rose-500/40 text-rose-300 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{socialError}</span>
+              </div>
+            )}
+
+            {isSocialProfileLocked ? (
+              <div
+                data-testid="affiliate-social-locked-summary"
+                className="p-4 rounded-2xl bg-[#111726] border border-emerald-500/30 space-y-3"
+              >
+                <div className="flex items-center justify-between text-xs font-mono">
+                  <span className="text-slate-400">Primary Platform:</span>
+                  <span className="px-2.5 py-0.5 rounded bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 font-black">
+                    {socialSubmission?.platformType ||
+                      userProfile.social_platform_type ||
+                      userProfile.affiliate_social_platform ||
+                      userProfile.affiliateSocialPlatform ||
+                      'Social Media'}
+                  </span>
+                </div>
+
+                <div>
+                  <div className="text-[11px] font-mono text-slate-400 mb-2">
+                    Submitted Group / Page / Channel Links:
+                  </div>
+                  <div className="space-y-2">
+                    {(
+                      socialSubmission?.socialLinks ||
+                      userProfile.social_platform_links ||
+                      userProfile.affiliate_social_links ||
+                      userProfile.affiliateSocialLinks ||
+                      []
+                    ).map((link, idx) => (
+                      <a
+                        key={`${link}-${idx}`}
+                        href={link.startsWith('http') ? link : `https://${link.replace(/^@/, '')}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-[#090d16] border border-white/10 text-xs font-mono text-[#ffaa00] hover:border-[#ff8800]/50 transition-colors break-all"
+                      >
+                        <span className="flex items-center gap-2 min-w-0">
+                          <Link2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                          <span className="truncate">{link}</span>
+                        </span>
+                        <ExternalLink className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      </a>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="text-[11px] font-mono text-slate-400 pt-2 border-t border-white/10 flex items-center justify-between">
+                  <span>Status: Permanently Locked</span>
+                  <span>
+                    {socialSubmission?.submittedAt
+                      ? new Date(socialSubmission.submittedAt).toLocaleDateString()
+                      : 'Verified'}
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={handleSubmitSocialProfile} className="space-y-4">
+                <div>
+                  <label className="text-xs font-mono text-slate-300 font-bold block mb-1.5">
+                    Social Media Platform Type
+                  </label>
+                  <select
+                    data-testid="affiliate-social-platform-select"
+                    value={socialPlatform}
+                    onChange={(e) => setSocialPlatform(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-[#090d16] border border-white/15 text-white font-mono text-xs focus:outline-none focus:border-cyan-400"
+                  >
+                    {AFFILIATE_SOCIAL_PLATFORMS.map((plat) => (
+                      <option key={plat} value={plat}>
+                        {plat}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-xs font-mono text-slate-300 font-bold">
+                      Group / Page / Channel Links
+                    </label>
+                    <button
+                      type="button"
+                      data-testid="add-social-link-btn"
+                      onClick={() => setSocialLinkInputs((prev) => [...prev, ''])}
+                      className="text-[11px] font-mono font-bold text-cyan-300 hover:text-cyan-200 flex items-center gap-1 cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Add Link</span>
+                    </button>
+                  </div>
+
+                  <div className="space-y-2">
+                    {socialLinkInputs.map((val, idx) => (
+                      <div key={idx} className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          data-testid={`affiliate-social-link-input-${idx}`}
+                          value={val}
+                          onChange={(e) => {
+                            const next = [...socialLinkInputs];
+                            next[idx] = e.target.value;
+                            setSocialLinkInputs(next);
+                          }}
+                          placeholder="https://t.me/yourchannel or https://youtube.com/@yourhandle"
+                          className="flex-1 px-3.5 py-2.5 rounded-xl bg-[#090d16] border border-white/15 text-white font-mono text-xs focus:outline-none focus:border-cyan-400"
+                        />
+                        {socialLinkInputs.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setSocialLinkInputs((prev) => prev.filter((_, i) => i !== idx))
+                            }
+                            className="p-2.5 rounded-xl bg-rose-950/60 border border-rose-500/30 text-rose-300 hover:bg-rose-900/60 cursor-pointer"
+                            title="Remove link"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-500/30 text-[11px] text-amber-200 flex items-start gap-2">
+                  <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                  <span>
+                    <strong>One-Time Submission:</strong> Once saved, these links become <strong>Verified &amp; Locked</strong> and cannot be modified later.
+                  </span>
+                </div>
+
+                <button
+                  type="submit"
+                  data-testid="submit-affiliate-social-btn"
+                  disabled={isSubmittingSocial}
+                  className="w-full py-3 rounded-2xl bg-cyan-400 hover:bg-cyan-300 disabled:opacity-50 text-slate-950 font-black text-xs font-mono uppercase tracking-wide flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                >
+                  <Lock className="w-3.5 h-3.5 stroke-[2.5]" />
+                  <span>
+                    {isSubmittingSocial ? 'Locking Channels...' : 'Submit & Lock Channels'}
+                  </span>
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+
+        {/* Right: BFT Country Manager Promotional Banner & Status */}
+        <div
+          data-testid="country-manager-banner"
+          className="lg:col-span-6 rounded-3xl bg-gradient-to-br from-[#14111b] via-[#17121e] to-[#0b0f19] border-2 border-amber-500/40 p-6 sm:p-7 shadow-2xl flex flex-col justify-between relative overflow-hidden"
+        >
+          <div>
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[11px] font-mono font-black">
+                <Megaphone className="w-3.5 h-3.5" />
+                <span>REGIONAL LEADERSHIP PROGRAM</span>
+              </div>
+              <span className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-[11px] font-mono text-slate-300">
+                Guideline: {COUNTRY_MANAGER_REFERRALS_GUIDELINE}+ Referrals
+              </span>
+            </div>
+
+            <h3 className="text-xl sm:text-2xl font-black text-white leading-tight mb-2">
+              Become a BFT Country Manager &amp; Earn $1,000+ Monthly Basic Salary!
+            </h3>
+            <p className="text-xs text-slate-300 leading-relaxed mb-4">
+              Lead BFT&apos;s regional community growth in your country. High-tier affiliates with a strong trading audience (<strong className="text-amber-300">{COUNTRY_MANAGER_REFERRALS_GUIDELINE}+ total referrals guideline</strong>) qualify for an official <strong className="text-emerald-400">$1,000+ monthly basic salary</strong> plus regional marketing budgets and VIP commissions.
+            </p>
+
+            {/* Referral Guideline Progress */}
+            <div className="p-3.5 rounded-2xl bg-[#090d16] border border-white/10 mb-4">
+              <div className="flex items-center justify-between text-xs font-mono mb-2">
+                <span className="text-slate-400">Your Referral Community Scale:</span>
+                <span className="text-amber-300 font-black">
+                  {totalReferralsForCm} / {COUNTRY_MANAGER_REFERRALS_GUIDELINE} Referrals
+                </span>
+              </div>
+              <div className="w-full h-2.5 rounded-full bg-white/5 overflow-hidden border border-white/10">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-amber-500 to-[#ff8800]"
+                  style={{
+                    width: `${Math.min(
+                      100,
+                      Math.max(4, (totalReferralsForCm / COUNTRY_MANAGER_REFERRALS_GUIDELINE) * 100)
+                    )}%`,
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Existing Country Manager Applications List */}
+            {countryManagerApps.length > 0 && (
+              <div
+                data-testid="country-manager-applications-status"
+                className="space-y-2 mb-4"
+              >
+                <div className="text-[11px] font-mono uppercase text-slate-400 font-bold">
+                  Your Submitted Applications:
+                </div>
+                {countryManagerApps.slice(0, 3).map((app) => (
+                  <div
+                    key={app.id}
+                    className="p-3 rounded-xl bg-[#111726] border border-white/10 flex items-center justify-between gap-3 text-xs"
+                  >
+                    <div className="min-w-0">
+                      <div className="font-bold text-white flex items-center gap-1.5">
+                        <Globe className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                        <span className="truncate">
+                          {app.targetCountry} • {app.telegramHandle}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-slate-400 font-mono truncate">
+                        Audience: {app.estimatedAudienceSize} • Submitted{' '}
+                        {new Date(app.createdAt).toLocaleDateString()}
+                      </div>
+                      {app.adminNotes && (
+                        <div className="text-[11px] text-slate-300 mt-1">
+                          Admin Note: {app.adminNotes}
+                        </div>
+                      )}
+                    </div>
+                    <span
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-mono font-black uppercase shrink-0 ${
+                        app.status === 'approved'
+                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                          : app.status === 'rejected'
+                          ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                          : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                      }`}
+                    >
+                      {app.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <button
+            type="button"
+            data-testid="open-country-manager-modal-btn"
+            onClick={() => {
+              soundEngine.playUiClick();
+              setCmError(null);
+              setCmSuccess(null);
+              if (!cmFullName && userProfile.fullName) setCmFullName(userProfile.fullName);
+              setShowCmModal(true);
+            }}
+            className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-400 via-yellow-400 to-[#ff8800] hover:brightness-110 text-slate-950 font-black text-xs font-mono uppercase tracking-wide flex items-center justify-center gap-2 cursor-pointer transition-all shadow-lg"
+          >
+            <Crown className="w-4 h-4 stroke-[2.5]" />
+            <span>Apply for Country Manager</span>
+          </button>
+        </div>
+      </div>
+
       <ReferralNetworkList
         userId={userProfile.id}
         userEmail={userProfile.email}
@@ -1282,6 +1920,170 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
           setTurnoverStats(tStats);
         }}
       />
+
+      {/* BFT Country Manager Application Modal */}
+      <AnimatePresence>
+        {showCmModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80">
+            <motion.div
+              data-testid="country-manager-modal"
+              initial={{ scale: 0.94, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.94, opacity: 0 }}
+              className="max-w-lg w-full max-h-[90vh] overflow-y-auto rounded-3xl bg-[#0b0f19] border border-amber-500/40 p-6 sm:p-7 shadow-2xl relative"
+            >
+              <button
+                type="button"
+                onClick={() => setShowCmModal(false)}
+                className="absolute top-4 right-4 p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[11px] font-mono font-black mb-3">
+                <Crown className="w-3.5 h-3.5" />
+                <span>BFT COUNTRY MANAGER APPLICATION</span>
+              </div>
+
+              <h3 className="text-xl font-black text-white mb-1">
+                Apply for BFT Country Manager
+              </h3>
+              <p className="text-xs text-slate-300 mb-5 leading-relaxed">
+                Recommended guideline: <strong>{COUNTRY_MANAGER_REFERRALS_GUIDELINE}+ total referrals</strong> or an established regional trading community. Approved managers receive a <strong>$1,000+ monthly basic salary</strong>.
+              </p>
+
+              {cmSuccess && (
+                <div className="mb-4 p-3 rounded-xl bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 text-xs flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  <span>{cmSuccess}</span>
+                </div>
+              )}
+
+              {cmError && (
+                <div className="mb-4 p-3 rounded-xl bg-rose-950/60 border border-rose-500/40 text-rose-300 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{cmError}</span>
+                </div>
+              )}
+
+              <form onSubmit={handleSubmitCountryManager} className="space-y-3.5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-mono text-slate-300 font-bold block mb-1">
+                      Full Name
+                    </label>
+                    <input
+                      type="text"
+                      data-testid="cm-full-name-input"
+                      value={cmFullName}
+                      onChange={(e) => setCmFullName(e.target.value)}
+                      placeholder="Your full legal name"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-[#090d16] border border-white/15 text-white font-mono text-xs focus:outline-none focus:border-amber-400"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-mono text-slate-300 font-bold block mb-1">
+                      Target Country
+                    </label>
+                    <input
+                      type="text"
+                      data-testid="cm-country-input"
+                      value={cmTargetCountry}
+                      onChange={(e) => setCmTargetCountry(e.target.value)}
+                      placeholder="e.g. India, Brazil, Nigeria"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-[#090d16] border border-white/15 text-white font-mono text-xs focus:outline-none focus:border-amber-400"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-mono text-slate-300 font-bold block mb-1">
+                      Telegram Handle
+                    </label>
+                    <input
+                      type="text"
+                      data-testid="cm-telegram-input"
+                      value={cmTelegramHandle}
+                      onChange={(e) => setCmTelegramHandle(e.target.value)}
+                      placeholder="@yourusername"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-[#090d16] border border-white/15 text-white font-mono text-xs focus:outline-none focus:border-amber-400"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-mono text-slate-300 font-bold block mb-1">
+                      Estimated Audience Size
+                    </label>
+                    <input
+                      type="text"
+                      data-testid="cm-audience-input"
+                      value={cmAudienceSize}
+                      onChange={(e) => setCmAudienceSize(e.target.value)}
+                      placeholder="e.g. 25,000+ traders"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-[#090d16] border border-white/15 text-white font-mono text-xs focus:outline-none focus:border-amber-400"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs font-mono text-slate-300 font-bold block mb-1">
+                    Marketing Strategy Description
+                  </label>
+                  <textarea
+                    rows={3}
+                    data-testid="cm-strategy-input"
+                    value={cmMarketingStrategy}
+                    onChange={(e) => setCmMarketingStrategy(e.target.value)}
+                    placeholder="Describe how you plan to grow BFT funded and self-capital traders in your target country..."
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-[#090d16] border border-white/15 text-white font-sans text-xs focus:outline-none focus:border-amber-400"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-mono text-slate-300 font-bold block mb-1">
+                    Relevant Social Links (one per line or comma-separated)
+                  </label>
+                  <textarea
+                    rows={2}
+                    data-testid="cm-social-links-input"
+                    value={cmSocialLinksText}
+                    onChange={(e) => setCmSocialLinksText(e.target.value)}
+                    placeholder="https://youtube.com/@yourchannel, https://t.me/yourcommunity"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-[#090d16] border border-white/15 text-white font-mono text-xs focus:outline-none focus:border-amber-400"
+                    required
+                  />
+                </div>
+
+                <div className="flex items-center gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowCmModal(false)}
+                    className="px-4 py-3 rounded-xl bg-white/10 hover:bg-white/15 text-slate-200 font-bold text-xs font-mono cursor-pointer"
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="submit"
+                    data-testid="submit-country-manager-btn"
+                    disabled={isSubmittingCm}
+                    className="flex-1 py-3 rounded-xl bg-gradient-to-r from-amber-400 to-[#ff8800] hover:brightness-110 disabled:opacity-50 text-slate-950 font-black text-xs font-mono uppercase tracking-wide flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <Send className="w-3.5 h-3.5 stroke-[2.5]" />
+                    <span>
+                      {isSubmittingCm ? 'Submitting...' : 'Submit Application'}
+                    </span>
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Pure Inline SVG QR Modal (Zero External URL Dependencies) */}
       <AnimatePresence>

@@ -28,8 +28,15 @@ import {
   Check,
   TrendingUp,
   GitBranch,
+  Crown,
+  Globe,
+  Link2,
 } from 'lucide-react';
-import { UserProfile } from '../types';
+import {
+  UserProfile,
+  AffiliateSocialSubmission,
+  CountryManagerApplication,
+} from '../types';
 import {
   fetchAdminCryptoDepositsFromSupabase,
   approveAdminCryptoDepositInSupabase,
@@ -56,6 +63,10 @@ import {
   apiGetAdminCommissions,
   apiAdminDistributeCommission,
   apiGetAdminAuditLogs,
+  apiGetAdminAffiliateSocialSubmissions,
+  apiGetAdminCountryManagerApplications,
+  apiAdminApproveCountryManagerApplication,
+  apiAdminRejectCountryManagerApplication,
 } from '../utils/apiClient';
 import { soundEngine } from '../utils/soundEffects';
 import { supabase } from '../utils/supabase';
@@ -78,7 +89,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 }) => {
   // Navigation
   const [activeTab, setActiveTab] = useState<
-    'overview' | 'users' | 'deposits' | 'withdrawals' | 'kyc' | 'referrals' | 'audit'
+    'overview' | 'users' | 'deposits' | 'withdrawals' | 'kyc' | 'referrals' | 'partners' | 'audit'
   >('overview');
 
   // RBAC Access State
@@ -98,6 +109,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [kycList, setKycList] = useState<any[]>([]);
   const [referralTree, setReferralTree] = useState<any[]>([]);
   const [commissionsList, setCommissionsList] = useState<any[]>([]);
+  const [socialSubmissionsList, setSocialSubmissionsList] = useState<AffiliateSocialSubmission[]>([]);
+  const [countryManagerApps, setCountryManagerApps] = useState<CountryManagerApplication[]>([]);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
 
   // Search & Filters
@@ -105,6 +118,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [depositFilter, setDepositFilter] = useState<'all' | 'pending' | 'approved' | 'declined'>('pending');
   const [withdrawalFilter, setWithdrawalFilter] = useState<'all' | 'pending' | 'completed' | 'declined'>('pending');
   const [kycFilter, setKycFilter] = useState<'all' | 'pending' | 'verified' | 'rejected'>('pending');
+  const [cmFilter, setCmFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('pending');
 
   // Interactive Modals
   const [selectedUserForBalance, setSelectedUserForBalance] = useState<{
@@ -115,7 +129,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [balanceReasonInput, setBalanceReasonInput] = useState<string>('');
 
   const [declineTarget, setDeclineTarget] = useState<{
-    type: 'deposit' | 'withdrawal' | 'kyc';
+    type: 'deposit' | 'withdrawal' | 'kyc' | 'country_manager';
     id: string;
     title: string;
   } | null>(null);
@@ -263,6 +277,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // 2. Fetch All Data
   const fetchAllAdminData = async () => {
     try {
+      // Load Country Manager applications & Social Link submissions immediately so they aren't blocked by other Supabase calls
+      Promise.all([
+        apiGetAdminAffiliateSocialSubmissions(),
+        apiGetAdminCountryManagerApplications('all'),
+      ])
+        .then(([socialSubsRes, countryManagerRes]) => {
+          if (socialSubsRes?.ok) setSocialSubmissionsList(socialSubsRes.submissions || []);
+          if (countryManagerRes?.ok) setCountryManagerApps(countryManagerRes.applications || []);
+        })
+        .catch(() => {});
+
       const [
         metricsRes,
         usersRes,
@@ -485,6 +510,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           event: '*',
           schema: 'public',
           table: 'deposits',
+        },
+        () => {
+          fetchAllAdminData();
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'country_manager_applications',
         },
         () => {
           fetchAllAdminData();
@@ -723,6 +759,32 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       } else {
         showFeedback('error', res.error || 'Failed to reject KYC.');
       }
+    } else if (declineTarget.type === 'country_manager') {
+      const res = await apiAdminRejectCountryManagerApplication(
+        declineTarget.id,
+        declineReason
+      );
+      setIsActionLoading(false);
+      if (res.ok) {
+        setCountryManagerApps((prev) =>
+          prev.map((a) =>
+            String(a.id) === String(declineTarget.id)
+              ? {
+                  ...a,
+                  ...(res.application || {}),
+                  status: 'rejected',
+                  reviewedAt: res.application?.reviewedAt || new Date().toISOString(),
+                }
+              : a
+          )
+        );
+        showFeedback('success', res.message || 'Country Manager application rejected.');
+        setDeclineTarget(null);
+        setDeclineReason('');
+        fetchAllAdminData();
+      } else {
+        showFeedback('error', res.error || 'Failed to reject application.');
+      }
     }
   };
 
@@ -905,9 +967,39 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     return w.status === withdrawalFilter;
   });
 
+  // Country Manager Approval Handler
+  const handleApproveCountryManager = async (appId: string) => {
+    setIsActionLoading(true);
+    const res = await apiAdminApproveCountryManagerApplication(appId);
+    setIsActionLoading(false);
+    if (res.ok) {
+      setCountryManagerApps((prev) =>
+        prev.map((a) =>
+          String(a.id) === String(appId)
+            ? {
+                ...a,
+                ...(res.application || {}),
+                status: 'approved',
+                reviewedAt: res.application?.reviewedAt || new Date().toISOString(),
+              }
+            : a
+        )
+      );
+      showFeedback('success', res.message || 'Country Manager application approved!');
+      fetchAllAdminData();
+    } else {
+      showFeedback('error', res.error || 'Failed to approve application.');
+    }
+  };
+
   const filteredKyc = kycList.filter((k) => {
     if (kycFilter === 'all') return true;
     return (k.kyc_status || 'unverified') === kycFilter;
+  });
+
+  const filteredCountryManagerApps = countryManagerApps.filter((a) => {
+    if (cmFilter === 'all') return true;
+    return (a.status || 'pending') === cmFilter;
   });
 
   // =========================================================================
@@ -1200,6 +1292,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             highlight: kycList.some((k) => (k.kyc_status || 'unverified') === 'pending'),
           },
           { id: 'referrals', label: '3-Level Referral Matrix', icon: Network },
+          {
+            id: 'partners',
+            label: `Country Managers & Social (${countryManagerApps.filter((a) => a.status === 'pending').length} pending)`,
+            icon: Crown,
+            highlight: countryManagerApps.some((a) => a.status === 'pending'),
+          },
           { id: 'audit', label: 'Audit Trail', icon: Layers },
         ].map((tab) => {
           const Icon = tab.icon;
@@ -2251,6 +2349,232 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     </div>
                   )}
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ================================================================= */}
+        {/* TAB 6B: COUNTRY MANAGER APPLICATIONS & VERIFIED SOCIAL LINKS */}
+        {/* ================================================================= */}
+        {activeTab === 'partners' && (
+          <div className="space-y-6 max-w-7xl mx-auto">
+            {/* Section 1: Country Manager Applications */}
+            <div
+              data-testid="admin-country-manager-section"
+              className="rounded-2xl bg-[#0d0d14] border border-amber-500/30 p-5"
+            >
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+                <div>
+                  <h3 className="text-sm font-black uppercase text-white tracking-wider flex items-center gap-2">
+                    <Crown className="w-4 h-4 text-amber-400" />
+                    <span>BFT Country Manager Applications ({countryManagerApps.length})</span>
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Review regional partner applications ($1,000+ monthly basic salary tier) synced from Supabase.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-1 bg-[#14141f] p-1 rounded-xl border border-white/10 text-[11px]">
+                  {(['pending', 'approved', 'rejected', 'all'] as const).map((statusOpt) => (
+                    <button
+                      key={statusOpt}
+                      type="button"
+                      onClick={() => setCmFilter(statusOpt)}
+                      className={`px-3 py-1 rounded-lg font-bold uppercase cursor-pointer ${
+                        cmFilter === statusOpt
+                          ? 'bg-[#ff8800] text-slate-950 font-black'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {statusOpt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                {filteredCountryManagerApps.map((app) => (
+                  <div
+                    key={app.id}
+                    data-testid={`admin-cm-card-${app.id}`}
+                    className="p-4 rounded-xl bg-[#12121c] border border-white/10 flex flex-col lg:flex-row lg:items-center justify-between gap-4 text-xs"
+                  >
+                    <div className="space-y-2 flex-1 min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-black text-white">{app.fullName}</span>
+                        <span className="px-2 py-0.5 rounded bg-amber-500/20 border border-amber-500/40 text-amber-300 font-bold flex items-center gap-1">
+                          <Globe className="w-3 h-3" />
+                          <span>{app.targetCountry}</span>
+                        </span>
+                        <span className="px-2 py-0.5 rounded bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 font-bold">
+                          Telegram: {app.telegramHandle}
+                        </span>
+                        <span
+                          className={`px-2 py-0.5 rounded font-black uppercase text-[10px] ${
+                            app.status === 'approved'
+                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                              : app.status === 'rejected'
+                              ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                              : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                          }`}
+                        >
+                          {app.status}
+                        </span>
+                      </div>
+
+                      <div className="flex flex-wrap gap-4 text-[11px] text-slate-400">
+                        <span>Email: <strong className="text-slate-200">{app.userEmail || app.userId}</strong></span>
+                        <span>Audience Size: <strong className="text-emerald-400">{app.estimatedAudienceSize}</strong></span>
+                        <span>Referrals Count: <strong className="text-amber-300">{app.totalReferralsCount ?? 0}</strong></span>
+                        <span>Applied: {new Date(app.createdAt).toLocaleString()}</span>
+                      </div>
+
+                      <div className="p-3 rounded-lg bg-[#0a0a10] border border-white/5 text-slate-300 leading-relaxed">
+                        <strong className="text-slate-400 uppercase text-[10px] block mb-1">
+                          Marketing Strategy:
+                        </strong>
+                        {app.marketingStrategy}
+                      </div>
+
+                      {app.socialLinks && app.socialLinks.length > 0 && (
+                        <div className="flex flex-wrap gap-2">
+                          {app.socialLinks.map((lnk, idx) => (
+                            <a
+                              key={`${lnk}-${idx}`}
+                              href={lnk.startsWith('http') ? lnk : `https://${lnk.replace(/^@/, '')}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] text-[#ffaa00]"
+                            >
+                              <Link2 className="w-3 h-3" />
+                              <span className="max-w-[260px] truncate">{lnk}</span>
+                              <ExternalLink className="w-3 h-3 text-slate-400" />
+                            </a>
+                          ))}
+                        </div>
+                      )}
+
+                      {app.adminNotes && (
+                        <div className="text-[11px] text-slate-300 italic">
+                          Admin Notes: {app.adminNotes}
+                        </div>
+                      )}
+                    </div>
+
+                    {app.status === 'pending' && (
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          data-testid={`admin-cm-approve-btn-${app.id}`}
+                          disabled={isActionLoading}
+                          onClick={() => handleApproveCountryManager(app.id)}
+                          className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 font-black text-xs uppercase flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Check className="w-3.5 h-3.5 stroke-[3]" />
+                          <span>Approve</span>
+                        </button>
+                        <button
+                          type="button"
+                          data-testid={`admin-cm-reject-btn-${app.id}`}
+                          disabled={isActionLoading}
+                          onClick={() =>
+                            setDeclineTarget({
+                              type: 'country_manager',
+                              id: app.id,
+                              title: `Reject Country Manager: ${app.fullName}`,
+                            })
+                          }
+                          className="px-4 py-2 rounded-xl bg-rose-950/80 hover:bg-rose-900 border border-rose-500/40 text-rose-300 font-bold text-xs uppercase flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                          <span>Reject</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+
+                {filteredCountryManagerApps.length === 0 && (
+                  <div className="text-center py-10 rounded-xl bg-[#12121c] border border-white/5 text-slate-500 text-xs">
+                    No {cmFilter !== 'all' ? cmFilter : ''} Country Manager applications found.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Section 2: Verified & Locked Affiliate Social Media Links */}
+            <div
+              data-testid="admin-affiliate-social-section"
+              className="rounded-2xl bg-[#0d0d14] border border-cyan-500/30 p-5"
+            >
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="text-sm font-black uppercase text-white tracking-wider flex items-center gap-2">
+                    <Lock className="w-4 h-4 text-emerald-400" />
+                    <span>Affiliate Submitted Social Channels ({socialSubmissionsList.length})</span>
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    One-time locked promotional channels submitted by affiliates via Supabase for compliance review.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {socialSubmissionsList.map((sub, idx) => (
+                  <div
+                    key={`${sub.userId || idx}`}
+                    data-testid={`admin-social-submission-${sub.userId || idx}`}
+                    className="p-4 rounded-xl bg-[#12121c] border border-white/10 space-y-2.5 text-xs"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="font-bold text-white truncate">
+                          {sub.userName || sub.userEmail || sub.userId}
+                        </div>
+                        <div className="text-[11px] text-slate-400 truncate">
+                          {sub.userEmail || sub.userId}
+                        </div>
+                      </div>
+                      <span className="px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-black text-[10px] flex items-center gap-1 shrink-0">
+                        <Lock className="w-3 h-3" />
+                        <span>Verified &amp; Locked</span>
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-slate-400">Platform:</span>
+                      <span className="px-2 py-0.5 rounded bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 font-bold">
+                        {sub.platformType}
+                      </span>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      {sub.socialLinks.map((link, lIdx) => (
+                        <a
+                          key={`${link}-${lIdx}`}
+                          href={link.startsWith('http') ? link : `https://${link.replace(/^@/, '')}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-[#09090f] border border-white/10 text-[11px] text-[#ffaa00] hover:border-cyan-400/50"
+                        >
+                          <span className="truncate">{link}</span>
+                          <ExternalLink className="w-3 h-3 text-slate-400 shrink-0" />
+                        </a>
+                      ))}
+                    </div>
+
+                    <div className="text-[10px] text-slate-500">
+                      Locked on: {new Date(sub.submittedAt).toLocaleString()}
+                    </div>
+                  </div>
+                ))}
+
+                {socialSubmissionsList.length === 0 && (
+                  <div className="col-span-2 text-center py-8 rounded-xl bg-[#12121c] border border-white/5 text-slate-500 text-xs">
+                    No locked affiliate social link submissions recorded yet.
+                  </div>
+                )}
               </div>
             </div>
           </div>

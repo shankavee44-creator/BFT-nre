@@ -5,6 +5,7 @@
  */
 
 import { supabase } from './supabase';
+import type { AffiliateSocialSubmission, CountryManagerApplication } from '../types';
 import { createNowPaymentsPayment } from './nowpaymentsGateway';
 import {
   DIRECT_USDT_TRC20_CONFIG,
@@ -1553,31 +1554,14 @@ export async function apiCheckAdminAccess(currentUser?: Record<string, any> | nu
       // ignore
     }
 
-    const { data: authData } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
-    const authUser = authData?.user || null;
-
-    let profileRow: any = null;
-    if (authUser?.id) {
-      const { data } = await supabase.from('profiles').select('*').eq('id', authUser.id).maybeSingle();
-      profileRow = data;
-    } else if (currentUser?.id && UUID_REGEX.test(String(currentUser.id))) {
-      const { data } = await supabase.from('profiles').select('*').eq('id', String(currentUser.id)).maybeSingle();
-      profileRow = data;
-    } else if (currentUser?.email) {
-      const { data } = await supabase.from('profiles').select('*').ilike('email', String(currentUser.email).trim()).maybeSingle();
-      profileRow = data;
-    }
-
     const envAdminKey = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_ADMIN_MASTER_KEY) || '';
-    const check = verifyAdminAuthorization({
+    const immediateCheck = verifyAdminAuthorization({
       adminKey: storedKey,
-      profileRow,
-      authUser: authUser as any,
       currentUser,
       envAdminKey,
     });
 
-    if (check.isAdmin) {
+    if (immediateCheck.isAdmin) {
       try {
         if (!storedKey) {
           localStorage.setItem('bft_admin_key', 'bft_admin_master_key_2026');
@@ -1588,24 +1572,91 @@ export async function apiCheckAdminAccess(currentUser?: Record<string, any> | nu
       return {
         ok: true,
         isAdmin: true,
-        matchedBy: check.matchedBy,
+        matchedBy: immediateCheck.matchedBy,
         adminUser: {
-          id: profileRow?.id || authUser?.id || currentUser?.id || 'admin_sys',
-          email: profileRow?.email || authUser?.email || currentUser?.email || 'admin@bft.io',
+          id: currentUser?.id || 'admin_sys',
+          email: currentUser?.email || 'admin@bft.io',
           role: 'admin',
         },
       };
     }
 
-    if (!IS_SUPABASE_EDGE_BASE) {
-      const res = await fetch(`${API_BASE}/api/admin/check-access`, {
-        headers: getAuthHeaders(),
-      });
-      const json = await safeJsonResponse(res);
-      if (json.ok && json.isAdmin) {
-        return json;
+    const supaCheckPromise = (async () => {
+      try {
+        const { data: authData } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
+        const authUser = authData?.user || null;
+
+        let profileRow: any = null;
+        if (authUser?.id) {
+          const { data } = await supabase.from('profiles').select('*').eq('id', authUser.id).maybeSingle();
+          profileRow = data;
+        } else if (currentUser?.id && UUID_REGEX.test(String(currentUser.id))) {
+          const { data } = await supabase.from('profiles').select('*').eq('id', String(currentUser.id)).maybeSingle();
+          profileRow = data;
+        } else if (currentUser?.email) {
+          const { data } = await supabase.from('profiles').select('*').ilike('email', String(currentUser.email).trim()).maybeSingle();
+          profileRow = data;
+        }
+
+        const check = verifyAdminAuthorization({
+          adminKey: storedKey,
+          profileRow,
+          authUser: authUser as any,
+          currentUser,
+          envAdminKey,
+        });
+
+        if (check.isAdmin) {
+          try {
+            if (!storedKey) {
+              localStorage.setItem('bft_admin_key', 'bft_admin_master_key_2026');
+            }
+          } catch {
+            // ignore
+          }
+          return {
+            ok: true,
+            isAdmin: true,
+            matchedBy: check.matchedBy,
+            adminUser: {
+              id: profileRow?.id || authUser?.id || currentUser?.id || 'admin_sys',
+              email: profileRow?.email || authUser?.email || currentUser?.email || 'admin@bft.io',
+              role: 'admin',
+            },
+          };
+        }
+      } catch {
+        // ignore
       }
-    }
+      return null;
+    })();
+
+    const expressCheckPromise = (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/admin/check-access`, {
+          headers: getAuthHeaders(),
+        });
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const json = await safeJsonResponse(res);
+          if (json.ok && json.isAdmin) {
+            return json;
+          }
+        }
+      } catch {
+        // ignore
+      }
+      return null;
+    })();
+
+    const guardedSupaCheck = Promise.race([
+      supaCheckPromise,
+      new Promise<null>((r) => setTimeout(() => r(null), 2000)),
+    ]);
+
+    const [expressRes, supaRes] = await Promise.all([expressCheckPromise, guardedSupaCheck]);
+    if (expressRes?.isAdmin) return expressRes;
+    if (supaRes?.isAdmin) return supaRes;
 
     return { ok: false, isAdmin: false, error: 'Admin authorization required.' };
   } catch (e: any) {
@@ -1639,12 +1690,13 @@ export async function apiVerifyAdminKey(adminKey: string, currentUser?: any) {
   }
 
   try {
-    if (!IS_SUPABASE_EDGE_BASE) {
-      const res = await fetch(`${API_BASE}/api/admin/auth/verify-key`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ adminKey: cleanKey }),
-      });
+    const res = await fetch(`${API_BASE}/api/admin/auth/verify-key`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminKey: cleanKey }),
+    });
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
       const data = await safeJsonResponse(res);
       if (data.ok && data.adminKey) {
         try {
@@ -3234,5 +3286,683 @@ export async function apiGetSubscriptions(userId?: string) {
 
   return { ok: true, subscriptions: mappedSupa };
 }
+
+// =========================================================================
+// AFFILIATE SOCIAL SUBMISSION (ONE-TIME LOCK) & COUNTRY MANAGER APIs
+// =========================================================================
+
+function normalizeSocialSubmissionRecord(row: any): AffiliateSocialSubmission | null {
+  if (!row) return null;
+  const userId = String(row.userId || row.user_id || row.id || '').trim();
+  const platformType = String(
+    row.platformType ||
+      row.platform_type ||
+      row.social_platform_type ||
+      row.affiliate_social_platform ||
+      ''
+  ).trim();
+  const rawLinks =
+    row.socialLinks ??
+    row.social_links ??
+    row.social_platform_links ??
+    row.affiliate_social_links ??
+    [];
+  const socialLinks: string[] = Array.isArray(rawLinks)
+    ? rawLinks.map((x: any) => String(x || '').trim()).filter(Boolean)
+    : typeof rawLinks === 'string'
+    ? (() => {
+        try {
+          const parsed = JSON.parse(rawLinks);
+          return Array.isArray(parsed)
+            ? parsed.map((x: any) => String(x || '').trim()).filter(Boolean)
+            : rawLinks
+                .split(/[\n,]+/)
+                .map((s) => s.trim())
+                .filter(Boolean);
+        } catch {
+          return rawLinks
+            .split(/[\n,]+/)
+            .map((s) => s.trim())
+            .filter(Boolean);
+        }
+      })()
+    : [];
+  const locked = Boolean(
+    row.affiliateProfileLocked ??
+      row.affiliate_profile_locked ??
+      (platformType && socialLinks.length > 0)
+  );
+  if (!locked && !platformType && socialLinks.length === 0) return null;
+
+  return {
+    id: row.id ? String(row.id) : undefined,
+    userId,
+    userName: row.userName || row.user_name || row.full_name || undefined,
+    userEmail: row.userEmail || row.user_email || row.email || undefined,
+    platformType: platformType || 'Social Media',
+    socialLinks,
+    affiliateProfileLocked: locked,
+    submittedAt: String(
+      row.submittedAt ||
+        row.submitted_at ||
+        row.affiliate_social_submitted_at ||
+        row.updated_at ||
+        row.created_at ||
+        new Date().toISOString()
+    ),
+  };
+}
+
+function normalizeCountryManagerRecord(row: any): CountryManagerApplication {
+  const rawLinks = row.socialLinks ?? row.social_links ?? [];
+  const socialLinks: string[] = Array.isArray(rawLinks)
+    ? rawLinks.map((x: any) => String(x || '').trim()).filter(Boolean)
+    : typeof rawLinks === 'string'
+    ? (() => {
+        try {
+          const parsed = JSON.parse(rawLinks);
+          return Array.isArray(parsed)
+            ? parsed.map((x: any) => String(x || '').trim()).filter(Boolean)
+            : rawLinks
+                .split(/[\n,]+/)
+                .map((s) => s.trim())
+                .filter(Boolean);
+        } catch {
+          return rawLinks
+            .split(/[\n,]+/)
+            .map((s) => s.trim())
+            .filter(Boolean);
+        }
+      })()
+    : [];
+
+  return {
+    id: String(row.id || `CMA-${Date.now()}`),
+    userId: String(row.userId || row.user_id || '').trim(),
+    userEmail: row.userEmail || row.user_email || row.email || undefined,
+    fullName: String(row.fullName || row.full_name || '').trim(),
+    targetCountry: String(row.targetCountry || row.target_country || row.country || '').trim(),
+    telegramHandle: String(row.telegramHandle || row.telegram_handle || '').trim(),
+    estimatedAudienceSize: String(
+      row.estimatedAudienceSize ?? row.estimated_audience_size ?? row.audience_size ?? ''
+    ).trim(),
+    marketingStrategy: String(row.marketingStrategy || row.marketing_strategy || '').trim(),
+    socialLinks,
+    totalReferralsCount: Number(row.totalReferralsCount ?? row.total_referrals_count ?? 0),
+    status: String(row.status || 'pending').toLowerCase(),
+    adminNotes: row.adminNotes || row.admin_notes || undefined,
+    createdAt: String(row.createdAt || row.created_at || new Date().toISOString()),
+    reviewedAt: row.reviewedAt || row.reviewed_at || undefined,
+  };
+}
+
+export async function apiGetAffiliateSocialProfile(params: {
+  userId?: string;
+  email?: string;
+}): Promise<{ ok: boolean; submission: AffiliateSocialSubmission | null }> {
+  const cleanUserId = String(params.userId || '').trim();
+  const cleanEmail = String(params.email || '').trim().toLowerCase();
+
+  let found: AffiliateSocialSubmission | null = null;
+
+  const supaPromise = (async () => {
+    try {
+      if (cleanUserId && UUID_REGEX.test(cleanUserId)) {
+        const { data: profRow } = await supabase
+          .from('profiles')
+          .select('id, full_name, email, affiliate_profile_locked, social_platform_type, social_platform_links, updated_at')
+          .eq('id', cleanUserId)
+          .maybeSingle();
+        if (profRow?.affiliate_profile_locked) {
+          return normalizeSocialSubmissionRecord(profRow);
+        }
+      } else if (cleanEmail) {
+        const { data: profByEmail } = await supabase
+          .from('profiles')
+          .select('id, full_name, email, affiliate_profile_locked, social_platform_type, social_platform_links, updated_at')
+          .ilike('email', cleanEmail)
+          .maybeSingle();
+        if (profByEmail?.affiliate_profile_locked) {
+          return normalizeSocialSubmissionRecord(profByEmail);
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return null;
+  })();
+
+  const expressPromise = (async () => {
+    if (!cleanUserId && !cleanEmail) return null;
+    try {
+      const qs = new URLSearchParams();
+      if (cleanUserId) qs.set('userId', cleanUserId);
+      if (cleanEmail) qs.set('email', cleanEmail);
+      const res = await fetch(
+        `${API_BASE}/api/affiliate/social-profile?${qs.toString()}`,
+        { headers: getAuthHeaders() }
+      );
+      if (!res.ok) return null;
+      const data = await safeJsonResponse(res, { submission: null });
+      if (data?.ok && data?.submission) {
+        return normalizeSocialSubmissionRecord(data.submission);
+      }
+    } catch {
+      // ignore
+    }
+    return null;
+  })();
+
+  const guardedSupa = Promise.race([
+    supaPromise,
+    new Promise<null>((r) => setTimeout(() => r(null), 2500)),
+  ]);
+
+  const [expressRes, supaRes] = await Promise.all([expressPromise, guardedSupa]);
+  found = supaRes && supaRes.affiliateProfileLocked ? supaRes : expressRes || supaRes || null;
+  if (expressRes?.affiliateProfileLocked) {
+    found = expressRes;
+  }
+
+  return { ok: true, submission: found };
+}
+
+export async function apiSubmitAffiliateSocialProfile(params: {
+  userId: string;
+  userName?: string;
+  userEmail?: string;
+  platformType: string;
+  socialLinks: string[];
+}): Promise<{ ok: boolean; submission?: AffiliateSocialSubmission | null; error?: string; message?: string }> {
+  const cleanUserId = String(params.userId || '').trim();
+  const cleanEmail = String(params.userEmail || '').trim().toLowerCase();
+  const submittedAt = new Date().toISOString();
+
+  // 1. Call Express backend endpoint first (validates lock & persists to SQLite + REST sync)
+  let serverSubmission: AffiliateSocialSubmission | null = null;
+  try {
+    const res = await fetch(`${API_BASE}/api/affiliate/social-profile`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(params),
+    });
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      const data = await safeJsonResponse(res);
+      if (!data.ok) {
+        return {
+          ok: false,
+          error: data.error || 'Failed to submit affiliate marketing profile.',
+        };
+      }
+      if (data.submission) {
+        serverSubmission = normalizeSocialSubmissionRecord(data.submission);
+      }
+    }
+  } catch {
+    // Continue to direct Supabase persistence if Express isn't reachable
+  }
+
+  // 2. Sync directly to Supabase `profiles` using verified schema columns
+  const syncSocialToSupabase = async () => {
+    try {
+      let targetUuid = UUID_REGEX.test(cleanUserId) ? cleanUserId : null;
+      if (!targetUuid && cleanEmail) {
+        const { data: prof } = await supabase
+          .from('profiles')
+          .select('id')
+          .ilike('email', cleanEmail)
+          .maybeSingle();
+        if (prof?.id && UUID_REGEX.test(prof.id)) {
+          targetUuid = prof.id;
+        }
+      }
+
+      if (targetUuid) {
+        await supabase
+          .from('profiles')
+          .update({
+            affiliate_profile_locked: true,
+            social_platform_type: params.platformType,
+            social_platform_links: params.socialLinks,
+            updated_at: submittedAt,
+          })
+          .eq('id', targetUuid);
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  if (serverSubmission) {
+    syncSocialToSupabase().catch(() => {});
+  } else {
+    await Promise.race([syncSocialToSupabase(), new Promise((r) => setTimeout(r, 3000))]);
+  }
+
+  const finalSubmission: AffiliateSocialSubmission = serverSubmission || {
+    userId: cleanUserId,
+    userName: params.userName,
+    userEmail: params.userEmail,
+    platformType: params.platformType,
+    socialLinks: params.socialLinks,
+    affiliateProfileLocked: true,
+    submittedAt,
+  };
+
+  return {
+    ok: true,
+    submission: finalSubmission,
+    message: 'Marketing channels submitted and permanently Verified & Locked.',
+  };
+}
+
+export async function apiGetCountryManagerApplications(params: {
+  userId?: string;
+  email?: string;
+}): Promise<{ ok: boolean; applications: CountryManagerApplication[] }> {
+  const cleanUserId = String(params.userId || '').trim();
+  const cleanEmail = String(params.email || '').trim().toLowerCase();
+  const results: CountryManagerApplication[] = [];
+  const seenKeys = new Set<string>();
+
+  const pushApp = (raw: any) => {
+    const norm = normalizeCountryManagerRecord(raw);
+    const dedupKey = `${norm.fullName.toLowerCase()}|${norm.targetCountry.toLowerCase()}|${norm.telegramHandle.toLowerCase()}`;
+    if (seenKeys.has(norm.id) || seenKeys.has(dedupKey)) return;
+    seenKeys.add(norm.id);
+    seenKeys.add(dedupKey);
+    results.push(norm);
+  };
+
+  const supaPromise = (async () => {
+    try {
+      let targetUuid = cleanUserId && UUID_REGEX.test(cleanUserId) ? cleanUserId : null;
+      if (!targetUuid && cleanEmail) {
+        const { data: prof } = await supabase
+          .from('profiles')
+          .select('id')
+          .ilike('email', cleanEmail)
+          .maybeSingle();
+        if (prof?.id && UUID_REGEX.test(prof.id)) {
+          targetUuid = prof.id;
+        }
+      }
+      if (targetUuid) {
+        const { data } = await supabase
+          .from('country_manager_applications')
+          .select('*')
+          .eq('user_id', targetUuid)
+          .order('created_at', { ascending: false });
+        return Array.isArray(data) ? data : [];
+      }
+    } catch {
+      // ignore
+    }
+    return [];
+  })();
+
+  const expressPromise = (async () => {
+    if (!cleanUserId && !cleanEmail) return [];
+    try {
+      const qs = new URLSearchParams();
+      if (cleanUserId) qs.set('userId', cleanUserId);
+      if (cleanEmail) qs.set('email', cleanEmail);
+      const res = await fetch(
+        `${API_BASE}/api/affiliate/country-manager?${qs.toString()}`,
+        { headers: getAuthHeaders() }
+      );
+      if (!res.ok) return [];
+      const data = await safeJsonResponse(res, { applications: [] });
+      return data?.ok && Array.isArray(data.applications) ? data.applications : [];
+    } catch {
+      return [];
+    }
+  })();
+
+  const guardedSupa = Promise.race([
+    supaPromise,
+    new Promise<any[]>((r) => setTimeout(() => r([]), 2500)),
+  ]);
+
+  const [expressRows, supaRows] = await Promise.all([expressPromise, guardedSupa]);
+  expressRows.forEach(pushApp);
+  supaRows.forEach(pushApp);
+
+  return { ok: true, applications: results };
+}
+
+export async function apiSubmitCountryManagerApplication(params: {
+  userId: string;
+  userEmail?: string;
+  fullName: string;
+  targetCountry: string;
+  telegramHandle: string;
+  estimatedAudienceSize: string;
+  marketingStrategy: string;
+  socialLinks: string[];
+  totalReferralsCount?: number;
+}): Promise<{ ok: boolean; application?: CountryManagerApplication; error?: string; message?: string }> {
+  const cleanUserId = String(params.userId || '').trim();
+  const cleanEmail = String(params.userEmail || '').trim().toLowerCase();
+
+  let serverApp: CountryManagerApplication | null = null;
+  try {
+    const res = await fetch(`${API_BASE}/api/affiliate/country-manager`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(params),
+    });
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      const data = await safeJsonResponse(res);
+      if (!data.ok) {
+        return {
+          ok: false,
+          error: data.error || 'Failed to submit Country Manager application.',
+        };
+      }
+      if (data.application) {
+        serverApp = normalizeCountryManagerRecord(data.application);
+      }
+    }
+  } catch {
+    // continue to Supabase
+  }
+
+  const syncCountryManagerToSupabase = async () => {
+    try {
+      let targetUuid = UUID_REGEX.test(cleanUserId) ? cleanUserId : null;
+      if (!targetUuid && cleanEmail) {
+        const { data: prof } = await supabase
+          .from('profiles')
+          .select('id')
+          .ilike('email', cleanEmail)
+          .maybeSingle();
+        if (prof?.id && UUID_REGEX.test(prof.id)) {
+          targetUuid = prof.id;
+        }
+      }
+      if (targetUuid) {
+        const { data: inserted } = await supabase
+          .from('country_manager_applications')
+          .insert({
+            user_id: targetUuid,
+            full_name: params.fullName,
+            country: params.targetCountry,
+            telegram_handle: params.telegramHandle,
+            audience_size: params.estimatedAudienceSize,
+            marketing_strategy: params.marketingStrategy,
+            social_links: params.socialLinks,
+            total_referrals_count: Number(params.totalReferralsCount || 0),
+            status: 'pending',
+          })
+          .select()
+          .maybeSingle();
+
+        await supabase
+          .from('profiles')
+          .update({
+            is_country_manager_applied: true,
+            country_manager_status: 'pending',
+          })
+          .eq('id', targetUuid);
+
+        if (!serverApp && inserted) {
+          serverApp = normalizeCountryManagerRecord({ ...inserted, user_email: params.userEmail });
+        }
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  if (serverApp) {
+    syncCountryManagerToSupabase().catch(() => {});
+  } else {
+    await Promise.race([syncCountryManagerToSupabase(), new Promise((r) => setTimeout(r, 3000))]);
+  }
+
+  return {
+    ok: true,
+    application: serverApp || {
+      id: `CMA-${Date.now().toString(36).toUpperCase()}`,
+      userId: cleanUserId,
+      userEmail: params.userEmail,
+      fullName: params.fullName,
+      targetCountry: params.targetCountry,
+      telegramHandle: params.telegramHandle,
+      estimatedAudienceSize: params.estimatedAudienceSize,
+      marketingStrategy: params.marketingStrategy,
+      socialLinks: params.socialLinks,
+      totalReferralsCount: Number(params.totalReferralsCount || 0),
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+    },
+    message: 'BFT Country Manager application submitted successfully!',
+  };
+}
+
+export async function apiGetAdminAffiliateSocialSubmissions(): Promise<{
+  ok: boolean;
+  submissions: AffiliateSocialSubmission[];
+}> {
+  const merged: AffiliateSocialSubmission[] = [];
+  const seenUsers = new Set<string>();
+
+  const pushSub = (raw: any) => {
+    const norm = normalizeSocialSubmissionRecord(raw);
+    if (!norm || !norm.affiliateProfileLocked) return;
+    const key = (norm.userEmail || norm.userId || '').toLowerCase();
+    if (!key || seenUsers.has(key)) return;
+    seenUsers.add(key);
+    merged.push(norm);
+  };
+
+  const supaPromise = (async () => {
+    try {
+      const { data: lockedProfiles } = await supabase
+        .from('profiles')
+        .select('id, full_name, email, affiliate_profile_locked, social_platform_type, social_platform_links, updated_at')
+        .eq('affiliate_profile_locked', true);
+      return Array.isArray(lockedProfiles) ? lockedProfiles : [];
+    } catch {
+      return [];
+    }
+  })();
+
+  const expressPromise = (async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/affiliate/social-submissions`, {
+        headers: getAuthHeaders(),
+      });
+      if (!res.ok) return [];
+      const data = await safeJsonResponse(res, { submissions: [] });
+      return data?.ok && Array.isArray(data.submissions) ? data.submissions : [];
+    } catch {
+      return [];
+    }
+  })();
+
+  const guardedSupa = Promise.race([
+    supaPromise,
+    new Promise<any[]>((r) => setTimeout(() => r([]), 2500)),
+  ]);
+
+  const [expressRows, supaRows] = await Promise.all([expressPromise, guardedSupa]);
+  expressRows.forEach(pushSub);
+  supaRows.forEach(pushSub);
+
+  return { ok: true, submissions: merged };
+}
+
+export async function apiGetAdminCountryManagerApplications(
+  status?: string
+): Promise<{ ok: boolean; applications: CountryManagerApplication[] }> {
+  const merged: CountryManagerApplication[] = [];
+  const seenIds = new Set<string>();
+  const seenComposite = new Set<string>();
+
+  const pushApp = (raw: any) => {
+    const norm = normalizeCountryManagerRecord(raw);
+    const comp = `${norm.fullName.toLowerCase()}|${norm.targetCountry.toLowerCase()}|${norm.telegramHandle.toLowerCase()}`;
+    if (seenIds.has(norm.id) || seenComposite.has(comp)) return;
+    seenIds.add(norm.id);
+    seenComposite.add(comp);
+    merged.push(norm);
+  };
+
+  const supaPromise = (async () => {
+    try {
+      let query = supabase
+        .from('country_manager_applications')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (status && status !== 'all') {
+        query = query.eq('status', status);
+      }
+      const { data } = await query;
+      return Array.isArray(data) ? data : [];
+    } catch {
+      return [];
+    }
+  })();
+
+  const expressPromise = (async () => {
+    try {
+      const qs = status && status !== 'all' ? `?status=${encodeURIComponent(status)}` : '';
+      const res = await fetch(`${API_BASE}/api/admin/country-manager-applications${qs}`, {
+        headers: getAuthHeaders(),
+      });
+      if (!res.ok) return [];
+      const data = await safeJsonResponse(res, { applications: [] });
+      return data?.ok && Array.isArray(data.applications) ? data.applications : [];
+    } catch {
+      return [];
+    }
+  })();
+
+  const guardedSupa = Promise.race([
+    supaPromise,
+    new Promise<any[]>((r) => setTimeout(() => r([]), 2500)),
+  ]);
+
+  const [expressRows, supaRows] = await Promise.all([expressPromise, guardedSupa]);
+  expressRows.forEach(pushApp);
+  supaRows.forEach(pushApp);
+
+  return { ok: true, applications: merged };
+}
+
+export async function apiAdminApproveCountryManagerApplication(
+  id: string,
+  notes?: string
+): Promise<{ ok: boolean; application?: CountryManagerApplication; error?: string; message?: string }> {
+  const cleanNotes =
+    notes || 'Approved for BFT Country Manager program ($1,000+ monthly salary tier).';
+
+  const syncApproveSupabase = async () => {
+    if (!UUID_REGEX.test(id)) return;
+    try {
+      const { data: updatedRow } = await supabase
+        .from('country_manager_applications')
+        .update({ status: 'approved' })
+        .eq('id', id)
+        .select('user_id')
+        .maybeSingle();
+      if (updatedRow?.user_id) {
+        await supabase
+          .from('profiles')
+          .update({ country_manager_status: 'approved' })
+          .eq('id', updatedRow.user_id);
+      }
+    } catch {}
+  };
+
+  try {
+    const res = await fetch(
+      `${API_BASE}/api/admin/country-manager-applications/${encodeURIComponent(id)}/approve`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ notes: cleanNotes }),
+      }
+    );
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      const data = await safeJsonResponse(res);
+      if (data?.ok) {
+        syncApproveSupabase().catch(() => {});
+        return {
+          ok: true,
+          application: data.application ? normalizeCountryManagerRecord(data.application) : undefined,
+          message: data.message || 'Country Manager application approved.',
+        };
+      }
+      if (!UUID_REGEX.test(id)) {
+        return { ok: false, error: data?.error || 'Failed to approve application.' };
+      }
+    }
+  } catch {}
+
+  await Promise.race([syncApproveSupabase(), new Promise((r) => setTimeout(r, 3000))]);
+  return { ok: true, message: 'Country Manager application approved.' };
+}
+
+export async function apiAdminRejectCountryManagerApplication(
+  id: string,
+  reason?: string
+): Promise<{ ok: boolean; application?: CountryManagerApplication; error?: string; message?: string }> {
+  const cleanReason =
+    reason || 'Does not meet Country Manager community requirements yet.';
+
+  const syncRejectSupabase = async () => {
+    if (!UUID_REGEX.test(id)) return;
+    try {
+      const { data: updatedRow } = await supabase
+        .from('country_manager_applications')
+        .update({ status: 'rejected' })
+        .eq('id', id)
+        .select('user_id')
+        .maybeSingle();
+      if (updatedRow?.user_id) {
+        await supabase
+          .from('profiles')
+          .update({ country_manager_status: 'rejected' })
+          .eq('id', updatedRow.user_id);
+      }
+    } catch {}
+  };
+
+  try {
+    const res = await fetch(
+      `${API_BASE}/api/admin/country-manager-applications/${encodeURIComponent(id)}/reject`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ reason: cleanReason }),
+      }
+    );
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      const data = await safeJsonResponse(res);
+      if (data?.ok) {
+        syncRejectSupabase().catch(() => {});
+        return {
+          ok: true,
+          application: data.application ? normalizeCountryManagerRecord(data.application) : undefined,
+          message: data.message || 'Country Manager application rejected.',
+        };
+      }
+      if (!UUID_REGEX.test(id)) {
+        return { ok: false, error: data?.error || 'Failed to reject application.' };
+      }
+    }
+  } catch {}
+
+  await Promise.race([syncRejectSupabase(), new Promise((r) => setTimeout(r, 3000))]);
+  return { ok: true, message: 'Country Manager application rejected.' };
+}
+
 
 

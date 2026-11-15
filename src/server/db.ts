@@ -467,7 +467,48 @@ var __defProp=Object.defineProperty;var __name=(target,value)=>__defProp(target,
     created_at INTEGER NOT NULL,
     settled_at INTEGER
   );
-`);function getKycSubmissionForUser(userId){return db.prepare("SELECT * FROM kyc_submissions WHERE user_id = ?").get(userId)}__name(getKycSubmissionForUser,"getKycSubmissionForUser");function ensureUserInDb(params){if(!params.id&&!params.email)return null;let existing=params.id?getUserById(params.id):null;if(!existing&&params.email){existing=getUserByEmail(params.email)}if(existing){return existing}const now=Date.now();const cleanEmail=(params.email||`${params.id}@bft.io`).trim().toLowerCase();const cleanName=(params.fullName||cleanEmail.split("@")[0]||"BFT Trader").trim();const sanitizedRef=(params.referralCode||`BFT-${Math.random().toString(36).substring(2,8).toUpperCase()}`).trim();const userId=params.id||`usr_${now.toString(36)}_${Math.random().toString(36).slice(2,6)}`;try{db.prepare(`
+
+  CREATE TABLE IF NOT EXISTS affiliate_social_submissions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT UNIQUE NOT NULL,
+    user_name TEXT,
+    user_email TEXT,
+    platform_type TEXT NOT NULL,
+    social_links_json TEXT NOT NULL,
+    affiliate_profile_locked INTEGER NOT NULL DEFAULT 1,
+    submitted_at TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS country_manager_applications (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    user_email TEXT,
+    full_name TEXT NOT NULL,
+    target_country TEXT NOT NULL,
+    telegram_handle TEXT NOT NULL,
+    estimated_audience_size TEXT NOT NULL,
+    marketing_strategy TEXT NOT NULL,
+    social_links_json TEXT NOT NULL,
+    total_referrals_count INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'pending',
+    admin_notes TEXT,
+    reviewed_at TEXT,
+    created_at INTEGER NOT NULL
+  );
+`);
+
+const affiliateSocialAlterColumns = [
+  `ALTER TABLE users ADD COLUMN affiliate_profile_locked INTEGER DEFAULT 0;`,
+  `ALTER TABLE users ADD COLUMN affiliate_social_platform TEXT;`,
+  `ALTER TABLE users ADD COLUMN affiliate_social_links TEXT;`,
+  `ALTER TABLE users ADD COLUMN affiliate_social_submitted_at TEXT;`
+];
+for (const stmt of affiliateSocialAlterColumns) {
+  try {
+    db.exec(stmt);
+  } catch {}
+}function getKycSubmissionForUser(userId){return db.prepare("SELECT * FROM kyc_submissions WHERE user_id = ?").get(userId)}__name(getKycSubmissionForUser,"getKycSubmissionForUser");function ensureUserInDb(params){if(!params.id&&!params.email)return null;let existing=params.id?getUserById(params.id):null;if(!existing&&params.email){existing=getUserByEmail(params.email)}if(existing){return existing}const now=Date.now();const cleanEmail=(params.email||`${params.id}@bft.io`).trim().toLowerCase();const cleanName=(params.fullName||cleanEmail.split("@")[0]||"BFT Trader").trim();const sanitizedRef=(params.referralCode||`BFT-${Math.random().toString(36).substring(2,8).toUpperCase()}`).trim();const userId=params.id||`usr_${now.toString(36)}_${Math.random().toString(36).slice(2,6)}`;try{db.prepare(`
       INSERT INTO users (id, email, full_name, referral_code, kyc_status, profile_locked, country, created_at, updated_at)
       VALUES (?, ?, ?, ?, 'unverified', 0, 'United States', ?, ?)
     `).run(userId,cleanEmail,cleanName,sanitizedRef,now,now)}catch{const fallbackRef=`BFT-${Math.floor(1e5+Math.random()*899999)}`;db.prepare(`
@@ -649,12 +690,7 @@ function updateUserKycStatus(userId,data){const now=Date.now();const submittedIs
         `).run(id,email,fullName,refCode,referredBy,now,now)}catch{const fallbackRef=`BFT-${Math.floor(1e5+Math.random()*899999)}`;db.prepare(`
           INSERT OR IGNORE INTO users (id, email, full_name, referral_code, referred_by, kyc_status, profile_locked, country, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, 'unverified', 0, 'United States', ?, ?)
-        `).run(id,email,fullName,fallbackRef,referredBy,now,now)}}else if(referredBy&&!existing.referred_by&&existing.id!==referredBy){db.prepare("UPDATE users SET referred_by = ?, updated_at = ? WHERE id = ?").run(referredBy,now,existing.id)}}const defaultPackages=[{pkgId:"BFT-IF-25K",pkgName:"$25K Instant Funded",sku:"BFT-IF-25K",amount:250},{pkgId:"BFT-1S-50K",pkgName:"$50K 1-Step Challenge",sku:"BFT-1S-50K",amount:289},{pkgId:"BFT-IF-10K",pkgName:"$10K Instant Funded",sku:"BFT-IF-10K",amount:149},{pkgId:"BFT-2S-25K",pkgName:"$25K 2-Step Challenge",sku:"BFT-2S-25K",amount:189}];let idx=0;for(const p of profilesList){if(!p?.id||!p?.referred_by)continue;const userId=String(p.id).trim();const sponsorId=String(p.referred_by).trim();if(userId&&sponsorId&&userId!==sponsorId){try{linkUplineReferrals(sponsorId,userId,now)}catch{}try{const existingPurchase=db.prepare("SELECT id FROM user_purchases WHERE user_id = ? LIMIT 1").get(userId);const existingComm=db.prepare("SELECT id FROM commissions WHERE referred_user_id = ? LIMIT 1").get(userId);if(!existingPurchase){const pkg=defaultPackages[idx%defaultPackages.length];idx+=1;db.prepare(`
-            INSERT OR IGNORE INTO user_purchases (
-              id, user_id, account_id, package_id, package_name, package_sku,
-              amount, package_amount, account_type, status, tx_hash, created_at
-            ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, 'challenge', 'completed', NULL, ?)
-          `).run(`PUR-SYNC-${userId.slice(0,8).toUpperCase()}`,userId,pkg.pkgId,pkg.pkgName,pkg.sku,pkg.amount,pkg.amount,now-idx*6e4);if(!existingComm){creditPurchaseCommissions(userId,pkg.pkgName,pkg.amount,null)}}}catch{}}}}__name(syncSupabaseProfilesToAffiliateTree,"syncSupabaseProfilesToAffiliateTree");function creditPurchaseCommissions(buyerUserId,packageName,packagePrice,referralCodeUsed){let buyer=getUserById(buyerUserId);const now=Date.now();if(referralCodeUsed&&buyer&&!buyer.referred_by){const sponsor=getUserByReferralCode(referralCodeUsed);if(sponsor&&sponsor.id!==buyer.id){const sponsorNetwork=db.prepare("SELECT referred_user_id FROM referrals WHERE sponsor_id = ?").all(sponsor.id);let sponsorActiveCount=0;for(const node of sponsorNetwork){const pur=getLatestPurchaseForUserInDb(node.referred_user_id);if(pur&&Number(pur.amount)>0)sponsorActiveCount+=1}const regTier=sponsorActiveCount>=1e3?"vip":"basic";db.prepare("UPDATE users SET referred_by = ?, registered_tier = ? WHERE id = ?").run(sponsor.id,regTier,buyer.id);linkUplineReferrals(sponsor.id,buyer.id,now);buyer=getUserById(buyerUserId)}}if(!buyer?.referred_by)return[];try{linkUplineReferrals(buyer.referred_by,buyer.id,now)}catch{}const isVipReferral=buyer.registered_tier==="vip";const effectiveTier=isVipReferral?"vip":"basic";const l1Rate=isVipReferral?.15:.1;const l2Rate=isVipReferral?.08:.05;const l3Rate=isVipReferral?.05:.02;const commissionsRecorded=[];const l1SponsorId=buyer.referred_by;const l1Amount=Number((packagePrice*l1Rate).toFixed(2));const l1Id=`COMM-P1-${now.toString(36)}-${Math.random().toString(36).slice(2,5)}`;db.prepare(`
+        `).run(id,email,fullName,fallbackRef,referredBy,now,now)}}else if(referredBy&&!existing.referred_by&&existing.id!==referredBy){db.prepare("UPDATE users SET referred_by = ?, updated_at = ? WHERE id = ?").run(referredBy,now,existing.id)}}for(const p of profilesList){if(!p?.id||!p?.referred_by)continue;const userId=String(p.id).trim();const sponsorId=String(p.referred_by).trim();if(userId&&sponsorId&&userId!==sponsorId){try{linkUplineReferrals(sponsorId,userId,now)}catch{}}}}__name(syncSupabaseProfilesToAffiliateTree,"syncSupabaseProfilesToAffiliateTree");function creditPurchaseCommissions(buyerUserId,packageName,packagePrice,referralCodeUsed){let buyer=getUserById(buyerUserId);const now=Date.now();if(referralCodeUsed&&buyer&&!buyer.referred_by){const sponsor=getUserByReferralCode(referralCodeUsed);if(sponsor&&sponsor.id!==buyer.id){const sponsorNetwork=db.prepare("SELECT referred_user_id FROM referrals WHERE sponsor_id = ?").all(sponsor.id);let sponsorActiveCount=0;for(const node of sponsorNetwork){const pur=getLatestPurchaseForUserInDb(node.referred_user_id);if(pur&&Number(pur.amount)>0)sponsorActiveCount+=1}const regTier=sponsorActiveCount>=1e3?"vip":"basic";db.prepare("UPDATE users SET referred_by = ?, registered_tier = ? WHERE id = ?").run(sponsor.id,regTier,buyer.id);linkUplineReferrals(sponsor.id,buyer.id,now);buyer=getUserById(buyerUserId)}}if(!buyer?.referred_by)return[];try{linkUplineReferrals(buyer.referred_by,buyer.id,now)}catch{}const isVipReferral=buyer.registered_tier==="vip";const effectiveTier=isVipReferral?"vip":"basic";const l1Rate=isVipReferral?.15:.1;const l2Rate=isVipReferral?.08:.05;const l3Rate=isVipReferral?.05:.02;const commissionsRecorded=[];const l1SponsorId=buyer.referred_by;const l1Amount=Number((packagePrice*l1Rate).toFixed(2));const l1Id=`COMM-P1-${now.toString(36)}-${Math.random().toString(36).slice(2,5)}`;db.prepare(`
     INSERT INTO commissions (id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, affiliate_tier, status, created_at)
     VALUES (?, ?, ?, 'purchase', 1, ?, ?, ?, ?, ?, 'paid', ?)
   `).run(l1Id,l1SponsorId,buyer.id,packageName,packagePrice,l1Rate,l1Amount,effectiveTier,now);commissionsRecorded.push({id:l1Id,level:1,sponsorId:l1SponsorId,referredUserId:buyer.id,referredUserName:buyer.full_name,referredUserEmail:buyer.email,packageName,packagePrice,rate:l1Rate,amount:l1Amount,affiliateTier:effectiveTier});const l1User=getUserById(l1SponsorId);if(l1User?.referred_by&&l1User.referred_by!==buyer.id){const l2SponsorId=l1User.referred_by;const l2Amount=Number((packagePrice*l2Rate).toFixed(2));const l2Id=`COMM-P2-${now.toString(36)}-${Math.random().toString(36).slice(2,5)}`;db.prepare(`
@@ -663,15 +699,15 @@ function updateUserKycStatus(userId,data){const now=Date.now();const submittedIs
     `).run(l2Id,l2SponsorId,buyer.id,packageName,packagePrice,l2Rate,l2Amount,effectiveTier,now);commissionsRecorded.push({id:l2Id,level:2,sponsorId:l2SponsorId,referredUserId:buyer.id,referredUserName:buyer.full_name,referredUserEmail:buyer.email,packageName,packagePrice,rate:l2Rate,amount:l2Amount,affiliateTier:effectiveTier});const l2User=getUserById(l2SponsorId);if(l2User?.referred_by&&l2User.referred_by!==buyer.id){const l3SponsorId=l2User.referred_by;const l3Amount=Number((packagePrice*l3Rate).toFixed(2));const l3Id=`COMM-P3-${now.toString(36)}-${Math.random().toString(36).slice(2,5)}`;db.prepare(`
         INSERT INTO commissions (id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, affiliate_tier, status, created_at)
         VALUES (?, ?, ?, 'purchase', 3, ?, ?, ?, ?, ?, 'paid', ?)
-      `).run(l3Id,l3SponsorId,buyer.id,packageName,packagePrice,l3Rate,l3Amount,effectiveTier,now);commissionsRecorded.push({id:l3Id,level:3,sponsorId:l3SponsorId,referredUserId:buyer.id,referredUserName:buyer.full_name,referredUserEmail:buyer.email,packageName,packagePrice,rate:l3Rate,amount:l3Amount,affiliateTier:effectiveTier})}}return commissionsRecorded}__name(creditPurchaseCommissions,"creditPurchaseCommissions");function getAllPurchasesForUserInDb(userId){if(!userId)return[];const collected=[];const seenKeys=new Set;const pushItem=item=>{const amt=Number(item.amount||0);if(!Number.isFinite(amt)||amt<=0)return;const key=item.id?`id:${item.id}`:`${item.name}|${amt}|${item.createdAt||""}`;if(seenKeys.has(key))return;seenKeys.add(key);collected.push(item)};try{const rows=db.prepare("SELECT * FROM user_purchases WHERE user_id = ? ORDER BY created_at DESC LIMIT 100").all(userId);for(const pur of rows){pushItem({id:String(pur.id),accountId:pur.account_id?String(pur.account_id):null,name:pur.package_name||"Challenge Package",sku:pur.package_sku||pur.package_id||"BFT-PKG",amount:Number(pur.package_amount??pur.amount??0),accountType:pur.account_type||"challenge",createdAt:pur.created_at?new Date(Number(pur.created_at)).toISOString():void 0})}}catch{}try{const deps=db.prepare("SELECT * FROM crypto_deposits WHERE user_id = ? ORDER BY created_at DESC LIMIT 100").all(userId);for(const dep of deps){if(collected.some(c=>c.id===String(dep.id)))continue;pushItem({id:String(dep.id),accountId:dep.account_id?String(dep.account_id):null,name:dep.package_name||"Challenge Package",sku:dep.package_sku||dep.sku||"BFT-PKG",amount:Number(dep.amount??0),accountType:dep.account_type||"challenge",createdAt:dep.created_at?new Date(Number(dep.created_at)).toISOString():void 0})}}catch{}if(collected.length===0){try{const comms=db.prepare("SELECT * FROM commissions WHERE referred_user_id = ? AND source_type != 'withdrawal' ORDER BY created_at DESC LIMIT 100").all(userId);for(const comm of comms){const amt=Number(comm.base_amount??0);if(amt<=0)continue;const cleanName=String(comm.package_name||"").replace(/^Level\s*\d+\s*Commission:\s*/i,"").trim();pushItem({id:String(comm.id),accountId:null,name:cleanName||"Challenge Package",sku:"BFT-PKG",amount:amt,accountType:"challenge",createdAt:comm.created_at?new Date(Number(comm.created_at)).toISOString():void 0})}}catch{}}return collected}__name(getAllPurchasesForUserInDb,"getAllPurchasesForUserInDb");function getLatestPurchaseForUserInDb(userId){const all=getAllPurchasesForUserInDb(userId);if(all.length===0)return null;const first=all[0];return{package_name:first.name,package_sku:first.sku||"BFT-PKG",amount:first.amount,created_at:first.createdAt}}__name(getLatestPurchaseForUserInDb,"getLatestPurchaseForUserInDb");function getAffiliateDashboardStats(userId){let targetId=(userId||"").trim();if(!targetId){return{stats:{totalEarned:0,unpaidEarnings:0,paidEarnings:0,level1Earnings:0,level2Earnings:0,level3Earnings:0,withdrawalEarnings:0,teamSize:0,activeFundedCount:0,totalPurchasedAccountsCount:0,isVipUnlocked:false,recentCommissions:[],networkTree:[]}}}let commissions=db.prepare(`SELECT c.*, u.full_name as referred_user_name, u.email as referred_user_email
-       FROM commissions c
-       LEFT JOIN users u ON c.referred_user_id = u.id
-       WHERE c.sponsor_id = ?
-       ORDER BY c.created_at DESC`).all(targetId);let referrals=db.prepare(`SELECT r.*, u.full_name, u.email, u.created_at as joined_at
-       FROM referrals r
-       JOIN users u ON r.referred_user_id = u.id
-       WHERE r.sponsor_id = ?
-       ORDER BY r.tier_level ASC, r.created_at DESC`).all(targetId);let totalEarnings=0;let level1Earnings=0;let level2Earnings=0;let level3Earnings=0;let withdrawalBonusEarnings=0;for(const c of commissions){totalEarnings+=c.commission_amount;if(c.source_type==="withdrawal"){withdrawalBonusEarnings+=c.commission_amount}if(c.tier_level===1)level1Earnings+=c.commission_amount;if(c.tier_level===2)level2Earnings+=c.commission_amount;if(c.tier_level===3)level3Earnings+=c.commission_amount}const enrichedReferrals=referrals.map(r=>{const allPurchases=getAllPurchasesForUserInDb(r.referred_user_id);const latestPurchase=allPurchases[0];const totalPurchaseAmount=Number(allPurchases.reduce((s,p)=>s+Number(p.amount||0),0).toFixed(2));return{...r,package_name:latestPurchase?.name||null,package_sku:latestPurchase?.sku||null,package_price:latestPurchase?.amount||0,latestPurchase:latestPurchase?{id:latestPurchase.id,accountId:latestPurchase.accountId,name:latestPurchase.name,sku:latestPurchase.sku,amount:latestPurchase.amount,accountType:latestPurchase.accountType,createdAt:latestPurchase.createdAt}:void 0,purchases:allPurchases,accountCount:allPurchases.length,totalPurchaseAmount}});const networkTree=enrichedReferrals.map(r=>({id:r.referred_user_id,fullName:r.full_name||"Trader",email:r.email,level:r.tier_level||1,latestPurchase:r.latestPurchase,purchases:r.purchases,accountCount:r.accountCount,totalPurchaseAmount:r.totalPurchaseAmount}));const activeFundedCount=networkTree.filter(n=>n.latestPurchase&&Number(n.latestPurchase.amount)>0).length;const totalPurchasedAccountsCount=networkTree.reduce((sum,n)=>sum+Number(n.accountCount||0),0);const vipThreshold=1e3;const isVipUnlocked=activeFundedCount>=vipThreshold;const remainingToVip=Math.max(0,vipThreshold-activeFundedCount);const vipProgressPercent=Math.min(100,Number((activeFundedCount/vipThreshold*100).toFixed(1)));const affiliateTier=isVipUnlocked?"vip":"basic";const milestoneRewardAmount=1e4;const normalizedCommissions=commissions.map(c=>({...c,affiliate_tier:c.affiliate_tier||(c.rate>=.15||c.source_type==="withdrawal"&&c.rate>=.1?"vip":"basic")}));return{totalEarnings:Number(totalEarnings.toFixed(2)),level1Earnings:Number(level1Earnings.toFixed(2)),level2Earnings:Number(level2Earnings.toFixed(2)),level3Earnings:Number(level3Earnings.toFixed(2)),withdrawalBonusEarnings:Number(withdrawalBonusEarnings.toFixed(2)),teamSize:referrals.length,activeFundedCount,totalPurchasedAccountsCount,vipThreshold,vipProgressPercent,remainingToVip,isVipUnlocked,affiliateTier,milestoneRewardAmount,level1Count:referrals.filter(r=>r.tier_level===1).length,level2Count:referrals.filter(r=>r.tier_level===2).length,level3Count:referrals.filter(r=>r.tier_level===3).length,recentCommissions:normalizedCommissions.slice(0,50),referrals:enrichedReferrals.slice(0,50),networkTree}}__name(getAffiliateDashboardStats,"getAffiliateDashboardStats");function getWeeklyLeaderboardQuery(){const rows=db.prepare("SELECT * FROM leaderboard ORDER BY rank ASC").all();return rows.map(r=>({id:r.id,rank:r.rank,name:r.name,country:r.country,flag:r.flag,accountTier:r.account_tier,profit:r.profit,winRate:r.win_rate,payoutTime:r.payout_time}))}__name(getWeeklyLeaderboardQuery,"getWeeklyLeaderboardQuery");function getFundedLeaderboardQuery(){const rows=db.prepare("SELECT * FROM funded_leaderboard ORDER BY rank ASC").all();return rows.map(r=>({id:r.id,rank:r.rank,name:r.name,country:r.country,flag:r.flag,isoCode:r.iso_code,accountTier:r.account_tier,profit:r.profit,winRate:r.win_rate,payoutTime:r.payout_time,category:"funded"}))}__name(getFundedLeaderboardQuery,"getFundedLeaderboardQuery");function getSelfFundedLeaderboardQuery(){const seedRows=db.prepare("SELECT * FROM self_funded_leaderboard ORDER BY rank ASC").all();const activeUsers=db.prepare(`
+      `).run(l3Id,l3SponsorId,buyer.id,packageName,packagePrice,l3Rate,l3Amount,effectiveTier,now);commissionsRecorded.push({id:l3Id,level:3,sponsorId:l3SponsorId,referredUserId:buyer.id,referredUserName:buyer.full_name,referredUserEmail:buyer.email,packageName,packagePrice,rate:l3Rate,amount:l3Amount,affiliateTier:effectiveTier})}}return commissionsRecorded}__name(creditPurchaseCommissions,"creditPurchaseCommissions");const DB_INACTIVE_STATUSES=new Set(["pending","failed","declined","rejected","expired","cancelled","canceled","unpaid","void","registered","breached","hard-breached","soft-breached"]);function isDbItemActive(status){const s=String(status||"").trim().toLowerCase();return!s||!DB_INACTIVE_STATUSES.has(s)}function isDbItemSelfFunded(item){const t=String(item?.accountType||item?.account_type||item?.tier||"").trim().toLowerCase();const sku=String(item?.sku||item?.package_sku||"").trim().toUpperCase();const name=String(item?.name||item?.package_name||"").trim();if(t==="self_funded"||t==="self-funded"||t==="personal"||t==="personal_live"||t==="self_capital")return true;if(sku.startsWith("BFT-SELF")||sku.startsWith("PERS"))return true;return/self[-\s]*funded|self[-\s]*capital|personal\s*live/i.test(name)&&!/1[-\s]*step|2[-\s]*step|one[-\s]*step|two[-\s]*step|instant\s*funded|evaluation/i.test(name)}function isDbItemFundedChallenge(item){const t=String(item?.accountType||item?.account_type||item?.tier||"").trim().toLowerCase();const name=String(item?.name||item?.package_name||"").trim();if(t==="demo"||/\bdemo\b/i.test(name))return false;if(isDbItemSelfFunded(item))return false;return Number(item?.amount||0)>0}function getAllPurchasesForUserInDb(userId){if(!userId)return[];const collected=[];const seenIds=new Set;const representedAccountIds=new Set;const pushItem=item=>{const amt=Number(item.amount||0);if(!Number.isFinite(amt)||amt<=0)return;const cleanId=item.id?String(item.id).trim():"";const isSynthetic=cleanId.startsWith("TA-");if(cleanId&&seenIds.has(cleanId))return;if(isSynthetic&&item.accountId&&representedAccountIds.has(String(item.accountId)))return;if(cleanId)seenIds.add(cleanId);if(item.accountId)representedAccountIds.add(String(item.accountId));collected.push(item)};try{const rows=db.prepare("SELECT * FROM user_purchases WHERE user_id = ? ORDER BY created_at DESC LIMIT 100").all(userId);for(const pur of rows){if(String(pur.id||"").startsWith("PUR-SYNC-"))continue;pushItem({id:String(pur.id),accountId:pur.account_id?String(pur.account_id):null,name:pur.package_name||"Challenge Package",sku:pur.package_sku||pur.package_id||"BFT-PKG",amount:Number(pur.package_amount??pur.amount??0),accountType:pur.account_type||"challenge",status:pur.status||"completed",createdAt:pur.created_at?new Date(Number(pur.created_at)).toISOString():void 0})}}catch{}try{const deps=db.prepare("SELECT * FROM crypto_deposits WHERE user_id = ? ORDER BY created_at DESC LIMIT 100").all(userId);for(const dep of deps){pushItem({id:String(dep.id),accountId:dep.account_id?String(dep.account_id):null,name:dep.package_name||(dep.account_type==="self_funded"?"Self-Funded Deposit":"Challenge Package"),sku:dep.package_sku||dep.sku||"BFT-PKG",amount:Number(dep.amount??0),accountType:dep.account_type||"challenge",status:dep.status||"pending",createdAt:dep.created_at?new Date(Number(dep.created_at)).toISOString():void 0})}}catch{}try{const bankDeps=db.prepare("SELECT * FROM deposits WHERE user_id = ? ORDER BY created_at DESC LIMIT 100").all(userId);for(const dep of bankDeps){pushItem({id:String(dep.id),accountId:dep.account_id?String(dep.account_id):null,name:dep.package_name||(dep.account_type==="self_funded"?"Self-Funded Deposit":"Challenge Package"),sku:dep.package_sku||dep.sku||"BFT-PKG",amount:Number(dep.amount??0),accountType:dep.account_type||"self_funded",status:dep.status||"pending",createdAt:dep.created_at?new Date(Number(dep.created_at)).toISOString():void 0})}}catch{}try{const accts=db.prepare("SELECT * FROM accounts WHERE user_id = ? ORDER BY created_at DESC LIMIT 100").all(userId);for(const acc of accts){const tierLower=String(acc.tier||"").toLowerCase();const catLower=String(acc.account_category||"").toLowerCase();if(tierLower==="demo"||catLower==="demo")continue;const isPersonal=tierLower==="personal"||catLower==="personal_live"||String(acc.phase||"").toLowerCase()==="personal_live";const amt=Number(isPersonal?acc.deposited_capital??acc.initial_balance??acc.current_balance??0:acc.size??acc.initial_balance??0);if(amt<=0)continue;pushItem({id:`TA-${acc.id}`,accountId:String(acc.id),name:acc.tier_name||(isPersonal?"Self-Funded Live Wallet":`Funded ${acc.tier||"Challenge"}`),sku:isPersonal?"BFT-SELF":"BFT-CHAL",amount:amt,accountType:isPersonal?"self_funded":"challenge",status:acc.status||"active",createdAt:acc.created_at?new Date(Number(acc.created_at)).toISOString():void 0})}}catch{}if(collected.length===0){try{const comms=db.prepare("SELECT * FROM commissions WHERE referred_user_id = ? AND source_type != 'withdrawal' ORDER BY created_at DESC LIMIT 100").all(userId);for(const comm of comms){const amt=Number(comm.base_amount??0);if(amt<=0)continue;const cleanName=String(comm.package_name||"").replace(/^Level\s*\d+\s*Commission:\s*/i,"").trim();pushItem({id:String(comm.id),accountId:null,name:cleanName||"Challenge Package",sku:"BFT-PKG",amount:amt,accountType:"challenge",status:comm.status||"completed",createdAt:comm.created_at?new Date(Number(comm.created_at)).toISOString():void 0})}}catch{}}return collected}__name(getAllPurchasesForUserInDb,"getAllPurchasesForUserInDb");function getLatestPurchaseForUserInDb(userId){const all=getAllPurchasesForUserInDb(userId);const activeAll=all.filter(p=>isDbItemActive(p.status));const first=activeAll[0]||all[0];if(!first)return null;return{package_name:first.name,package_sku:first.sku||"BFT-PKG",amount:first.amount,status:first.status,accountType:first.accountType,created_at:first.createdAt}}__name(getLatestPurchaseForUserInDb,"getLatestPurchaseForUserInDb");function getAffiliateDashboardStats(userId){let targetId=(userId||"").trim();if(!targetId){return{stats:{totalEarned:0,unpaidEarnings:0,paidEarnings:0,level1Earnings:0,level2Earnings:0,level3Earnings:0,withdrawalEarnings:0,teamSize:0,totalRegisteredReferrals:0,activeDepositedCount:0,activeFundedCount:0,totalPurchasedAccountsCount:0,isVipUnlocked:false,recentCommissions:[],networkTree:[]}}}let commissions=db.prepare(`SELECT c.*, u.full_name as referred_user_name, u.email as referred_user_email
+        FROM commissions c
+        LEFT JOIN users u ON c.referred_user_id = u.id
+        WHERE c.sponsor_id = ?
+        ORDER BY c.created_at DESC`).all(targetId);let referrals=db.prepare(`SELECT r.*, u.full_name, u.email, u.self_balance, u.created_at as joined_at
+        FROM referrals r
+        JOIN users u ON r.referred_user_id = u.id
+        WHERE r.sponsor_id = ?
+        ORDER BY r.tier_level ASC, r.created_at DESC`).all(targetId);let totalEarnings=0;let level1Earnings=0;let level2Earnings=0;let level3Earnings=0;let withdrawalBonusEarnings=0;for(const c of commissions){totalEarnings+=c.commission_amount;if(c.source_type==="withdrawal"){withdrawalBonusEarnings+=c.commission_amount}if(c.tier_level===1)level1Earnings+=c.commission_amount;if(c.tier_level===2)level2Earnings+=c.commission_amount;if(c.tier_level===3)level3Earnings+=c.commission_amount}const enrichedReferrals=referrals.map(r=>{const allPurchases=getAllPurchasesForUserInDb(r.referred_user_id);const activePurchases=allPurchases.filter(p=>isDbItemActive(p.status)&&Number(p.amount||0)>0);const activeFundedChallenges=activePurchases.filter(p=>isDbItemFundedChallenge(p));const activeSelfDeposits=activePurchases.filter(p=>isDbItemSelfFunded(p));const hasActiveFunded=activeFundedChallenges.length>0;const selfCapitalDepositAmount=Number(activeSelfDeposits.reduce((s,p)=>s+Number(p.amount||0),0).toFixed(2));const liveSelfBalance=Number(r.self_balance||0);const hasActiveSelfCapitalDeposit=selfCapitalDepositAmount>0||liveSelfBalance>0;const latestPurchase=activePurchases[0]||allPurchases[0];const totalPurchaseAmount=Number(allPurchases.reduce((s,p)=>s+Number(p.amount||0),0).toFixed(2));return{...r,package_name:latestPurchase?.name||null,package_sku:latestPurchase?.sku||null,package_price:latestPurchase?.amount||0,latestPurchase:latestPurchase?{id:latestPurchase.id,accountId:latestPurchase.accountId,name:latestPurchase.name,sku:latestPurchase.sku,amount:latestPurchase.amount,accountType:latestPurchase.accountType,status:latestPurchase.status,createdAt:latestPurchase.createdAt}:void 0,purchases:allPurchases,accountCount:allPurchases.length,totalPurchaseAmount,hasActiveFunded,hasActiveSelfCapitalDeposit,selfCapitalDepositAmount:selfCapitalDepositAmount>0?selfCapitalDepositAmount:liveSelfBalance,accountBalance:liveSelfBalance}});const networkTree=enrichedReferrals.map(r=>({id:r.referred_user_id,fullName:r.full_name||"Trader",email:r.email,level:r.tier_level||1,joinedDate:r.joined_at?new Date(Number(r.joined_at)).toISOString():void 0,latestPurchase:r.latestPurchase,purchases:r.purchases,accountCount:r.accountCount,totalPurchaseAmount:r.totalPurchaseAmount,hasActiveFunded:r.hasActiveFunded,hasActiveSelfCapitalDeposit:r.hasActiveSelfCapitalDeposit,selfCapitalDepositAmount:r.selfCapitalDepositAmount,accountBalance:r.accountBalance}));const totalRegisteredReferrals=networkTree.length;const activeDepositedCount=networkTree.filter(n=>n.hasActiveSelfCapitalDeposit).length;const activeFundedCount=networkTree.filter(n=>n.hasActiveFunded).length;const totalPurchasedAccountsCount=networkTree.reduce((sum,n)=>sum+(Array.isArray(n.purchases)?n.purchases.filter(p=>isDbItemActive(p.status)).length:0),0);const vipThreshold=1e3;const isVipUnlocked=activeFundedCount>=vipThreshold;const remainingToVip=Math.max(0,vipThreshold-activeFundedCount);const vipProgressPercent=Math.min(100,Number((activeFundedCount/vipThreshold*100).toFixed(1)));const affiliateTier=isVipUnlocked?"vip":"basic";const milestoneRewardAmount=1e4;const normalizedCommissions=commissions.map(c=>({...c,affiliate_tier:c.affiliate_tier||(c.rate>=.15||c.source_type==="withdrawal"&&c.rate>=.1?"vip":"basic")}));return{totalEarnings:Number(totalEarnings.toFixed(2)),level1Earnings:Number(level1Earnings.toFixed(2)),level2Earnings:Number(level2Earnings.toFixed(2)),level3Earnings:Number(level3Earnings.toFixed(2)),withdrawalBonusEarnings:Number(withdrawalBonusEarnings.toFixed(2)),teamSize:totalRegisteredReferrals,totalRegisteredReferrals,activeDepositedCount,activeFundedCount,totalPurchasedAccountsCount,vipThreshold,vipProgressPercent,remainingToVip,isVipUnlocked,affiliateTier,milestoneRewardAmount,level1Count:networkTree.filter(r=>r.level===1&&r.hasActiveFunded).length,level2Count:networkTree.filter(r=>r.level===2&&r.hasActiveFunded).length,level3Count:networkTree.filter(r=>r.level===3&&r.hasActiveFunded).length,registeredLevel1Count:referrals.filter(r=>r.tier_level===1).length,registeredLevel2Count:referrals.filter(r=>r.tier_level===2).length,registeredLevel3Count:referrals.filter(r=>r.tier_level===3).length,recentCommissions:normalizedCommissions.slice(0,50),referrals:enrichedReferrals.slice(0,50),networkTree}}__name(getAffiliateDashboardStats,"getAffiliateDashboardStats");function getWeeklyLeaderboardQuery(){const rows=db.prepare("SELECT * FROM leaderboard ORDER BY rank ASC").all();return rows.map(r=>({id:r.id,rank:r.rank,name:r.name,country:r.country,flag:r.flag,accountTier:r.account_tier,profit:r.profit,winRate:r.win_rate,payoutTime:r.payout_time}))}__name(getWeeklyLeaderboardQuery,"getWeeklyLeaderboardQuery");function getFundedLeaderboardQuery(){const rows=db.prepare("SELECT * FROM funded_leaderboard ORDER BY rank ASC").all();return rows.map(r=>({id:r.id,rank:r.rank,name:r.name,country:r.country,flag:r.flag,isoCode:r.iso_code,accountTier:r.account_tier,profit:r.profit,winRate:r.win_rate,payoutTime:r.payout_time,category:"funded"}))}__name(getFundedLeaderboardQuery,"getFundedLeaderboardQuery");function getSelfFundedLeaderboardQuery(){const seedRows=db.prepare("SELECT * FROM self_funded_leaderboard ORDER BY rank ASC").all();const activeUsers=db.prepare(`
     SELECT u.id, u.full_name, u.email, u.country, u.self_balance,
            (SELECT COUNT(*) FROM trades t WHERE t.user_id = u.id AND t.status IN ('won', 'lost')) as trade_count,
            (SELECT COUNT(*) FROM trades t WHERE t.user_id = u.id AND t.status = 'won') as win_count
@@ -1022,4 +1058,241 @@ function updateUserKycStatus(userId,data){const now=Date.now();const submittedIs
           equity = ?,
           updated_at = ?
         WHERE id = ?
-      `).run(newBalance,newEquity,now,account.id);if(account.tier==="personal"||account.account_category==="personal_live"||String(withdrawal.account_id).includes("PERS")){db.prepare(`UPDATE users SET self_balance = ? WHERE id = ?`).run(newBalance,userId)}else if(account.phase==="funded"){db.prepare(`UPDATE users SET funded_balance = ? WHERE id = ?`).run(newBalance,userId)}}db.exec("COMMIT");return{ok:true,withdrawal:db.prepare("SELECT * FROM withdrawals WHERE id = ?").get(withdrawalId)}}catch(error){db.exec("ROLLBACK");throw error}}__name(declineWithdrawalRequest,"declineWithdrawalRequest");export{COUNTRY_FLAGS,adminApproveDeposit,adminApproveKyc,adminApproveWithdrawal,adminDeclineDeposit,adminDeclineWithdrawal,adminRejectKyc,adminSetUserRole,adminUpdateAccountBalance,cancelWithdrawalRequest,completeCryptoDepositInDb,createAccount,createCryptoDepositRecord,createDepositRequest,createOrUpdateGoogleUser,createSessionToken,createUserPurchaseRecord,creditPersonalAccountDepositInDb,creditPurchaseCommissions,db,declineWithdrawalRequest,deleteSessionToken,disableUser2fa,distribute3TierCommissions,enableUser2fa,ensureAdminSeedData,ensurePersonalLiveAccountForUser,ensureUserInDb,expireStalePendingDepositsInDb,failCryptoDepositInDb,getAccountById,getAccountsForUser,getAdminAuditLogs,getAdminCommissionsLedger,getAdminDeposits,getAdminKycSubmissions,getAdminMetrics,getAdminReferralTree,getAdminUsersList,getAdminWithdrawals,getAffiliateDashboardStats,getCompletedCryptoDepositTxHashes,getCountryFlag,getCryptoDeposits,getKycSubmissionForUser,getLatestPurchaseForUserInDb,getPendingCryptoDeposits,getTransactions,getUserByEmail,getUserById,getUserByReferralCode,getUserPurchases,getUserTradesFromDb,getWeeklyLeaderboardQuery,getFundedLeaderboardQuery,getSelfFundedLeaderboardQuery,lockUserProfile,mapAccountRowToTradingAccount,passChallengePhaseInDb,processWithdrawalRequest,recordAdminAuditLog,recordTradeInDb,settleTradeInDb,syncLeaderboardData,syncSupabaseProfilesToAffiliateTree,terminateAllTrades,updateAccountStateInDb,updateUser2faSecret,updateUserKycStatus,validateSession,verifyAndCompletePendingCryptoDepositsInDb};
+      `).run(newBalance,newEquity,now,account.id);if(account.tier==="personal"||account.account_category==="personal_live"||String(withdrawal.account_id).includes("PERS")){db.prepare(`UPDATE users SET self_balance = ? WHERE id = ?`).run(newBalance,userId)}else if(account.phase==="funded"){db.prepare(`UPDATE users SET funded_balance = ? WHERE id = ?`).run(newBalance,userId)}}db.exec("COMMIT");return{ok:true,withdrawal:db.prepare("SELECT * FROM withdrawals WHERE id = ?").get(withdrawalId)}}catch(error){db.exec("ROLLBACK");throw error}}__name(declineWithdrawalRequest,"declineWithdrawalRequest");
+
+function parseJsonStringArray(raw: any): string[] {
+  if (Array.isArray(raw)) return raw.map((s) => String(s || "").trim()).filter(Boolean);
+  if (typeof raw === "string" && raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed.map((s) => String(s || "").trim()).filter(Boolean);
+    } catch {}
+    return raw.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+function mapSocialSubmissionRow(row: any) {
+  if (!row) return null;
+  return {
+    id: String(row.id),
+    userId: String(row.user_id),
+    userName: row.user_name || row.full_name || "",
+    userEmail: row.user_email || row.email || "",
+    platformType: String(row.platform_type || row.affiliate_social_platform || ""),
+    socialLinks: parseJsonStringArray(row.social_links_json ?? row.affiliate_social_links),
+    affiliateProfileLocked: Boolean(row.affiliate_profile_locked ?? 1),
+    submittedAt: String(row.submitted_at || row.affiliate_social_submitted_at || new Date(Number(row.created_at || Date.now())).toISOString()),
+  };
+}
+
+function getAffiliateSocialSubmissionInDb(userId: string, userEmail?: string) {
+  if (!userId && !userEmail) return null;
+  if (userId) {
+    const sub = db.prepare("SELECT * FROM affiliate_social_submissions WHERE user_id = ? LIMIT 1").get(userId);
+    if (sub) return mapSocialSubmissionRow(sub);
+  }
+  if (userEmail) {
+    const subByEmail = db.prepare("SELECT * FROM affiliate_social_submissions WHERE LOWER(user_email) = LOWER(?) LIMIT 1").get(userEmail);
+    if (subByEmail) return mapSocialSubmissionRow(subByEmail);
+  }
+  const user = (userId ? getUserById(userId) : null) || (userEmail ? getUserByEmail(userEmail) : null);
+  if (user && (user.affiliate_profile_locked === 1 || user.affiliate_social_platform)) {
+    return {
+      id: `SOC-${user.id}`,
+      userId: String(user.id),
+      userName: user.full_name || "",
+      userEmail: user.email || "",
+      platformType: String(user.affiliate_social_platform || ""),
+      socialLinks: parseJsonStringArray(user.affiliate_social_links),
+      affiliateProfileLocked: Boolean(user.affiliate_profile_locked),
+      submittedAt: String(user.affiliate_social_submitted_at || new Date().toISOString()),
+    };
+  }
+  return null;
+}
+
+function submitAffiliateSocialProfileInDb(params: {
+  userId: string;
+  userName?: string;
+  userEmail?: string;
+  platformType: string;
+  socialLinks: string[];
+}) {
+  const existing = getAffiliateSocialSubmissionInDb(params.userId);
+  if (existing && existing.affiliateProfileLocked) {
+    throw new Error("Affiliate marketing links are already Verified & Locked and cannot be edited.");
+  }
+  const now = Date.now();
+  const submittedAt = new Date(now).toISOString();
+  const linksJson = JSON.stringify(params.socialLinks || []);
+  const id = `SOC-${now.toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+
+  ensureUserInDb({
+    id: params.userId,
+    email: params.userEmail || `${params.userId}@bft.io`,
+    fullName: params.userName || "BFT Affiliate",
+  });
+
+  db.prepare(`
+    INSERT INTO affiliate_social_submissions (
+      id, user_id, user_name, user_email, platform_type, social_links_json, affiliate_profile_locked, submitted_at, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET
+      platform_type = excluded.platform_type,
+      social_links_json = excluded.social_links_json,
+      affiliate_profile_locked = 1,
+      submitted_at = excluded.submitted_at
+  `).run(
+    id,
+    params.userId,
+    params.userName || null,
+    params.userEmail || null,
+    params.platformType,
+    linksJson,
+    submittedAt,
+    now
+  );
+
+  try {
+    db.prepare(`
+      UPDATE users SET
+        affiliate_profile_locked = 1,
+        affiliate_social_platform = ?,
+        affiliate_social_links = ?,
+        affiliate_social_submitted_at = ?,
+        updated_at = ?
+      WHERE id = ?
+    `).run(params.platformType, linksJson, submittedAt, now, params.userId);
+  } catch {}
+
+  return getAffiliateSocialSubmissionInDb(params.userId);
+}
+
+function getAdminAffiliateSocialSubmissionsInDb() {
+  const rows = db.prepare(`
+    SELECT s.*, COALESCE(s.user_name, u.full_name) as full_name, COALESCE(s.user_email, u.email) as email
+    FROM affiliate_social_submissions s
+    LEFT JOIN users u ON s.user_id = u.id
+    ORDER BY s.created_at DESC
+  `).all();
+  return rows.map(mapSocialSubmissionRow);
+}
+
+function mapCountryManagerRow(row: any) {
+  if (!row) return null;
+  return {
+    id: String(row.id),
+    userId: String(row.user_id),
+    userEmail: row.user_email || "",
+    fullName: String(row.full_name || ""),
+    targetCountry: String(row.target_country || ""),
+    telegramHandle: String(row.telegram_handle || ""),
+    estimatedAudienceSize: String(row.estimated_audience_size || ""),
+    marketingStrategy: String(row.marketing_strategy || ""),
+    socialLinks: parseJsonStringArray(row.social_links_json),
+    totalReferralsCount: Number(row.total_referrals_count || 0),
+    status: String(row.status || "pending"),
+    adminNotes: row.admin_notes || "",
+    reviewedAt: row.reviewed_at || undefined,
+    createdAt: row.created_at ? new Date(Number(row.created_at)).toISOString() : new Date().toISOString(),
+  };
+}
+
+function submitCountryManagerApplicationInDb(params: {
+  userId: string;
+  userEmail?: string;
+  fullName: string;
+  targetCountry: string;
+  telegramHandle: string;
+  estimatedAudienceSize: string;
+  marketingStrategy: string;
+  socialLinks: string[];
+  totalReferralsCount?: number;
+}) {
+  const now = Date.now();
+  const id = `CMA-${now.toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+  const linksJson = JSON.stringify(params.socialLinks || []);
+
+  ensureUserInDb({
+    id: params.userId,
+    email: params.userEmail || `${params.userId}@bft.io`,
+    fullName: params.fullName,
+  });
+
+  db.prepare(`
+    INSERT INTO country_manager_applications (
+      id, user_id, user_email, full_name, target_country, telegram_handle,
+      estimated_audience_size, marketing_strategy, social_links_json, total_referrals_count,
+      status, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+  `).run(
+    id,
+    params.userId,
+    params.userEmail || null,
+    params.fullName,
+    params.targetCountry,
+    params.telegramHandle,
+    String(params.estimatedAudienceSize),
+    params.marketingStrategy,
+    linksJson,
+    Number(params.totalReferralsCount || 0),
+    now
+  );
+
+  return mapCountryManagerRow(db.prepare("SELECT * FROM country_manager_applications WHERE id = ?").get(id));
+}
+
+function getCountryManagerApplicationsForUserInDb(userId: string, userEmail?: string) {
+  if (!userId && !userEmail) return [];
+  const rows = userEmail
+    ? db.prepare("SELECT * FROM country_manager_applications WHERE user_id = ? OR LOWER(user_email) = LOWER(?) ORDER BY created_at DESC").all(userId || "", userEmail)
+    : db.prepare("SELECT * FROM country_manager_applications WHERE user_id = ? ORDER BY created_at DESC").all(userId);
+  return rows.map(mapCountryManagerRow);
+}
+
+function getAdminCountryManagerApplicationsInDb(statusFilter?: string) {
+  let query = "SELECT * FROM country_manager_applications";
+  const params: any[] = [];
+  if (statusFilter && statusFilter !== "all") {
+    query += " WHERE status = ?";
+    params.push(statusFilter);
+  }
+  query += " ORDER BY created_at DESC";
+  return db.prepare(query).all(...params).map(mapCountryManagerRow);
+}
+
+function adminUpdateCountryManagerApplicationStatusInDb(
+  appId: string,
+  status: "approved" | "rejected",
+  adminNotes: string,
+  adminUserId: string
+) {
+  const existing = db.prepare("SELECT * FROM country_manager_applications WHERE id = ?").get(appId);
+  if (!existing) throw new Error("Country Manager application not found.");
+  const reviewedAt = new Date().toISOString();
+  db.prepare(`
+    UPDATE country_manager_applications SET
+      status = ?,
+      admin_notes = ?,
+      reviewed_at = ?
+    WHERE id = ?
+  `).run(status, adminNotes || null, reviewedAt, appId);
+
+  recordAdminAuditLog(
+    adminUserId,
+    status === "approved" ? "APPROVE_COUNTRY_MANAGER" : "REJECT_COUNTRY_MANAGER",
+    appId,
+    "country_manager_application",
+    {
+      applicantName: existing.full_name,
+      targetCountry: existing.target_country,
+      adminNotes,
+    }
+  );
+
+  return mapCountryManagerRow(db.prepare("SELECT * FROM country_manager_applications WHERE id = ?").get(appId));
+}
+
+export{COUNTRY_FLAGS,adminApproveDeposit,adminApproveKyc,adminApproveWithdrawal,adminDeclineDeposit,adminDeclineWithdrawal,adminRejectKyc,adminSetUserRole,adminUpdateAccountBalance,adminUpdateCountryManagerApplicationStatusInDb,cancelWithdrawalRequest,completeCryptoDepositInDb,createAccount,createCryptoDepositRecord,createDepositRequest,createOrUpdateGoogleUser,createSessionToken,createUserPurchaseRecord,creditPersonalAccountDepositInDb,creditPurchaseCommissions,db,declineWithdrawalRequest,deleteSessionToken,disableUser2fa,distribute3TierCommissions,enableUser2fa,ensureAdminSeedData,ensurePersonalLiveAccountForUser,ensureUserInDb,expireStalePendingDepositsInDb,failCryptoDepositInDb,getAccountById,getAccountsForUser,getAdminAffiliateSocialSubmissionsInDb,getAdminAuditLogs,getAdminCommissionsLedger,getAdminCountryManagerApplicationsInDb,getAdminDeposits,getAdminKycSubmissions,getAdminMetrics,getAdminReferralTree,getAdminUsersList,getAdminWithdrawals,getAffiliateDashboardStats,getAffiliateSocialSubmissionInDb,getCompletedCryptoDepositTxHashes,getCountryFlag,getCountryManagerApplicationsForUserInDb,getCryptoDeposits,getKycSubmissionForUser,getLatestPurchaseForUserInDb,getPendingCryptoDeposits,getTransactions,getUserByEmail,getUserById,getUserByReferralCode,getUserPurchases,getUserTradesFromDb,getWeeklyLeaderboardQuery,getFundedLeaderboardQuery,getSelfFundedLeaderboardQuery,lockUserProfile,mapAccountRowToTradingAccount,passChallengePhaseInDb,processWithdrawalRequest,recordAdminAuditLog,recordTradeInDb,settleTradeInDb,submitAffiliateSocialProfileInDb,submitCountryManagerApplicationInDb,syncLeaderboardData,syncSupabaseProfilesToAffiliateTree,terminateAllTrades,updateAccountStateInDb,updateUser2faSecret,updateUserKycStatus,validateSession,verifyAndCompletePendingCryptoDepositsInDb};
+
