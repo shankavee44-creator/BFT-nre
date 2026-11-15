@@ -67,7 +67,7 @@ export const QuotexAccountSwitcher: React.FC<QuotexAccountSwitcherProps> = ({
 
   const dropdownRef = useRef<HTMLDivElement | null>(null);
 
-  // Close dropdown on outside click
+  // Close dropdown on outside click or Escape key
   useEffect(() => {
     const handleOutsideClick = (e: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
@@ -76,10 +76,21 @@ export const QuotexAccountSwitcher: React.FC<QuotexAccountSwitcherProps> = ({
         setDemoError(null);
       }
     };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsOpen(false);
+        setIsEditingDemo(false);
+        setDemoError(null);
+      }
+    };
     if (isOpen) {
       document.addEventListener('mousedown', handleOutsideClick);
+      document.addEventListener('keydown', handleKeyDown);
     }
-    return () => document.removeEventListener('mousedown', handleOutsideClick);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
   }, [isOpen]);
 
   const personalAccount = accounts.find((a) => isPersonalLiveAccount(a));
@@ -265,12 +276,23 @@ export const QuotexAccountSwitcher: React.FC<QuotexAccountSwitcherProps> = ({
         />
       </button>
 
-      {/* Quotex-Style Two-Column Account Switcher Dropdown Menu */}
+      {/* Backdrop & Quotex-Style Two-Column Account Switcher Dropdown Menu */}
       {isOpen && (
-        <div
-          data-testid="account-switcher-dropdown"
-          className="absolute right-0 top-full mt-2 w-[calc(100vw-24px)] max-w-[460px] sm:w-[460px] rounded-2xl bg-[#0c0d12] border border-white/15 shadow-2xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150 flex flex-col sm:flex-row"
-        >
+        <>
+          <div
+            data-testid="account-switcher-backdrop"
+            onClick={() => {
+              setIsOpen(false);
+              setIsEditingDemo(false);
+              setDemoError(null);
+            }}
+            className="fixed inset-0 z-[60] bg-black/45"
+            aria-hidden="true"
+          />
+          <div
+            data-testid="account-switcher-dropdown"
+            className="fixed inset-x-3 top-[104px] sm:inset-x-auto sm:absolute sm:right-0 sm:top-full sm:mt-2 w-auto sm:w-[460px] max-w-[460px] mx-auto sm:mx-0 max-h-[calc(100dvh-118px)] overflow-y-auto rounded-2xl bg-[#0c0d12] border border-white/15 shadow-[0_24px_60px_rgba(0,0,0,0.85)] z-[70] animate-in fade-in zoom-in-95 duration-150 flex flex-col sm:flex-row"
+          >
           {/* Left Column: Account Details, Live & Demo Cards */}
           <div className="flex-1 p-4 border-b sm:border-b-0 sm:border-r border-white/10 space-y-4">
             {/* Top Status Pill: Standard +0% profit & Eye privacy toggle */}
@@ -657,7 +679,8 @@ export const QuotexAccountSwitcher: React.FC<QuotexAccountSwitcherProps> = ({
               </div>
             )}
           </div>
-        </div>
+          </div>
+        </>
       )}
     </div>
   );

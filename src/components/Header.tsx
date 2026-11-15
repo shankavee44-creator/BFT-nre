@@ -137,7 +137,7 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   return (
-    <header className="sticky top-0 z-40 w-full max-w-[100vw] border-b border-white/[0.12] bg-[#0b0f19]">
+    <header className="sticky top-0 z-[45] w-full max-w-[100vw] border-b border-white/[0.12] bg-[#0b0f19]">
       {/* Live Institutional Payout Ticker Feed */}
       <CryptoTickerBar onSelectPair={() => setLeaderboardOpen(true)} />
 

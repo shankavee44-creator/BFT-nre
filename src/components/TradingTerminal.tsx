@@ -3667,8 +3667,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       {/* 0. COMPACT MOBILE TOP NAVIGATION HEADER (Quotex Mobile View) */}
       <div
         data-testid="quotex-mobile-top-header"
-        style={{ willChange: 'transform', transform: 'translateZ(0)' }}
-        className="flex md:hidden h-10 bg-[#131722] border-b border-[#252a3a] items-center justify-between px-2 shrink-0 relative z-50 mobile-trading-controls"
+        className="flex md:hidden h-10 bg-[#131722] border-b border-[#252a3a] items-center justify-between px-2 shrink-0 relative z-40 mobile-trading-controls"
       >
         <div className="flex items-center gap-1 min-w-0">
           <button
@@ -3721,7 +3720,16 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
             {/* Account Switcher Dropdown Modal */}
             {accountDropdownOpen && (
-              <div className="absolute top-full left-0 mt-1.5 w-68 bg-[#141824] border border-[#2a2e39] rounded-xl shadow-2xl p-2 z-50 font-mono">
+              <>
+                <div
+                  onClick={() => setAccountDropdownOpen(false)}
+                  className="fixed inset-0 z-[60] bg-black/45"
+                  aria-hidden="true"
+                />
+                <div
+                  data-testid="mobile-account-switcher-dropdown"
+                  className="fixed inset-x-3 top-11 sm:absolute sm:inset-x-auto sm:top-full sm:left-0 sm:mt-1.5 sm:w-72 max-h-[calc(100dvh-60px)] overflow-y-auto bg-[#141824] border border-[#2a2e39] rounded-xl shadow-[0_20px_50px_rgba(0,0,0,0.85)] p-2.5 z-[70] font-mono"
+                >
                 <div className="text-[10px] text-slate-400 font-bold px-1 py-1 uppercase tracking-wider">
                   Account Mode Toggle
                 </div>
@@ -3825,7 +3833,8 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                     </button>
                   </div>
                 )}
-              </div>
+                </div>
+              </>
             )}
           </div>
         </div>
@@ -3899,7 +3908,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       </div>
 
       {/* 1. QUOTEX-STYLE TERMINAL TOP BAR (Desktop) */}
-      <div className="hidden md:flex h-12 bg-[#131722] border-b border-[#242836] flex items-center justify-between px-3 shrink-0 relative z-50">
+      <div className="hidden md:flex h-12 bg-[#131722] border-b border-[#242836] items-center justify-between px-3 shrink-0 relative z-30">
         {/* Left: BFT Brand / Portal Button + Active Terminal Mode Indicator */}
         <div className="flex items-center gap-2.5">
           <button
@@ -3956,172 +3965,6 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
             )}
           </button>
-
-          {/* Account Balance Switcher Dropdown */}
-          <div className="relative">
-            <button
-              onClick={() => setAccountDropdownOpen(!accountDropdownOpen)}
-              data-testid="terminal-account-switcher"
-              className="flex items-center gap-2 px-3 py-1 rounded-lg bg-[#1c202e] hover:bg-[#252b3d] border border-[#2a2e39] hover:border-[#ff8800]/60 text-xs font-mono transition-colors cursor-pointer"
-            >
-              <div
-                className={`w-2 h-2 rounded-full ${
-                  isBreached
-                    ? 'bg-rose-500 animate-pulse'
-                    : isPersonalLiveAccount(effectiveAccount) || isLiveFundedAccount(effectiveAccount)
-                    ? 'bg-[#00e676]'
-                    : 'bg-[#ff8800]'
-                }`}
-              />
-              <div className="text-left leading-tight">
-                <div className="flex items-center gap-1.5">
-                  <span className="font-bold text-slate-300 text-[10px] uppercase tracking-wider">
-                    {isPersonalLiveAccount(effectiveAccount)
-                      ? 'LIVE ACCOUNT'
-                      : isDemoAccount(effectiveAccount)
-                      ? 'DEMO ACCOUNT'
-                      : effectiveAccount.id}
-                  </span>
-                </div>
-                <div
-                  data-testid="terminal-active-balance"
-                  className={`text-xs font-black ${isBreached ? 'text-rose-400' : 'text-[#00e676]'}`}
-                >
-                  ${effectiveAccount.currentBalance.toLocaleString('en-US', {
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2,
-                  })}
-                </div>
-              </div>
-              <ChevronDown className="w-3.5 h-3.5 text-slate-400 ml-1" />
-            </button>
-
-            {/* Account Switcher Dropdown Menu */}
-            {accountDropdownOpen && (
-              <div className="absolute right-0 mt-2 w-76 rounded-xl bg-[#1e222d] border border-[#2a2e39] shadow-2xl p-2.5 z-50 font-mono text-xs animate-in fade-in">
-                <div className="text-[10px] uppercase font-bold text-slate-400 px-1 pb-1.5">
-                  Account Mode Toggle
-                </div>
-                <div className="grid grid-cols-2 gap-1.5 mb-2">
-                  <button
-                    type="button"
-                    data-testid="switch-mode-personal-btn"
-                    onClick={() => {
-                      soundEngine.playUiClick();
-                      onSelectAccount?.(personalLiveAccount?.id || 'personal_live');
-                      setAccountDropdownOpen(false);
-                    }}
-                    className={`p-2 rounded-lg border text-left transition-all cursor-pointer ${
-                      isPersonalLiveAccount(effectiveAccount)
-                        ? 'bg-[#00e676]/15 border-[#00e676] text-white'
-                        : 'bg-[#161923] border-[#2a2e39] text-slate-300 hover:border-white/25'
-                    }`}
-                  >
-                    <div className="text-[9px] font-black uppercase text-[#00e676]">
-                      Self-Capital (Live)
-                    </div>
-                    <div className="text-[11px] font-black text-white mt-0.5">
-                      ${personalLiveBalance.toLocaleString('en-US', {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}
-                    </div>
-                  </button>
-                  <button
-                    type="button"
-                    data-testid="switch-mode-demo-btn"
-                    onClick={() => {
-                      soundEngine.playUiClick();
-                      onSelectAccount?.(demoModeAccount?.id || 'BFT-DEMO-001');
-                      setAccountDropdownOpen(false);
-                    }}
-                    className={`p-2 rounded-lg border text-left transition-all cursor-pointer ${
-                      isDemoAccount(effectiveAccount)
-                        ? 'bg-[#ff8800]/20 border-[#ff8800] text-white'
-                        : 'bg-[#161923] border-[#2a2e39] text-slate-300 hover:border-white/25'
-                    }`}
-                  >
-                    <div className="text-[9px] font-black uppercase text-[#ff8800]">
-                      Demo Mode
-                    </div>
-                    <div className="text-[11px] font-black text-white mt-0.5">
-                      ${demoModeBalance.toLocaleString('en-US', {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}
-                    </div>
-                  </button>
-                </div>
-
-                <div className="text-[10px] uppercase font-bold text-slate-400 px-2 py-1 border-t border-[#2a2e39]">
-                  Switch Prop Account
-                </div>
-                {accounts.map((acc) => {
-                  const isLive = isLiveFundedAccount(acc);
-                  const accBal = getAuthoritativeAccountBalance(acc, userProfile);
-                  return (
-                    <button
-                      key={acc.id}
-                      onClick={() => {
-                        soundEngine.playUiClick();
-                        onSelectAccount?.(acc.id);
-                        setAccountDropdownOpen(false);
-                      }}
-                      className={`w-full flex items-center justify-between p-2 rounded-lg text-left transition-colors cursor-pointer ${
-                        acc.id === effectiveAccount?.id ? 'bg-cyan-500/15 border border-cyan-500/30' : 'hover:bg-[#262b3a]'
-                      }`}
-                    >
-                      <div>
-                        <div className="font-bold text-white flex items-center gap-1.5 flex-wrap">
-                          <span>
-                            {isPersonalLiveAccount(acc)
-                              ? 'Personal Live (Self-Capital)'
-                              : isDemoAccount(acc)
-                              ? 'Demo Practice Account'
-                              : `${acc.tierName || 'Trading Account'} · ${acc.id}`}
-                          </span>
-                          <span
-                            className={`text-[9px] px-1.5 py-0.5 rounded font-black uppercase tracking-wider border ${
-                              isLive
-                                ? 'bg-[#00c853]/25 text-[#00e676] border-[#00e676]/60'
-                                : 'bg-[#ff8800]/20 text-[#ff8800] border-[#ff8800]/50'
-                            }`}
-                          >
-                            {getAccountStatusBadgeLabel(acc)}
-                          </span>
-                          {acc.status === 'breached' && (
-                            <span className="text-[9px] px-1 py-0.2 rounded bg-rose-500/20 text-rose-300 font-bold">
-                              BREACHED
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-[#00e676] font-black mt-0.5">
-                          ${accBal.toLocaleString('en-US', {
-                            minimumFractionDigits: 2,
-                            maximumFractionDigits: 2,
-                          })} • {acc.tierName}
-                        </div>
-                      </div>
-                      {acc.id === effectiveAccount?.id && <CheckCircle2 className="w-4 h-4 text-cyan-400" />}
-                    </button>
-                  );
-                })}
-                {onOpenChallengeModal && (
-                  <div className="border-t border-[#2a2e39] mt-2 pt-2">
-                    <button
-                      onClick={() => {
-                        setAccountDropdownOpen(false);
-                        onOpenChallengeModal();
-                      }}
-                      className="w-full py-1.5 text-xs text-center font-bold text-amber-400 hover:text-amber-300 rounded bg-[#131722] border border-amber-500/20 cursor-pointer"
-                    >
-                      + Buy New Evaluation Account
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
 
           {/* Green "Deposit" Button (Quotex Style) */}
           <button
