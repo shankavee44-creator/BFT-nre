@@ -273,6 +273,16 @@ export interface ReferralRecord {
   [key: string]: any;
 }
 
+export interface ReferredPurchaseItem {
+  id?: string;
+  accountId?: string | null;
+  name: string;
+  sku?: string;
+  amount: number;
+  accountType?: string;
+  createdAt?: string;
+}
+
 export interface ReferredUser {
   id: string;
   fullName?: string;
@@ -283,6 +293,10 @@ export interface ReferredUser {
   hasPurchased?: boolean;
   totalVolume?: number;
   totalCommissionGenerated?: number;
+  latestPurchase?: ReferredPurchaseItem;
+  purchases?: ReferredPurchaseItem[];
+  accountCount?: number;
+  totalPurchaseAmount?: number;
   status?: 'active' | 'pending' | string;
   [key: string]: any;
 }
@@ -302,6 +316,8 @@ export interface AffiliateReferralDetail {
   commissionEarned: number; // Automatically calculated from turnover * rate ($)
   challengeCommissionEarned?: number; // Any funded challenge purchase/withdrawal commission ($)
   accountType?: 'self_funded' | 'funded' | 'dual';
+  accountCount?: number;
+  purchasedAccounts?: ReferredPurchaseItem[];
   status: 'active' | 'completed' | 'pending' | string;
   joinedAt: string;
 }
@@ -337,6 +353,7 @@ export interface AffiliateStats {
   level3Count: number;
   activeTradersCount: number;
   activeFundedCount: number;
+  totalPurchasedAccountsCount?: number;
   isVipUnlocked?: boolean;
   vipThreshold: number;
   vipProgressPercent: number;

@@ -2458,18 +2458,23 @@ export async function insertSupabaseCryptoDeposit(params: {
     };
   }
 
+  const isBankMethod = String(params.network || '')
+    .toLowerCase()
+    .includes('bank');
+  const resolvedPayMethod = isBankMethod ? 'bank_transfer' : params.network || 'crypto';
+
   // Dual insertion attempt into public.deposits and public.crypto_deposits
   const depositsTablePayload = {
     user_id: effectiveUserId,
     amount: params.amount,
     amount_lkr: amountLkr,
     lkr_amount: amountLkr,
-    payment_method: params.network || 'Commercial Bank',
-    network: params.network || 'Commercial Bank',
+    payment_method: resolvedPayMethod,
+    network: params.network || (isBankMethod ? 'Bank Transfer' : 'Commercial Bank'),
     wallet_address: params.walletAddress || '',
     receipt_url: params.receiptUrl || '',
     proof_url: params.receiptUrl || '',
-    status: params.status || 'Processing',
+    status: params.status || 'pending',
     tx_hash: params.txHash || null,
     package_name: params.packageName || '',
     account_type: params.accountType || 'self_funded',
@@ -2838,7 +2843,8 @@ export function getAuthoritativeAccountBalance(
 export function resolveActiveTradingAccount(
   accounts: TradingAccount[],
   activeAccountId: string,
-  userProfile?: UserProfile | null
+  userProfile?: UserProfile | null,
+  options?: { strictMatch?: boolean }
 ): TradingAccount | undefined {
   if (!Array.isArray(accounts) || accounts.length === 0) return undefined;
 
@@ -2846,7 +2852,12 @@ export function resolveActiveTradingAccount(
   let matched: TradingAccount | undefined;
 
   if (cleanId) {
-    matched = accounts.find((acc) => acc.id === cleanId);
+    matched = accounts.find(
+      (acc) =>
+        acc.id === cleanId ||
+        (acc.supabaseAccountId && acc.supabaseAccountId === cleanId) ||
+        (acc.loginId && acc.loginId === cleanId)
+    );
   }
 
   if (!matched && (cleanId === 'personal_live' || cleanId.startsWith('BFT-PERS'))) {
@@ -2855,6 +2866,10 @@ export function resolveActiveTradingAccount(
 
   if (!matched && (cleanId === 'demo' || cleanId.startsWith('BFT-DEMO'))) {
     matched = accounts.find((acc) => isDemoAccount(acc));
+  }
+
+  if (!matched && options?.strictMatch && cleanId) {
+    return undefined;
   }
 
   if (!matched) {

@@ -133,6 +133,7 @@ import {
   deduplicateP2PTransferRecords,
   type P2PTransferRecord,
 } from '../utils/p2pTransfer';
+import { mapPurchaseOrdersToAccounts } from '../utils/accountLoader';
 
 interface UserDashboardProps {
   userProfile: UserProfile;
@@ -146,7 +147,7 @@ interface UserDashboardProps {
   purchases?: any[];
   onAddPayout?: (payout: AffiliatePayout) => void;
   onSelectAccount: (accountId: string) => void;
-  onOpenTerminal: () => void;
+  onOpenTerminal: (accountId?: string) => void;
   onOpenChallengeModal: () => void;
   onOpenWithdrawalModal?: () => void;
   onNavigateToPricing?: () => void;
@@ -549,6 +550,11 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     }
     return combined;
   }, [purchases, livePurchases]);
+
+  const purchaseAccountMap = React.useMemo(
+    () => mapPurchaseOrdersToAccounts(displayPurchases, accounts),
+    [displayPurchases, accounts]
+  );
 
   useEffect(() => {
     const t = setInterval(() => setNowTick(Date.now()), 1000);
@@ -2404,8 +2410,18 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               </div>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {accounts.map((acc) => {
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2 px-1 font-mono">
+                <div className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                  Active Trading Accounts ({accounts.length})
+                </div>
+                <div className="text-[11px] text-slate-400">
+                  {accounts.filter((a) => !isPersonalLiveAccount(a) && !isDemoAccount(a)).length} Challenge / Funded ·{' '}
+                  {accounts.filter((a) => isPersonalLiveAccount(a)).length} Personal Live
+                </div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {accounts.map((acc, accIdx) => {
                 const profit = Number((acc.currentBalance - acc.initialBalance).toFixed(2));
                 const isPersonal = isPersonalLiveAccount(acc);
                 const isDemo = isDemoAccount(acc);
@@ -2577,7 +2593,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                             type="button"
                             onClick={() => {
                               onSelectAccount(acc.id);
-                              onOpenTerminal();
+                              onOpenTerminal(acc.id);
                             }}
                             className="flex-1 py-2.5 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 cursor-pointer font-mono bg-rose-950/80 text-rose-300 border border-rose-500/40"
                           >
@@ -2597,9 +2613,10 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                         <>
                           <button
                             type="button"
+                            data-testid={`launch-account-terminal-btn-${acc.id}`}
                             onClick={() => {
                               onSelectAccount(acc.id);
-                              onOpenTerminal();
+                              onOpenTerminal(acc.id);
                             }}
                             className="flex-1 py-2.5 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 cursor-pointer font-mono bg-[#ff8800] hover:bg-[#ff9900] text-slate-950"
                           >
@@ -2641,6 +2658,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                   </div>
                 );
               })}
+              </div>
             </div>
           )}
 
@@ -2686,15 +2704,12 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                     liveStatus === 'approved';
                   const isFailed = liveStatus === 'failed' || liveStatus === 'declined';
                   const accountForPurchase = isCompleted
-                    ? accounts.find(
-                        (a) =>
-                          (purchase.account_id && a.id === purchase.account_id) ||
-                          getPackageSku(a) === purchase.package_sku
-                      ) ||
-                      (purchase.account_type === 'self_funded'
-                        ? accounts.find((a) => isPersonalLiveAccount(a))
-                        : accounts.find((a) => !isPersonalLiveAccount(a) && !isDemoAccount(a)))
+                    ? purchaseAccountMap.get(String(purchase.id)) || null
                     : null;
+                  const targetLaunchId =
+                    accountForPurchase?.id ||
+                    (purchase.account_id ? String(purchase.account_id) : '') ||
+                    String(purchase.id);
                   return (
                     <div
                       key={purchase.id}
@@ -2734,9 +2749,20 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                             {purchase.account_type === 'self_funded' ? 'Self-Funded' : 'Challenge'}
                           </span>
                           <span>•</span>
-                          <span className="text-[10px] text-slate-500">
-                            ID: {String(purchase.id).slice(0, 10)}
+                          <span className="text-[10px] text-slate-400">
+                            Acct:{' '}
+                            <strong className="text-white">
+                              {accountForPurchase?.id || purchase.account_id || String(purchase.id).slice(0, 12)}
+                            </strong>
                           </span>
+                          {accountForPurchase && (
+                            <>
+                              <span>•</span>
+                              <span className="text-[10px] text-emerald-400 font-bold">
+                                Bal: ${Number(accountForPurchase.currentBalance ?? 0).toLocaleString()}
+                              </span>
+                            </>
+                          )}
                         </div>
                         {liveStatus === 'pending' && (
                           <div className="inline-flex items-center gap-1 text-[10px] text-[#ffaa00] bg-[#ff8800]/10 border border-[#ff8800]/30 px-2 py-0.5 rounded font-bold mt-1">
@@ -2758,12 +2784,13 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                             ? new Date(purchase.created_at).toLocaleDateString()
                             : 'Today'}
                         </div>
-                        {accountForPurchase && isCompleted && (
+                        {isCompleted && targetLaunchId && (
                           <button
                             type="button"
+                            data-testid={`launch-purchase-terminal-btn-${purchase.id}`}
                             onClick={() => {
-                              onSelectAccount(accountForPurchase.id);
-                              onOpenTerminal();
+                              onSelectAccount(targetLaunchId);
+                              onOpenTerminal(targetLaunchId);
                             }}
                             className="px-3 py-2 rounded-xl bg-[#ff8800] text-slate-950 font-black text-[10px] hover:bg-[#ff9900] transition-colors cursor-pointer"
                           >

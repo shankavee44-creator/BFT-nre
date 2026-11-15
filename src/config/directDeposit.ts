@@ -731,15 +731,58 @@ export function mergeRealtimePurchase(
     return updated.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
   }
 
-  // Deduplicate optimistic or cross-table (user_purchases vs crypto_deposits) records for the same purchase within 15s
+  // Deduplicate optimistic or cross-table (user_purchases vs crypto_deposits) mirrors for the same order,
+  // while preserving legitimate multiple purchases of the same SKU/amount made by the same trader.
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const mappedTs = Date.parse(mapped.created_at) || Date.now();
   const nearDuplicateIdx = list.findIndex((item) => {
+    const itemAccId = String(item.account_id || '').trim();
+    const mappedAccId = String(mapped.account_id || '').trim();
+    if (itemAccId && mappedAccId && itemAccId !== mappedAccId) {
+      return false;
+    }
+
+    const itemTx = String(item.tx_hash || '').trim();
+    const mappedTx = String(mapped.tx_hash || '').trim();
+    if (itemTx && mappedTx && itemTx !== mappedTx) {
+      return false;
+    }
+    if (itemTx && mappedTx && itemTx === mappedTx) {
+      return true;
+    }
+
+    const itemIdStr = String(item.id || '').trim();
+    const mappedIdStr = String(mapped.id || '').trim();
+    // Two distinct database UUIDs or two distinct confirmed PUR- records represent separate orders
+    if (uuidRegex.test(itemIdStr) && uuidRegex.test(mappedIdStr) && itemIdStr !== mappedIdStr) {
+      return false;
+    }
+    if (
+      itemIdStr.startsWith('PUR-') &&
+      mappedIdStr.startsWith('PUR-') &&
+      itemIdStr !== mappedIdStr
+    ) {
+      return false;
+    }
+    if (
+      itemIdStr.startsWith('DEP-') &&
+      mappedIdStr.startsWith('DEP-') &&
+      itemIdStr !== mappedIdStr
+    ) {
+      return false;
+    }
+
     const itemTs = Date.parse(item.created_at) || 0;
     const withinWindow = Math.abs(mappedTs - itemTs) <= 15000;
     const sameSkuOrName =
       item.package_sku === mapped.package_sku || item.package_name === mapped.package_name;
     const sameAmount = Math.abs(item.amount - mapped.amount) < 0.01;
-    return withinWindow && sameSkuOrName && sameAmount;
+    const isCrossTableMirror =
+      itemIdStr.startsWith('DEP-') !== mappedIdStr.startsWith('DEP-') ||
+      uuidRegex.test(itemIdStr) !== uuidRegex.test(mappedIdStr) ||
+      itemIdStr.startsWith('NOW-') !== mappedIdStr.startsWith('NOW-');
+
+    return withinWindow && sameSkuOrName && sameAmount && isCrossTableMirror;
   });
 
   if (nearDuplicateIdx >= 0) {
@@ -756,6 +799,7 @@ export function mergeRealtimePurchase(
     updated[nearDuplicateIdx] = {
       ...curr,
       ...mapped,
+      account_id: mapped.account_id || curr.account_id || null,
       status: nextStatus,
     };
     return updated.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));

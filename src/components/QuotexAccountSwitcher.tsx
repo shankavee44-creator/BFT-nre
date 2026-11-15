@@ -84,9 +84,12 @@ export const QuotexAccountSwitcher: React.FC<QuotexAccountSwitcherProps> = ({
 
   const personalAccount = accounts.find((a) => isPersonalLiveAccount(a));
   const demoAccount = accounts.find((a) => isDemoAccount(a));
+  const propAccounts = accounts.filter((a) => !isPersonalLiveAccount(a) && !isDemoAccount(a));
 
   // Determine current active mode
   const isDemoActive = !activeAccount || isDemoAccount(activeAccount);
+  const isPersonalActive = Boolean(activeAccount && isPersonalLiveAccount(activeAccount));
+  const isPropActive = Boolean(activeAccount && !isDemoActive && !isPersonalActive);
 
   // Authoritative balances
   const liveBalance =
@@ -98,6 +101,20 @@ export const QuotexAccountSwitcher: React.FC<QuotexAccountSwitcherProps> = ({
     userProfile.demoBalance !== undefined && userProfile.demoBalance !== null
       ? Number(userProfile.demoBalance)
       : Number(demoAccount?.currentBalance ?? 10000);
+
+  const activePillBalance = isDemoActive
+    ? demoBalance
+    : isPropActive && activeAccount
+    ? Number(activeAccount.currentBalance ?? activeAccount.equity ?? activeAccount.initialBalance ?? 0)
+    : liveBalance;
+
+  const activePillLabel = isDemoActive
+    ? 'DEMO ACCOUNT'
+    : isPropActive && activeAccount
+    ? activeAccount.phase === 'funded' || activeAccount.tier === 'instant'
+      ? `LIVE FUNDED · ${activeAccount.id}`
+      : `CHALLENGE · ${activeAccount.id}`
+    : 'LIVE ACCOUNT';
 
   const traderId = resolveUserNumericId(userProfile);
 
@@ -230,13 +247,13 @@ export const QuotexAccountSwitcher: React.FC<QuotexAccountSwitcherProps> = ({
         <div className="text-left font-mono">
           <div
             className={`text-[9px] font-black uppercase tracking-wider ${
-              isDemoActive ? 'text-amber-400' : 'text-[#00e676]'
+              isDemoActive ? 'text-amber-400' : isPropActive ? 'text-[#ff8800]' : 'text-[#00e676]'
             }`}
           >
-            {isDemoActive ? 'DEMO ACCOUNT' : 'LIVE ACCOUNT'}
+            {activePillLabel}
           </div>
           <div className="text-xs sm:text-sm font-black text-white leading-none">
-            {formatAccountBalance(isDemoActive ? demoBalance : liveBalance, currency, hideBalance)}
+            {formatAccountBalance(activePillBalance, currency, hideBalance)}
           </div>
         </div>
 
@@ -331,11 +348,11 @@ export const QuotexAccountSwitcher: React.FC<QuotexAccountSwitcherProps> = ({
 
             <div className="border-t border-white/10 my-2" />
 
-            {/* Option 1: Live Account */}
+            {/* Option 1: Personal Live Account */}
             <div
               onClick={handleSwitchToLive}
               className={`p-3 rounded-xl border transition-all cursor-pointer select-none ${
-                !isDemoActive
+                isPersonalActive
                   ? 'bg-[#151722] border-[#00e676]/50 shadow-md shadow-[#00e676]/10'
                   : 'bg-white/5 hover:bg-white/10 border-white/10'
               }`}
@@ -344,14 +361,14 @@ export const QuotexAccountSwitcher: React.FC<QuotexAccountSwitcherProps> = ({
                 {/* Custom Radio Button */}
                 <div
                   className={`mt-0.5 w-4 h-4 rounded-full border flex items-center justify-center shrink-0 ${
-                    !isDemoActive ? 'border-white bg-transparent' : 'border-slate-500'
+                    isPersonalActive ? 'border-white bg-transparent' : 'border-slate-500'
                   }`}
                 >
-                  {!isDemoActive && <div className="w-2 h-2 rounded-full bg-white" />}
+                  {isPersonalActive && <div className="w-2 h-2 rounded-full bg-white" />}
                 </div>
 
                 <div className="flex-1 font-mono">
-                  <div className="text-xs font-bold text-white">Live Account</div>
+                  <div className="text-xs font-bold text-white">Live Account (Self-Funded)</div>
                   <div className="text-base font-black text-white mt-0.5">
                     {formatAccountBalance(liveBalance, currency, hideBalance)}
                   </div>
@@ -376,6 +393,52 @@ export const QuotexAccountSwitcher: React.FC<QuotexAccountSwitcherProps> = ({
                 </div>
               )}
             </div>
+
+            {/* Prop Evaluation & Funded Accounts */}
+            {propAccounts.length > 0 && (
+              <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                <div className="text-[10px] font-bold text-slate-400 uppercase font-mono tracking-wider px-1">
+                  Evaluation &amp; Funded Accounts ({propAccounts.length})
+                </div>
+                {propAccounts.map((acc) => {
+                  const isSelected = activeAccount?.id === acc.id;
+                  return (
+                    <div
+                      key={acc.id}
+                      onClick={() => {
+                        soundEngine.playUiClick();
+                        onSelectAccount(acc.id);
+                        setIsOpen(false);
+                      }}
+                      className={`p-2.5 rounded-xl border transition-all cursor-pointer select-none flex items-center gap-2.5 ${
+                        isSelected
+                          ? 'bg-[#151722] border-[#ff8800]/60 shadow-md shadow-[#ff8800]/10'
+                          : 'bg-white/5 hover:bg-white/10 border-white/10'
+                      }`}
+                    >
+                      <div
+                        className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 ${
+                          isSelected ? 'border-white' : 'border-slate-500'
+                        }`}
+                      >
+                        {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                      </div>
+                      <div className="flex-1 min-w-0 font-mono">
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="text-[11px] font-bold text-white truncate">{acc.id}</span>
+                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#ff8800]/15 text-[#ff8800] font-black uppercase">
+                            {acc.phase === 'funded' || acc.tier === 'instant' ? 'FUNDED' : acc.tierName}
+                          </span>
+                        </div>
+                        <div className="text-sm font-black text-white mt-0.5">
+                          {formatAccountBalance(Number(acc.currentBalance ?? 0), currency, hideBalance)}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
 
             {/* Option 2: Demo Account with Custom Balance ($1 to $10,000) */}
             <div

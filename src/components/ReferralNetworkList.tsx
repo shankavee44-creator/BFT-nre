@@ -225,6 +225,13 @@ export const ReferralNetworkList: React.FC<ReferralNetworkListProps> = ({
                       account_balance: liveBalance,
                       bonus_amount: bonusAmt,
                       total_trade_turnover: turnoverAmt,
+                      account_count: userAccts.length,
+                      purchased_accounts: userAccts.map((a: any) => ({
+                        id: String(a.id),
+                        accountId: String(a.id),
+                        name: String(a.tier_name || a.account_type || 'Trading Account'),
+                        amount: Number(a.starting_balance ?? a.initial_balance ?? a.current_balance ?? 0),
+                      })),
                       status: turnoverAmt > 0 || liveBalance > 0 ? 'completed' : 'active',
                       joined_at: u.created_at || new Date().toISOString(),
                     });
@@ -291,11 +298,13 @@ export const ReferralNetworkList: React.FC<ReferralNetworkListProps> = ({
               const pkgAmt = Number(c.package_amount || 0);
               if (pkgAmt > 0) {
                 collectedPurchases.push({
+                  id: c.id ? `COMMPUR-${c.id}` : undefined,
                   user_id: c.referred_user_id,
                   package_name: c.package_name || c.description || 'Challenge Package',
                   package_sku: 'BFT-PKG',
                   package_amount: pkgAmt,
                   amount: pkgAmt,
+                  created_at: c.created_at,
                 });
               }
             }
@@ -319,9 +328,28 @@ export const ReferralNetworkList: React.FC<ReferralNetworkListProps> = ({
                   email: node.email,
                   level: (node.level || 1) as 1 | 2 | 3,
                   latestPurchase: node.latestPurchase,
+                  purchases: node.purchases,
+                  accountCount: node.accountCount,
+                  totalPurchaseAmount: node.totalPurchaseAmount,
                 });
+              }
+              if (Array.isArray(node.purchases) && node.purchases.length > 0) {
+                for (const np of node.purchases) {
+                  collectedPurchases.push({
+                    id: np.id,
+                    account_id: np.accountId || null,
+                    user_id: node.id,
+                    package_name: np.name,
+                    package_sku: np.sku,
+                    package_amount: np.amount,
+                    amount: np.amount,
+                    created_at: np.createdAt,
+                  });
+                }
               } else if (node.latestPurchase) {
                 collectedPurchases.push({
+                  id: node.latestPurchase.id,
+                  account_id: node.latestPurchase.accountId || null,
                   user_id: node.id,
                   package_name: node.latestPurchase.name,
                   package_sku: node.latestPurchase.sku,
@@ -333,13 +361,23 @@ export const ReferralNetworkList: React.FC<ReferralNetworkListProps> = ({
           }
           if (Array.isArray(dashRes.stats.recentCommissions)) {
             for (const rc of dashRes.stats.recentCommissions) {
-              if (rc.source_type !== 'withdrawal' && Number(rc.base_amount) > 0) {
-                collectedPurchases.push({
-                  user_id: rc.referred_user_id,
-                  package_name: rc.package_name,
-                  package_sku: 'BFT-PKG',
-                  package_amount: Number(rc.base_amount),
-                  amount: Number(rc.base_amount),
+              if (!rc) continue;
+              const commId = String(rc.id || `RC-${rc.referred_user_id}-${rc.created_at || ''}`);
+              if (!collectedCommissions.some((c) => String(c.id) === commId)) {
+                collectedCommissions.push({
+                  id: commId,
+                  referrerId: String(rc.referrer_id || userId || ''),
+                  referredUserId: String(rc.referred_user_id || ''),
+                  referredUserName: rc.referred_name || 'Trader',
+                  referredUserEmail: rc.referred_email || '',
+                  level: (Number(rc.level) === 2 ? 2 : Number(rc.level) === 3 ? 3 : 1) as 1 | 2 | 3,
+                  commissionType: rc.source_type === 'withdrawal' ? 'withdrawal' : 'package',
+                  packageName: rc.package_name || 'Challenge Package',
+                  packagePrice: Number(rc.base_amount || 0),
+                  commissionRate: Number(rc.commission_rate || 0),
+                  commissionAmount: Number(rc.commission_amount || 0),
+                  status: rc.status === 'pending' ? 'pending' : 'paid',
+                  createdAt: rc.created_at || new Date().toISOString(),
                 });
               }
             }
@@ -803,8 +841,13 @@ export const ReferralNetworkList: React.FC<ReferralNetworkListProps> = ({
                               #{row.traderIndex}
                             </span>
                             <div>
-                              <div className="font-bold text-white font-sans text-sm leading-tight">
-                                {row.referralName}
+                              <div className="font-bold text-white font-sans text-sm leading-tight flex items-center gap-2">
+                                <span>{row.referralName}</span>
+                                {Number(row.accountCount || 0) > 1 && (
+                                  <span className="px-1.5 py-0.5 rounded bg-[#ff8800]/15 text-[#ff8800] border border-[#ff8800]/30 text-[10px] font-mono font-bold">
+                                    {row.accountCount} Accounts
+                                  </span>
+                                )}
                               </div>
                               <div className="text-[11px] text-slate-400 font-mono mt-0.5 flex items-center gap-2">
                                 <span>{row.referralCodeOrId}</span>
@@ -913,7 +956,16 @@ export const ReferralNetworkList: React.FC<ReferralNetworkListProps> = ({
               })}
             </div>
             <span className="px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-[11px] font-mono text-slate-300">
-              {filteredNetwork.length} {filteredNetwork.length === 1 ? 'Trader' : 'Traders'}
+              {filteredNetwork.length} {filteredNetwork.length === 1 ? 'Trader' : 'Traders'} ·{' '}
+              {filteredNetwork.reduce(
+                (acc, u) =>
+                  acc +
+                  (Array.isArray(u.purchases) && u.purchases.length > 0
+                    ? u.purchases.length
+                    : u.accountCount || (u.latestPurchase && Number(u.latestPurchase.amount) > 0 ? 1 : 0)),
+                0
+              )}{' '}
+              Purchased Accounts
             </span>
           </div>
         </div>
@@ -992,22 +1044,24 @@ export const ReferralNetworkList: React.FC<ReferralNetworkListProps> = ({
               </thead>
               <tbody className="divide-y divide-white/5">
                 {paginatedNetwork.map((u) => {
-                  const hasPurchase = Boolean(
-                    u.latestPurchase && Number(u.latestPurchase.amount) > 0
-                  );
-                  const displayPkg = hasPurchase
-                    ? formatPurchasedPackageLabel(
-                        u.latestPurchase?.name,
-                        u.latestPurchase?.sku,
-                        u.latestPurchase?.amount
-                      )
-                    : 'No Purchase';
+                  const userPurchases =
+                    Array.isArray(u.purchases) && u.purchases.length > 0
+                      ? u.purchases.filter((p) => Number(p.amount) > 0)
+                      : u.latestPurchase && Number(u.latestPurchase.amount) > 0
+                      ? [u.latestPurchase]
+                      : [];
+                  const hasPurchase = userPurchases.length > 0;
+                  const totalAmt = hasPurchase
+                    ? u.totalPurchaseAmount && Number(u.totalPurchaseAmount) > 0
+                      ? Number(u.totalPurchaseAmount)
+                      : userPurchases.reduce((sum, p) => sum + Number(p.amount || 0), 0)
+                    : 0;
                   const displayAmt = hasPurchase
-                    ? formatPurchaseAmountDisplay(u.latestPurchase?.amount)
+                    ? formatPurchaseAmountDisplay(totalAmt)
                     : '$0';
 
                   return (
-                    <tr key={u.id} className="hover:bg-white/5">
+                    <tr key={u.id} className="hover:bg-white/5 align-top">
                       <td className="py-3 pl-2 font-bold text-white flex items-center gap-2">
                         <span
                           className={`w-1.5 h-1.5 rounded-full ${
@@ -1019,6 +1073,11 @@ export const ReferralNetworkList: React.FC<ReferralNetworkListProps> = ({
                           }`}
                         />
                         <span>{u.fullName}</span>
+                        {userPurchases.length > 1 && (
+                          <span className="px-1.5 py-0.5 rounded bg-[#ff8800]/15 text-[#ff8800] border border-[#ff8800]/30 text-[9px] font-black">
+                            {userPurchases.length} Accts
+                          </span>
+                        )}
                       </td>
                       <td className="py-3 text-slate-300">
                         <span
@@ -1035,8 +1094,27 @@ export const ReferralNetworkList: React.FC<ReferralNetworkListProps> = ({
                         </span>
                       </td>
                       <td className="py-3 text-slate-300">
-                        {hasPurchase && displayPkg !== 'No Purchase' ? (
-                          <span className="font-bold text-[#ff8800]">{displayPkg}</span>
+                        {hasPurchase ? (
+                          <div className="space-y-1">
+                            {userPurchases.map((pur, idx) => {
+                              const label = formatPurchasedPackageLabel(pur.name, pur.sku, pur.amount);
+                              return (
+                                <div key={pur.id || pur.accountId || `${u.id}-${idx}`} className="flex flex-wrap items-center gap-1.5">
+                                  <span className="font-bold text-[#ff8800]">
+                                    {label !== 'No Purchase' ? label : pur.name}
+                                  </span>
+                                  <span className="text-[10px] text-emerald-400 font-bold">
+                                    ({formatPurchaseAmountDisplay(pur.amount)})
+                                  </span>
+                                  {pur.accountId && (
+                                    <span className="text-[9px] px-1 py-0.2 rounded bg-white/5 border border-white/10 text-slate-400">
+                                      {pur.accountId}
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
                         ) : (
                           <span className="text-slate-400">No Purchase</span>
                         )}

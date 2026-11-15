@@ -52,6 +52,13 @@ import {
   filterAccountsForUser,
 } from './utils/kycVerification';
 import {
+  parseAccountIdFromSearch,
+  buildTerminalUrlWithAccountId,
+  fetchAccountByIdFromDatabase,
+  isExplicitNonDemoAccountId,
+  findMatchingAccount,
+} from './utils/accountLoader';
+import {
   loadAffiliateUsers,
   saveAffiliateUsers,
   loadAffiliateReferrals,
@@ -240,6 +247,10 @@ export default function App() {
   const [affiliateReferrals, setAffiliateReferrals] = useState<ReferralRecord[]>([]);
   const [affiliatePayouts, setAffiliatePayouts] = useState<AffiliatePayout[]>([]);
   const [activeReferralNotification, setActiveReferralNotification] = useState<string | null>(null);
+  const [urlRequestedAccountId, setUrlRequestedAccountId] = useState<string | null>(() =>
+    typeof window !== 'undefined' ? parseAccountIdFromSearch(window.location.search) : null
+  );
+  const [isResolvingUrlAccount, setIsResolvingUrlAccount] = useState<boolean>(false);
 
   // Modals state
   const [selectedPackageToBuy, setSelectedPackageToBuy] = useState<EvaluationPackage | null>(null);
@@ -286,8 +297,14 @@ export default function App() {
   useEffect(() => {
     const loadedAccounts = loadAccounts();
     const activeId = loadActiveAccountId();
+    const initialUrlAccountId = parseAccountIdFromSearch(window.location.search);
+    const effectiveActiveId = initialUrlAccountId || activeId;
     setAccounts(loadedAccounts);
-    setActiveAccountId(activeId);
+    setActiveAccountId(effectiveActiveId);
+    if (initialUrlAccountId) {
+      setUrlRequestedAccountId(initialUrlAccountId);
+      saveActiveAccountId(initialUrlAccountId);
+    }
     setWithdrawals(loadWithdrawals());
 
     setAffiliateUsers(loadAffiliateUsers());
@@ -301,8 +318,10 @@ export default function App() {
     }
     if (urlParams.get('tab')) {
       setCurrentTab(urlParams.get('tab')!);
-    } else if (urlParams.get('autostart') === '1') {
-      setCurrentTab('terminal');
+    } else if (urlParams.get('autostart') === '1' || initialUrlAccountId) {
+      if (window.location.pathname === '/terminal' || urlParams.get('autostart') === '1') {
+        setCurrentTab('terminal');
+      }
     }
 
     // Check live database session on backend
@@ -432,9 +451,24 @@ export default function App() {
                 winRate: localAcc.winRate || incoming.winRate,
               });
             });
+            for (const prevAcc of prev) {
+              const existsInMapped = mappedAccounts.some(
+                (m: TradingAccount) =>
+                  m.id === prevAcc.id ||
+                  (prevAcc.supabaseAccountId && m.supabaseAccountId === prevAcc.supabaseAccountId) ||
+                  (m.loginId && prevAcc.loginId && m.loginId === prevAcc.loginId)
+              );
+              if (!existsInMapped && !isPersonalLiveAccount(prevAcc) && !isDemoAccount(prevAcc)) {
+                mappedAccounts.push(sanitizeAccountForAntiBreach(prevAcc));
+              }
+            }
             saveAccounts(mappedAccounts);
+            const explicitUrlAcc = parseAccountIdFromSearch(window.location.search);
             const storedActiveId = loadActiveAccountId();
-            if (!storedActiveId) {
+            if (explicitUrlAcc) {
+              setActiveAccountId(explicitUrlAcc);
+              saveActiveAccountId(explicitUrlAcc);
+            } else if (!storedActiveId) {
               const fundedAcc = mappedAccounts.find((a: TradingAccount) => a.currentBalance > 0);
               const nextActiveId = fundedAcc?.id || 'BFT-DEMO-001';
               setActiveAccountId(nextActiveId);
@@ -666,12 +700,7 @@ export default function App() {
               (a) =>
                 a.id === sa.id ||
                 (a.supabaseAccountId && a.supabaseAccountId === sa.id) ||
-                a.loginId === sa.loginId ||
-                (!a.supabaseAccountId &&
-                  !isPersonalLiveAccount(a) &&
-                  !isDemoAccount(a) &&
-                  a.accountType === sa.accountType &&
-                  a.size === sa.size)
+                (sa.loginId && a.loginId && a.loginId === sa.loginId)
             );
             if (idx >= 0) {
               const localAcc = updated[idx];
@@ -1178,10 +1207,17 @@ export default function App() {
   };
 
   const handleSelectAccount = (id: string) => {
-    const resolved = resolveActiveTradingAccount(userAccounts, id, userProfile);
+    const resolved = findMatchingAccount(userAccounts, id);
     const nextId = resolved ? resolved.id : id;
     setActiveAccountId(nextId);
     saveActiveAccountId(nextId);
+    setUrlRequestedAccountId(nextId);
+    if (currentTab === 'terminal' && typeof window !== 'undefined') {
+      const nextUrl = buildTerminalUrlWithAccountId(nextId, window.location.search);
+      if (window.location.pathname + window.location.search !== nextUrl) {
+        window.history.replaceState(null, '', nextUrl);
+      }
+    }
     broadcastSyncEvent('ACCOUNT_SELECTED', nextId);
   };
 
@@ -1576,7 +1612,7 @@ export default function App() {
     setIsAuthModalOpen(true);
   };
 
-  const handleNavigateTab = (tabId: string) => {
+  const handleNavigateTab = (tabId: string, options?: { accountId?: string }) => {
     const routeCheck = resolveTargetRoute(tabId, Boolean(userProfile?.isLoggedIn));
     if (!routeCheck.allowed) {
       setProtectedRouteNotice(routeCheck.securityNotice || 'Authentication required to access this portal.');
@@ -1587,29 +1623,64 @@ export default function App() {
       return;
     }
     setProtectedRouteNotice(null);
+
+    const explicitAccId = options?.accountId ? String(options.accountId).trim() : '';
+    if (explicitAccId) {
+      setActiveAccountId(explicitAccId);
+      saveActiveAccountId(explicitAccId);
+      setUrlRequestedAccountId(explicitAccId);
+    } else if (tabId !== 'terminal') {
+      setUrlRequestedAccountId(null);
+    }
+
     setCurrentTab(tabId);
-    
-    // Synchronize URL path with state-based navigation
-    const path = tabId === 'home' ? '/' : `/${tabId}`;
-    if (window.location.pathname !== path) {
-      window.history.pushState(null, '', path);
+
+    // Synchronize URL path (and ?accountId= query parameter for Trading Terminal)
+    if (tabId === 'terminal') {
+      const targetAccForUrl =
+        explicitAccId ||
+        urlRequestedAccountId ||
+        (activeAccountId && activeAccountId !== 'BFT-DEMO-001' ? activeAccountId : '');
+      const terminalPath = buildTerminalUrlWithAccountId(targetAccForUrl || undefined);
+      if (window.location.pathname + window.location.search !== terminalPath) {
+        window.history.pushState(null, '', terminalPath);
+      }
+    } else {
+      const path = tabId === 'home' ? '/' : `/${tabId}`;
+      if (window.location.pathname + window.location.search !== path) {
+        window.history.pushState(null, '', path);
+      }
     }
   };
 
-  // Initial URL-to-Tab Routing Synchronization
+  // Initial URL-to-Tab Routing Synchronization (including ?accountId=...)
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
+    const urlAccId = parseAccountIdFromSearch(window.location.search);
+    if (urlAccId) {
+      setUrlRequestedAccountId(urlAccId);
+      setActiveAccountId(urlAccId);
+      saveActiveAccountId(urlAccId);
+    }
     const rawPath = window.location.pathname.replace(/^\//, '');
     const path =
       urlParams.get('tab') ||
       (urlParams.get('autostart') === '1' ? 'terminal' : rawPath || 'home');
     const validTabs = ['home', 'terminal', 'rules', 'affiliate', 'withdrawals', 'dashboard', 'certificates', 'faq'];
-    if (validTabs.includes(path) && path !== currentTab) {
-      handleNavigateTab(path);
+    if (validTabs.includes(path) && (path !== currentTab || Boolean(urlAccId))) {
+      handleNavigateTab(path, urlAccId ? { accountId: urlAccId } : undefined);
     }
 
     const handlePopState = () => {
       const p = window.location.pathname.replace(/^\//, '') || 'home';
+      const poppedAccId = parseAccountIdFromSearch(window.location.search);
+      if (poppedAccId) {
+        setUrlRequestedAccountId(poppedAccId);
+        setActiveAccountId(poppedAccId);
+        saveActiveAccountId(poppedAccId);
+      } else {
+        setUrlRequestedAccountId(null);
+      }
       if (validTabs.includes(p)) {
         setCurrentTab(p);
       }
@@ -1714,9 +1785,85 @@ export default function App() {
     return list;
   }, [baseOwnedAccounts, userProfile.isLoggedIn, userProfile.id, userProfile.email, userProfile.selfBalance, userProfile.demoBalance, userProfile.fundedBalance]);
 
+  const explicitTerminalAccountId =
+    currentTab === 'terminal'
+      ? urlRequestedAccountId || (isExplicitNonDemoAccountId(activeAccountId) ? activeAccountId : '')
+      : '';
+
+  // Resolve an explicitly requested terminal ?accountId= directly from Supabase / backend if not yet loaded locally
+  useEffect(() => {
+    if (currentTab !== 'terminal' || !userProfile?.isLoggedIn) {
+      setIsResolvingUrlAccount(false);
+      return;
+    }
+    const targetId = String(explicitTerminalAccountId || '').trim();
+    if (!targetId || !isExplicitNonDemoAccountId(targetId)) {
+      setIsResolvingUrlAccount(false);
+      return;
+    }
+
+    const existing = findMatchingAccount(userAccounts, targetId);
+    if (existing) {
+      if (activeAccountId !== existing.id) {
+        setActiveAccountId(existing.id);
+        saveActiveAccountId(existing.id);
+      }
+      setIsResolvingUrlAccount(false);
+      return;
+    }
+
+    let isCancelled = false;
+    setIsResolvingUrlAccount(true);
+    fetchAccountByIdFromDatabase(targetId, {
+      userId: userProfile.id,
+      userEmail: userProfile.email,
+    })
+      .then((fetchedAcc) => {
+        if (isCancelled || !fetchedAcc) return;
+        const owned: TradingAccount = {
+          ...fetchedAcc,
+          ownerId: fetchedAcc.ownerId || userProfile.id,
+          ownerEmail: fetchedAcc.ownerEmail || userProfile.email,
+        };
+        setAccounts((prev) => {
+          const idx = prev.findIndex(
+            (a) =>
+              a.id === owned.id ||
+              (owned.supabaseAccountId && a.supabaseAccountId === owned.supabaseAccountId)
+          );
+          const next = idx >= 0 ? prev.map((a, i) => (i === idx ? { ...a, ...owned } : a)) : [owned, ...prev];
+          saveAccounts(next);
+          return next;
+        });
+        setActiveAccountId(owned.id);
+        saveActiveAccountId(owned.id);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!isCancelled) {
+          setIsResolvingUrlAccount(false);
+        }
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [currentTab, explicitTerminalAccountId, userProfile?.isLoggedIn, userProfile?.id, userProfile?.email, userAccounts, activeAccountId]);
+
   const activeAccount = React.useMemo(
-    () => resolveActiveTradingAccount(userAccounts, activeAccountId, userProfile),
-    [userAccounts, activeAccountId, userProfile]
+    () =>
+      resolveActiveTradingAccount(
+        userAccounts,
+        explicitTerminalAccountId || activeAccountId,
+        userProfile,
+        {
+          strictMatch:
+            currentTab === 'terminal' &&
+            Boolean(explicitTerminalAccountId) &&
+            isExplicitNonDemoAccountId(explicitTerminalAccountId),
+        }
+      ),
+    [userAccounts, explicitTerminalAccountId, activeAccountId, userProfile, currentTab]
   );
 
   const activeTerminalTrades = React.useMemo(
@@ -1848,6 +1995,8 @@ export default function App() {
           <TradingTerminal
             account={activeAccount || null}
             accounts={userAccounts}
+            requestedAccountId={explicitTerminalAccountId || null}
+            isResolvingAccount={isResolvingUrlAccount}
             onSelectAccount={handleSelectAccount}
             onUpdateAccount={handleUpdateSingleAccount}
             trades={activeTerminalTrades}
@@ -1910,7 +2059,9 @@ export default function App() {
             purchases={purchases}
             onAddPayout={handleAddAffiliatePayout}
             onSelectAccount={handleSelectAccount}
-            onOpenTerminal={() => handleNavigateTab('terminal')}
+            onOpenTerminal={(accountId?: string) =>
+              handleNavigateTab('terminal', accountId ? { accountId } : undefined)
+            }
             onOpenChallengeModal={() => setSelectedPackageToBuy(PACKAGES[2])}
             onOpenWithdrawalModal={() => handleNavigateTab('withdrawals')}
             onNavigateToPricing={() => {

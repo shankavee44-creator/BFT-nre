@@ -1204,7 +1204,7 @@ async function insertRowWithColumnFallback(
 ): Promise<Record<string, any> | null> {
   if (typeof client?.from !== 'function') return null;
   const workingPayload = { ...basePayload };
-  for (let attempt = 0; attempt < 12; attempt++) {
+  for (let attempt = 0; attempt < 8; attempt++) {
     if (Object.keys(workingPayload).length === 0) break;
     try {
       const query = (client.from(tableName) as any).insert(workingPayload);
@@ -1232,10 +1232,6 @@ async function insertRowWithColumnFallback(
         continue;
       }
 
-      if (/invalid input syntax for type uuid/i.test(msg) && 'user_id' in workingPayload) {
-        delete workingPayload.user_id;
-        continue;
-      }
       break;
     } catch {
       break;
@@ -1303,6 +1299,21 @@ export async function submitCryptoDepositToSupabaseTable(params: {
     }
   }
 
+  if (!resolvedUuid && params.userEmail && typeof client?.from === 'function') {
+    try {
+      const q = (client.from('profiles') as any).select('id');
+      const { data } =
+        typeof q.ilike === 'function'
+          ? await q.ilike('email', String(params.userEmail).trim().toLowerCase()).maybeSingle()
+          : await q.eq('email', String(params.userEmail).trim().toLowerCase()).maybeSingle();
+      if (data?.id && UUID_REGEX.test(String(data.id))) {
+        resolvedUuid = String(data.id);
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   const nowIso = new Date().toISOString();
   const isBankTransfer =
     String(params.paymentMethod || '').toLowerCase() === 'bank_transfer' ||
@@ -1318,7 +1329,7 @@ export async function submitCryptoDepositToSupabaseTable(params: {
   const cleanTxHash = params.txHash ? String(params.txHash).trim() : null;
 
   const insertPayload: Record<string, any> = {
-    ...(resolvedUuid ? { user_id: resolvedUuid } : params.userId ? { user_id: params.userId } : {}),
+    ...(resolvedUuid ? { user_id: resolvedUuid } : {}),
     ...(params.userEmail ? { user_email: params.userEmail, email: params.userEmail } : {}),
     ...(params.userName ? { user_name: params.userName } : {}),
     ...(params.accountId ? { account_id: params.accountId } : {}),
@@ -1344,7 +1355,7 @@ export async function submitCryptoDepositToSupabaseTable(params: {
   let insertedCryptoRow: Record<string, any> | null = null;
   let insertedDepositsRow: Record<string, any> | null = null;
 
-  if (typeof client?.from === 'function') {
+  if (typeof client?.from === 'function' && resolvedUuid) {
     insertedCryptoRow = await insertRowWithColumnFallback(
       client,
       'crypto_deposits',
@@ -1640,15 +1651,19 @@ export async function approveAdminCryptoDepositInSupabase(params: {
     const maxDailyLossPct = 5;
     const maxOverallDrawdownPct = 10;
 
-    const provisionedAccount: TradingAccount = {
+    const provisionedAccount = {
       id: accountId,
       ownerId: userId || 'usr_bft_001',
       tier,
       tierName,
       size,
       balance: size,
+      initialBalance: size,
+      currentBalance: size,
       startingBalance: size,
       dailyStartBalance: size,
+      startingDayEquity: size,
+      equity: size,
       targetBalance: roundCurrency(size * (1 + targetProfitPct / 100)),
       minEquity: roundCurrency(size * (1 - maxOverallDrawdownPct / 100)),
       maxDailyLossAmount: roundCurrency(size * (maxDailyLossPct / 100)),
@@ -1658,8 +1673,8 @@ export async function approveAdminCryptoDepositInSupabase(params: {
       maxTradeRiskPct: 2,
       minTradingDays: 5,
       profitSplit: 80,
-      status: 'active',
-      fundingType: 'funded',
+      status: 'active' as const,
+      fundingType: 'funded' as const,
       loginId: `BFT${loginSuffix}`,
       passwordHash: `Trd#${String(loginSuffix).slice(0, 4)}!`,
       createdAt: nowMs,
@@ -1667,7 +1682,7 @@ export async function approveAdminCryptoDepositInSupabase(params: {
       dailyTradeDate: new Date().toISOString().slice(0, 10),
       dailyLossesCount: 0,
       tradingDays: [],
-    };
+    } as unknown as TradingAccount;
 
     if (typeof client?.from === 'function') {
       await insertRowWithColumnFallback(client, 'trading_accounts', {
@@ -1677,12 +1692,12 @@ export async function approveAdminCryptoDepositInSupabase(params: {
         tier: provisionedAccount.tier,
         tier_name: provisionedAccount.tierName,
         size: provisionedAccount.size,
-        balance: provisionedAccount.balance,
-        starting_balance: provisionedAccount.startingBalance,
-        daily_start_balance: provisionedAccount.dailyStartBalance,
-        target_balance: provisionedAccount.targetBalance,
-        min_equity: provisionedAccount.minEquity,
-        max_daily_loss: provisionedAccount.maxDailyLossAmount,
+        balance: size,
+        starting_balance: size,
+        daily_start_balance: size,
+        target_balance: roundCurrency(size * (1 + targetProfitPct / 100)),
+        min_equity: roundCurrency(size * (1 - maxOverallDrawdownPct / 100)),
+        max_daily_loss: roundCurrency(size * (maxDailyLossPct / 100)),
         status: 'active',
         funding_type: 'funded',
         login_id: provisionedAccount.loginId,

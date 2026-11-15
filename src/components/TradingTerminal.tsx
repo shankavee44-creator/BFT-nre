@@ -117,6 +117,12 @@ import {
   syncProfileBonusColumnsToSupabase,
 } from '../utils/depositBonus';
 import {
+  parseAccountIdFromSearch,
+  fetchAccountByIdFromDatabase,
+  isExplicitNonDemoAccountId,
+  findMatchingAccount,
+} from '../utils/accountLoader';
+import {
   computeAssetActiveTradeBadge,
   normalizeTradeAssetKey,
   isTradeActiveOrOpen,
@@ -235,6 +241,8 @@ import {
 interface TradingTerminalProps {
   account?: TradingAccount | null;
   accounts?: TradingAccount[];
+  requestedAccountId?: string | null;
+  isResolvingAccount?: boolean;
   onSelectAccount?: (id: string) => void;
   onUpdateAccount: (updated: TradingAccount) => void;
   trades: BinaryTrade[];
@@ -321,6 +329,8 @@ function drawRoundedRect(
 export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   account,
   accounts = [],
+  requestedAccountId = null,
+  isResolvingAccount = false,
   onSelectAccount,
   onUpdateAccount,
   trades,
@@ -450,7 +460,117 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     }
   }, [userProfile?.demoBalance]);
 
-  const rawEffectiveAccount = account || demoPracticeAccount;
+  const [resolvedExternalAccount, setResolvedExternalAccount] = useState<TradingAccount | null>(null);
+  const [isFetchingExternalAccount, setIsFetchingExternalAccount] = useState<boolean>(false);
+
+  const urlSearchAccountId =
+    typeof window !== 'undefined' ? parseAccountIdFromSearch(window.location.search) : null;
+  const effectiveRequestedAccountId = (requestedAccountId || urlSearchAccountId || '').trim();
+  const hasExplicitNonDemoRequest = isExplicitNonDemoAccountId(effectiveRequestedAccountId);
+
+  useEffect(() => {
+    if (!hasExplicitNonDemoRequest) {
+      setIsFetchingExternalAccount(false);
+      return;
+    }
+
+    const propMatches =
+      account &&
+      (account.id === effectiveRequestedAccountId ||
+        account.supabaseAccountId === effectiveRequestedAccountId ||
+        account.loginId === effectiveRequestedAccountId);
+    if (propMatches) {
+      setResolvedExternalAccount(null);
+      setIsFetchingExternalAccount(false);
+      return;
+    }
+
+    const listMatch = findMatchingAccount(accounts, effectiveRequestedAccountId);
+    if (listMatch) {
+      setResolvedExternalAccount(listMatch);
+      onSelectAccount?.(listMatch.id);
+      setIsFetchingExternalAccount(false);
+      return;
+    }
+
+    if (
+      resolvedExternalAccount &&
+      (resolvedExternalAccount.id === effectiveRequestedAccountId ||
+        resolvedExternalAccount.supabaseAccountId === effectiveRequestedAccountId ||
+        resolvedExternalAccount.loginId === effectiveRequestedAccountId)
+    ) {
+      setIsFetchingExternalAccount(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsFetchingExternalAccount(true);
+    fetchAccountByIdFromDatabase(effectiveRequestedAccountId, {
+      userId: userProfile?.id,
+      userEmail: userProfile?.email,
+    })
+      .then((fetched) => {
+        if (cancelled || !fetched) return;
+        const ownedFetched: TradingAccount = {
+          ...fetched,
+          ownerId: fetched.ownerId || userProfile?.id,
+          ownerEmail: fetched.ownerEmail || userProfile?.email,
+        };
+        setResolvedExternalAccount(ownedFetched);
+        onUpdateAccount(ownedFetched);
+        onSelectAccount?.(ownedFetched.id);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) {
+          setIsFetchingExternalAccount(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    effectiveRequestedAccountId,
+    hasExplicitNonDemoRequest,
+    account?.id,
+    account?.supabaseAccountId,
+    account?.loginId,
+    accounts,
+    userProfile?.id,
+    userProfile?.email,
+  ]);
+
+  const matchedRequestedAccount = React.useMemo(() => {
+    if (!hasExplicitNonDemoRequest) return account || null;
+    if (
+      account &&
+      (account.id === effectiveRequestedAccountId ||
+        account.supabaseAccountId === effectiveRequestedAccountId ||
+        account.loginId === effectiveRequestedAccountId)
+    ) {
+      return account;
+    }
+    const inList = findMatchingAccount(accounts, effectiveRequestedAccountId);
+    if (inList) return inList;
+    if (
+      resolvedExternalAccount &&
+      (resolvedExternalAccount.id === effectiveRequestedAccountId ||
+        resolvedExternalAccount.supabaseAccountId === effectiveRequestedAccountId ||
+        resolvedExternalAccount.loginId === effectiveRequestedAccountId)
+    ) {
+      return resolvedExternalAccount;
+    }
+    return null;
+  }, [account, accounts, resolvedExternalAccount, effectiveRequestedAccountId, hasExplicitNonDemoRequest]);
+
+  const isWaitingForRequestedAccount = Boolean(
+    hasExplicitNonDemoRequest &&
+      !matchedRequestedAccount &&
+      (isResolvingAccount || isFetchingExternalAccount)
+  );
+
+  const rawEffectiveAccount = matchedRequestedAccount || (!hasExplicitNonDemoRequest ? demoPracticeAccount : account || demoPracticeAccount);
   const authoritativeEffectiveBalance = getAuthoritativeAccountBalance(
     rawEffectiveAccount,
     userProfile
@@ -3500,9 +3620,25 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
           : 'h-[100dvh] md:h-[calc(100vh-98px)] md:min-h-[640px] relative'
       }`}
     >
+      {/* Requested Account Loading Overlay (prevents Demo flash while fetching ?accountId=...) */}
+      {isWaitingForRequestedAccount && (
+        <div
+          data-testid="terminal-resolving-account-overlay"
+          className="absolute inset-0 z-[110] flex flex-col items-center justify-center bg-[#0b0f19] font-mono text-center px-6"
+        >
+          <div className="w-16 h-16 rounded-full border-2 border-white/10 border-t-[#ff8800] animate-spin mb-5" />
+          <h2 className="text-base sm:text-lg font-black text-white uppercase tracking-wider">
+            Loading Account {effectiveRequestedAccountId}
+          </h2>
+          <p className="text-xs text-slate-400 mt-2">
+            Fetching verified account balance &amp; institutional risk rules from database...
+          </p>
+        </div>
+      )}
+
       {/* Global Assets Loading Overlay */}
       {isLoadingAssets && (
-        <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-[#0b0f19]/98 backdrop-blur-md pointer-events-auto font-mono text-center px-6">
+        <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-[#0b0f19]/95 pointer-events-auto font-mono text-center px-6">
           <div className="relative mb-8 flex items-center justify-center">
             <div className="w-24 h-24 rounded-full border-2 border-white/10 border-t-[#0066ff] animate-spin" />
             <div className="absolute inset-0 flex items-center justify-center">
@@ -3936,13 +4072,13 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                       }`}
                     >
                       <div>
-                        <div className="font-bold text-white flex items-center gap-1.5">
+                        <div className="font-bold text-white flex items-center gap-1.5 flex-wrap">
                           <span>
                             {isPersonalLiveAccount(acc)
                               ? 'Personal Live (Self-Capital)'
                               : isDemoAccount(acc)
                               ? 'Demo Practice Account'
-                              : acc.id}
+                              : `${acc.tierName || 'Trading Account'} · ${acc.id}`}
                           </span>
                           <span
                             className={`text-[9px] px-1.5 py-0.5 rounded font-black uppercase tracking-wider border ${

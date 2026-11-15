@@ -5,6 +5,7 @@ import type {
   AffiliateStats,
   ChallengeTier,
   ReferredUser,
+  ReferredPurchaseItem,
   AffiliateReferralDetail,
 } from '../types/index.ts';
 
@@ -14,6 +15,7 @@ export type {
   AffiliatePayout,
   AffiliateStats,
   ReferredUser,
+  ReferredPurchaseItem,
   AffiliateReferralDetail,
 };
 
@@ -622,6 +624,8 @@ export function processWithdrawalCommission(params: {
  * Enforces strict fraud prevention: Self-referrals are rejected.
  */
 export interface AffiliateUserPurchaseRecord {
+  id?: string;
+  accountId?: string;
   userId: string;
   userEmail?: string;
   userName?: string;
@@ -714,6 +718,7 @@ export function formatPurchaseAmountDisplay(amount?: number | null): string {
 }
 
 export const INITIAL_USER_PURCHASES: AffiliateUserPurchaseRecord[] = [];
+let memoryAffiliateUserPurchases: AffiliateUserPurchaseRecord[] = [];
 
 export function loadAffiliateUserPurchases(): AffiliateUserPurchaseRecord[] {
   try {
@@ -731,24 +736,29 @@ export function loadAffiliateUserPurchases(): AffiliateUserPurchaseRecord[] {
           );
         }
       }
+      return [];
     }
   } catch {
     // ignore
   }
-  return [];
+  return memoryAffiliateUserPurchases;
 }
 
 export function saveAffiliateUserPurchases(records: AffiliateUserPurchaseRecord[]): void {
   try {
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem(AFFILIATE_PURCHASES_STORAGE_KEY, JSON.stringify(records));
+      return;
     }
   } catch {
     // ignore
   }
+  memoryAffiliateUserPurchases = [...records];
 }
 
 export function recordAffiliateUserPurchase(params: {
+  id?: string;
+  accountId?: string;
   userId: string;
   userEmail?: string;
   userName?: string;
@@ -758,7 +768,12 @@ export function recordAffiliateUserPurchase(params: {
 }): AffiliateUserPurchaseRecord[] {
   const existing = [...loadAffiliateUserPurchases()];
   const formattedName = formatPurchasedPackageLabel(params.packageName, params.packageSku, params.amount);
+  const newId =
+    params.id ||
+    `AFFPUR-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
   const newRec: AffiliateUserPurchaseRecord = {
+    id: newId,
+    accountId: params.accountId,
     userId: params.userId,
     userEmail: params.userEmail,
     userName: params.userName,
@@ -767,11 +782,13 @@ export function recordAffiliateUserPurchase(params: {
     amount: Number(params.amount || 0),
     createdAt: new Date().toISOString(),
   };
-  const filtered = existing.filter(
-    (p) =>
-      p.userId !== params.userId &&
-      (!params.userEmail || !p.userEmail || p.userEmail.toLowerCase() !== params.userEmail.toLowerCase())
-  );
+  // Append new purchases for the same user instead of overwriting previous accounts;
+  // only replace if the exact purchase ID or exact linked accountId already exists.
+  const filtered = existing.filter((p) => {
+    if (params.id && p.id && p.id === params.id) return false;
+    if (params.accountId && p.accountId && p.accountId === params.accountId) return false;
+    return true;
+  });
   const updated = [newRec, ...filtered];
   saveAffiliateUserPurchases(updated);
   return updated;
@@ -953,86 +970,188 @@ export function process3TierCommissions(params: {
 }
 
 /**
- * Resolves the latest package purchase for a referred user from all available sources:
+ * Resolves ALL distinct package purchases / accounts for a referred user across:
  * 1) Direct purchase records (`user_purchases` / `AffiliateUserPurchaseRecord`)
- * 2) Commission ledger entries (`ReferralRecord[]` where `referredUserId === user.id` and `commissionType === 'package'`)
- * 3) Pre-populated `latestPurchase` on the node
+ * 2) Pre-populated `purchases` or `latestPurchase` on the node
+ * 3) Commission ledger entries (`ReferralRecord[]` where `referredUserId === user.id` and `commissionType !== 'withdrawal'`)
  */
-export function resolveReferredUserPurchase(
-  user: { id: string; fullName?: string; email?: string; latestPurchase?: { name: string; sku?: string; amount: number } },
+export function resolveReferredUserPurchases(
+  user: {
+    id: string;
+    fullName?: string;
+    email?: string;
+    latestPurchase?: ReferredPurchaseItem;
+    purchases?: ReferredPurchaseItem[];
+  },
   purchasesList?: Array<any>,
   referralsList?: ReferralRecord[]
-): { name: string; sku?: string; amount: number } | undefined {
-  // 1. Check explicit purchase records first
+): ReferredPurchaseItem[] {
   const purchases = purchasesList || loadAffiliateUserPurchases();
-  const matchedPurchase = purchases.find((p: any) => {
+  const referrals = referralsList || loadAffiliateReferrals();
+
+  const items: ReferredPurchaseItem[] = [];
+  const seenKeys = new Set<string>();
+
+  const pushUnique = (item: ReferredPurchaseItem, sourceKind: 'purchase' | 'node' | 'commission') => {
+    const amt = Number(item.amount || 0);
+    if (!Number.isFinite(amt) || amt <= 0) return;
+
+    const cleanAccId = item.accountId ? String(item.accountId).trim() : '';
+    const cleanId = item.id ? String(item.id).trim() : '';
+
+    // Avoid duplicating the exact same DB row or same linked account
+    if (cleanAccId && items.some((x) => x.accountId && x.accountId === cleanAccId)) return;
+    if (cleanId && items.some((x) => x.id && x.id === cleanId)) return;
+
+    // Only synthesize from commission/node fallback if there's no un-linked matching entry from direct purchases
+    if (sourceKind === 'commission') {
+      const keyNoTs = `${item.name}|${amt}`;
+      // Note: commission records are often L1/L2/L3 copies OR represent purchases without user_purchases rows.
+      // Dedup L1/L2/L3 duplicates by timestamp/name/amount within 5s or exact id/key.
+      const commKey = `comm|${keyNoTs}|${item.createdAt ? String(item.createdAt).slice(0, 16) : ''}`;
+      if (seenKeys.has(commKey)) return;
+      seenKeys.add(commKey);
+    } else if (sourceKind === 'node') {
+      // Only compare against items that came from direct purchase rows (not other distinct node.purchases rows)
+      const matchedFromDirectPurchases = items
+        .slice(0, directPurchaseEndIdx)
+        .some((x) => x.name === item.name && Math.abs(x.amount - amt) < 0.01);
+      if (matchedFromDirectPurchases) {
+        return;
+      }
+    }
+
+    if (cleanId) seenKeys.add(`id:${cleanId}`);
+    items.push(item);
+  };
+
+  // 1. Direct purchase rows
+  for (const p of purchases) {
+    if (!p) continue;
     const pUserId = String(p.userId || p.user_id || '').trim();
     const pEmail = String(p.userEmail || p.user_email || p.email || '').trim().toLowerCase();
-    if (pUserId && pUserId === user.id) return true;
-    if (user.email && pEmail && pEmail === user.email.trim().toLowerCase()) return true;
-    return false;
-  });
+    const matchesUser =
+      (pUserId && pUserId === user.id) ||
+      (user.email && pEmail && pEmail === user.email.trim().toLowerCase());
+    if (!matchesUser) continue;
 
-  if (matchedPurchase) {
-    const amount = Number(matchedPurchase.package_amount ?? matchedPurchase.amount ?? matchedPurchase.price ?? 0);
-    const rawName = matchedPurchase.packageName || matchedPurchase.package_name || 'Challenge Package';
-    const rawSku = matchedPurchase.packageSku || matchedPurchase.package_sku || matchedPurchase.sku || 'BFT-PKG';
-    if (amount > 0) {
-      const formattedLabel = formatPurchasedPackageLabel(rawName, rawSku, amount);
-      return {
+    const amount = Number(p.package_amount ?? p.amount ?? p.price ?? 0);
+    const rawName = p.packageName || p.package_name || p.name || 'Challenge Package';
+    const rawSku = p.packageSku || p.package_sku || p.sku || 'BFT-PKG';
+    const formattedLabel = formatPurchasedPackageLabel(rawName, rawSku, amount);
+    if (formattedLabel === 'No Purchase' && /payout bonus|withdrawal/i.test(String(rawName))) continue;
+
+    pushUnique(
+      {
+        id: p.id ? String(p.id) : undefined,
+        accountId: p.account_id || p.accountId ? String(p.account_id || p.accountId) : null,
         name: formattedLabel !== 'No Purchase' ? formattedLabel : rawName,
         sku: rawSku,
         amount,
-      };
-    }
+        accountType: p.account_type || p.accountType,
+        createdAt: p.created_at || p.createdAt,
+      },
+      'purchase'
+    );
   }
 
-  // 2. Check existing latestPurchase on the node
-  if (user.latestPurchase && Number(user.latestPurchase.amount) > 0) {
+  const directPurchaseEndIdx = items.length;
+
+  // 2. Pre-populated node.purchases / node.latestPurchase
+  if (Array.isArray(user.purchases)) {
+    for (const np of user.purchases) {
+      if (!np || Number(np.amount) <= 0) continue;
+      const formattedLabel = formatPurchasedPackageLabel(np.name, np.sku, np.amount);
+      pushUnique(
+        {
+          id: np.id,
+          accountId: np.accountId || null,
+          name: formattedLabel !== 'No Purchase' ? formattedLabel : np.name,
+          sku: np.sku || 'BFT-PKG',
+          amount: Number(np.amount),
+          accountType: np.accountType,
+          createdAt: np.createdAt,
+        },
+        'node'
+      );
+    }
+  }
+  if (items.length === 0 && user.latestPurchase && Number(user.latestPurchase.amount) > 0) {
     const formattedLabel = formatPurchasedPackageLabel(
       user.latestPurchase.name,
       user.latestPurchase.sku,
       user.latestPurchase.amount
     );
-    return {
-      name: formattedLabel !== 'No Purchase' ? formattedLabel : user.latestPurchase.name,
-      sku: user.latestPurchase.sku || 'BFT-PKG',
-      amount: Number(user.latestPurchase.amount),
-    };
-  }
-
-  // 3. Check 3-tier commission ledger records (any package commission triggered by this referred user)
-  const referrals = referralsList || loadAffiliateReferrals();
-  const matchedComm = referrals.find(
-    (r) =>
-      r.commissionType !== 'withdrawal' &&
-      r.packagePrice > 0 &&
-      (r.referredUserId === user.id ||
-        (user.fullName &&
-          r.referredUserName &&
-          r.referredUserName.trim().toLowerCase() === user.fullName.trim().toLowerCase()))
-  );
-
-  if (matchedComm) {
-    const formattedLabel = formatPurchasedPackageLabel(
-      matchedComm.packageName,
-      matchedComm.packageTier,
-      matchedComm.packagePrice
+    pushUnique(
+      {
+        id: user.latestPurchase.id,
+        accountId: user.latestPurchase.accountId || null,
+        name: formattedLabel !== 'No Purchase' ? formattedLabel : user.latestPurchase.name,
+        sku: user.latestPurchase.sku || 'BFT-PKG',
+        amount: Number(user.latestPurchase.amount),
+        accountType: user.latestPurchase.accountType,
+        createdAt: user.latestPurchase.createdAt,
+      },
+      'node'
     );
-    return {
-      name: formattedLabel !== 'No Purchase' ? formattedLabel : matchedComm.packageName,
-      sku: matchedComm.packageTier ? `BFT-${matchedComm.packageTier.toUpperCase()}` : 'BFT-PKG',
-      amount: Number(matchedComm.packagePrice),
-    };
   }
 
-  return undefined;
+  // 3. Commission ledger fallback if no direct purchases were found yet (or additional purchase commissions exist)
+  if (items.length === 0) {
+    for (const r of referrals) {
+      if (
+        r.commissionType !== 'withdrawal' &&
+        r.sourceType !== 'withdrawal' &&
+        Number(r.packagePrice) > 0 &&
+        (r.referredUserId === user.id ||
+          (user.fullName &&
+            r.referredUserName &&
+            r.referredUserName.trim().toLowerCase() === user.fullName.trim().toLowerCase()))
+      ) {
+        const formattedLabel = formatPurchasedPackageLabel(
+          r.packageName || r.packagePurchased,
+          r.packageTier,
+          r.packagePrice
+        );
+        pushUnique(
+          {
+            id: r.id,
+            accountId: null,
+            name: formattedLabel !== 'No Purchase' ? formattedLabel : (r.packageName || 'Challenge Package'),
+            sku: r.packageTier ? `BFT-${String(r.packageTier).toUpperCase()}` : 'BFT-PKG',
+            amount: Number(r.packagePrice),
+            createdAt: r.createdAt || r.date,
+          },
+          'commission'
+        );
+      }
+    }
+  }
+
+  return items;
+}
+
+/**
+ * Resolves the latest package purchase for a referred user from all available sources.
+ */
+export function resolveReferredUserPurchase(
+  user: {
+    id: string;
+    fullName?: string;
+    email?: string;
+    latestPurchase?: ReferredPurchaseItem;
+    purchases?: ReferredPurchaseItem[];
+  },
+  purchasesList?: Array<any>,
+  referralsList?: ReferralRecord[]
+): ReferredPurchaseItem | undefined {
+  const all = resolveReferredUserPurchases(user, purchasesList, referralsList);
+  return all[0];
 }
 
 /**
  * Builds the complete 3-tier ReferredUser[] network tree (L1, L2, L3) for a sponsor,
- * merging nodes from Supabase/backend/local users and enriching every node with its
- * actual purchased package name and exact amount paid.
+ * merging nodes from Supabase/backend/local users and preserving ALL purchased accounts per trader.
  */
 export function buildReferredNetworkTree(params: {
   sponsorId: string;
@@ -1051,11 +1170,22 @@ export function buildReferredNetworkTree(params: {
   // 1. Add external nodes (from Supabase or backend API)
   for (const ext of externalNodes) {
     if (!ext || !ext.id) continue;
+    const allPurchases = resolveReferredUserPurchases(ext, purchases, referrals);
+    const totalPurchaseAmount = Number(
+      allPurchases.reduce((s, p) => s + Number(p.amount || 0), 0).toFixed(2)
+    );
+    const explicitAcctCount = Number(ext.accountCount || 0);
+    const accountCount = Math.max(allPurchases.length, explicitAcctCount);
     nodeMap.set(ext.id, {
+      ...ext,
       id: ext.id,
       fullName: ext.fullName || 'Trader',
       level: ext.level,
-      latestPurchase: resolveReferredUserPurchase(ext, purchases, referrals),
+      latestPurchase: allPurchases[0],
+      purchases: allPurchases,
+      accountCount,
+      totalPurchaseAmount:
+        totalPurchaseAmount > 0 ? totalPurchaseAmount : Number(ext.totalPurchaseAmount || 0),
     });
   }
 
@@ -1070,21 +1200,31 @@ export function buildReferredNetworkTree(params: {
 
   const addLocalUser = (u: UserAccount, level: 1 | 2 | 3) => {
     const existing = nodeMap.get(u.id);
-    const resolvedPurchase = resolveReferredUserPurchase(
+    const allPurchases = resolveReferredUserPurchases(
       {
         id: u.id,
         fullName: u.name,
         email: u.email,
         latestPurchase: existing?.latestPurchase,
+        purchases: existing?.purchases,
       },
       purchases,
       referrals
     );
+    const totalPurchaseAmount = Number(
+      allPurchases.reduce((s, p) => s + Number(p.amount || 0), 0).toFixed(2)
+    );
     nodeMap.set(u.id, {
+      ...(existing || {}),
       id: u.id,
       fullName: existing?.fullName && existing.fullName !== 'Trader' ? existing.fullName : u.name,
+      email: existing?.email || u.email,
       level: existing?.level || level,
-      latestPurchase: resolvedPurchase,
+      latestPurchase: allPurchases[0],
+      purchases: allPurchases,
+      accountCount: Math.max(allPurchases.length, Number(existing?.accountCount || 0)),
+      totalPurchaseAmount:
+        totalPurchaseAmount > 0 ? totalPurchaseAmount : Number(existing?.totalPurchaseAmount || 0),
     });
   };
 
@@ -1103,7 +1243,13 @@ export function buildReferredNetworkTree(params: {
         fullName: r.referredUserName || `Trader ${r.referredUserId.slice(0, 6)}`,
         level,
       };
-      node.latestPurchase = resolveReferredUserPurchase(node, purchases, referrals);
+      const allPurchases = resolveReferredUserPurchases(node, purchases, referrals);
+      node.latestPurchase = allPurchases[0];
+      node.purchases = allPurchases;
+      node.accountCount = allPurchases.length;
+      node.totalPurchaseAmount = Number(
+        allPurchases.reduce((s, p) => s + Number(p.amount || 0), 0).toFixed(2)
+      );
       nodeMap.set(node.id, node);
     }
   }
@@ -1652,6 +1798,15 @@ export function normalizeAffiliateReferralDetailRow(
     commissionEarned,
     challengeCommissionEarned,
     accountType: row.account_type ?? row.accountType ?? 'self_funded',
+    accountCount:
+      Number(row.account_count ?? row.accountCount ?? 0) ||
+      (Array.isArray(row.purchasedAccounts) ? row.purchasedAccounts.length : 0) ||
+      (Array.isArray(row.purchased_accounts) ? row.purchased_accounts.length : 0),
+    purchasedAccounts: Array.isArray(row.purchasedAccounts)
+      ? row.purchasedAccounts
+      : Array.isArray(row.purchased_accounts)
+      ? row.purchased_accounts
+      : undefined,
     status,
     joinedAt,
   };
@@ -1693,7 +1848,13 @@ export function buildDetailedReferralList(params: {
   for (const node of networkNodes) {
     if (!node || !node.id) continue;
     const existing = byUserId.get(node.id);
-    const purchaseAmt = Number(node.latestPurchase?.amount || 0);
+    const purchaseAmt = Number(node.totalPurchaseAmount || node.latestPurchase?.amount || 0);
+    const nodePurchases = Array.isArray(node.purchases) && node.purchases.length > 0
+      ? node.purchases
+      : node.latestPurchase
+      ? [node.latestPurchase]
+      : [];
+    const nodeAcctCount = Math.max(Number(node.accountCount || 0), nodePurchases.length);
     const derivedBalance = Number(
       (node as any).accountBalance ?? (node as any).selfBalance ?? 0
     );
@@ -1710,6 +1871,8 @@ export function buildDetailedReferralList(params: {
         account_balance: derivedBalance,
         bonus_amount: derivedBonus,
         total_trade_turnover: derivedTurnover,
+        account_count: nodeAcctCount,
+        purchased_accounts: nodePurchases,
         status: purchaseAmt > 0 || derivedTurnover > 0 ? 'completed' : 'active',
         joined_at: node.joinedDate || new Date().toISOString(),
       });
@@ -1719,6 +1882,13 @@ export function buildDetailedReferralList(params: {
       }
       if (!existing.email && node.email) {
         existing.email = node.email;
+      }
+      existing.account_count = Math.max(
+        Number(existing.account_count || 0),
+        nodeAcctCount
+      );
+      if (!Array.isArray(existing.purchased_accounts) || nodePurchases.length > existing.purchased_accounts.length) {
+        existing.purchased_accounts = nodePurchases;
       }
     }
   }
@@ -1737,6 +1907,7 @@ export function buildDetailedReferralList(params: {
         account_balance: 0,
         bonus_amount: 0,
         total_trade_turnover: 0,
+        account_count: Number(ref.packagePrice || 0) > 0 ? 1 : 0,
         challenge_commission_earned: Number(ref.commissionAmount || 0),
         status: 'active',
         joined_at: ref.createdAt || ref.date || new Date().toISOString(),

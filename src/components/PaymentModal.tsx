@@ -373,7 +373,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         accountType,
         network: isBankTransfer ? 'Bank Transfer' : 'TRC-20',
         paymentMethod: isBankTransfer ? 'bank_transfer' : 'crypto',
-        receiptUrl: uploadedReceiptUrl || null,
+        receiptUrl: uploadedReceiptUrl || undefined,
         txHash: resolvedTxHash,
       });
 
