@@ -58,9 +58,11 @@ export const TimeTimerSelectorPopover: React.FC<TimeTimerSelectorPopoverProps> =
   const [hoursInput, setHoursInput] = useState<string>(String(hours).padStart(2, '0'));
   const [minutesInput, setMinutesInput] = useState<string>(String(minutes).padStart(2, '0'));
   const [secondsInput, setSecondsInput] = useState<string>(String(seconds).padStart(2, '0'));
+  const [focusedField, setFocusedField] = useState<'h' | 'm' | 's' | null>(null);
   const [localWarning, setLocalWarning] = useState<string | null>(null);
 
   useEffect(() => {
+    if (focusedField !== null) return;
     const hms = durationSecondsToHms(duration);
     setHoursInput(String(hms.hours).padStart(2, '0'));
     setMinutesInput(String(hms.minutes).padStart(2, '0'));
@@ -68,11 +70,18 @@ export const TimeTimerSelectorPopover: React.FC<TimeTimerSelectorPopoverProps> =
     if (!isFundedRestricted || duration >= MIN_TRADE_DURATION_SECONDS) {
       setLocalWarning(null);
     }
-  }, [duration, isFundedRestricted]);
+  }, [duration, isFundedRestricted, focusedField]);
 
   if (!isOpen) return null;
 
-  const applyCustomDuration = (rawSeconds: number) => {
+  const syncInputsToDuration = (targetSec: number) => {
+    const hms = durationSecondsToHms(targetSec);
+    setHoursInput(String(hms.hours).padStart(2, '0'));
+    setMinutesInput(String(hms.minutes).padStart(2, '0'));
+    setSecondsInput(String(hms.seconds).padStart(2, '0'));
+  };
+
+  const applyCustomDuration = (rawSeconds: number): boolean => {
     const clamped = clampCustomTradeDuration(rawSeconds);
     if (isFundedRestricted && clamped < MIN_TRADE_DURATION_SECONDS) {
       const msg =
@@ -80,14 +89,16 @@ export const TimeTimerSelectorPopover: React.FC<TimeTimerSelectorPopoverProps> =
       setLocalWarning(msg);
       onNotifyViolation?.(msg);
       onChangeDuration(clamped);
-      return;
+      return false;
     }
     setLocalWarning(null);
     onChangeDuration(clamped);
+    return true;
   };
 
   const handleAdjustUnit = (unit: 'h' | 'm' | 's', delta: number) => {
     soundEngine.playUiClick();
+    setFocusedField(null);
     let nextH = hours;
     let nextM = minutes;
     let nextS = seconds;
@@ -106,12 +117,29 @@ export const TimeTimerSelectorPopover: React.FC<TimeTimerSelectorPopoverProps> =
       if (nextH === 4) nextS = 0;
     } else {
       const totalSec = clampCustomTradeDuration(duration + delta);
-      applyCustomDuration(totalSec);
+      const accepted = applyCustomDuration(totalSec);
+      syncInputsToDuration(accepted ? totalSec : duration);
       return;
     }
 
     const computed = hmsToDurationSeconds(nextH, nextM, nextS);
-    applyCustomDuration(computed);
+    const accepted = applyCustomDuration(computed);
+    syncInputsToDuration(accepted ? computed : duration);
+  };
+
+  const tryLiveApplyTypedInputs = (nextHStr: string, nextMStr: string, nextSStr: string) => {
+    const h = parseInt(nextHStr || '0', 10) || 0;
+    const m = parseInt(nextMStr || '0', 10) || 0;
+    const s = parseInt(nextSStr || '0', 10) || 0;
+    if (h < 0 || h > 4 || m < 0 || m > 59 || s < 0 || s > 59) return;
+    const rawTotal = h * 3600 + m * 60 + s;
+    const minLive = isFundedRestricted
+      ? MIN_TRADE_DURATION_SECONDS
+      : MIN_SELF_CAPITAL_DURATION_SECONDS;
+    if (rawTotal >= minLive && rawTotal <= MAX_TRADE_DURATION_SECONDS) {
+      setLocalWarning(null);
+      onChangeDuration(rawTotal);
+    }
   };
 
   const commitTypedInputs = (nextHStr: string, nextMStr: string, nextSStr: string) => {
@@ -119,14 +147,27 @@ export const TimeTimerSelectorPopover: React.FC<TimeTimerSelectorPopoverProps> =
     const m = h >= 4 ? 0 : Math.max(0, Math.min(59, parseInt(nextMStr || '0', 10) || 0));
     const s = h >= 4 ? 0 : Math.max(0, Math.min(59, parseInt(nextSStr || '0', 10) || 0));
     const computed = hmsToDurationSeconds(h, m, s);
-    applyCustomDuration(computed);
+    const accepted = applyCustomDuration(computed);
+    syncInputsToDuration(accepted ? computed : duration);
+  };
+
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      setFocusedField(null);
+      commitTypedInputs(hoursInput, minutesInput, secondsInput);
+    }
   };
 
   return (
     <>
       <div
         data-testid="time-timer-selector-backdrop"
-        onClick={onClose}
+        onClick={() => {
+          setFocusedField(null);
+          commitTypedInputs(hoursInput, minutesInput, secondsInput);
+          onClose();
+        }}
         className="fixed inset-0 z-40 bg-black/30"
         aria-hidden="true"
       />
@@ -134,7 +175,7 @@ export const TimeTimerSelectorPopover: React.FC<TimeTimerSelectorPopoverProps> =
         data-testid="time-timer-selector-popup"
         role="dialog"
         aria-label="Time and Timer Selector"
-        className="fixed inset-x-3 bottom-16 md:absolute md:inset-x-auto md:bottom-auto md:top-full md:right-0 md:mt-1.5 md:w-[264px] z-50 rounded-xl bg-[#161a26] border border-[#2c3347] shadow-[0_20px_50px_rgba(0,0,0,0.85)] p-3 font-mono text-white select-none"
+        className="fixed inset-x-3 bottom-24 md:bottom-auto md:inset-x-auto md:absolute md:top-full md:right-0 md:mt-1.5 md:w-[264px] z-50 rounded-xl bg-[#161a26] border border-[#2c3347] shadow-[0_20px_50px_rgba(0,0,0,0.85)] p-3 font-mono text-white select-none"
       >
         {/* Header & Mode Toggle */}
         <div className="flex items-center justify-between pb-2 mb-2.5 border-b border-[#262c3d]">
@@ -185,7 +226,11 @@ export const TimeTimerSelectorPopover: React.FC<TimeTimerSelectorPopoverProps> =
             <button
               type="button"
               aria-label="Close Time Selector"
-              onClick={onClose}
+              onClick={() => {
+                setFocusedField(null);
+                commitTypedInputs(hoursInput, minutesInput, secondsInput);
+                onClose();
+              }}
               className="p-1 rounded-md text-slate-400 hover:text-white hover:bg-[#23293a] cursor-pointer transition-colors"
             >
               <X className="w-3.5 h-3.5" />
@@ -216,20 +261,27 @@ export const TimeTimerSelectorPopover: React.FC<TimeTimerSelectorPopoverProps> =
                 <Plus className="w-3 h-3" />
               </button>
               <input
-                type="number"
+                type="text"
+                inputMode="numeric"
                 aria-label="Custom Hours"
                 data-testid="custom-duration-hours-input"
-                min={0}
-                max={4}
                 value={hoursInput}
+                onFocus={(e) => {
+                  setFocusedField('h');
+                  e.target.select();
+                }}
                 onChange={(e) => {
-                  const val = e.target.value;
+                  const val = e.target.value.replace(/\D/g, '').slice(0, 2);
                   setHoursInput(val);
                   if (val !== '') {
-                    commitTypedInputs(val, minutesInput, secondsInput);
+                    tryLiveApplyTypedInputs(val, minutesInput, secondsInput);
                   }
                 }}
-                onBlur={() => commitTypedInputs(hoursInput, minutesInput, secondsInput)}
+                onKeyDown={handleInputKeyDown}
+                onBlur={() => {
+                  setFocusedField(null);
+                  commitTypedInputs(hoursInput, minutesInput, secondsInput);
+                }}
                 className="w-full my-1 py-1 bg-[#161a26] border border-[#2a3146] rounded text-center font-black text-xs text-white tabular-nums focus:outline-none focus:border-[#3b82f6]"
               />
               <button
@@ -256,20 +308,27 @@ export const TimeTimerSelectorPopover: React.FC<TimeTimerSelectorPopoverProps> =
                 <Plus className="w-3 h-3" />
               </button>
               <input
-                type="number"
+                type="text"
+                inputMode="numeric"
                 aria-label="Custom Minutes"
                 data-testid="custom-duration-minutes-input"
-                min={0}
-                max={59}
                 value={minutesInput}
+                onFocus={(e) => {
+                  setFocusedField('m');
+                  e.target.select();
+                }}
                 onChange={(e) => {
-                  const val = e.target.value;
+                  const val = e.target.value.replace(/\D/g, '').slice(0, 2);
                   setMinutesInput(val);
                   if (val !== '') {
-                    commitTypedInputs(hoursInput, val, secondsInput);
+                    tryLiveApplyTypedInputs(hoursInput, val, secondsInput);
                   }
                 }}
-                onBlur={() => commitTypedInputs(hoursInput, minutesInput, secondsInput)}
+                onKeyDown={handleInputKeyDown}
+                onBlur={() => {
+                  setFocusedField(null);
+                  commitTypedInputs(hoursInput, minutesInput, secondsInput);
+                }}
                 className="w-full my-1 py-1 bg-[#161a26] border border-[#2a3146] rounded text-center font-black text-xs text-white tabular-nums focus:outline-none focus:border-[#3b82f6]"
               />
               <button
@@ -296,20 +355,27 @@ export const TimeTimerSelectorPopover: React.FC<TimeTimerSelectorPopoverProps> =
                 <Plus className="w-3 h-3" />
               </button>
               <input
-                type="number"
+                type="text"
+                inputMode="numeric"
                 aria-label="Custom Seconds"
                 data-testid="custom-duration-seconds-input"
-                min={0}
-                max={59}
                 value={secondsInput}
+                onFocus={(e) => {
+                  setFocusedField('s');
+                  e.target.select();
+                }}
                 onChange={(e) => {
-                  const val = e.target.value;
+                  const val = e.target.value.replace(/\D/g, '').slice(0, 2);
                   setSecondsInput(val);
                   if (val !== '') {
-                    commitTypedInputs(hoursInput, minutesInput, val);
+                    tryLiveApplyTypedInputs(hoursInput, minutesInput, val);
                   }
                 }}
-                onBlur={() => commitTypedInputs(hoursInput, minutesInput, secondsInput)}
+                onKeyDown={handleInputKeyDown}
+                onBlur={() => {
+                  setFocusedField(null);
+                  commitTypedInputs(hoursInput, minutesInput, secondsInput);
+                }}
                 className="w-full my-1 py-1 bg-[#161a26] border border-[#2a3146] rounded text-center font-black text-xs text-white tabular-nums focus:outline-none focus:border-[#3b82f6]"
               />
               <button
@@ -347,16 +413,18 @@ export const TimeTimerSelectorPopover: React.FC<TimeTimerSelectorPopoverProps> =
                   data-testid={`duration-preset-${preset.label}`}
                   onClick={() => {
                     soundEngine.playUiClick();
-                    applyCustomDuration(preset.seconds);
+                    setFocusedField(null);
+                    const accepted = applyCustomDuration(preset.seconds);
+                    syncInputsToDuration(accepted ? preset.seconds : duration);
                   }}
-                  className={`py-1.5 px-1 rounded-md font-bold flex items-center justify-center gap-0.5 cursor-pointer transition-colors ${
+                  className={`py-1.5 px-1 rounded-md border font-bold flex items-center justify-center gap-0.5 cursor-pointer transition-colors ${
                     isSelected
                       ? isLockedForFunded
-                        ? 'bg-rose-600 text-white font-black'
-                        : 'bg-[#3b82f6] text-white font-black'
+                        ? 'bg-rose-600 border-rose-400 text-white font-black'
+                        : 'bg-[#3b82f6] border-[#60a5fa] text-white font-black'
                       : isLockedForFunded
-                      ? 'bg-[#121621] text-slate-400 hover:text-rose-300 border border-rose-500/30'
-                      : 'bg-[#0f131d] text-slate-300 hover:text-white hover:bg-[#1d2333] border border-[#262c3d]'
+                      ? 'bg-[#121621] text-slate-400 hover:text-rose-300 border-rose-500/30'
+                      : 'bg-[#0f131d] text-slate-300 hover:text-white hover:bg-[#1d2333] border-[#262c3d]'
                   }`}
                 >
                   {isLockedForFunded && <Lock className="w-2.5 h-2.5 text-rose-400 shrink-0" />}
@@ -386,6 +454,8 @@ export const TimeTimerSelectorPopover: React.FC<TimeTimerSelectorPopoverProps> =
           data-testid="time-selector-apply-btn"
           onClick={() => {
             soundEngine.playUiClick();
+            setFocusedField(null);
+            commitTypedInputs(hoursInput, minutesInput, secondsInput);
             onClose();
           }}
           className="w-full py-1.5 rounded-lg bg-[#3b82f6] hover:bg-blue-500 text-white font-sans font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-colors"

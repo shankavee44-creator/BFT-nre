@@ -693,6 +693,18 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   const [expiryMode, setExpiryMode] = useState<'timer' | 'time'>('timer');
   const [duration, setDuration] = useState<number>(60);
   const [isTimeSelectorOpen, setIsTimeSelectorOpen] = useState<boolean>(false);
+  const [isMobileViewport, setIsMobileViewport] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.innerWidth < 768 : false
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mq = window.matchMedia('(max-width: 767px)');
+    const update = () => setIsMobileViewport(mq.matches);
+    update();
+    mq.addEventListener('change', update);
+    return () => mq.removeEventListener('change', update);
+  }, []);
 
   // Investment parameters & Quotex Right-Panel controls
   const [investment, setInvestment] = useState<number>(50);
@@ -5776,6 +5788,9 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
           isSoftBreached={isSoftBreached}
           isHardBreached={isHardBreached}
           riskBarricaded={riskBarricade.barricaded}
+          isFundedRestricted={isFundedDurationRestrictedAccount(effectiveAccount)}
+          tradeError={tradeError}
+          tradeSuccess={tradeSuccess}
           activeTradesCount={activeTrades.length}
           closedTradesCount={closedTrades.length}
           dailyDrawdownPercent={metrics.dailyDrawdownPercent}
@@ -5789,16 +5804,35 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
           onOpenAssetModal={() => setIsAssetModalOpen(true)}
           onTogglePendingTrade={() => setPendingOrderEnabled(!pendingOrderEnabled)}
           onChangeDuration={(d) => handleSelectDuration(d)}
-          onOpenTimeSelector={() => setIsTimeSelectorOpen(true)}
+          onOpenTimeSelector={() => setIsTimeSelectorOpen((prev) => !prev)}
           onChangeInvestment={(inv) => handleChangeInvestmentAmount(inv)}
           onToggleInvestmentMode={() => setInvestmentMode(investmentMode === 'usd' ? 'percent' : 'usd')}
           onTriggerTrade={(dir) => handleTriggerTrade(dir)}
+          onDismissNotice={() => {
+            setTradeError(null);
+            setTradeSuccess(null);
+          }}
           onToggleTradesDrawer={() => {
             const next = resolveMobileTradesDrawerAction(isTradesDrawerOpen, mobileTradesTab, 'toggle');
             setIsTradesDrawerOpen(next.isOpen);
             setMobileTradesTab(next.activeTab);
           }}
         />
+        {isMobileViewport && (
+          <TimeTimerSelectorPopover
+            isOpen={isTimeSelectorOpen}
+            onClose={() => setIsTimeSelectorOpen(false)}
+            duration={duration}
+            expiryMode={expiryMode}
+            onChangeExpiryMode={(m) => setExpiryMode(m)}
+            onChangeDuration={(sec: number) => handleSelectDuration(sec)}
+            isFundedRestricted={isFundedDurationRestrictedAccount(effectiveAccount)}
+            onNotifyViolation={(msg) => {
+              soundEngine.playTradeLoss();
+              setTradeError(msg);
+            }}
+          />
+        )}
         {/* 4. RIGHT-SIDE QUOTEX TRADE EXECUTION & ACTIVE POSITIONS / HISTORY PANEL */}
         <div
           data-testid="quotex-right-panel"
@@ -5959,19 +5993,21 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                 })}
               </div>
 
-              <TimeTimerSelectorPopover
-                isOpen={isTimeSelectorOpen}
-                onClose={() => setIsTimeSelectorOpen(false)}
-                duration={duration}
-                expiryMode={expiryMode}
-                onChangeExpiryMode={(m) => setExpiryMode(m)}
-                onChangeDuration={(sec: number) => handleSelectDuration(sec)}
-                isFundedRestricted={isFundedDurationRestrictedAccount(effectiveAccount)}
-                onNotifyViolation={(msg) => {
-                  soundEngine.playTradeLoss();
-                  setTradeError(msg);
-                }}
-              />
+              {!isMobileViewport && (
+                <TimeTimerSelectorPopover
+                  isOpen={isTimeSelectorOpen}
+                  onClose={() => setIsTimeSelectorOpen(false)}
+                  duration={duration}
+                  expiryMode={expiryMode}
+                  onChangeExpiryMode={(m) => setExpiryMode(m)}
+                  onChangeDuration={(sec: number) => handleSelectDuration(sec)}
+                  isFundedRestricted={isFundedDurationRestrictedAccount(effectiveAccount)}
+                  onNotifyViolation={(msg) => {
+                    soundEngine.playTradeLoss();
+                    setTradeError(msg);
+                  }}
+                />
+              )}
             </div>
 
             {/* INVESTMENT CONTROL BOX (Quotex Style with Strict $5,000 Per-Trade Limit) */}
@@ -6242,7 +6278,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
           onClose={() => setIsSignalsDrawerOpen(false)}
           onApplySignal={(asset, dir, dur) => {
             handleSelectTabAsset(asset);
-            setDuration(dur);
+            handleSelectDuration(dur);
             executeTradeAction(dir, asset, dur);
           }}
         />

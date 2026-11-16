@@ -8,11 +8,15 @@ import {
   Clock,
   Lock,
   History,
+  AlertCircle,
+  CheckCircle2,
+  X,
 } from 'lucide-react';
 import { AssetInfo } from '../types';
 import { soundEngine } from '../utils/soundEffects';
 import { MobileTradesTab } from '../utils/quotexMobile';
 import { AssetFlagIcon } from './CountryFlagIcon';
+import { MAX_SINGLE_TRADE_INVESTMENT_USD } from '../utils/propRules';
 
 interface QuotexMobileDockProps {
   selectedAsset: AssetInfo;
@@ -25,6 +29,9 @@ interface QuotexMobileDockProps {
   isSoftBreached: boolean;
   isHardBreached: boolean;
   riskBarricaded: boolean;
+  isFundedRestricted?: boolean;
+  tradeError?: string | null;
+  tradeSuccess?: string | null;
   activeTradesCount: number;
   closedTradesCount: number;
   dailyDrawdownPercent: number;
@@ -39,6 +46,7 @@ interface QuotexMobileDockProps {
   onTriggerTrade: (direction: 'CALL' | 'PUT') => void;
   onToggleTradesDrawer: () => void;
   onSelectTradesTab?: (tab: MobileTradesTab) => void;
+  onDismissNotice?: () => void;
 }
 
 export function formatSecondsToTimer(sec: number): string {
@@ -58,6 +66,9 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = React.memo(({
   isSoftBreached,
   isHardBreached,
   riskBarricaded,
+  isFundedRestricted = false,
+  tradeError = null,
+  tradeSuccess = null,
   activeTradesCount,
   closedTradesCount,
   dailyDrawdownPercent,
@@ -72,6 +83,7 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = React.memo(({
   onTriggerTrade,
   onToggleTradesDrawer,
   onSelectTradesTab,
+  onDismissNotice,
 }) => {
   const potentialProfit = (effectiveInvestment * selectedAsset.payout) / 100;
   const totalPayout = effectiveInvestment + potentialProfit;
@@ -81,6 +93,36 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = React.memo(({
       data-testid="quotex-mobile-dock"
       className="md:hidden fixed bottom-[48px] left-0 right-0 z-40 bg-[#0e1015] border-t border-white/15 px-2 py-1 shrink-0 font-mono select-none w-full max-w-[100vw] overflow-x-hidden mobile-trading-controls shadow-[0_-8px_24px_rgba(0,0,0,0.9)] space-y-1"
     >
+      {/* Mobile Rule / Trade Notification Banner */}
+      {(tradeError || tradeSuccess) && (
+        <div
+          data-testid="mobile-trade-notification"
+          className={`px-2 py-1 rounded-md border text-[9.5px] flex items-center justify-between gap-1.5 font-sans leading-tight ${
+            tradeError
+              ? 'bg-rose-950/95 border-rose-500/60 text-rose-200'
+              : 'bg-emerald-950/95 border-[#00e676]/60 text-emerald-200'
+          }`}
+        >
+          <div className="flex items-center gap-1.5 min-w-0">
+            {tradeError ? (
+              <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+            ) : (
+              <CheckCircle2 className="w-3.5 h-3.5 text-[#00e676] shrink-0" />
+            )}
+            <span className="break-words">{tradeError || tradeSuccess}</span>
+          </div>
+          {onDismissNotice && (
+            <button
+              type="button"
+              aria-label="Dismiss Notification"
+              onClick={onDismissNotice}
+              className="p-0.5 text-slate-300 hover:text-white shrink-0 cursor-pointer"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          )}
+        </div>
+      )}
       {/* 1. Compact Asset Selector, Inline Payout Pill & Pending Switch */}
       <div className="flex items-center justify-between gap-1.5">
         <button
@@ -139,21 +181,30 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = React.memo(({
           <div className="flex items-center justify-between text-[8.5px] text-slate-400 leading-tight mb-0.5">
             <span>Duration</span>
             <div className="flex gap-0.5">
-              {[5, 30, 60, 300].map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => {
-                    soundEngine.playUiClick();
-                    onChangeDuration(s);
-                  }}
-                  className={`px-1 rounded text-[8px] font-bold cursor-pointer ${
-                    duration === s ? 'bg-[#ff8800] text-slate-950 font-black' : 'bg-[#0a0a0a] text-slate-300'
-                  }`}
-                >
-                  {s >= 60 ? `${s / 60}m` : `${s}s`}
-                </button>
-              ))}
+              {[5, 30, 60, 300].map((s) => {
+                const lockedForFunded = isFundedRestricted && s < 30;
+                return (
+                  <button
+                    key={s}
+                    type="button"
+                    data-testid={`mobile-quick-duration-${s}s`}
+                    onClick={() => {
+                      soundEngine.playUiClick();
+                      onChangeDuration(s);
+                    }}
+                    className={`px-1 rounded text-[8px] font-bold cursor-pointer flex items-center gap-0.5 ${
+                      duration === s
+                        ? 'bg-[#ff8800] text-slate-950 font-black'
+                        : lockedForFunded
+                        ? 'bg-[#0a0a0a] text-slate-500 border border-rose-500/30'
+                        : 'bg-[#0a0a0a] text-slate-300'
+                    }`}
+                  >
+                    {lockedForFunded && <Lock className="w-2 h-2 text-rose-400" />}
+                    <span>{s >= 60 ? `${s / 60}m` : `${s}s`}</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
           <div className="flex items-center justify-between bg-[#0a0a0a] border border-white/10 rounded px-1 py-0.5">
@@ -207,7 +258,13 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = React.memo(({
               {investmentMode === 'usd' ? '$ → %' : '% → $'}
             </button>
           </div>
-          <div className="flex items-center justify-between bg-[#0a0a0a] border border-white/10 rounded px-1 py-0.5">
+          <div
+            className={`flex items-center justify-between bg-[#0a0a0a] border rounded px-1 py-0.5 transition-colors ${
+              effectiveInvestment > MAX_SINGLE_TRADE_INVESTMENT_USD
+                ? 'border-rose-500/70'
+                : 'border-white/10'
+            }`}
+          >
             <button
               type="button"
               onClick={() => {
@@ -221,8 +278,10 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = React.memo(({
             <div className="flex items-center gap-0.5 font-black text-white text-[10.5px]">
               <input
                 aria-label="Trade Investment Amount"
+                data-testid="mobile-investment-input"
                 type="number"
                 min={1}
+                max={investmentMode === 'usd' ? MAX_SINGLE_TRADE_INVESTMENT_USD : 100}
                 value={investment}
                 onChange={(e) => onChangeInvestment(Math.max(1, Number(e.target.value)))}
                 className="w-11 bg-transparent text-center focus:outline-none font-black text-white"
@@ -397,6 +456,9 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = React.memo(({
     prev.isSoftBreached === next.isSoftBreached &&
     prev.isHardBreached === next.isHardBreached &&
     prev.riskBarricaded === next.riskBarricaded &&
+    prev.isFundedRestricted === next.isFundedRestricted &&
+    prev.tradeError === next.tradeError &&
+    prev.tradeSuccess === next.tradeSuccess &&
     prev.activeTradesCount === next.activeTradesCount &&
     prev.closedTradesCount === next.closedTradesCount &&
     prev.dailyDrawdownPercent === next.dailyDrawdownPercent &&
