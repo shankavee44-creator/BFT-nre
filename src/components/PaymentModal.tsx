@@ -134,14 +134,6 @@ const PACKAGE_PAYMENT_OPTIONS: Array<{
     icon: 'trx',
     isNowPayments: true,
   },
-  {
-    id: 'commercial_bank',
-    name: 'Commercial Bank (Manual Transfer)',
-    subtitle: 'Acc: 8174001908 · A.D.H.W Kumari (LKR $1 = 350.44)',
-    badge: 'BANK SLIP',
-    icon: 'commercial_bank',
-    isNowPayments: false,
-  },
 ];
 
 export const PaymentModal: React.FC<PaymentModalProps> = ({
@@ -661,7 +653,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                   <span aria-hidden="true">·</span>
                   <span className="flex items-center gap-1 text-slate-300">
                     <ShieldCheck className="w-3.5 h-3.5 text-[#ff7b00]" />
-                    NOWPayments &amp; Commercial Bank
+                    NOWPayments Automated Crypto Gateway
                   </span>
                 </div>
                 <h3 className="text-xl font-black text-white mt-0.5">
@@ -819,107 +811,6 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                 })}
               </div>
             </div>
-
-            {/* If Commercial Bank is selected */}
-            {selectedPayCurrency === 'commercial_bank' && (
-              <div className="p-4 rounded-2xl bg-[#111827] border border-white/[0.08] mb-4 space-y-3 text-xs font-mono">
-                <div className="flex items-center gap-2 text-blue-400 font-bold">
-                  <Building2 className="w-4 h-4" /> Commercial Bank of Ceylon (Bank Transfer)
-                </div>
-                <div className="space-y-1.5">
-                  <div className="flex justify-between">
-                    <span className="text-[#9ca3af]">Account Name:</span>
-                    <span className="text-white font-bold">A.D.H.W Kumari</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-[#9ca3af]">Account Number:</span>
-                    <span className="text-[#ffaa00] font-bold">8174001908</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-[#9ca3af]">LKR Deposit Rate:</span>
-                    <span className="text-white">$1 USD = 350.44 LKR</span>
-                  </div>
-                  <div className="flex justify-between pt-1 border-t border-white/[0.08] text-emerald-400 font-bold">
-                    <span>Required LKR Amount:</span>
-                    <span>
-                      Rs. {(finalPrice * 350.44).toLocaleString('en-US', { maximumFractionDigits: 2 })} LKR
-                    </span>
-                  </div>
-                </div>
-
-                {/* Required Payment Receipt Screenshot Upload */}
-                <div className="pt-2.5 border-t border-white/10 space-y-2 font-sans">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-bold text-white flex items-center gap-1.5">
-                      <Upload className="w-3.5 h-3.5 text-[#0066ff]" />
-                      <span>Upload Payment Receipt Screenshot</span>
-                    </label>
-                    <span className="text-[10px] font-mono text-amber-400 font-bold uppercase">
-                      Required
-                    </span>
-                  </div>
-
-                  <label
-                    data-testid="challenge-bank-receipt-label"
-                    className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-[#0b0f19] hover:bg-[#161f33] border border-dashed border-[#0066ff]/50 text-xs text-slate-200 cursor-pointer transition-colors"
-                  >
-                    <Upload className="w-4 h-4 text-[#0066ff] shrink-0" />
-                    <span className="truncate font-medium">
-                      {receiptFile ? receiptFile.name : 'Choose payment receipt screenshot...'}
-                    </span>
-                    <input
-                      type="file"
-                      data-testid="challenge-bank-receipt-input"
-                      accept="image/*,.pdf"
-                      onChange={handleReceiptFileChange}
-                      className="hidden"
-                    />
-                  </label>
-
-                  {receiptPreviewUrl && (
-                    <div
-                      data-testid="challenge-bank-receipt-preview"
-                      className="flex items-center justify-between gap-2.5 p-2 rounded-xl bg-[#0b0f19] border border-white/10"
-                    >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <img
-                          src={receiptPreviewUrl}
-                          alt="Payment Receipt Preview"
-                          className="w-10 h-10 rounded-lg object-cover border border-white/15 shrink-0"
-                        />
-                        <div className="min-w-0">
-                          <div className="text-xs font-bold text-white truncate">
-                            {receiptFile?.name || 'Receipt Screenshot Attached'}
-                          </div>
-                          <div className="text-[10px] text-emerald-400 font-mono">
-                            Ready to upload to deposit_receipts
-                          </div>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setReceiptFile(null);
-                          setReceiptPreviewUrl(null);
-                        }}
-                        className="text-[11px] text-slate-400 hover:text-rose-400 px-2 py-1 rounded cursor-pointer"
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  )}
-
-                  <input
-                    type="text"
-                    data-testid="challenge-bank-reference-input"
-                    value={txHashInput}
-                    onChange={(e) => setTxHashInput(e.target.value)}
-                    placeholder="Bank Reference / Slip Number (Optional)"
-                    className="w-full px-3 py-2 rounded-xl bg-[#0b0f19] border border-white/10 focus:border-[#0066ff] text-xs text-white font-mono outline-none"
-                  />
-                </div>
-              </div>
-            )}
 
             {activeReferralCode && (
               <div className="mb-4 p-3 rounded-xl bg-[#111827] border border-[#ff8800]/40 flex items-center justify-between text-xs">

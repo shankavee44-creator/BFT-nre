@@ -83,7 +83,7 @@ test('Rule 1: Funded Traders Leaderboard removes Yohan Siriwardhana and anchors 
   assert.equal(fundedList.filter((t) => t.isoCode === 'AE' || t.isoCode === 'MY').length, 2);
 });
 
-test('Rule 2: Self-Funded Daily Leaderboard resets every day at 05:30 AM (UTC+5:30) and anchors Aarav Sharma ($40,056.61) at Rank 1', () => {
+test('Rule 2: Self-Funded Daily Leaderboard resets every day at 05:30 AM (UTC+5:30), removes Ashen Fernando, and places Yohan Siriwardhana at $10,067.81 sorted by profit', () => {
   // Exact reset boundary: 00:00 UTC === 05:30 AM (UTC+5:30)
   const exactResetUtcMs = Date.UTC(2026, 10, 10, 0, 0, 0);
   const resetInfo = getSriLankaDailyResetInfo(exactResetUtcMs);
@@ -112,25 +112,48 @@ test('Rule 2: Self-Funded Daily Leaderboard resets every day at 05:30 AM (UTC+5:
   assert.equal(rank1.name, 'Aarav Sharma');
   assert.equal(rank1.country, 'India');
   assert.equal(rank1.isoCode, 'IN');
-  assert.equal(rank1.profit, 40056.61);
+  assert.equal(rank1.profit, AARAV_SELF_FUNDED_PROFIT);
 
-  // Yohan must be completely absent
-  assert.equal(selfFundedList.some((t) => t.name.toLowerCase().includes('yohan')), false);
+  // Ashen Fernando must be completely absent
+  assert.equal(
+    selfFundedList.some((t) => t.name.toLowerCase().includes('ashen fernando')),
+    false
+  );
 
-  // Even if legacy data has Yohan, normalizeSelfFundedLeaderboard replaces him with Aarav Sharma at $40,056.61
+  // Yohan Siriwardhana must be present with exact profit $10,067.81 and sorted in descending order
+  const yohanEntry = selfFundedList.find((t) => t.name === 'Yohan Siriwardhana');
+  assert.ok(yohanEntry, 'Yohan Siriwardhana must be present on the Self-Funded Leaderboard');
+  assert.equal(yohanEntry.profit, YOHAN_SELF_FUNDED_PROFIT);
+  assert.equal(yohanEntry.profit, 10067.81);
+  assert.equal(yohanEntry.country, 'Sri Lanka');
+  assert.equal(yohanEntry.isoCode, 'LK');
+
+  // Even if legacy data has Ashen Fernando, normalizeSelfFundedLeaderboard removes him and places Yohan Siriwardhana at $10,067.81 sorted by profit
   const normalizedWithLegacy = normalizeSelfFundedLeaderboard([
-    { ...selfFundedList[0], rank: 1, name: 'Yohan Siriwardhana', country: 'Sri Lanka', flag: '🇱🇰', isoCode: 'LK', profit: 37456.55 },
-    ...selfFundedList.slice(1),
+    ...selfFundedList.slice(0, 6),
+    {
+      id: 'slf_lk_ashen',
+      rank: 7,
+      name: 'Ashen Fernando',
+      country: 'Sri Lanka',
+      flag: '🇱🇰',
+      isoCode: 'LK',
+      accountTier: 'Self-Funded Live',
+      profit: 11250.0,
+      winRate: 74.0,
+      payoutTime: '1m 20s',
+    },
+    ...selfFundedList.slice(7),
   ]);
   assert.equal(normalizedWithLegacy[0].name, 'Aarav Sharma');
-  assert.equal(normalizedWithLegacy[0].country, 'India');
   assert.equal(normalizedWithLegacy[0].profit, 40056.61);
-  assert.equal(normalizedWithLegacy.some((t) => t.name.toLowerCase().includes('yohan')), false);
-
-  assert.equal(selfFundedList.filter((t) => t.isoCode === 'IN').length, 6);
-  assert.equal(selfFundedList.filter((t) => t.isoCode === 'PK').length, 4);
-  assert.equal(selfFundedList.filter((t) => t.isoCode === 'AE').length, 3);
-  assert.equal(selfFundedList.filter((t) => t.isoCode === 'BD').length, 2);
+  assert.equal(
+    normalizedWithLegacy.some((t) => t.name.toLowerCase().includes('ashen fernando')),
+    false
+  );
+  const normalizedYohan = normalizedWithLegacy.find((t) => t.name === 'Yohan Siriwardhana');
+  assert.ok(normalizedYohan);
+  assert.equal(normalizedYohan.profit, 10067.81);
 });
 
 test('Rule 3: User Real-Time Integration calculates Weekly PnL for Funded and Daily PnL for Self-Funded', () => {

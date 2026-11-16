@@ -1,20 +1,16 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  Award,
-  Download,
-  FileCheck,
-  CheckCircle2,
-  Sparkles,
-  ExternalLink,
-  ShieldCheck,
-  AlertCircle,
-  Eye,
-  RefreshCw,
-  Lock,
-  Calendar,
-  User,
   ArrowRight,
-  Share2,
+  Award,
+  CheckCircle2,
+  Download,
+  Eye,
+  FileCheck,
+  Lock,
+  RefreshCw,
+  ShieldCheck,
+  User,
+  Calendar,
 } from 'lucide-react';
 import { UserProfile, TradingAccount } from '../types';
 import { supabase } from '../utils/supabase';
@@ -34,6 +30,7 @@ interface FundedCertificateProps {
   accounts?: TradingAccount[];
   onOpenTerminal?: () => void;
   onOpenChallengeModal?: () => void;
+  onOpenChallengePassedModal?: (account?: any) => void;
 }
 
 export const FundedCertificate: React.FC<FundedCertificateProps> = ({
@@ -41,6 +38,7 @@ export const FundedCertificate: React.FC<FundedCertificateProps> = ({
   accounts = [],
   onOpenTerminal,
   onOpenChallengeModal,
+  onOpenChallengePassedModal,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -263,12 +261,13 @@ export const FundedCertificate: React.FC<FundedCertificateProps> = ({
 
   // Redraw when parameters change
   useEffect(() => {
-    if (isEligible) {
-      const timer = setTimeout(() => {
-        drawCertificate();
-      }, 50);
-      return () => clearTimeout(timer);
-    }
+    if (!isEligible) return;
+    const timer = setTimeout(() => {
+      drawCertificate();
+    }, 50);
+    return () => {
+      clearTimeout(timer);
+    };
   }, [isEligible, drawCertificate]);
 
   // 3. PNG High-Res Download Action
@@ -393,13 +392,27 @@ export const FundedCertificate: React.FC<FundedCertificateProps> = ({
               )}
             </div>
 
-            {/* Action Buttons: High-Res PNG and Print-Ready PDF */}
-            <div className="flex items-center gap-3">
+            {/* Action Buttons: Challenge Passed Modal Preview, High-Res PNG and Print-Ready PDF */}
+            <div className="flex flex-wrap items-center gap-2.5">
+              {onOpenChallengePassedModal && (
+                <button
+                  type="button"
+                  data-testid="open-challenge-passed-modal-btn"
+                  onClick={() => {
+                    soundEngine.playUiClick();
+                    onOpenChallengePassedModal(activeAccount);
+                  }}
+                  className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[#0B111A] hover:bg-[#082F49]/80 border border-[#38BDF8]/45 text-[#38BDF8] hover:text-white text-xs font-bold font-mono transition-all whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  <Eye className="w-4 h-4 text-[#00E5FF]" />
+                  <span>Graduation Certificate</span>
+                </button>
+              )}
               <button
                 data-testid="download-certificate-png-btn"
                 onClick={handleDownloadPng}
                 disabled={isExportingPng || renderLoading}
-                className="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/15 text-white text-xs font-bold transition-all active:scale-95 disabled:opacity-50 cursor-pointer shadow-lg"
+                className="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/15 text-white text-xs font-bold transition-all active:scale-95 disabled:opacity-50 cursor-pointer shadow-lg whitespace-nowrap"
               >
                 <Download className={`w-4 h-4 text-amber-400 ${isExportingPng ? 'animate-bounce' : ''}`} />
                 <span>{isExportingPng ? 'Generating PNG...' : 'Download High-Res PNG'}</span>
@@ -409,7 +422,7 @@ export const FundedCertificate: React.FC<FundedCertificateProps> = ({
                 data-testid="download-certificate-pdf-btn"
                 onClick={handleDownloadPdf}
                 disabled={isExportingPdf || renderLoading}
-                className="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 text-xs font-black transition-all active:scale-95 disabled:opacity-50 cursor-pointer shadow-lg shadow-amber-500/20"
+                className="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 text-xs font-black transition-all active:scale-95 disabled:opacity-50 cursor-pointer shadow-lg shadow-amber-500/20 whitespace-nowrap"
               >
                 <FileCheck className={`w-4 h-4 text-slate-950 ${isExportingPdf ? 'animate-spin' : ''}`} />
                 <span>{isExportingPdf ? 'Generating PDF...' : 'Download Print-Ready PDF'}</span>
@@ -510,21 +523,35 @@ export const FundedCertificate: React.FC<FundedCertificateProps> = ({
             </div>
           </div>
 
-          {/* Action Button: Start Challenge */}
-          {onOpenChallengeModal && (
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-2">
+          {/* Action Button: Start Challenge or Preview Graduation Certificate */}
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+            {onOpenChallengeModal && (
               <button
                 onClick={() => {
                   soundEngine.playUiClick();
                   onOpenChallengeModal();
                 }}
-                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 text-xs font-black transition-all cursor-pointer shadow-lg shadow-amber-500/20"
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 text-xs font-black transition-all cursor-pointer shadow-lg shadow-amber-500/20 whitespace-nowrap"
               >
                 <span>Start Evaluation Challenge</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
-            </div>
-          )}
+            )}
+            {onOpenChallengePassedModal && (
+              <button
+                type="button"
+                data-testid="open-challenge-passed-modal-btn"
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  onOpenChallengePassedModal(null);
+                }}
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-[#0B111A] hover:bg-[#082F49]/80 border border-[#38BDF8]/40 text-[#38BDF8] text-xs font-bold font-mono transition-all cursor-pointer whitespace-nowrap"
+              >
+                <Eye className="w-4 h-4 text-[#00E5FF]" />
+                <span>Preview Graduation Certificate</span>
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>

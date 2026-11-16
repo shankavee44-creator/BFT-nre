@@ -136,6 +136,8 @@ import {
 } from '../utils/p2pTransfer';
 import { mapPurchaseOrdersToAccounts } from '../utils/accountLoader';
 import { FundedWalletAnalyticsModal } from './FundedWalletAnalyticsModal';
+import { LiveFundedDashboardView } from './LiveFundedDashboardView';
+import { CertificateModal } from './CertificateModal';
 import {
   clearExpiredSoftBreachInFundedWallet,
   ensureFundedWalletsForAccounts,
@@ -162,7 +164,16 @@ interface UserDashboardProps {
   onOpenWithdrawalModal?: () => void;
   onNavigateToPricing?: () => void;
   onPassChallengePhase?: (account: TradingAccount) => void;
-  initialTab?: 'accounts' | 'analytics' | 'affiliate' | 'kyc' | 'profile' | 'security' | 'admin_users' | 'certificates';
+  initialTab?:
+    | 'accounts'
+    | 'live_funded'
+    | 'analytics'
+    | 'affiliate'
+    | 'kyc'
+    | 'profile'
+    | 'security'
+    | 'admin_users'
+    | 'certificates';
   onLogout?: () => void;
   onOpenAdminDashboard?: () => void;
 }
@@ -196,7 +207,15 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   );
 
   const [activeTab, setActiveTab] = useState<
-    'accounts' | 'analytics' | 'affiliate' | 'kyc' | 'profile' | 'security' | 'admin_users' | 'certificates'
+    | 'accounts'
+    | 'live_funded'
+    | 'analytics'
+    | 'affiliate'
+    | 'kyc'
+    | 'profile'
+    | 'security'
+    | 'admin_users'
+    | 'certificates'
   >(initialTab === 'admin_users' && !isUserAdmin ? 'accounts' : initialTab);
   const [isMobileTabDropdownOpen, setIsMobileTabDropdownOpen] = useState(false);
 
@@ -289,10 +308,29 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   }, [userProfile.profileLocked]);
 
   useEffect(() => {
+    if (initialTab && (initialTab !== 'admin_users' || isUserAdmin)) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab, isUserAdmin]);
+
+  useEffect(() => {
     const handleSelectSubTab = (e: Event) => {
       const custom = e as CustomEvent;
       const nextSub = custom.detail?.subTab;
-      if (nextSub && ['accounts', 'kyc', 'security', 'profile', 'analytics', 'affiliate', 'certificates'].includes(nextSub)) {
+      if (
+        nextSub &&
+        [
+          'accounts',
+          'live_funded',
+          'simulation',
+          'kyc',
+          'security',
+          'profile',
+          'analytics',
+          'affiliate',
+          'certificates',
+        ].includes(nextSub)
+      ) {
         setActiveTab(nextSub);
       }
     };
@@ -313,6 +351,8 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   const [copiedNumericId, setCopiedNumericId] = useState(false);
   const [fundedWallets, setFundedWallets] = useState<PurchasedFundedWallet[]>([]);
   const [analyticsModalAccount, setAnalyticsModalAccount] = useState<TradingAccount | null>(null);
+  const [certificatePreviewAccount, setCertificatePreviewAccount] = useState<TradingAccount | null>(null);
+  const [isCertificatePreviewOpen, setIsCertificatePreviewOpen] = useState(false);
   const [p2pDashboardToast, setP2pDashboardToast] = useState<{
     type: 'success' | 'error';
     title: string;
@@ -1991,6 +2031,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
       <div className="hidden lg:flex gap-2 border-b border-white/10 mb-8 overflow-x-auto pb-2 font-mono">
         {[
           { id: 'accounts', label: `My Trading Accounts (${accounts.length})` },
+          { id: 'live_funded', label: 'Live Funded Account' },
           { id: 'certificates', label: 'Certificates' },
           { id: 'kyc', label: `KYC Verification (${formatKycStatusBadgeText(userProfile.kycStatus)})` },
           { id: 'profile', label: 'Profile & Personal Details' },
@@ -1998,23 +2039,30 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           { id: 'affiliate', label: 'Affiliate Program (10%/5%/2% + 8%)' },
           { id: 'security', label: 'Security & 2FA' },
           ...(isUserAdmin ? [{ id: 'admin_users', label: 'Admin Command Center (RBAC)' }] : []),
-        ].map((tab) => (
-          <button
-            key={tab.id}
-            data-testid={`dashboard-tab-${tab.id}`}
-            onClick={() => {
-              soundEngine.playUiClick();
-              setActiveTab(tab.id as any);
-            }}
-            className={`px-4 py-2.5 min-h-[44px] rounded-xl text-xs font-bold transition-colors whitespace-nowrap cursor-pointer touch-manipulation ${
-              activeTab === tab.id
-                ? 'bg-[#ff8800] text-slate-950 font-black'
-                : 'text-slate-400 hover:text-white hover:bg-white/5'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
+        ].map((tab) => {
+          const isIceBlueTab = tab.id === 'live_funded';
+          return (
+            <button
+              key={tab.id}
+              data-testid={`dashboard-tab-${tab.id}`}
+              onClick={() => {
+                soundEngine.playUiClick();
+                setActiveTab(tab.id as any);
+              }}
+              className={`px-4 py-2.5 min-h-[44px] rounded-xl text-xs font-bold transition-colors whitespace-nowrap shrink-0 cursor-pointer touch-manipulation ${
+                activeTab === tab.id
+                  ? isIceBlueTab
+                    ? 'bg-gradient-to-r from-[#38BDF8] to-[#00E5FF] text-[#06090F] font-black'
+                    : 'bg-[#ff8800] text-slate-950 font-black'
+                  : isIceBlueTab
+                  ? 'text-[#38BDF8] hover:text-white hover:bg-[#38BDF8]/10 border border-[#38BDF8]/25'
+                  : 'text-slate-400 hover:text-white hover:bg-white/5'
+              }`}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
       </div>
 
       {/* Navigation Tabs (Mobile & Tablet Glassmorphic Dropdown Popover) */}
@@ -2040,6 +2088,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             <div className="flex items-center gap-2.5 truncate">
               <span className="w-7 h-7 rounded-lg bg-[#ff8800]/15 border border-[#ff8800]/40 flex items-center justify-center shrink-0">
                 {activeTab === 'accounts' && <CreditCard className="w-4 h-4 text-[#ff8800]" />}
+                {activeTab === 'live_funded' && <Zap className="w-4 h-4 text-[#00E5FF]" />}
                 {activeTab === 'certificates' && <Award className="w-4 h-4 text-[#ff8800]" />}
                 {activeTab === 'kyc' && <ShieldCheck className="w-4 h-4 text-[#ff8800]" />}
                 {activeTab === 'profile' && <User className="w-4 h-4 text-[#ff8800]" />}
@@ -2051,6 +2100,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
               <span className="truncate">
                 {activeTab === 'accounts' && `My Trading Accounts (${accounts.length})`}
+                {activeTab === 'live_funded' && 'Live Funded Account'}
                 {activeTab === 'certificates' && 'Certificates & Badges'}
                 {activeTab === 'kyc' && `KYC Verification (${formatKycStatusBadgeText(userProfile.kycStatus)})`}
                 {activeTab === 'profile' && 'Profile & Personal Details'}
@@ -2076,6 +2126,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             <div className="absolute left-0 right-0 top-full mt-2 z-50 rounded-xl bg-zinc-900/95 backdrop-blur-md border border-[#ff8800]/45 shadow-[0_20px_50px_rgba(0,0,0,0.9),0_0_24px_rgba(255,136,0,0.15)] p-1.5 space-y-1 text-xs animate-in fade-in zoom-in-95 slide-in-from-top-1 duration-150">
               {[
                 { id: 'accounts', label: `My Trading Accounts (${accounts.length})`, icon: <CreditCard className="w-4 h-4 shrink-0" /> },
+                { id: 'live_funded', label: 'Live Funded Account', icon: <Zap className="w-4 h-4 text-[#00E5FF] shrink-0" /> },
                 { id: 'certificates', label: 'Certificates & Badges', icon: <Award className="w-4 h-4 shrink-0" /> },
                 { id: 'kyc', label: 'KYC Verification', icon: <ShieldCheck className="w-4 h-4 shrink-0" />, badge: formatKycStatusBadgeText(userProfile.kycStatus) },
                 { id: 'profile', label: 'Profile & Personal Details', icon: <User className="w-4 h-4 shrink-0" /> },
@@ -3268,6 +3319,26 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         </div>
       )}
 
+      {/* Tab: Live Funded Account Cockpit */}
+      {activeTab === 'live_funded' && (
+        <LiveFundedDashboardView
+          accounts={accounts}
+          activeAccountId={activeAccountId}
+          fundedWallets={fundedWallets}
+          userProfile={userProfile}
+          nowTick={nowTick}
+          onSelectAccount={onSelectAccount}
+          onOpenTerminal={onOpenTerminal}
+          onOpenAnalytics={(acc) => setAnalyticsModalAccount(acc)}
+          onRequestPayout={(accId) => handleAttemptWithdrawal(accId)}
+          onOpenCertificatePreview={(acc) => {
+            setCertificatePreviewAccount(acc);
+            setIsCertificatePreviewOpen(true);
+          }}
+          onOpenChallengeModal={onOpenChallengeModal}
+        />
+      )}
+
       {/* Tab: Official Funded Trader Certificates */}
       {activeTab === 'certificates' && (
         <FundedCertificate
@@ -3275,6 +3346,14 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           accounts={accounts}
           onOpenTerminal={onOpenTerminal}
           onOpenChallengeModal={onOpenChallengeModal}
+          onOpenChallengePassedModal={(acc) => {
+            const matchedAcc =
+              accounts.find((a) => acc && a.id === acc.id) ||
+              accounts.find((a) => !isPersonalLiveAccount(a) && !isDemoAccount(a)) ||
+              null;
+            setCertificatePreviewAccount(matchedAcc);
+            setIsCertificatePreviewOpen(true);
+          }}
         />
       )}
 
@@ -4817,6 +4896,22 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                 )
               : [updatedWallet, ...prev];
           });
+        }}
+      />
+
+      {/* Challenge Passed & Certificate Preview Modal */}
+      <CertificateModal
+        isOpen={isCertificatePreviewOpen}
+        onClose={() => setIsCertificatePreviewOpen(false)}
+        traderName={userProfile.fullName || userProfile.email || 'Official BFT Trader'}
+        certificateId={certificatePreviewAccount?.certificateId}
+        passedAccount={certificatePreviewAccount}
+        deployedAccount={certificatePreviewAccount}
+        onLaunchRealAccount={() => {
+          if (certificatePreviewAccount?.id) {
+            onSelectAccount(certificatePreviewAccount.id);
+          }
+          setActiveTab('live_funded');
         }}
       />
     </div>

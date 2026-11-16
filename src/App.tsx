@@ -158,6 +158,7 @@ export default function App() {
   const [currentTab, setCurrentTab] = useState<string>(
     requestedInitialTab || (isAutostart ? 'terminal' : 'home')
   );
+  const [dashboardSubTab, setDashboardSubTab] = useState<'accounts' | 'live_funded'>('accounts');
   const [accounts, setAccounts] = useState<TradingAccount[]>([]);
   const [activeAccountId, setActiveAccountId] = useState<string>('');
   const [userProfile, setUserProfile] = useState<UserProfile>(() => {
@@ -2095,7 +2096,7 @@ export default function App() {
                 ? 'affiliate'
                 : currentTab === 'certificates'
                 ? 'certificates'
-                : 'accounts'
+                : dashboardSubTab
             }
             onLogout={handleLogout}
             onOpenAdminDashboard={() => setIsAdminDashboardOpen(true)}
@@ -2339,7 +2340,23 @@ export default function App() {
         onLaunchRealAccount={() => {
           if (certificateModalState.deployedAccount) {
             handleSelectAccount(certificateModalState.deployedAccount.id);
-            setCurrentTab('terminal');
+            const isPhase2 = certificateModalState.deployedAccount.phase === 'phase_2';
+            if (isPhase2) {
+              setCurrentTab('terminal');
+            } else {
+              setDashboardSubTab('live_funded');
+              handleNavigateTab('dashboard', { accountId: certificateModalState.deployedAccount.id });
+              setTimeout(() => {
+                window.dispatchEvent(
+                  new CustomEvent('bft-select-dashboard-subtab', {
+                    detail: { subTab: 'live_funded' },
+                  })
+                );
+              }, 30);
+            }
+          } else {
+            setDashboardSubTab('live_funded');
+            handleNavigateTab('dashboard');
           }
         }}
       />

@@ -33,9 +33,9 @@ export const MATEUS_FUNDED_PROFIT = 72876.98;
 export const YOHAN_FUNDED_PROFIT = MATEUS_FUNDED_PROFIT;
 export const FUNDED_RANK_15_PROFIT = 27321.11;
 export const AARAV_SELF_FUNDED_PROFIT = 40056.61;
-export const YOHAN_SELF_FUNDED_PROFIT = AARAV_SELF_FUNDED_PROFIT;
+export const YOHAN_SELF_FUNDED_PROFIT = 10067.81;
 export const AARAV_EVENING_TARGET_PROFIT = AARAV_SELF_FUNDED_PROFIT;
-export const YOHAN_EVENING_TARGET_PROFIT = AARAV_SELF_FUNDED_PROFIT;
+export const YOHAN_EVENING_TARGET_PROFIT = YOHAN_SELF_FUNDED_PROFIT;
 
 export const MATEUS_DOMINGOS_ENTRY: LeaderboardTrader = {
   id: 'fnd_ao_01',
@@ -67,7 +67,20 @@ export const AARAV_SHARMA_SELF_ENTRY: LeaderboardTrader = {
   payoutTime: '0m 58s',
 };
 
-export const YOHAN_SIRIWARDHANA_ENTRY: LeaderboardTrader = AARAV_SHARMA_SELF_ENTRY;
+export const YOHAN_SIRIWARDHANA_ENTRY: LeaderboardTrader = {
+  id: 'slf_lk_yohan',
+  rank: 8,
+  name: 'Yohan Siriwardhana',
+  country: 'Sri Lanka',
+  flag: '🇱🇰',
+  isoCode: 'LK',
+  category: 'self_funded',
+  accountTier: 'Self-Funded Live',
+  profit: YOHAN_SELF_FUNDED_PROFIT,
+  targetEveningProfit: YOHAN_SELF_FUNDED_PROFIT,
+  winRate: 74.6,
+  payoutTime: '1m 14s',
+};
 
 export const KASUN_PERERA_ENTRY = MATEUS_DOMINGOS_ENTRY;
 
@@ -436,7 +449,7 @@ export const SELF_FUNDED_TRADER_POOL: SeedTraderConfig[] = [
     payoutTime: '1m 31s',
   },
 
-  // 2 Bangladesh (Distinct names)
+  // 1 Bangladesh & 1 Sri Lanka (Yohan Siriwardhana - $10,067.81)
   {
     id: 'slf_bd_01',
     name: 'Nafis Rahman',
@@ -449,15 +462,15 @@ export const SELF_FUNDED_TRADER_POOL: SeedTraderConfig[] = [
     payoutTime: '1m 24s',
   },
   {
-    id: 'slf_bd_02',
-    name: 'Mehedi Hasan',
-    country: 'Bangladesh',
-    flag: '🇧🇩',
-    isoCode: 'BD',
+    id: 'slf_lk_yohan',
+    name: 'Yohan Siriwardhana',
+    country: 'Sri Lanka',
+    flag: '🇱🇰',
+    isoCode: 'LK',
     accountTier: 'Self-Funded Live',
-    eveningProfit: 9210.45,
-    winRate: 67.8,
-    payoutTime: '1m 45s',
+    eveningProfit: YOHAN_SELF_FUNDED_PROFIT,
+    winRate: 74.6,
+    payoutTime: '1m 14s',
   },
 ];
 
@@ -648,6 +661,7 @@ export function normalizeFundedLeaderboard(
       (t) =>
         t.name !== 'Mateus Domingos' &&
         !t.name.toLowerCase().includes('yohan') &&
+        !t.name.toLowerCase().includes('ashen fernando') &&
         t.isoCode !== 'AO' &&
         t.country !== 'Angola'
     )
@@ -681,7 +695,8 @@ export function normalizeFundedLeaderboard(
 /**
  * Normalizes Self-Funded Leaderboard traders:
  * Keeps Aarav Sharma anchored at Rank 1 (India, IN, 🇮🇳) with exact profit $40,056.61.
- * Completely strips any instances of Yohan Siriwardhana.
+ * Removes Ashen Fernando and ensures Yohan Siriwardhana is included with $10,067.81 profit
+ * and automatically sorted into his correct ranking position by profit.
  * When `resetToZero` is true (at 05:30 AM UTC+5:30 daily reset), traders start fresh at $0.00.
  */
 export function normalizeSelfFundedLeaderboard(
@@ -704,14 +719,21 @@ export function normalizeSelfFundedLeaderboard(
     ? 0
     : Math.max(aarav.profit, AARAV_SELF_FUNDED_PROFIT);
 
-  const others = traders
-    .filter(
-      (t) =>
+  const filteredOthers = traders
+    .filter((t) => {
+      const lower = t.name.trim().toLowerCase();
+      return (
         t.name !== 'Aarav Sharma' &&
-        !t.name.toLowerCase().includes('yohan')
-    )
-    .map((t) => (resetToZero ? { ...t, profit: 0 } : t))
-    .sort((a, b) => b.profit - a.profit);
+        !lower.includes('ashen fernando') &&
+        !lower.includes('yohan siriwardhana')
+      );
+    })
+    .map((t) => (resetToZero ? { ...t, profit: 0 } : t));
+
+  const yohanEntry: LeaderboardTrader = {
+    ...YOHAN_SIRIWARDHANA_ENTRY,
+    profit: resetToZero ? 0 : YOHAN_SELF_FUNDED_PROFIT,
+  };
 
   const aaravRank1: LeaderboardTrader = {
     ...aarav,
@@ -728,11 +750,21 @@ export function normalizeSelfFundedLeaderboard(
     payoutTime: '0m 58s',
   };
 
-  return [aaravRank1, ...others.slice(0, 14)].map((t, idx) => ({
-    ...t,
-    category: 'self_funded' as LeaderboardTabCategory,
-    rank: idx + 1,
-  }));
+  // Sort intermediate traders descending by profit, keeping Yohan Siriwardhana ($10,067.81) included and sorted by profit
+  const sortedOthers = [...filteredOthers, yohanEntry].sort((a, b) => b.profit - a.profit);
+  const top14Others = sortedOthers.slice(0, 14);
+  if (!top14Others.some((t) => t.name === 'Yohan Siriwardhana') && top14Others.length === 14) {
+    top14Others[13] = yohanEntry;
+    top14Others.sort((a, b) => b.profit - a.profit);
+  }
+
+  return [aaravRank1, ...top14Others]
+    .sort((a, b) => b.profit - a.profit)
+    .map((t, idx) => ({
+      ...t,
+      category: 'self_funded' as LeaderboardTabCategory,
+      rank: idx + 1,
+    }));
 }
 
 export const normalizeWeeklyLeaderboard = normalizeFundedLeaderboard;
@@ -822,6 +854,8 @@ export function getDynamicLeaderboardTraders(options?: {
     let profit: number;
     if (idx === 0 || cfg.name === 'Aarav Sharma') {
       profit = AARAV_SELF_FUNDED_PROFIT;
+    } else if (cfg.name === 'Yohan Siriwardhana') {
+      profit = YOHAN_SELF_FUNDED_PROFIT;
     } else {
       const minuteBucket = Math.floor(resetInfo.elapsedMsSinceReset / (60 * 1000));
       const waveSeed = Math.sin((minuteBucket + idx * 19) * 0.15) * 0.025;
@@ -1126,7 +1160,8 @@ export function resolveUserLeaderboardPosition(
   const filteredTraders = traders.filter((t) => {
     if (t.isCurrentUser || t.id === 'usr_current_logged_in') return false;
     const tNameLower = String(t.name || '').trim().toLowerCase();
-    if (tNameLower === userNameLower) return false;
+    if (tNameLower.includes('ashen fernando')) return false;
+    if (tNameLower === userNameLower && t.id !== 'slf_lk_yohan') return false;
     if (!isResetZeroList && Number(t.profit) <= 0) return false;
     return true;
   });
@@ -1145,7 +1180,7 @@ export function resolveUserLeaderboardPosition(
   for (const seed of fallbackSeedPool) {
     if (cleanTraders.length >= 15) break;
     const sLower = String(seed.name || '').trim().toLowerCase();
-    if (!seenNames.has(sLower) && sLower !== userNameLower) {
+    if (!seenNames.has(sLower) && (sLower !== userNameLower || seed.id === 'slf_lk_yohan')) {
       seenNames.add(sLower);
       cleanTraders.push(seed);
     }
@@ -1188,7 +1223,10 @@ export function resolveUserLeaderboardPosition(
       isCurrentUser: true,
     };
 
-    const combined = [...top15Base, userEntry].sort((a, b) => b.profit - a.profit);
+    const baseWithoutDuplicateUser = top15Base.filter(
+      (t) => String(t.name || '').trim().toLowerCase() !== userNameLower
+    );
+    const combined = [...baseWithoutDuplicateUser, userEntry].sort((a, b) => b.profit - a.profit);
     const userIndex = combined.findIndex((t) => t.isCurrentUser || t.id === 'usr_current_logged_in');
 
     if (userIndex >= 0 && userIndex < 15) {
@@ -1475,7 +1513,14 @@ export async function fetchFundedLeaderboardFromSupabase(): Promise<LeaderboardT
       })
       .filter((t) => {
         const lower = t.name.toLowerCase();
-        return t.profit > 0 && lower !== 'loading' && lower !== 'null' && lower !== 'trader';
+        return (
+          t.profit > 0 &&
+          lower !== 'loading' &&
+          lower !== 'null' &&
+          lower !== 'trader' &&
+          !lower.includes('ashen fernando') &&
+          !lower.includes('yohan')
+        );
       });
 
     const selfFundedSample = getDynamicLeaderboardTraders({
@@ -1561,14 +1606,21 @@ export async function fetchSelfFundedLeaderboardFromSupabase(
           })
           .filter((t) => {
             const lower = t.name.toLowerCase();
-            return t.profit > 0 && lower !== 'loading' && lower !== 'null' && lower !== 'trader';
+            return (
+              t.profit > 0 &&
+              lower !== 'loading' &&
+              lower !== 'null' &&
+              lower !== 'trader' &&
+              !lower.includes('ashen fernando') &&
+              !lower.includes('yohan siriwardhana')
+            );
           });
       }
     } catch {
       // view might be empty or unavailable
     }
 
-    // If `global_leaderboards` returned rows, backfill up to 15 if needed, sort descending by profit and return top 15
+    // If `global_leaderboards` returned rows, inject Yohan Siriwardhana ($10,067.81), backfill up to 15 if needed, sort descending by profit and return top 15
     if (dbTraders.length > 0) {
       const fundedSample = getDynamicLeaderboardTraders({
         category: 'funded',
@@ -1579,24 +1631,34 @@ export async function fetchSelfFundedLeaderboardFromSupabase(
         nowMs,
         useEveningPeak: false,
       });
-      const crossFilteredSelf = filterCrossTableDuplicates(dbTraders, fundedSample);
+      const crossFilteredSelf = filterCrossTableDuplicates(
+        [...dbTraders, { ...YOHAN_SIRIWARDHANA_ENTRY }],
+        fundedSample
+      );
       const seenSelfNames = new Set(crossFilteredSelf.map((t) => t.name.toLowerCase()));
       for (const seed of selfFallback) {
         if (crossFilteredSelf.length >= 15) break;
         const sLower = seed.name.toLowerCase();
-        if (!seenSelfNames.has(sLower)) {
+        if (!seenSelfNames.has(sLower) && !sLower.includes('ashen fernando')) {
           seenSelfNames.add(sLower);
           crossFilteredSelf.push(seed);
         }
       }
-      return crossFilteredSelf
+      const sortedTop15 = crossFilteredSelf
         .sort((a, b) => b.profit - a.profit)
-        .slice(0, 15)
-        .map((t, idx) => ({
-          ...t,
-          category: 'self_funded' as LeaderboardTabCategory,
-          rank: idx + 1,
-        }));
+        .slice(0, 15);
+      if (
+        !sortedTop15.some((t) => t.name === 'Yohan Siriwardhana') &&
+        sortedTop15.length === 15
+      ) {
+        sortedTop15[14] = { ...YOHAN_SIRIWARDHANA_ENTRY };
+        sortedTop15.sort((a, b) => b.profit - a.profit);
+      }
+      return sortedTop15.map((t, idx) => ({
+        ...t,
+        category: 'self_funded' as LeaderboardTabCategory,
+        rank: idx + 1,
+      }));
     }
 
     // 2. Fallback: Fetch active traders from backend SQLite query + dynamic seed pool

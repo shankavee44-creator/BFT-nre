@@ -39664,6169 +39664,6 @@ var DEFAULT_NEWS_EVENTS = [
   }
 ];
 
-// src/utils/affiliateEngine.ts
-function normalizeSocialLinksList(links) {
-  const rawList = Array.isArray(links) ? links : String(links || "").split(/[\n,]+/).map((s) => s.trim());
-  const deduped = [];
-  const seen = /* @__PURE__ */ new Set();
-  for (const item of rawList) {
-    const clean = String(item || "").trim();
-    if (!clean) continue;
-    const key = clean.toLowerCase();
-    if (!seen.has(key)) {
-      seen.add(key);
-      deduped.push(clean);
-    }
-  }
-  return deduped;
-}
-function validateAffiliateSocialSubmission(params) {
-  if (params.alreadyLocked) {
-    return {
-      valid: false,
-      error: "Your affiliate marketing profile is already Verified & Locked and cannot be edited.",
-      platformType: String(params.platformType || "").trim(),
-      socialLinks: []
-    };
-  }
-  const platformType = String(params.platformType || "").trim();
-  if (!platformType) {
-    return {
-      valid: false,
-      error: "Please select your primary Social Media / Marketing Platform.",
-      platformType: "",
-      socialLinks: []
-    };
-  }
-  const socialLinks = normalizeSocialLinksList(params.links);
-  if (socialLinks.length === 0) {
-    return {
-      valid: false,
-      error: "Please enter at least one Group, Page, or Channel link.",
-      platformType,
-      socialLinks: []
-    };
-  }
-  for (const link of socialLinks) {
-    if (link.length < 4 || !link.includes(".") && !link.startsWith("@") && !link.startsWith("http")) {
-      return {
-        valid: false,
-        error: `Please provide a valid link or channel URL (invalid entry: "${link}").`,
-        platformType,
-        socialLinks: []
-      };
-    }
-  }
-  return {
-    valid: true,
-    platformType,
-    socialLinks
-  };
-}
-function validateCountryManagerApplication(params) {
-  const fullName = String(params.fullName || "").trim();
-  const targetCountry = String(params.targetCountry || "").trim();
-  const rawTelegram = String(params.telegramHandle || "").trim();
-  const telegramHandle = rawTelegram ? rawTelegram.startsWith("@") ? rawTelegram : `@${rawTelegram}` : "";
-  const estimatedAudienceSize = String(params.estimatedAudienceSize ?? "").trim();
-  const marketingStrategy = String(params.marketingStrategy || "").trim();
-  const socialLinks = normalizeSocialLinksList(params.socialLinks);
-  if (fullName.length < 2) {
-    return { valid: false, error: "Please enter your Full Name." };
-  }
-  if (targetCountry.length < 2) {
-    return { valid: false, error: "Please enter your Target Country." };
-  }
-  if (telegramHandle.length < 3) {
-    return { valid: false, error: "Please enter a valid Telegram Handle (e.g., @yourhandle)." };
-  }
-  if (!estimatedAudienceSize) {
-    return { valid: false, error: "Please specify your Estimated Audience / Community Size." };
-  }
-  if (marketingStrategy.length < 15) {
-    return {
-      valid: false,
-      error: "Please provide a brief Marketing Strategy description (at least 15 characters)."
-    };
-  }
-  if (socialLinks.length === 0) {
-    return { valid: false, error: "Please provide at least one relevant Social Link." };
-  }
-  return {
-    valid: true,
-    normalized: {
-      fullName,
-      targetCountry,
-      telegramHandle,
-      estimatedAudienceSize,
-      marketingStrategy,
-      socialLinks
-    }
-  };
-}
-
-// src/server/db.ts
-import { DatabaseSync } from "node:sqlite";
-import path from "node:path";
-import fs from "node:fs";
-import os from "node:os";
-var __defProp2 = Object.defineProperty;
-var __name = (target, value) => __defProp2(target, "name", { value, configurable: true });
-function openResilientDatabase() {
-  const candidates = [path.resolve(process.cwd(), "data"), path.resolve(os.tmpdir(), "bft_data")];
-  for (const dir of candidates) {
-    try {
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
-      const dbFile = path.join(dir, "bft_platform.sqlite");
-      try {
-        const instance = new DatabaseSync(dbFile);
-        instance.exec("SELECT count(*) FROM sqlite_master;");
-        try {
-          instance.exec("PRAGMA journal_mode = WAL;");
-        } catch {
-        }
-        return instance;
-      } catch (err) {
-        const msg = String(err?.message || "").toLowerCase();
-        if (msg.includes("malformed") || msg.includes("disk image") || msg.includes("file is not a database")) {
-          try {
-            const backupFile = `${dbFile}.corrupted_${Date.now()}`;
-            if (fs.existsSync(dbFile)) {
-              fs.renameSync(dbFile, backupFile);
-              console.warn(`Renamed corrupted SQLite database to ${backupFile}`);
-            }
-            const freshInstance = new DatabaseSync(dbFile);
-            return freshInstance;
-          } catch {
-          }
-        }
-        throw err;
-      }
-    } catch {
-    }
-  }
-  return new DatabaseSync(":memory:");
-}
-__name(openResilientDatabase, "openResilientDatabase");
-var db = openResilientDatabase();
-db.exec(`
-  PRAGMA foreign_keys = ON;
-
-  -- 1. Users Table
-  CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    email TEXT UNIQUE NOT NULL,
-    full_name TEXT NOT NULL,
-    avatar_url TEXT,
-    google_id TEXT,
-    referral_code TEXT UNIQUE NOT NULL,
-    referred_by TEXT,
-    kyc_status TEXT DEFAULT 'unverified',
-    kyc_verified_at INTEGER,
-    kyc_timer_ends_at INTEGER,
-    kyc_doc_type TEXT,
-    profile_locked INTEGER DEFAULT 0,
-    address TEXT,
-    date_of_birth TEXT,
-    country TEXT DEFAULT 'United States',
-    telegram_handle TEXT,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-  );
-
-  -- 2. Sessions Table (HTTP-Only / Bearer Session Management)
-  CREATE TABLE IF NOT EXISTS sessions (
-    token TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    expires_at INTEGER NOT NULL,
-    created_at INTEGER NOT NULL
-  );
-
-  -- 3. Trading Accounts Table
-  CREATE TABLE IF NOT EXISTS accounts (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    tier TEXT NOT NULL,
-    tier_name TEXT NOT NULL,
-    size REAL NOT NULL,
-    initial_balance REAL NOT NULL,
-    current_balance REAL NOT NULL,
-    starting_day_equity REAL NOT NULL,
-    equity REAL NOT NULL,
-    daily_loss_limit_percent REAL NOT NULL,
-    max_overall_loss_percent REAL NOT NULL,
-    max_risk_per_trade_percent REAL DEFAULT 5,
-    status TEXT DEFAULT 'active',
-    phase TEXT DEFAULT 'funded',
-    trading_days_completed INTEGER DEFAULT 14,
-    trades_count INTEGER DEFAULT 0,
-    win_rate REAL DEFAULT 0,
-    daily_withdrawals_unlocked INTEGER DEFAULT 0,
-    first_withdrawal_completed INTEGER DEFAULT 0,
-    created_date TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-  );
-
-  -- 4. Referrals Network Table (3-Tier Chain)
-  CREATE TABLE IF NOT EXISTS referrals (
-    id TEXT PRIMARY KEY,
-    sponsor_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    referred_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    tier_level INTEGER NOT NULL,
-    created_at INTEGER NOT NULL
-  );
-
-  -- 5. Affiliate Commissions Ledger
-  CREATE TABLE IF NOT EXISTS commissions (
-    id TEXT PRIMARY KEY,
-    sponsor_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    referred_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    source_type TEXT NOT NULL, -- 'purchase' or 'withdrawal'
-    tier_level INTEGER NOT NULL, -- 1, 2, or 3
-    package_tier TEXT,
-    package_name TEXT,
-    base_amount REAL NOT NULL,
-    rate REAL NOT NULL,
-    commission_amount REAL NOT NULL,
-    status TEXT DEFAULT 'paid',
-    created_at INTEGER NOT NULL
-  );
-
-  -- 6. Withdrawals Ledger
-  CREATE TABLE IF NOT EXISTS withdrawals (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    gross_amount REAL NOT NULL,
-    net_profit REAL NOT NULL,
-    max_allowed_profit REAL NOT NULL,
-    profit_share_rate REAL DEFAULT 0.80,
-    fee_amount REAL NOT NULL,
-    net_payout REAL NOT NULL,
-    wallet_address TEXT NOT NULL,
-    network TEXT NOT NULL,
-    payment_method TEXT NOT NULL,
-    status TEXT DEFAULT 'completed',
-    rejection_reason TEXT,
-    tx_hash TEXT,
-    reference_number TEXT,
-    requested_at INTEGER NOT NULL,
-    processed_at INTEGER
-  );
-
-  -- 7. Leaderboard Table
-  CREATE TABLE IF NOT EXISTS leaderboard (
-    id TEXT PRIMARY KEY,
-    rank INTEGER NOT NULL,
-    name TEXT NOT NULL,
-    country TEXT NOT NULL,
-    flag TEXT NOT NULL,
-    account_tier TEXT NOT NULL,
-    profit REAL NOT NULL,
-    win_rate REAL NOT NULL,
-    payout_time TEXT NOT NULL,
-    updated_at INTEGER NOT NULL
-  );
-
-  -- 8. Copy Trading Profiles Table
-  CREATE TABLE IF NOT EXISTS copy_trading_profiles (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    name TEXT NOT NULL,
-    country TEXT NOT NULL,
-    flag TEXT NOT NULL,
-    avatar TEXT NOT NULL,
-    category TEXT NOT NULL,
-    strategy_name TEXT NOT NULL,
-    vip_level TEXT NOT NULL,
-    starting_capital REAL NOT NULL,
-    current_balance REAL NOT NULL,
-    lifetime_earnings REAL NOT NULL,
-    daily_profit_dollars REAL NOT NULL,
-    weekly_profit_pct REAL NOT NULL,
-    monthly_profit_pct REAL NOT NULL,
-    win_rate REAL NOT NULL,
-    total_trades INTEGER NOT NULL,
-    trading_turnover REAL NOT NULL,
-    total_copiers INTEGER DEFAULT 0,
-    max_copiers INTEGER DEFAULT 1000,
-    win_rate_3m REAL NOT NULL,
-    profit_factor REAL DEFAULT 2.15,
-    max_drawdown REAL DEFAULT 4.2,
-    sharpe_ratio REAL DEFAULT 1.85,
-    avg_holding_time TEXT DEFAULT '4h 12m',
-    status TEXT DEFAULT 'approved',
-    created_at INTEGER NOT NULL
-  );
-
-  -- 9. Copy Trading Subscriptions Table
-  CREATE TABLE IF NOT EXISTS copy_trading_subscriptions (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    provider_id TEXT NOT NULL,
-    allocated_capital REAL DEFAULT 100,
-    max_loss_limit REAL DEFAULT 0,
-    take_profit_limit REAL DEFAULT 0,
-    trade_sizing_type TEXT DEFAULT 'proportionate',
-    sizing_multiplier REAL DEFAULT 1.0,
-    status TEXT DEFAULT 'active',
-    current_pnl REAL DEFAULT 0,
-    created_at INTEGER NOT NULL
-  );
-
-  -- 10. Copy Executed Trades Table
-  CREATE TABLE IF NOT EXISTS copy_executed_trades (
-    id TEXT PRIMARY KEY,
-    subscription_id TEXT NOT NULL,
-    copier_user_id TEXT NOT NULL,
-    copier_account_id TEXT NOT NULL,
-    provider_id TEXT NOT NULL,
-    asset_symbol TEXT NOT NULL,
-    trade_type TEXT NOT NULL,
-    amount REAL NOT NULL,
-    entry_price REAL NOT NULL,
-    exit_price REAL,
-    status TEXT DEFAULT 'OPEN',
-    pnl REAL DEFAULT 0,
-    created_at INTEGER NOT NULL
-  );
-
-  -- 11. Platform Revenue Pool & House Capital Structure Ledger
-  CREATE TABLE IF NOT EXISTS platform_revenue_pool (
-    id TEXT PRIMARY KEY,
-    pool_balance REAL DEFAULT 2500000.0,
-    total_lost_stakes_captured REAL DEFAULT 0.0,
-    total_win_payouts_disbursed REAL DEFAULT 0.0,
-    total_spread_retained REAL DEFAULT 0.0,
-    total_cutoff_liquidations REAL DEFAULT 0.0,
-    trades_settled_count INTEGER DEFAULT 0,
-    updated_at INTEGER NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS platform_revenue_ledger (
-    id TEXT PRIMARY KEY,
-    trade_id TEXT NOT NULL,
-    subscription_id TEXT NOT NULL,
-    copier_user_id TEXT NOT NULL,
-    copier_account_id TEXT NOT NULL,
-    investment_amount REAL NOT NULL,
-    platform_credit REAL NOT NULL,
-    house_spread_retained REAL DEFAULT 0.0,
-    settlement_reason TEXT NOT NULL,
-    created_at INTEGER NOT NULL
-  );
-
-  -- 12. Master Trader Bot Execution & Cool-Off State Table
-  CREATE TABLE IF NOT EXISTS master_trader_bot_state (
-    provider_id TEXT PRIMARY KEY,
-    status TEXT DEFAULT 'active',
-    pause_reason TEXT DEFAULT 'NONE',
-    last_trade_executed_at INTEGER DEFAULT 0,
-    last_cooldown_duration_ms INTEGER DEFAULT 0,
-    next_eligible_trade_at INTEGER DEFAULT 0,
-    paused_until_ms INTEGER DEFAULT 0,
-    hour_window_start_ms INTEGER DEFAULT 0,
-    max_trades_this_hour INTEGER DEFAULT 4,
-    trades_executed_this_hour INTEGER DEFAULT 0,
-    consecutive_wins INTEGER DEFAULT 0,
-    consecutive_losses INTEGER DEFAULT 0,
-    total_signals_generated INTEGER DEFAULT 0,
-    last_signal_id TEXT,
-    updated_at INTEGER NOT NULL
-  );
-`);
-try {
-  db.prepare(`
-    INSERT OR IGNORE INTO platform_revenue_pool (
-      id, pool_balance, total_lost_stakes_captured, total_win_payouts_disbursed,
-      total_spread_retained, total_cutoff_liquidations, trades_settled_count, updated_at
-    ) VALUES ('HOUSE_POOL_MAIN', 2500000.0, 0.0, 0.0, 0.0, 0.0, 0, ?)
-  `).run(Date.now());
-} catch {
-}
-var copyTradingAlterColumns = [`ALTER TABLE copy_trading_subscriptions ADD COLUMN allocated_capital REAL DEFAULT 100;`, `ALTER TABLE copy_trading_subscriptions ADD COLUMN max_loss_limit REAL DEFAULT 0;`, `ALTER TABLE copy_trading_subscriptions ADD COLUMN take_profit_limit REAL DEFAULT 0;`, `ALTER TABLE copy_trading_subscriptions ADD COLUMN trade_sizing_type TEXT DEFAULT 'proportionate';`, `ALTER TABLE copy_trading_subscriptions ADD COLUMN sizing_multiplier REAL DEFAULT 1.0;`, `ALTER TABLE copy_trading_subscriptions ADD COLUMN current_pnl REAL DEFAULT 0;`, `ALTER TABLE copy_trading_subscriptions ADD COLUMN copier_user_id TEXT;`, `ALTER TABLE copy_trading_subscriptions ADD COLUMN copier_account_id TEXT;`, `ALTER TABLE copy_trading_subscriptions ADD COLUMN trade_amount REAL DEFAULT 100;`, `ALTER TABLE copy_trading_subscriptions ADD COLUMN stop_loss REAL DEFAULT 0;`, `ALTER TABLE copy_trading_subscriptions ADD COLUMN take_profit REAL DEFAULT 0;`, `ALTER TABLE copy_trading_subscriptions ADD COLUMN max_drawdown REAL DEFAULT 5.0;`, `ALTER TABLE copy_trading_profiles ADD COLUMN profit_factor REAL DEFAULT 2.15;`, `ALTER TABLE copy_trading_profiles ADD COLUMN max_drawdown REAL DEFAULT 4.2;`, `ALTER TABLE copy_trading_profiles ADD COLUMN sharpe_ratio REAL DEFAULT 1.85;`, `ALTER TABLE copy_trading_profiles ADD COLUMN avg_holding_time TEXT DEFAULT '4h 12m';`, `ALTER TABLE commissions ADD COLUMN affiliate_tier TEXT DEFAULT 'basic';`, `ALTER TABLE users ADD COLUMN registered_tier TEXT DEFAULT 'basic';`];
-for (const stmt of copyTradingAlterColumns) {
-  try {
-    db.exec(stmt);
-  } catch {
-  }
-}
-function seedInitialData() {
-  const userCount = Number(db.prepare("SELECT COUNT(*) as c FROM users").get().c);
-  if (userCount > 0) return;
-  const now = Date.now();
-  db.prepare(`
-    INSERT INTO users (id, email, full_name, referral_code, referred_by, kyc_status, profile_locked, address, date_of_birth, country, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("USR-MASTER-88", "viktor.v@quant-prop.io", "Viktor Vance", "BFT-VIKTOR88", null, "verified", 1, "Level 42, Al Saada St, Dubai Financial Centre", "1985-04-12", "United Arab Emirates", now - 864e5 * 60, now - 864e5 * 60);
-  db.prepare(`
-    INSERT INTO users (id, email, full_name, referral_code, referred_by, kyc_status, profile_locked, address, date_of_birth, country, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("USR-PARENT-55", "elena.rostova@alpha-traders.com", "Elena Rostova", "BFT-ELENA55", "USR-MASTER-88", "verified", 1, "12 Bishopsgate, London EC2N 4BQ", "1991-08-20", "United Kingdom", now - 864e5 * 45, now - 864e5 * 45);
-  db.prepare(`
-    INSERT INTO users (id, email, full_name, referral_code, referred_by, kyc_status, profile_locked, address, date_of_birth, country, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("usr_bft_001", "alex.mercer@gmail.com", "Alex Mercer", "BFT-ALEX77", "USR-PARENT-55", "verified", 1, "742 Evergreen Terrace, Springfield, OR 97477", "1994-06-15", "United States", now - 864e5 * 30, now - 864e5 * 30);
-  db.prepare(`
-    INSERT INTO accounts (
-      id, user_id, tier, tier_name, size, initial_balance, current_balance, starting_day_equity, equity,
-      daily_loss_limit_percent, max_overall_loss_percent, max_risk_per_trade_percent, status, phase,
-      trading_days_completed, trades_count, win_rate, daily_withdrawals_unlocked, first_withdrawal_completed,
-      created_date, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("BFT-91823", "usr_bft_001", "instant", "$10,000 Instant Funded", 1e4, 1e4, 10680, 10680, 10680, 5, 12, 5, "active", "funded", 14, 42, 76.2, 1, 1, "2026-10-01", now - 864e5 * 20, now);
-  db.prepare(`
-    INSERT INTO withdrawals (
-      id, user_id, account_id, gross_amount, net_profit, max_allowed_profit, profit_share_rate, fee_amount, net_payout,
-      wallet_address, network, payment_method, status, tx_hash, reference_number, requested_at, processed_at
-    ) VALUES (?, ?, ?, ?, ?, ?, 0.80, ?, ?, ?, ?, 'crypto_trc20', 'completed', ?, ?, ?, ?)
-  `).run("WD-51940284910", "usr_bft_001", "BFT-91823", 350, 680, 544, 35, 315, "0x71C94F8B92E1048A3B99D2E54C1A82F901D3E84A", "BSC (BEP20)", "0x9fb8c14d5e23a0781b4d0812eac92b8d4f0980598125cfb881329a1b9e21", "REF-51940284910", now - 864e5 * 1, now - 864e5 * 1 + 92e3);
-}
-__name(seedInitialData, "seedInitialData");
-function syncLeaderboardData() {
-  const now = Date.now();
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS funded_leaderboard (
-      id TEXT PRIMARY KEY,
-      rank INTEGER NOT NULL,
-      name TEXT NOT NULL,
-      country TEXT NOT NULL,
-      flag TEXT NOT NULL,
-      iso_code TEXT,
-      account_tier TEXT NOT NULL,
-      profit REAL NOT NULL,
-      win_rate REAL NOT NULL,
-      payout_time TEXT NOT NULL,
-      updated_at INTEGER NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS self_funded_leaderboard (
-      id TEXT PRIMARY KEY,
-      rank INTEGER NOT NULL,
-      name TEXT NOT NULL,
-      country TEXT NOT NULL,
-      flag TEXT NOT NULL,
-      iso_code TEXT,
-      account_tier TEXT NOT NULL,
-      profit REAL NOT NULL,
-      win_rate REAL NOT NULL,
-      payout_time TEXT NOT NULL,
-      updated_at INTEGER NOT NULL
-    );
-  `);
-  const fundedSeed = [
-    { rank: 1, name: "Mateus Domingos", country: "Angola", flag: "\u{1F1E6}\u{1F1F4}", isoCode: "AO", tier: "$100,000 Instant Funded", profit: 72876.98, winRate: 84.2, payout: "1m 12s" },
-    { rank: 2, name: "Rajesh Kumar", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "$100,000 Two-Step", profit: 64280.45, winRate: 81.5, payout: "1m 24s" },
-    { rank: 3, name: "Tanvir Ahmed", country: "Bangladesh", flag: "\u{1F1E7}\u{1F1E9}", isoCode: "BD", tier: "$50,000 One-Step", profit: 54820.9, winRate: 78.7, payout: "1m 21s" },
-    { rank: 4, name: "Rohan Gupta", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "$50,000 Instant Funded", profit: 50150.8, winRate: 77.6, payout: "1m 31s" },
-    { rank: 5, name: "Muhammad Hamza", country: "Pakistan", flag: "\u{1F1F5}\u{1F1F0}", isoCode: "PK", tier: "$100,000 Instant Funded", profit: 46890.65, winRate: 76.8, payout: "1m 29s" },
-    { rank: 6, name: "Tariq Al-Mansoor", country: "Dubai, UAE", flag: "\u{1F1E6}\u{1F1EA}", isoCode: "AE", tier: "$50,000 One-Step", profit: 43280.5, winRate: 76.3, payout: "1m 30s" },
-    { rank: 7, name: "Vikramjit Singh", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "$50,000 Two-Step", profit: 40820.6, winRate: 75.9, payout: "1m 42s" },
-    { rank: 8, name: "Shakib Hasan", country: "Bangladesh", flag: "\u{1F1E7}\u{1F1E9}", isoCode: "BD", tier: "$25,000 Instant Funded", profit: 38420.55, winRate: 75.2, payout: "1m 34s" },
-    { rank: 9, name: "Usman Khan", country: "Pakistan", flag: "\u{1F1F5}\u{1F1F0}", isoCode: "PK", tier: "$50,000 Two-Step", profit: 36430.1, winRate: 74.6, payout: "1m 35s" },
-    { rank: 10, name: "Ananya Iyer", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "$25,000 Instant Funded", profit: 34640.3, winRate: 74.1, payout: "1m 27s" },
-    { rank: 11, name: "Faizal Zulkifli", country: "Malaysia", flag: "\u{1F1F2}\u{1F1FE}", isoCode: "MY", tier: "$25,000 Instant Funded", profit: 32410, winRate: 73, payout: "1m 18s" },
-    { rank: 12, name: "Siddharth Nair", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "$25,000 One-Step", profit: 30480.15, winRate: 72.5, payout: "1m 38s" },
-    { rank: 13, name: "Mahmudul Islam", country: "Bangladesh", flag: "\u{1F1E7}\u{1F1E9}", isoCode: "BD", tier: "$10,000 One-Step", profit: 28950.4, winRate: 71.8, payout: "1m 41s" },
-    { rank: 14, name: "Priya Patel", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "$25,000 Two-Step", profit: 27890, winRate: 71.4, payout: "1m 20s" },
-    { rank: 15, name: "Karthik Reddy", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "$10,000 Instant Funded", profit: 27321.11, winRate: 71, payout: "1m 45s" }
-  ];
-  for (const lb of fundedSeed) {
-    db.prepare(`
-      INSERT OR REPLACE INTO funded_leaderboard (id, rank, name, country, flag, iso_code, account_tier, profit, win_rate, payout_time, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(`FND-LB-${lb.rank}`, lb.rank, lb.name, lb.country, lb.flag, lb.isoCode, lb.tier, lb.profit, lb.winRate, lb.payout, now);
-    db.prepare(`
-      INSERT OR REPLACE INTO leaderboard (id, rank, name, country, flag, account_tier, profit, win_rate, payout_time, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(`LB-${lb.rank}`, lb.rank, lb.name, lb.country, lb.flag, lb.tier, lb.profit, lb.winRate, lb.payout, now);
-  }
-  const selfFundedSeed = [
-    { rank: 1, name: "Aarav Sharma", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "Self-Funded VIP Live", profit: 40056.61, winRate: 83.1, payout: "0m 58s" },
-    { rank: 2, name: "Devansh Mehta", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "Self-Funded Live", profit: 32650.2, winRate: 79.4, payout: "1m 05s" },
-    { rank: 3, name: "Faisal Mahmood", country: "Pakistan", flag: "\u{1F1F5}\u{1F1F0}", isoCode: "PK", tier: "Self-Funded Live", profit: 29890.1, winRate: 78.2, payout: "1m 11s" },
-    { rank: 4, name: "Zayed Al-Hashemi", country: "Dubai, UAE", flag: "\u{1F1E6}\u{1F1EA}", isoCode: "AE", tier: "Self-Funded VIP Live", profit: 27520.8, winRate: 77.4, payout: "1m 09s" },
-    { rank: 5, name: "Kavya Krishnan", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "Self-Funded Live", profit: 25230.9, winRate: 76.2, payout: "1m 18s" },
-    { rank: 6, name: "Bilal Qureshi", country: "Pakistan", flag: "\u{1F1F5}\u{1F1F0}", isoCode: "PK", tier: "Self-Funded Live", profit: 23490.4, winRate: 75.1, payout: "1m 20s" },
-    { rank: 7, name: "Rashid Al-Maktoum", country: "Dubai, UAE", flag: "\u{1F1E6}\u{1F1EA}", isoCode: "AE", tier: "Self-Funded Live", profit: 21340.5, winRate: 74.5, payout: "1m 16s" },
-    { rank: 8, name: "Harshvardhan Rao", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "Self-Funded Live", profit: 19840.6, winRate: 73.8, payout: "1m 25s" },
-    { rank: 9, name: "Nafis Rahman", country: "Bangladesh", flag: "\u{1F1E7}\u{1F1E9}", isoCode: "BD", tier: "Self-Funded Live", profit: 18120.75, winRate: 73, payout: "1m 24s" },
-    { rank: 10, name: "Ayesha Tariq", country: "Pakistan", flag: "\u{1F1F5}\u{1F1F0}", isoCode: "PK", tier: "Self-Funded Live", profit: 16430.5, winRate: 72.3, payout: "1m 29s" },
-    { rank: 11, name: "Pranav Kulkarni", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "Self-Funded Live", profit: 14620.15, winRate: 71, payout: "1m 35s" },
-    { rank: 12, name: "Omar Al-Suwaidi", country: "Dubai, UAE", flag: "\u{1F1E6}\u{1F1EA}", isoCode: "AE", tier: "Self-Funded Live", profit: 13170.25, winRate: 70.2, payout: "1m 31s" },
-    { rank: 13, name: "Saad Afridi", country: "Pakistan", flag: "\u{1F1F5}\u{1F1F0}", isoCode: "PK", tier: "Self-Funded Live", profit: 11960.35, winRate: 69.4, payout: "1m 38s" },
-    { rank: 14, name: "Arjun Malhotra", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "Self-Funded Live", profit: 10480.4, winRate: 68.5, payout: "1m 42s" },
-    { rank: 15, name: "Mehedi Hasan", country: "Bangladesh", flag: "\u{1F1E7}\u{1F1E9}", isoCode: "BD", tier: "Self-Funded Live", profit: 9210.45, winRate: 67.8, payout: "1m 45s" }
-  ];
-  try {
-    db.prepare(`DELETE FROM self_funded_leaderboard WHERE id = 'SLF-LB-1'`).run();
-  } catch {
-  }
-  for (const lb of selfFundedSeed) {
-    db.prepare(`
-      INSERT OR REPLACE INTO self_funded_leaderboard (id, rank, name, country, flag, iso_code, account_tier, profit, win_rate, payout_time, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(`SLF-LB-${lb.rank}`, lb.rank, lb.name, lb.country, lb.flag, lb.isoCode, lb.tier, lb.profit, lb.winRate, lb.payout, now);
-  }
-}
-__name(syncLeaderboardData, "syncLeaderboardData");
-seedInitialData();
-syncLeaderboardData();
-function getUserById(userId) {
-  return db.prepare("SELECT * FROM users WHERE id = ?").get(userId);
-}
-__name(getUserById, "getUserById");
-function getUserByEmail(email) {
-  return db.prepare("SELECT * FROM users WHERE email = ? COLLATE NOCASE").get(email);
-}
-__name(getUserByEmail, "getUserByEmail");
-function getUserByReferralCode(code) {
-  return db.prepare("SELECT * FROM users WHERE referral_code = ? COLLATE NOCASE").get(code);
-}
-__name(getUserByReferralCode, "getUserByReferralCode");
-function createOrUpdateGoogleUser(params) {
-  const existing = getUserByEmail(params.email);
-  const now = Date.now();
-  if (existing) {
-    db.prepare(`
-      UPDATE users SET
-        full_name = CASE WHEN profile_locked = 1 THEN full_name ELSE ? END,
-        google_id = COALESCE(?, google_id),
-        avatar_url = COALESCE(?, avatar_url),
-        updated_at = ?
-      WHERE id = ?
-    `).run(params.fullName, params.googleId || null, params.avatarUrl || null, now, existing.id);
-    return getUserById(existing.id);
-  }
-  const sanitizedName = params.fullName.replace(/[^A-Za-z0-9]/g, "").slice(0, 4).toUpperCase();
-  const randomSuffix = Math.floor(1e3 + Math.random() * 9e3);
-  const newRefCode = `BFT-${sanitizedName || "TRD"}${randomSuffix}`;
-  const newUserId = `usr_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
-  let sponsorId = null;
-  if (params.referralCodeInput) {
-    const sponsor = getUserByReferralCode(params.referralCodeInput);
-    if (sponsor && sponsor.id !== newUserId) {
-      sponsorId = sponsor.id;
-    }
-  }
-  db.prepare(`
-    INSERT INTO users (id, email, full_name, avatar_url, google_id, referral_code, referred_by, kyc_status, profile_locked, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 'unverified', 0, ?, ?)
-  `).run(newUserId, params.email.toLowerCase(), params.fullName, params.avatarUrl || null, params.googleId || null, newRefCode, sponsorId, now, now);
-  if (sponsorId) {
-    linkUplineReferrals(sponsorId, newUserId, now);
-  }
-  return getUserById(newUserId);
-}
-__name(createOrUpdateGoogleUser, "createOrUpdateGoogleUser");
-function linkUplineReferrals(l1SponsorId, newUserId, nowMs) {
-  db.prepare(`
-    INSERT OR IGNORE INTO referrals (id, sponsor_id, referred_user_id, tier_level, created_at)
-    VALUES (?, ?, ?, 1, ?)
-  `).run(`REF-L1-${l1SponsorId}-${newUserId}`, l1SponsorId, newUserId, nowMs);
-  const l1User = getUserById(l1SponsorId);
-  if (l1User?.referred_by) {
-    const l2SponsorId = l1User.referred_by;
-    db.prepare(`
-      INSERT OR IGNORE INTO referrals (id, sponsor_id, referred_user_id, tier_level, created_at)
-      VALUES (?, ?, ?, 2, ?)
-    `).run(`REF-L2-${l2SponsorId}-${newUserId}`, l2SponsorId, newUserId, nowMs);
-    const l2User = getUserById(l2SponsorId);
-    if (l2User?.referred_by) {
-      const l3SponsorId = l2User.referred_by;
-      db.prepare(`
-        INSERT OR IGNORE INTO referrals (id, sponsor_id, referred_user_id, tier_level, created_at)
-        VALUES (?, ?, ?, 3, ?)
-      `).run(`REF-L3-${l3SponsorId}-${newUserId}`, l3SponsorId, newUserId, nowMs);
-    }
-  }
-}
-__name(linkUplineReferrals, "linkUplineReferrals");
-function createSessionToken(userId, rememberMe = true) {
-  const token = `bft_sess_${Math.random().toString(36).substring(2)}${Date.now().toString(36)}${Math.random().toString(36).substring(2)}`;
-  const expiresAt = Date.now() + (rememberMe ? 30 * 86400 * 1e3 : 86400 * 1e3);
-  db.prepare(`
-    INSERT INTO sessions (token, user_id, expires_at, created_at)
-    VALUES (?, ?, ?, ?)
-  `).run(token, userId, expiresAt, Date.now());
-  return { token, expiresAt };
-}
-__name(createSessionToken, "createSessionToken");
-function validateSession(token) {
-  if (!token) return null;
-  const session = db.prepare("SELECT * FROM sessions WHERE token = ?").get(token);
-  if (!session) return null;
-  if (session.expires_at < Date.now()) {
-    db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
-    return null;
-  }
-  return getUserById(session.user_id);
-}
-__name(validateSession, "validateSession");
-function deleteSessionToken(token) {
-  db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
-}
-__name(deleteSessionToken, "deleteSessionToken");
-function mapAccountRowToTradingAccount(row) {
-  if (!row) return null;
-  const accountCategory = row.account_category || (row.tier === "personal" || row.phase === "personal_live" ? "personal_live" : row.tier === "demo" || row.phase === "demo" ? "demo" : "prop");
-  return { ...row, id: row.id, userId: row.user_id, user_id: row.user_id, loginId: row.id, passwordHash: "bft_live_" + String(row.id).replace(/[^a-zA-Z0-9]/g, "").toLowerCase(), tier: row.tier, tierName: row.tier_name, accountCategory, depositedCapital: Number(row.deposited_capital ?? (accountCategory === "personal_live" ? row.initial_balance : 0)), size: row.size, initialBalance: row.initial_balance, currentBalance: row.current_balance, startingDayEquity: row.starting_day_equity, equity: row.equity, dailyLossLimitPercent: row.daily_loss_limit_percent, maxOverallLossPercent: row.max_overall_loss_percent, maxRiskPerTradePercent: row.max_risk_per_trade_percent, status: row.status, phase: row.phase, tradingDaysCompleted: row.trading_days_completed, tradesCount: row.trades_count, winRate: row.win_rate, dailyWithdrawalsUnlocked: Boolean(row.daily_withdrawals_unlocked), firstWithdrawalCompleted: Boolean(row.first_withdrawal_completed), monthsCompleted: row.months_completed || 1, scalingActive: Boolean(row.scaling_active), createdDate: row.created_date, lastActiveDate: row.last_active_date || row.created_date, certificateId: row.certificate_id || void 0 };
-}
-__name(mapAccountRowToTradingAccount, "mapAccountRowToTradingAccount");
-var accountAlterColumns = [`ALTER TABLE accounts ADD COLUMN certificate_id TEXT;`, `ALTER TABLE accounts ADD COLUMN account_category TEXT DEFAULT 'prop';`, `ALTER TABLE accounts ADD COLUMN deposited_capital REAL DEFAULT 0;`];
-for (const stmt of accountAlterColumns) {
-  try {
-    db.exec(stmt);
-  } catch {
-  }
-}
-var kycAlterColumns = [`ALTER TABLE users ADD COLUMN kyc_doc_number TEXT;`, `ALTER TABLE users ADD COLUMN kyc_front_url TEXT;`, `ALTER TABLE users ADD COLUMN kyc_back_url TEXT;`, `ALTER TABLE users ADD COLUMN kyc_selfie_url TEXT;`, `ALTER TABLE users ADD COLUMN kyc_front_filename TEXT;`, `ALTER TABLE users ADD COLUMN kyc_back_filename TEXT;`, `ALTER TABLE users ADD COLUMN kyc_selfie_filename TEXT;`, `ALTER TABLE users ADD COLUMN kyc_submitted_at TEXT;`, `ALTER TABLE users ADD COLUMN is_2fa_enabled INTEGER DEFAULT 0;`, `ALTER TABLE users ADD COLUMN totp_secret TEXT;`, `ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'trader';`, `ALTER TABLE users ADD COLUMN self_balance REAL DEFAULT 0;`, `ALTER TABLE users ADD COLUMN demo_balance REAL DEFAULT 10000;`, `ALTER TABLE users ADD COLUMN funded_balance REAL DEFAULT 0;`, `ALTER TABLE withdrawals ADD COLUMN admin_notes TEXT;`];
-for (const stmt of kycAlterColumns) {
-  try {
-    db.exec(stmt);
-  } catch {
-  }
-}
-db.exec(`
-  CREATE TABLE IF NOT EXISTS kyc_documents (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    doc_type TEXT,
-    document_number TEXT,
-    id_front_url TEXT,
-    id_back_url TEXT,
-    selfie_url TEXT,
-    extracted_name TEXT,
-    status TEXT DEFAULT 'pending',
-    rejection_reason TEXT,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS kyc_submissions (
-    id TEXT PRIMARY KEY,
-    user_id TEXT UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    full_name TEXT NOT NULL,
-    address TEXT NOT NULL,
-    date_of_birth TEXT NOT NULL,
-    country TEXT NOT NULL DEFAULT 'United States',
-    profile_locked INTEGER DEFAULT 1,
-    doc_type TEXT,
-    document_number TEXT,
-    front_document_url TEXT,
-    back_document_url TEXT,
-    selfie_url TEXT,
-    front_file_name TEXT,
-    back_file_name TEXT,
-    selfie_file_name TEXT,
-    status TEXT NOT NULL DEFAULT 'unverified',
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS deposits (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    account_id TEXT,
-    amount REAL NOT NULL,
-    payment_method TEXT NOT NULL,
-    currency TEXT DEFAULT 'USDT',
-    network TEXT DEFAULT 'TRC-20',
-    wallet_address TEXT DEFAULT 'TWr3rLWrWGBcfwix5osJwAwMXmpcu4PNSp',
-    package_name TEXT,
-    sku TEXT,
-    account_type TEXT DEFAULT 'self_funded',
-    tx_hash TEXT,
-    deposit_slip_url TEXT,
-    status TEXT DEFAULT 'pending',
-    decline_reason TEXT,
-    created_at INTEGER NOT NULL,
-    processed_at INTEGER
-  );
-
-  CREATE TABLE IF NOT EXISTS crypto_deposits (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    account_id TEXT,
-    wallet_address TEXT NOT NULL DEFAULT 'TWr3rLWrWGBcfwix5osJwAwMXmpcu4PNSp',
-    amount REAL NOT NULL,
-    package_name TEXT NOT NULL,
-    sku TEXT NOT NULL,
-    account_type TEXT NOT NULL DEFAULT 'self_funded',
-    currency TEXT DEFAULT 'USDT',
-    network TEXT DEFAULT 'TRC-20',
-    tx_hash TEXT,
-    status TEXT NOT NULL DEFAULT 'pending',
-    created_at INTEGER NOT NULL,
-    processed_at INTEGER
-  );
-
-  CREATE TABLE IF NOT EXISTS admin_audit_logs (
-    id TEXT PRIMARY KEY,
-    admin_user_id TEXT NOT NULL,
-    action TEXT NOT NULL,
-    target_id TEXT NOT NULL,
-    target_type TEXT NOT NULL,
-    details TEXT,
-    created_at INTEGER NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS trades (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    asset TEXT NOT NULL,
-    direction TEXT NOT NULL,
-    strike_price REAL NOT NULL,
-    close_price REAL,
-    investment REAL NOT NULL,
-    payout_percentage REAL NOT NULL,
-    potential_payout REAL NOT NULL,
-    pnl REAL DEFAULT 0,
-    credited_amount REAL DEFAULT 0,
-    start_time INTEGER NOT NULL,
-    end_time INTEGER NOT NULL,
-    duration_seconds INTEGER NOT NULL,
-    status TEXT DEFAULT 'active',
-    account_tier TEXT,
-    created_at INTEGER NOT NULL,
-    settled_at INTEGER
-  );
-
-  CREATE TABLE IF NOT EXISTS affiliate_social_submissions (
-    id TEXT PRIMARY KEY,
-    user_id TEXT UNIQUE NOT NULL,
-    user_name TEXT,
-    user_email TEXT,
-    platform_type TEXT NOT NULL,
-    social_links_json TEXT NOT NULL,
-    affiliate_profile_locked INTEGER NOT NULL DEFAULT 1,
-    submitted_at TEXT NOT NULL,
-    created_at INTEGER NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS country_manager_applications (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    user_email TEXT,
-    full_name TEXT NOT NULL,
-    target_country TEXT NOT NULL,
-    telegram_handle TEXT NOT NULL,
-    estimated_audience_size TEXT NOT NULL,
-    marketing_strategy TEXT NOT NULL,
-    social_links_json TEXT NOT NULL,
-    total_referrals_count INTEGER NOT NULL DEFAULT 0,
-    status TEXT NOT NULL DEFAULT 'pending',
-    admin_notes TEXT,
-    reviewed_at TEXT,
-    created_at INTEGER NOT NULL
-  );
-`);
-var affiliateSocialAlterColumns = [
-  `ALTER TABLE users ADD COLUMN affiliate_profile_locked INTEGER DEFAULT 0;`,
-  `ALTER TABLE users ADD COLUMN affiliate_social_platform TEXT;`,
-  `ALTER TABLE users ADD COLUMN affiliate_social_links TEXT;`,
-  `ALTER TABLE users ADD COLUMN affiliate_social_submitted_at TEXT;`
-];
-for (const stmt of affiliateSocialAlterColumns) {
-  try {
-    db.exec(stmt);
-  } catch {
-  }
-}
-function getKycSubmissionForUser(userId) {
-  return db.prepare("SELECT * FROM kyc_submissions WHERE user_id = ?").get(userId);
-}
-__name(getKycSubmissionForUser, "getKycSubmissionForUser");
-function ensureUserInDb(params) {
-  if (!params.id && !params.email) return null;
-  let existing = params.id ? getUserById(params.id) : null;
-  if (!existing && params.email) {
-    existing = getUserByEmail(params.email);
-  }
-  if (existing) {
-    return existing;
-  }
-  const now = Date.now();
-  const cleanEmail = (params.email || `${params.id}@bft.io`).trim().toLowerCase();
-  const cleanName = (params.fullName || cleanEmail.split("@")[0] || "BFT Trader").trim();
-  const sanitizedRef = (params.referralCode || `BFT-${Math.random().toString(36).substring(2, 8).toUpperCase()}`).trim();
-  const userId = params.id || `usr_${now.toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
-  try {
-    db.prepare(`
-      INSERT INTO users (id, email, full_name, referral_code, kyc_status, profile_locked, country, created_at, updated_at)
-      VALUES (?, ?, ?, ?, 'unverified', 0, 'United States', ?, ?)
-    `).run(userId, cleanEmail, cleanName, sanitizedRef, now, now);
-  } catch {
-    const fallbackRef = `BFT-${Math.floor(1e5 + Math.random() * 899999)}`;
-    db.prepare(`
-      INSERT OR IGNORE INTO users (id, email, full_name, referral_code, kyc_status, profile_locked, country, created_at, updated_at)
-      VALUES (?, ?, ?, ?, 'unverified', 0, 'United States', ?, ?)
-    `).run(userId, cleanEmail, cleanName, fallbackRef, now, now);
-  }
-  return getUserById(userId) || getUserByEmail(cleanEmail);
-}
-__name(ensureUserInDb, "ensureUserInDb");
-var COUNTRY_FLAGS = { "United States": "\u{1F1FA}\u{1F1F8}", "Sri Lanka": "\u{1F1F1}\u{1F1F0}", "United Kingdom": "\u{1F1EC}\u{1F1E7}", "United Arab Emirates": "\u{1F1E6}\u{1F1EA}", "Dubai, UAE": "\u{1F1E6}\u{1F1EA}", "India": "\u{1F1EE}\u{1F1F3}", "Malaysia": "\u{1F1F2}\u{1F1FE}", "Pakistan": "\u{1F1F5}\u{1F1F0}", "Singapore": "\u{1F1F8}\u{1F1EC}", "Canada": "\u{1F1E8}\u{1F1E6}", "Australia": "\u{1F1E6}\u{1F1FA}", "Germany": "\u{1F1E9}\u{1F1EA}", "France": "\u{1F1EB}\u{1F1F7}", "Japan": "\u{1F1EF}\u{1F1F5}", "Switzerland": "\u{1F1E8}\u{1F1ED}", "Brazil": "\u{1F1E7}\u{1F1F7}", "Nigeria": "\u{1F1F3}\u{1F1EC}", "South Africa": "\u{1F1FF}\u{1F1E6}" };
-function getCountryFlag(country) {
-  if (!country) return "\u{1F1FA}\u{1F1F8}";
-  return COUNTRY_FLAGS[country.trim()] || "\u{1F310}";
-}
-__name(getCountryFlag, "getCountryFlag");
-function ensurePersonalLiveAccountForUser(userId) {
-  if (!userId) return null;
-  const user = getUserById(userId);
-  if (!user) return null;
-  const existing = db.prepare(`SELECT * FROM accounts WHERE user_id = ? AND (tier = 'personal' OR account_category = 'personal_live' OR phase = 'personal_live') LIMIT 1`).get(userId);
-  if (existing) {
-    return mapAccountRowToTradingAccount(existing);
-  }
-  const now = Date.now();
-  const nowIso = new Date(now).toISOString().split("T")[0];
-  const suffix = userId.replace(/[^a-zA-Z0-9]/g, "").slice(-5).toUpperCase() || "001";
-  const accountId = userId === "usr_bft_001" ? "BFT-PERS-001" : `BFT-PERS-${suffix}`;
-  const initialDeposit = 0;
-  db.prepare(`
-    INSERT OR IGNORE INTO accounts (
-      id, user_id, tier, tier_name, account_category, deposited_capital, size,
-      initial_balance, current_balance, starting_day_equity, equity,
-      daily_loss_limit_percent, max_overall_loss_percent, max_risk_per_trade_percent,
-      status, phase, trading_days_completed, trades_count, win_rate,
-      daily_withdrawals_unlocked, first_withdrawal_completed, created_date, created_at, updated_at
-    ) VALUES (?, ?, 'personal', 'Personal Live Balance (Self-Funded)', 'personal_live', ?, ?, ?, ?, ?, ?, 0, 0, 100, 'active', 'personal_live', 14, 0, 0, 1, 1, ?, ?, ?)
-  `).run(accountId, userId, initialDeposit, initialDeposit, initialDeposit, initialDeposit, initialDeposit, initialDeposit, nowIso, now - 864e5 * 25, now);
-  return getAccountById(accountId);
-}
-__name(ensurePersonalLiveAccountForUser, "ensurePersonalLiveAccountForUser");
-function creditPersonalAccountDepositInDb(params) {
-  const cleanAmount = Number(params.amountUsdt);
-  if (!Number.isFinite(cleanAmount) || cleanAmount <= 0) {
-    throw new Error("Deposit amount must be greater than $0.00.");
-  }
-  let personalAcc = ensurePersonalLiveAccountForUser(params.userId);
-  if (params.accountId) {
-    const specific = getAccountById(params.accountId);
-    if (specific && specific.user_id === params.userId && (specific.tier === "personal" || specific.accountCategory === "personal_live")) {
-      personalAcc = specific;
-    }
-  }
-  if (!personalAcc) {
-    throw new Error("Personal Live account could not be initialized for deposit.");
-  }
-  const now = Date.now();
-  const nextDeposited = Number(((personalAcc.depositedCapital || 0) + cleanAmount).toFixed(2));
-  const nextInitial = Number(((personalAcc.initialBalance || 0) + cleanAmount).toFixed(2));
-  const nextCurrent = Number(((personalAcc.currentBalance || 0) + cleanAmount).toFixed(2));
-  const nextEquity = Number(((personalAcc.equity || 0) + cleanAmount).toFixed(2));
-  const nextStartingDay = Number(((personalAcc.startingDayEquity || 0) + cleanAmount).toFixed(2));
-  db.prepare(`
-    UPDATE accounts SET
-      deposited_capital = ?,
-      size = ?,
-      initial_balance = ?,
-      current_balance = ?,
-      starting_day_equity = ?,
-      equity = ?,
-      status = 'active',
-      updated_at = ?
-    WHERE id = ? AND user_id = ?
-  `).run(nextDeposited, nextInitial, nextInitial, nextCurrent, nextStartingDay, nextEquity, now, personalAcc.id, params.userId);
-  try {
-    db.prepare(`UPDATE users SET self_balance = ? WHERE id = ?`).run(nextCurrent, params.userId);
-  } catch {
-  }
-  return getAccountById(personalAcc.id);
-}
-__name(creditPersonalAccountDepositInDb, "creditPersonalAccountDepositInDb");
-function getAccountsForUser(userId) {
-  ensurePersonalLiveAccountForUser(userId);
-  const rows = db.prepare(`SELECT * FROM accounts WHERE user_id = ? ORDER BY CASE WHEN tier = 'personal' OR account_category = 'personal_live' THEN 1 ELSE 0 END ASC, created_at DESC`).all(userId);
-  return rows.map(mapAccountRowToTradingAccount);
-}
-__name(getAccountsForUser, "getAccountsForUser");
-function getAccountById(accountId) {
-  const row = db.prepare("SELECT * FROM accounts WHERE id = ?").get(accountId);
-  return mapAccountRowToTradingAccount(row);
-}
-__name(getAccountById, "getAccountById");
-function createAccount(params) {
-  const now = Date.now();
-  const nowIso = new Date(now).toISOString().split("T")[0];
-  const newAccountId = `BFT-${Math.floor(1e4 + Math.random() * 89999)}`;
-  const limits = getDynamicAccountLimits(params.tier, params.tier === "instant" ? "funded" : "phase_1");
-  db.prepare(`
-    INSERT INTO accounts (
-      id, user_id, tier, tier_name, size, initial_balance, current_balance, starting_day_equity, equity,
-      daily_loss_limit_percent, max_overall_loss_percent, max_risk_per_trade_percent, status, phase,
-      trading_days_completed, trades_count, win_rate, daily_withdrawals_unlocked, first_withdrawal_completed,
-      created_date, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 5, 'active', ?, 0, 0, 0, ?, 0, ?, ?, ?)
-  `).run(newAccountId, params.userId, limits.tier, params.tierName, params.size, params.size, params.size, params.size, params.size, limits.dailyLossLimitPercent, limits.maxOverallLossPercent, limits.initialPhase, params.dailyWithdrawalsUnlocked ? 1 : 0, nowIso, now, now);
-  return getAccountById(newAccountId);
-}
-__name(createAccount, "createAccount");
-function terminateAllTrades(accountId) {
-  const now = Date.now();
-  const openTrades = db.prepare("SELECT * FROM trades WHERE account_id = ? AND status = 'active'").all(accountId);
-  for (const trade of openTrades) {
-    db.prepare("UPDATE trades SET status = 'cancelled', close_price = ?, pnl = ?, updated_at = ? WHERE id = ?").run(trade.strike_price, -Number(trade.investment), now, trade.id);
-  }
-  return { ok: true, terminatedCount: openTrades.length };
-}
-__name(terminateAllTrades, "terminateAllTrades");
-function updateAccountStateInDb(userId, accountId, updates) {
-  const existing = db.prepare("SELECT * FROM accounts WHERE id = ? AND user_id = ?").get(accountId, userId);
-  if (!existing) throw new Error("Account not found or unauthorized.");
-  if (updates.status === "breached" || updates.status === "hard-breached") {
-    terminateAllTrades(accountId);
-  }
-  const now = Date.now();
-  db.prepare(`
-    UPDATE accounts SET
-      current_balance = COALESCE(?, current_balance),
-      equity = COALESCE(?, equity),
-      starting_day_equity = COALESCE(?, starting_day_equity),
-      status = COALESCE(?, status),
-      phase = COALESCE(?, phase),
-      trades_count = COALESCE(?, trades_count),
-      win_rate = COALESCE(?, win_rate),
-      trading_days_completed = COALESCE(?, trading_days_completed),
-      certificate_id = COALESCE(?, certificate_id),
-      updated_at = ?
-    WHERE id = ? AND user_id = ?
-  `).run(updates.currentBalance !== void 0 ? updates.currentBalance : null, updates.equity !== void 0 ? updates.equity : null, updates.startingDayEquity !== void 0 ? updates.startingDayEquity : null, updates.status || null, updates.phase || null, updates.tradesCount !== void 0 ? updates.tradesCount : null, updates.winRate !== void 0 ? updates.winRate : null, updates.tradingDaysCompleted !== void 0 ? updates.tradingDaysCompleted : null, updates.certificateId || null, now, accountId, userId);
-  return getAccountById(accountId);
-}
-__name(updateAccountStateInDb, "updateAccountStateInDb");
-function passChallengePhaseInDb(userId, accountId, provisionLiveDirectly = false) {
-  const existing = db.prepare("SELECT * FROM accounts WHERE id = ? AND user_id = ?").get(accountId, userId);
-  if (!existing) throw new Error("Challenge account not found or unauthorized.");
-  const now = Date.now();
-  const nowIso = new Date(now).toISOString().split("T")[0];
-  const certId = existing.certificate_id || `CERT-${existing.id}-${Math.floor(1e3 + Math.random() * 9e3)}`;
-  const normType = normalizeChallengeAccountType(existing.tier || existing.account_type);
-  const isToPhase2 = !provisionLiveDirectly && normType === "two_step" && (existing.phase === "phase_1" || existing.challenge_phase === "phase_1");
-  const lockedStatus = isToPhase2 ? "passed_phase_1" : "passed";
-  db.prepare(`
-    UPDATE accounts SET
-      status = ?,
-      certificate_id = ?,
-      updated_at = ?
-    WHERE id = ? AND user_id = ?
-  `).run(lockedStatus, certId, now, accountId, userId);
-  const nextPhase = isToPhase2 ? "phase_2" : "funded";
-  const nextLimits = getDynamicAccountLimits(normType, nextPhase, { dailyDrawdown: existing.daily_loss_limit_percent, maxDrawdown: existing.max_overall_loss_percent });
-  const nextPrefix = isToPhase2 ? "BFT-P2" : "BFT-LIVE";
-  const nextAccountId = `${nextPrefix}-${Math.floor(1e4 + Math.random() * 89999)}`;
-  const baseTierName = String(existing.tier_name || "").replace(/\s*\(Phase \d\)/i, "");
-  const nextTierName = isToPhase2 ? `${baseTierName} (Phase 2)` : `Real Funded (${baseTierName})`;
-  const nextBalance = isToPhase2 ? Number(existing.size) : Math.max(Number(existing.size), Number(existing.current_balance));
-  db.prepare(`
-    INSERT INTO accounts (
-      id, user_id, tier, tier_name, size, initial_balance, current_balance, starting_day_equity, equity,
-      daily_loss_limit_percent, max_overall_loss_percent, max_risk_per_trade_percent, status, phase,
-      trading_days_completed, trades_count, win_rate, daily_withdrawals_unlocked, first_withdrawal_completed,
-      certificate_id, created_date, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, 14, 0, 0, ?, 0, ?, ?, ?, ?)
-  `).run(nextAccountId, userId, nextLimits.tier, nextTierName, existing.size, existing.size, nextBalance, nextBalance, nextBalance, nextLimits.dailyLossLimitPercent, nextLimits.maxOverallLossPercent, existing.max_risk_per_trade_percent || 5, nextPhase, existing.daily_withdrawals_unlocked || 0, !isToPhase2 ? certId : null, nowIso, now + 1, now + 1);
-  return { lockedAccount: getAccountById(accountId), deployedAccount: getAccountById(nextAccountId), certificateId: certId, isRealFundedDeployed: !isToPhase2 };
-}
-__name(passChallengePhaseInDb, "passChallengePhaseInDb");
-function lockUserProfile(userId, data) {
-  const user = getUserById(userId);
-  if (!user) throw new Error("User not found.");
-  const now = Date.now();
-  if (user.profile_locked === 1) {
-    db.prepare(`
-      UPDATE users SET
-        telegram_handle = COALESCE(?, telegram_handle),
-        updated_at = ?
-      WHERE id = ?
-    `).run(data.telegramHandle || null, now, userId);
-    return getUserById(userId);
-  }
-  const cleanName = data.fullName.trim();
-  const cleanAddress = data.address.trim();
-  const cleanDob = data.dateOfBirth.trim();
-  const cleanCountry = (data.country || user.country || "United States").trim();
-  db.prepare(`
-    UPDATE users SET
-      full_name = ?,
-      address = ?,
-      date_of_birth = ?,
-      country = ?,
-      telegram_handle = COALESCE(?, telegram_handle),
-      profile_locked = 1,
-      updated_at = ?
-    WHERE id = ?
-  `).run(cleanName, cleanAddress, cleanDob, cleanCountry, data.telegramHandle?.trim() || null, now, userId);
-  const existingSub = getKycSubmissionForUser(userId);
-  if (existingSub) {
-    db.prepare(`
-      UPDATE kyc_submissions SET
-        full_name = ?,
-        address = ?,
-        date_of_birth = ?,
-        country = ?,
-        profile_locked = 1,
-        updated_at = ?
-      WHERE user_id = ?
-    `).run(cleanName, cleanAddress, cleanDob, cleanCountry, now, userId);
-  } else {
-    db.prepare(`
-      INSERT INTO kyc_submissions (
-        id, user_id, full_name, address, date_of_birth, country, profile_locked, status, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
-    `).run(`KYC-SUB-${userId}-${now.toString(36)}`, userId, cleanName, cleanAddress, cleanDob, cleanCountry, user.kyc_status || "unverified", now, now);
-  }
-  return getUserById(userId);
-}
-__name(lockUserProfile, "lockUserProfile");
-function createKycDocumentRecord(data) {
-  const now = Date.now();
-  const id = `KYC-DOC-${data.userId}-${now.toString(36)}`;
-  try {
-    db.prepare(`
-      INSERT INTO kyc_documents (
-        id, user_id, doc_type, document_number, id_front_url, id_back_url, selfie_url,
-        extracted_name, status, rejection_reason, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      id,
-      data.userId,
-      data.docType || "ID Card",
-      data.documentNumber || null,
-      data.idFrontUrl || null,
-      data.idBackUrl || null,
-      data.selfieUrl || null,
-      data.extractedName || null,
-      data.status || "pending",
-      data.rejectionReason || null,
-      now,
-      now
-    );
-  } catch (err) {
-    console.warn("Failed to insert kyc_documents record:", err);
-  }
-  return db.prepare("SELECT * FROM kyc_documents WHERE id = ?").get(id);
-}
-__name(createKycDocumentRecord, "createKycDocumentRecord");
-function getKycDocumentsForUser(userId) {
-  return db.prepare("SELECT * FROM kyc_documents WHERE user_id = ? ORDER BY created_at DESC").all(userId);
-}
-__name(getKycDocumentsForUser, "getKycDocumentsForUser");
-function updateUserKycStatus(userId, data) {
-  const now = Date.now();
-  const submittedIso = data.submittedAt || new Date(now).toISOString().split("T")[0];
-  db.prepare(`
-    UPDATE users SET
-      kyc_status = ?,
-      kyc_doc_type = COALESCE(?, kyc_doc_type),
-      kyc_doc_number = COALESCE(?, kyc_doc_number),
-      kyc_front_url = COALESCE(?, kyc_front_url),
-      kyc_back_url = COALESCE(?, kyc_back_url),
-      kyc_selfie_url = COALESCE(?, kyc_selfie_url),
-      kyc_front_filename = COALESCE(?, kyc_front_filename),
-      kyc_back_filename = COALESCE(?, kyc_back_filename),
-      kyc_selfie_filename = COALESCE(?, kyc_selfie_filename),
-      kyc_submitted_at = COALESCE(?, kyc_submitted_at),
-      kyc_timer_ends_at = ?,
-      kyc_verified_at = CASE WHEN ? = 'verified' THEN ? ELSE kyc_verified_at END,
-      profile_locked = CASE WHEN ? IN ('pending', 'verified') THEN 1 ELSE profile_locked END,
-      updated_at = ?
-    WHERE id = ?
-  `).run(data.status, data.docType || null, data.documentNumber || null, data.frontDocumentUrl || null, data.backDocumentUrl || null, data.selfieUrl || null, data.frontFileName || null, data.backFileName || null, data.selfieFileName || null, submittedIso, data.timerEndsAt || null, data.status, now, data.status, now, userId);
-  const user = getUserById(userId);
-  if (user) {
-    const existingSub = getKycSubmissionForUser(userId);
-    const subStatus = data.status === "pending" ? "Pending Verification" : data.status;
-    if (existingSub) {
-      db.prepare(`
-        INSERT OR REPLACE INTO kyc_submissions (
-          id, user_id, full_name, address, date_of_birth, country, profile_locked,
-          doc_type, document_number, front_document_url, back_document_url, selfie_url, front_file_name, back_file_name, selfie_file_name,
-          status, created_at, updated_at
-        ) VALUES (
-          (SELECT id FROM kyc_submissions WHERE user_id = ?), ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT created_at FROM kyc_submissions WHERE user_id = ?), ?
-        )
-      `).run(userId, userId, user.full_name, user.address || "N/A", user.date_of_birth || "N/A", user.country || "United States", data.docType || null, data.documentNumber || null, data.frontDocumentUrl || null, data.backDocumentUrl || null, data.selfieUrl || null, data.frontFileName || null, data.backFileName || null, data.selfieFileName || null, subStatus, userId, now);
-    } else {
-      db.prepare(`
-        INSERT INTO kyc_submissions (
-          id, user_id, full_name, address, date_of_birth, country, profile_locked,
-          doc_type, document_number, front_document_url, back_document_url, selfie_url, front_file_name, back_file_name, selfie_file_name,
-          status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(`KYC-SUB-${userId}-${now.toString(36)}`, userId, user.full_name || "Verified Trader", user.address || "", user.date_of_birth || "", user.country || "United States", data.docType || "ID Card", data.documentNumber || null, data.frontDocumentUrl || null, data.backDocumentUrl || null, data.selfieUrl || null, data.frontFileName || null, data.backFileName || null, data.selfieFileName || null, subStatus, now, now);
-    }
-    createKycDocumentRecord({ userId, docType: data.docType, documentNumber: data.documentNumber, idFrontUrl: data.frontDocumentUrl, idBackUrl: data.backDocumentUrl, selfieUrl: data.selfieUrl, extractedName: user.full_name, status: data.status, rejectionReason: data.rejectionReason });
-  }
-  return getUserById(userId);
-}
-__name(updateUserKycStatus, "updateUserKycStatus");
-function processWithdrawalRequest(params) {
-  const user = getUserById(params.userId);
-  if (!user) throw new Error("User not found.");
-  if (user.kyc_status !== "verified") {
-    throw new Error("Please complete your KYC verification to unlock withdrawals.");
-  }
-  const account = getAccountById(params.accountId);
-  if (!account || account.user_id !== params.userId) {
-    throw new Error("Trading account not found or unauthorized.");
-  }
-  const isPersonalLive = account.tier === "personal" || account.account_category === "personal_live" || account.accountCategory === "personal_live" || account.phase === "personal_live";
-  if (isPersonalLive) {
-    if (account.status !== "active") {
-      throw new Error("Account is not active.");
-    }
-    const availableBalance = Math.max(0, Number(account.current_balance.toFixed(2)));
-    if (availableBalance < 10) {
-      throw new Error(`Minimum withdrawal threshold is $10.00. Current Personal Live balance is $${availableBalance.toFixed(2)}.`);
-    }
-    if (params.requestedAmount < 10) {
-      throw new Error("Minimum withdrawal amount is $10.00 USD.");
-    }
-    if (params.requestedAmount > availableBalance) {
-      throw new Error(`Cannot withdraw more than your available Personal Live balance ($${availableBalance.toFixed(2)}).`);
-    }
-    const feeAmount2 = Number((params.requestedAmount * 0.03).toFixed(2));
-    const netPayout2 = Number((params.requestedAmount - feeAmount2).toFixed(2));
-    const now2 = Date.now();
-    const withdrawalId2 = `WD-${Math.floor(5194e7 + Math.random() * 99999999)}`;
-    const refNumber2 = `0x${Math.random().toString(16).slice(2, 10)}${Math.random().toString(16).slice(2, 10)}`;
-    db.prepare(`
-      INSERT INTO withdrawals (
-        id, user_id, account_id, gross_amount, net_profit, max_allowed_profit, profit_share_rate, fee_amount, net_payout,
-        wallet_address, network, payment_method, status, reference_number, tx_hash, requested_at, processed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, 1.00, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, NULL)
-    `).run(withdrawalId2, params.userId, params.accountId, params.requestedAmount, availableBalance, availableBalance, feeAmount2, netPayout2, params.walletAddress, params.network, params.paymentMethod, refNumber2, refNumber2, now2);
-    const updatedAccount2 = getAccountById(account.id);
-    const withdrawalRecord2 = db.prepare("SELECT * FROM withdrawals WHERE id = ?").get(withdrawalId2);
-    return { ok: true, withdrawal: withdrawalRecord2, updatedAccount: updatedAccount2, breakdown: { requestedAmount: params.requestedAmount, netProfit: availableBalance, maxAllowed80Percent: availableBalance, profitShareRate: 1, feeAmount: feeAmount2, netPayout: netPayout2, isPersonalLive: true } };
-  }
-  const isLiveFunded = account.tier === "instant" || account.phase === "funded";
-  if (!isLiveFunded) {
-    throw new Error("Withdrawals are locked during the Challenge Phase. Trade to hit your profit target first to pass the challenge, earn your Completion Certificate, and unlock your Live Funded Account.");
-  }
-  if (account.status !== "active") {
-    throw new Error("Account is not active.");
-  }
-  if (account.first_withdrawal_completed === 0 && account.trading_days_completed < 14) {
-    throw new Error(`First withdrawal requires a mandatory 14-day account holding period (${14 - account.trading_days_completed} days remaining).`);
-  }
-  const netProfit = Math.max(0, Number((account.current_balance - account.initial_balance).toFixed(2)));
-  if (netProfit < 250) {
-    throw new Error(`Minimum profit requirement is $250.00. Current net profit is $${netProfit.toFixed(2)}.`);
-  }
-  if (params.requestedAmount < 250) {
-    throw new Error("Minimum withdrawal amount is $250.00 USD.");
-  }
-  if (params.requestedAmount > netProfit) {
-    throw new Error(`Cannot withdraw more than total accumulated profit ($${netProfit.toFixed(2)}). Initial funded balance cannot be withdrawn directly.`);
-  }
-  const maxAllowed80Percent = Number((netProfit * 0.8).toFixed(2));
-  if (params.requestedAmount > maxAllowed80Percent) {
-    throw new Error(`Withdrawal exceeds the 80% profit payout ceiling. Maximum allowable withdrawal is $${maxAllowed80Percent.toFixed(2)} (80% of $${netProfit.toFixed(2)} net generated profit).`);
-  }
-  const feeAmount = Number((params.requestedAmount * 0.1).toFixed(2));
-  const netPayout = Number((params.requestedAmount - feeAmount).toFixed(2));
-  const now = Date.now();
-  const withdrawalId = `WD-${Math.floor(5194e7 + Math.random() * 99999999)}`;
-  const refNumber = `0x${Math.random().toString(16).slice(2, 10)}${Math.random().toString(16).slice(2, 10)}`;
-  db.prepare(`
-    INSERT INTO withdrawals (
-      id, user_id, account_id, gross_amount, net_profit, max_allowed_profit, profit_share_rate, fee_amount, net_payout,
-      wallet_address, network, payment_method, status, reference_number, tx_hash, requested_at, processed_at
-    ) VALUES (?, ?, ?, ?, ?, ?, 0.80, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, NULL)
-  `).run(withdrawalId, params.userId, params.accountId, params.requestedAmount, netProfit, maxAllowed80Percent, feeAmount, netPayout, params.walletAddress, params.network, params.paymentMethod, refNumber, refNumber, now);
-  if (user.referred_by) {
-    const isVip = user.registered_tier === "vip";
-    const bonusRate = isVip ? 0.1 : 0.08;
-    const affiliateTier = isVip ? "vip" : "basic";
-    const bonusAmount = Number((params.requestedAmount * bonusRate).toFixed(2));
-    const commId = `COMM-WD-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-    db.prepare(`
-      INSERT INTO commissions (
-        id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, affiliate_tier, status, created_at
-      ) VALUES (?, ?, ?, 'withdrawal', 1, ?, ?, ?, ?, ?, 'paid', ?)
-    `).run(commId, user.referred_by, user.id, `Direct Referral Payout Bonus (${(bonusRate * 100).toFixed(0)}% of $${params.requestedAmount.toFixed(2)} Withdrawal by ${user.full_name})`, params.requestedAmount, bonusRate, bonusAmount, affiliateTier, now);
-  }
-  const updatedAccount = getAccountById(account.id);
-  const withdrawalRecord = db.prepare("SELECT * FROM withdrawals WHERE id = ?").get(withdrawalId);
-  return { ok: true, withdrawal: withdrawalRecord, updatedAccount, breakdown: { requestedAmount: params.requestedAmount, netProfit, maxAllowed80Percent, feeAmount, netPayout } };
-}
-__name(processWithdrawalRequest, "processWithdrawalRequest");
-function syncSupabaseProfilesToAffiliateTree(profilesList) {
-  if (!Array.isArray(profilesList) || profilesList.length === 0) return;
-  const now = Date.now();
-  for (const p of profilesList) {
-    if (!p?.id) continue;
-    const id = String(p.id).trim();
-    const email = String(p.email || `${id.slice(0, 8)}@bft.io`).trim().toLowerCase();
-    const fullName = String(p.full_name || p.name || email.split("@")[0] || "Trader").trim();
-    const refCode = String(p.referral_code || `BFT-${id.replace(/[^a-zA-Z0-9]/g, "").slice(0, 6).toUpperCase()}`).trim();
-    const referredBy = p.referred_by ? String(p.referred_by).trim() : null;
-    const existing = getUserById(id) || getUserByEmail(email);
-    if (!existing) {
-      try {
-        db.prepare(`
-          INSERT OR IGNORE INTO users (id, email, full_name, referral_code, referred_by, kyc_status, profile_locked, country, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, 'unverified', 0, 'United States', ?, ?)
-        `).run(id, email, fullName, refCode, referredBy, now, now);
-      } catch {
-        const fallbackRef = `BFT-${Math.floor(1e5 + Math.random() * 899999)}`;
-        db.prepare(`
-          INSERT OR IGNORE INTO users (id, email, full_name, referral_code, referred_by, kyc_status, profile_locked, country, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, 'unverified', 0, 'United States', ?, ?)
-        `).run(id, email, fullName, fallbackRef, referredBy, now, now);
-      }
-    } else if (referredBy && !existing.referred_by && existing.id !== referredBy) {
-      db.prepare("UPDATE users SET referred_by = ?, updated_at = ? WHERE id = ?").run(referredBy, now, existing.id);
-    }
-  }
-  for (const p of profilesList) {
-    if (!p?.id || !p?.referred_by) continue;
-    const userId = String(p.id).trim();
-    const sponsorId = String(p.referred_by).trim();
-    if (userId && sponsorId && userId !== sponsorId) {
-      try {
-        linkUplineReferrals(sponsorId, userId, now);
-      } catch {
-      }
-    }
-  }
-}
-__name(syncSupabaseProfilesToAffiliateTree, "syncSupabaseProfilesToAffiliateTree");
-function creditPurchaseCommissions(buyerUserId, packageName, packagePrice, referralCodeUsed) {
-  let buyer = getUserById(buyerUserId);
-  const now = Date.now();
-  if (referralCodeUsed && buyer && !buyer.referred_by) {
-    const sponsor = getUserByReferralCode(referralCodeUsed);
-    if (sponsor && sponsor.id !== buyer.id) {
-      const sponsorNetwork = db.prepare("SELECT referred_user_id FROM referrals WHERE sponsor_id = ?").all(sponsor.id);
-      let sponsorActiveCount = 0;
-      for (const node of sponsorNetwork) {
-        const pur = getLatestPurchaseForUserInDb(node.referred_user_id);
-        if (pur && Number(pur.amount) > 0) sponsorActiveCount += 1;
-      }
-      const regTier = sponsorActiveCount >= 1e3 ? "vip" : "basic";
-      db.prepare("UPDATE users SET referred_by = ?, registered_tier = ? WHERE id = ?").run(sponsor.id, regTier, buyer.id);
-      linkUplineReferrals(sponsor.id, buyer.id, now);
-      buyer = getUserById(buyerUserId);
-    }
-  }
-  if (!buyer?.referred_by) return [];
-  try {
-    linkUplineReferrals(buyer.referred_by, buyer.id, now);
-  } catch {
-  }
-  const isVipReferral = buyer.registered_tier === "vip";
-  const effectiveTier = isVipReferral ? "vip" : "basic";
-  const l1Rate = isVipReferral ? 0.15 : 0.1;
-  const l2Rate = isVipReferral ? 0.08 : 0.05;
-  const l3Rate = isVipReferral ? 0.05 : 0.02;
-  const commissionsRecorded = [];
-  const l1SponsorId = buyer.referred_by;
-  const l1Amount = Number((packagePrice * l1Rate).toFixed(2));
-  const l1Id = `COMM-P1-${now.toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
-  db.prepare(`
-    INSERT INTO commissions (id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, affiliate_tier, status, created_at)
-    VALUES (?, ?, ?, 'purchase', 1, ?, ?, ?, ?, ?, 'paid', ?)
-  `).run(l1Id, l1SponsorId, buyer.id, packageName, packagePrice, l1Rate, l1Amount, effectiveTier, now);
-  commissionsRecorded.push({ id: l1Id, level: 1, sponsorId: l1SponsorId, referredUserId: buyer.id, referredUserName: buyer.full_name, referredUserEmail: buyer.email, packageName, packagePrice, rate: l1Rate, amount: l1Amount, affiliateTier: effectiveTier });
-  const l1User = getUserById(l1SponsorId);
-  if (l1User?.referred_by && l1User.referred_by !== buyer.id) {
-    const l2SponsorId = l1User.referred_by;
-    const l2Amount = Number((packagePrice * l2Rate).toFixed(2));
-    const l2Id = `COMM-P2-${now.toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
-    db.prepare(`
-      INSERT INTO commissions (id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, affiliate_tier, status, created_at)
-      VALUES (?, ?, ?, 'purchase', 2, ?, ?, ?, ?, ?, 'paid', ?)
-    `).run(l2Id, l2SponsorId, buyer.id, packageName, packagePrice, l2Rate, l2Amount, effectiveTier, now);
-    commissionsRecorded.push({ id: l2Id, level: 2, sponsorId: l2SponsorId, referredUserId: buyer.id, referredUserName: buyer.full_name, referredUserEmail: buyer.email, packageName, packagePrice, rate: l2Rate, amount: l2Amount, affiliateTier: effectiveTier });
-    const l2User = getUserById(l2SponsorId);
-    if (l2User?.referred_by && l2User.referred_by !== buyer.id) {
-      const l3SponsorId = l2User.referred_by;
-      const l3Amount = Number((packagePrice * l3Rate).toFixed(2));
-      const l3Id = `COMM-P3-${now.toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
-      db.prepare(`
-        INSERT INTO commissions (id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, affiliate_tier, status, created_at)
-        VALUES (?, ?, ?, 'purchase', 3, ?, ?, ?, ?, ?, 'paid', ?)
-      `).run(l3Id, l3SponsorId, buyer.id, packageName, packagePrice, l3Rate, l3Amount, effectiveTier, now);
-      commissionsRecorded.push({ id: l3Id, level: 3, sponsorId: l3SponsorId, referredUserId: buyer.id, referredUserName: buyer.full_name, referredUserEmail: buyer.email, packageName, packagePrice, rate: l3Rate, amount: l3Amount, affiliateTier: effectiveTier });
-    }
-  }
-  return commissionsRecorded;
-}
-__name(creditPurchaseCommissions, "creditPurchaseCommissions");
-var DB_INACTIVE_STATUSES = /* @__PURE__ */ new Set(["pending", "failed", "declined", "rejected", "expired", "cancelled", "canceled", "unpaid", "void", "registered", "breached", "hard-breached", "soft-breached"]);
-function isDbItemActive(status) {
-  const s = String(status || "").trim().toLowerCase();
-  return !s || !DB_INACTIVE_STATUSES.has(s);
-}
-function isDbItemSelfFunded(item) {
-  const t = String(item?.accountType || item?.account_type || item?.tier || "").trim().toLowerCase();
-  const sku = String(item?.sku || item?.package_sku || "").trim().toUpperCase();
-  const name = String(item?.name || item?.package_name || "").trim();
-  if (t === "self_funded" || t === "self-funded" || t === "personal" || t === "personal_live" || t === "self_capital") return true;
-  if (sku.startsWith("BFT-SELF") || sku.startsWith("PERS")) return true;
-  return /self[-\s]*funded|self[-\s]*capital|personal\s*live/i.test(name) && !/1[-\s]*step|2[-\s]*step|one[-\s]*step|two[-\s]*step|instant\s*funded|evaluation/i.test(name);
-}
-function isDbItemFundedChallenge(item) {
-  const t = String(item?.accountType || item?.account_type || item?.tier || "").trim().toLowerCase();
-  const name = String(item?.name || item?.package_name || "").trim();
-  if (t === "demo" || /\bdemo\b/i.test(name)) return false;
-  if (isDbItemSelfFunded(item)) return false;
-  return Number(item?.amount || 0) > 0;
-}
-function getAllPurchasesForUserInDb(userId) {
-  if (!userId) return [];
-  const collected = [];
-  const seenIds = /* @__PURE__ */ new Set();
-  const representedAccountIds = /* @__PURE__ */ new Set();
-  const pushItem = (item) => {
-    const amt = Number(item.amount || 0);
-    if (!Number.isFinite(amt) || amt <= 0) return;
-    const cleanId = item.id ? String(item.id).trim() : "";
-    const isSynthetic = cleanId.startsWith("TA-");
-    if (cleanId && seenIds.has(cleanId)) return;
-    if (isSynthetic && item.accountId && representedAccountIds.has(String(item.accountId))) return;
-    if (cleanId) seenIds.add(cleanId);
-    if (item.accountId) representedAccountIds.add(String(item.accountId));
-    collected.push(item);
-  };
-  try {
-    const rows = db.prepare("SELECT * FROM user_purchases WHERE user_id = ? ORDER BY created_at DESC LIMIT 100").all(userId);
-    for (const pur of rows) {
-      if (String(pur.id || "").startsWith("PUR-SYNC-")) continue;
-      pushItem({ id: String(pur.id), accountId: pur.account_id ? String(pur.account_id) : null, name: pur.package_name || "Challenge Package", sku: pur.package_sku || pur.package_id || "BFT-PKG", amount: Number(pur.package_amount ?? pur.amount ?? 0), accountType: pur.account_type || "challenge", status: pur.status || "completed", createdAt: pur.created_at ? new Date(Number(pur.created_at)).toISOString() : void 0 });
-    }
-  } catch {
-  }
-  try {
-    const deps = db.prepare("SELECT * FROM crypto_deposits WHERE user_id = ? ORDER BY created_at DESC LIMIT 100").all(userId);
-    for (const dep of deps) {
-      pushItem({ id: String(dep.id), accountId: dep.account_id ? String(dep.account_id) : null, name: dep.package_name || (dep.account_type === "self_funded" ? "Self-Funded Deposit" : "Challenge Package"), sku: dep.package_sku || dep.sku || "BFT-PKG", amount: Number(dep.amount ?? 0), accountType: dep.account_type || "challenge", status: dep.status || "pending", createdAt: dep.created_at ? new Date(Number(dep.created_at)).toISOString() : void 0 });
-    }
-  } catch {
-  }
-  try {
-    const bankDeps = db.prepare("SELECT * FROM deposits WHERE user_id = ? ORDER BY created_at DESC LIMIT 100").all(userId);
-    for (const dep of bankDeps) {
-      pushItem({ id: String(dep.id), accountId: dep.account_id ? String(dep.account_id) : null, name: dep.package_name || (dep.account_type === "self_funded" ? "Self-Funded Deposit" : "Challenge Package"), sku: dep.package_sku || dep.sku || "BFT-PKG", amount: Number(dep.amount ?? 0), accountType: dep.account_type || "self_funded", status: dep.status || "pending", createdAt: dep.created_at ? new Date(Number(dep.created_at)).toISOString() : void 0 });
-    }
-  } catch {
-  }
-  try {
-    const accts = db.prepare("SELECT * FROM accounts WHERE user_id = ? ORDER BY created_at DESC LIMIT 100").all(userId);
-    for (const acc of accts) {
-      const tierLower = String(acc.tier || "").toLowerCase();
-      const catLower = String(acc.account_category || "").toLowerCase();
-      if (tierLower === "demo" || catLower === "demo") continue;
-      const isPersonal = tierLower === "personal" || catLower === "personal_live" || String(acc.phase || "").toLowerCase() === "personal_live";
-      const amt = Number(isPersonal ? acc.deposited_capital ?? acc.initial_balance ?? acc.current_balance ?? 0 : acc.size ?? acc.initial_balance ?? 0);
-      if (amt <= 0) continue;
-      pushItem({ id: `TA-${acc.id}`, accountId: String(acc.id), name: acc.tier_name || (isPersonal ? "Self-Funded Live Wallet" : `Funded ${acc.tier || "Challenge"}`), sku: isPersonal ? "BFT-SELF" : "BFT-CHAL", amount: amt, accountType: isPersonal ? "self_funded" : "challenge", status: acc.status || "active", createdAt: acc.created_at ? new Date(Number(acc.created_at)).toISOString() : void 0 });
-    }
-  } catch {
-  }
-  if (collected.length === 0) {
-    try {
-      const comms = db.prepare("SELECT * FROM commissions WHERE referred_user_id = ? AND source_type != 'withdrawal' ORDER BY created_at DESC LIMIT 100").all(userId);
-      for (const comm of comms) {
-        const amt = Number(comm.base_amount ?? 0);
-        if (amt <= 0) continue;
-        const cleanName = String(comm.package_name || "").replace(/^Level\s*\d+\s*Commission:\s*/i, "").trim();
-        pushItem({ id: String(comm.id), accountId: null, name: cleanName || "Challenge Package", sku: "BFT-PKG", amount: amt, accountType: "challenge", status: comm.status || "completed", createdAt: comm.created_at ? new Date(Number(comm.created_at)).toISOString() : void 0 });
-      }
-    } catch {
-    }
-  }
-  return collected;
-}
-__name(getAllPurchasesForUserInDb, "getAllPurchasesForUserInDb");
-function getLatestPurchaseForUserInDb(userId) {
-  const all = getAllPurchasesForUserInDb(userId);
-  const activeAll = all.filter((p) => isDbItemActive(p.status));
-  const first = activeAll[0] || all[0];
-  if (!first) return null;
-  return { package_name: first.name, package_sku: first.sku || "BFT-PKG", amount: first.amount, status: first.status, accountType: first.accountType, created_at: first.createdAt };
-}
-__name(getLatestPurchaseForUserInDb, "getLatestPurchaseForUserInDb");
-function getAffiliateDashboardStats(userId) {
-  let targetId = (userId || "").trim();
-  if (!targetId) {
-    return { stats: { totalEarned: 0, unpaidEarnings: 0, paidEarnings: 0, level1Earnings: 0, level2Earnings: 0, level3Earnings: 0, withdrawalEarnings: 0, teamSize: 0, totalRegisteredReferrals: 0, activeDepositedCount: 0, activeFundedCount: 0, totalPurchasedAccountsCount: 0, isVipUnlocked: false, recentCommissions: [], networkTree: [] } };
-  }
-  let commissions = db.prepare(`SELECT c.*, u.full_name as referred_user_name, u.email as referred_user_email
-        FROM commissions c
-        LEFT JOIN users u ON c.referred_user_id = u.id
-        WHERE c.sponsor_id = ?
-        ORDER BY c.created_at DESC`).all(targetId);
-  let referrals = db.prepare(`SELECT r.*, u.full_name, u.email, u.self_balance, u.created_at as joined_at
-        FROM referrals r
-        JOIN users u ON r.referred_user_id = u.id
-        WHERE r.sponsor_id = ?
-        ORDER BY r.tier_level ASC, r.created_at DESC`).all(targetId);
-  let totalEarnings = 0;
-  let level1Earnings = 0;
-  let level2Earnings = 0;
-  let level3Earnings = 0;
-  let withdrawalBonusEarnings = 0;
-  for (const c of commissions) {
-    totalEarnings += c.commission_amount;
-    if (c.source_type === "withdrawal") {
-      withdrawalBonusEarnings += c.commission_amount;
-    }
-    if (c.tier_level === 1) level1Earnings += c.commission_amount;
-    if (c.tier_level === 2) level2Earnings += c.commission_amount;
-    if (c.tier_level === 3) level3Earnings += c.commission_amount;
-  }
-  const enrichedReferrals = referrals.map((r) => {
-    const allPurchases = getAllPurchasesForUserInDb(r.referred_user_id);
-    const activePurchases = allPurchases.filter((p) => isDbItemActive(p.status) && Number(p.amount || 0) > 0);
-    const activeFundedChallenges = activePurchases.filter((p) => isDbItemFundedChallenge(p));
-    const activeSelfDeposits = activePurchases.filter((p) => isDbItemSelfFunded(p));
-    const hasActiveFunded = activeFundedChallenges.length > 0;
-    const selfCapitalDepositAmount = Number(activeSelfDeposits.reduce((s, p) => s + Number(p.amount || 0), 0).toFixed(2));
-    const liveSelfBalance = Number(r.self_balance || 0);
-    const hasActiveSelfCapitalDeposit = selfCapitalDepositAmount > 0 || liveSelfBalance > 0;
-    const latestPurchase = activePurchases[0] || allPurchases[0];
-    const totalPurchaseAmount = Number(allPurchases.reduce((s, p) => s + Number(p.amount || 0), 0).toFixed(2));
-    return { ...r, package_name: latestPurchase?.name || null, package_sku: latestPurchase?.sku || null, package_price: latestPurchase?.amount || 0, latestPurchase: latestPurchase ? { id: latestPurchase.id, accountId: latestPurchase.accountId, name: latestPurchase.name, sku: latestPurchase.sku, amount: latestPurchase.amount, accountType: latestPurchase.accountType, status: latestPurchase.status, createdAt: latestPurchase.createdAt } : void 0, purchases: allPurchases, accountCount: allPurchases.length, totalPurchaseAmount, hasActiveFunded, hasActiveSelfCapitalDeposit, selfCapitalDepositAmount: selfCapitalDepositAmount > 0 ? selfCapitalDepositAmount : liveSelfBalance, accountBalance: liveSelfBalance };
-  });
-  const networkTree = enrichedReferrals.map((r) => ({ id: r.referred_user_id, fullName: r.full_name || "Trader", email: r.email, level: r.tier_level || 1, joinedDate: r.joined_at ? new Date(Number(r.joined_at)).toISOString() : void 0, latestPurchase: r.latestPurchase, purchases: r.purchases, accountCount: r.accountCount, totalPurchaseAmount: r.totalPurchaseAmount, hasActiveFunded: r.hasActiveFunded, hasActiveSelfCapitalDeposit: r.hasActiveSelfCapitalDeposit, selfCapitalDepositAmount: r.selfCapitalDepositAmount, accountBalance: r.accountBalance }));
-  const totalRegisteredReferrals = networkTree.length;
-  const activeDepositedCount = networkTree.filter((n) => n.hasActiveSelfCapitalDeposit).length;
-  const activeFundedCount = networkTree.filter((n) => n.hasActiveFunded).length;
-  const totalPurchasedAccountsCount = networkTree.reduce((sum, n) => sum + (Array.isArray(n.purchases) ? n.purchases.filter((p) => isDbItemActive(p.status)).length : 0), 0);
-  const vipThreshold = 1e3;
-  const isVipUnlocked = activeFundedCount >= vipThreshold;
-  const remainingToVip = Math.max(0, vipThreshold - activeFundedCount);
-  const vipProgressPercent = Math.min(100, Number((activeFundedCount / vipThreshold * 100).toFixed(1)));
-  const affiliateTier = isVipUnlocked ? "vip" : "basic";
-  const milestoneRewardAmount = 1e4;
-  const normalizedCommissions = commissions.map((c) => ({ ...c, affiliate_tier: c.affiliate_tier || (c.rate >= 0.15 || c.source_type === "withdrawal" && c.rate >= 0.1 ? "vip" : "basic") }));
-  return { totalEarnings: Number(totalEarnings.toFixed(2)), level1Earnings: Number(level1Earnings.toFixed(2)), level2Earnings: Number(level2Earnings.toFixed(2)), level3Earnings: Number(level3Earnings.toFixed(2)), withdrawalBonusEarnings: Number(withdrawalBonusEarnings.toFixed(2)), teamSize: totalRegisteredReferrals, totalRegisteredReferrals, activeDepositedCount, activeFundedCount, totalPurchasedAccountsCount, vipThreshold, vipProgressPercent, remainingToVip, isVipUnlocked, affiliateTier, milestoneRewardAmount, level1Count: networkTree.filter((r) => r.level === 1 && r.hasActiveFunded).length, level2Count: networkTree.filter((r) => r.level === 2 && r.hasActiveFunded).length, level3Count: networkTree.filter((r) => r.level === 3 && r.hasActiveFunded).length, registeredLevel1Count: referrals.filter((r) => r.tier_level === 1).length, registeredLevel2Count: referrals.filter((r) => r.tier_level === 2).length, registeredLevel3Count: referrals.filter((r) => r.tier_level === 3).length, recentCommissions: normalizedCommissions.slice(0, 50), referrals: enrichedReferrals.slice(0, 50), networkTree };
-}
-__name(getAffiliateDashboardStats, "getAffiliateDashboardStats");
-function getWeeklyLeaderboardQuery() {
-  const rows = db.prepare("SELECT * FROM leaderboard ORDER BY rank ASC").all();
-  return rows.map((r) => ({ id: r.id, rank: r.rank, name: r.name, country: r.country, flag: r.flag, accountTier: r.account_tier, profit: r.profit, winRate: r.win_rate, payoutTime: r.payout_time }));
-}
-__name(getWeeklyLeaderboardQuery, "getWeeklyLeaderboardQuery");
-function getFundedLeaderboardQuery() {
-  const rows = db.prepare("SELECT * FROM funded_leaderboard ORDER BY rank ASC").all();
-  return rows.map((r) => ({ id: r.id, rank: r.rank, name: r.name, country: r.country, flag: r.flag, isoCode: r.iso_code, accountTier: r.account_tier, profit: r.profit, winRate: r.win_rate, payoutTime: r.payout_time, category: "funded" }));
-}
-__name(getFundedLeaderboardQuery, "getFundedLeaderboardQuery");
-function getSelfFundedLeaderboardQuery() {
-  const seedRows = db.prepare("SELECT * FROM self_funded_leaderboard ORDER BY rank ASC").all();
-  const activeUsers = db.prepare(`
-    SELECT u.id, u.full_name, u.email, u.country, u.self_balance,
-           (SELECT COUNT(*) FROM trades t WHERE t.user_id = u.id AND t.status IN ('won', 'lost')) as trade_count,
-           (SELECT COUNT(*) FROM trades t WHERE t.user_id = u.id AND t.status = 'won') as win_count
-    FROM users u
-    WHERE u.self_balance > 0 AND u.role != 'admin'
-    ORDER BY u.self_balance DESC
-    LIMIT 20
-  `).all();
-  const aaravEntry = { id: "slf_in_01", rank: 1, name: "Aarav Sharma", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", category: "self_funded", accountTier: "Self-Funded VIP Live", profit: 40056.61, winRate: 83.1, payoutTime: "0m 58s" };
-  const pool = [];
-  const addedNames = /* @__PURE__ */ new Set(["aarav sharma", "yohan siriwardhana", "yohan siriwardana"]);
-  for (const u of activeUsers) {
-    const rawName = String(u.full_name || u.email?.split("@")[0] || "Trader").trim();
-    const lower = rawName.toLowerCase();
-    if (addedNames.has(lower) || lower === "loading" || lower === "null") continue;
-    addedNames.add(lower);
-    const winRate = u.trade_count > 0 ? Number((u.win_count / u.trade_count * 100).toFixed(1)) : 76.5;
-    const profit = Math.min(38500, Number(Number(u.self_balance).toFixed(2)));
-    pool.push({ id: `usr_slf_${u.id}`, rank: 2, name: rawName, country: u.country || "Bangladesh", flag: getCountryFlag(u.country || "Bangladesh"), isoCode: (u.country || "BD").slice(0, 2).toUpperCase(), countryCode: (u.country || "BD").slice(0, 2).toUpperCase(), category: "self_funded", accountTier: profit > 2e4 ? "Self-Funded VIP Live" : "Self-Funded Live", profit, winRate, payoutTime: "1m 15s" });
-  }
-  for (const s of seedRows) {
-    const sName = String(s.name || "").trim();
-    const lower = sName.toLowerCase();
-    if (s.rank === 1 || lower.includes("yohan") || addedNames.has(lower)) continue;
-    addedNames.add(lower);
-    pool.push({ id: s.id, rank: s.rank, name: s.name, country: s.country, flag: s.flag, isoCode: s.iso_code || "IN", category: "self_funded", accountTier: s.account_tier, profit: Math.min(s.profit, 39900), winRate: s.win_rate, payoutTime: s.payout_time });
-  }
-  pool.sort((a, b) => b.profit - a.profit);
-  return [aaravEntry, ...pool.slice(0, 14)].map((t, idx) => ({ ...t, rank: idx + 1 }));
-}
-__name(getSelfFundedLeaderboardQuery, "getSelfFundedLeaderboardQuery");
-function recordAdminAuditLog(adminUserId, action, targetId, targetType, details) {
-  const id = `AUDIT-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-  db.prepare(`
-    INSERT INTO admin_audit_logs (id, admin_user_id, action, target_id, target_type, details, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(id, adminUserId, action, targetId, targetType, details ? typeof details === "string" ? details : JSON.stringify(details) : null, Date.now());
-}
-__name(recordAdminAuditLog, "recordAdminAuditLog");
-function getAdminMetrics() {
-  const totalUsers = Number(db.prepare("SELECT COUNT(*) as c FROM users").get()?.c || 0);
-  const totalAccounts = Number(db.prepare("SELECT COUNT(*) as c FROM accounts").get()?.c || 0);
-  const totalActiveBalance = Number(db.prepare("SELECT SUM(current_balance) as s FROM accounts").get()?.s || 0);
-  const totalDeposited = Number(db.prepare("SELECT SUM(deposited_capital) as s FROM accounts").get()?.s || 0);
-  const pendingDeposits = Number(db.prepare("SELECT COUNT(*) as c FROM deposits WHERE status = 'pending'").get()?.c || 0);
-  const pendingDepositsSum = Number(db.prepare("SELECT SUM(amount) as s FROM deposits WHERE status = 'pending'").get()?.s || 0);
-  const pendingWithdrawals = Number(db.prepare("SELECT COUNT(*) as c FROM withdrawals WHERE status = 'pending'").get()?.c || 0);
-  const pendingWithdrawalsSum = Number(db.prepare("SELECT SUM(gross_amount) as s FROM withdrawals WHERE status = 'pending'").get()?.s || 0);
-  const pendingKyc = Number(db.prepare("SELECT COUNT(*) as c FROM users WHERE kyc_status IN ('pending', 'Pending Verification')").get()?.c || 0);
-  const totalCommissions = Number(db.prepare("SELECT SUM(commission_amount) as s FROM commissions WHERE status = 'paid'").get()?.s || 0);
-  const totalAffiliates = Number(db.prepare("SELECT COUNT(DISTINCT sponsor_id) as c FROM referrals").get()?.c || 0);
-  return { totalUsers, totalAccounts, totalActiveBalance: Number(totalActiveBalance.toFixed(2)), totalDeposited: Number(totalDeposited.toFixed(2)), pendingDepositsCount: pendingDeposits, pendingDepositsAmount: Number(pendingDepositsSum.toFixed(2)), pendingWithdrawalsCount: pendingWithdrawals, pendingWithdrawalsAmount: Number(pendingWithdrawalsSum.toFixed(2)), pendingKycCount: pendingKyc, totalCommissionsPaid: Number(totalCommissions.toFixed(2)), totalAffiliatesCount: totalAffiliates };
-}
-__name(getAdminMetrics, "getAdminMetrics");
-function getAdminUsersList() {
-  const users = db.prepare(`
-    SELECT u.*,
-           (SELECT COUNT(*) FROM accounts a WHERE a.user_id = u.id) as accounts_count,
-           (SELECT SUM(current_balance) FROM accounts a WHERE a.user_id = u.id) as total_balance,
-           (SELECT full_name FROM users s WHERE s.id = u.referred_by) as sponsor_name
-    FROM users u
-    ORDER BY u.created_at DESC
-  `).all();
-  return users.map((u) => {
-    const userAccounts = db.prepare("SELECT * FROM accounts WHERE user_id = ? ORDER BY created_at DESC").all(u.id);
-    return { id: u.id, email: u.email, fullName: u.full_name, role: u.role || "trader", avatarUrl: u.avatar_url, country: u.country, referralCode: u.referral_code, referredBy: u.referred_by, sponsorName: u.sponsor_name || null, kycStatus: u.kyc_status, profileLocked: Boolean(u.profile_locked), address: u.address, dateOfBirth: u.date_of_birth, telegramHandle: u.telegram_handle, selfBalance: u.self_balance ?? 0, accountsCount: u.accounts_count || 0, totalBalance: Number((u.total_balance || 0).toFixed(2)), createdAt: u.created_at, accounts: userAccounts.map(mapAccountRowToTradingAccount) };
-  });
-}
-__name(getAdminUsersList, "getAdminUsersList");
-function adminUpdateAccountBalance(params) {
-  const account = db.prepare("SELECT * FROM accounts WHERE id = ?").get(params.accountId);
-  if (!account) throw new Error(`Trading account ${params.accountId} not found.`);
-  const oldBalance = Number(account.current_balance);
-  const targetBalance = Number(Number(params.newBalance).toFixed(2));
-  if (!Number.isFinite(targetBalance) || targetBalance < 0) {
-    throw new Error("New balance must be a non-negative number.");
-  }
-  const delta = targetBalance - oldBalance;
-  const newEquity = Number((account.equity + delta).toFixed(2));
-  const newStartingDay = Number((account.starting_day_equity + delta).toFixed(2));
-  const now = Date.now();
-  db.prepare(`
-    UPDATE accounts SET
-      current_balance = ?,
-      equity = ?,
-      starting_day_equity = ?,
-      updated_at = ?
-    WHERE id = ?
-  `).run(targetBalance, newEquity, newStartingDay, now, params.accountId);
-  if (account.tier === "personal" || account.account_category === "personal_live" || String(params.accountId).includes("PERS")) {
-    try {
-      db.prepare(`UPDATE users SET self_balance = ? WHERE id = ?`).run(targetBalance, account.user_id);
-    } catch {
-    }
-  } else if (account.tier === "demo" || account.account_category === "demo" || String(params.accountId).includes("DEMO")) {
-    try {
-      db.prepare(`UPDATE users SET demo_balance = ? WHERE id = ?`).run(targetBalance, account.user_id);
-    } catch {
-    }
-  } else if (account.phase === "funded") {
-    try {
-      db.prepare(`UPDATE users SET funded_balance = ? WHERE id = ?`).run(targetBalance, account.user_id);
-    } catch {
-    }
-  }
-  recordAdminAuditLog(params.adminUserId, "MODIFY_BALANCE", params.accountId, "account", { oldBalance, newBalance: targetBalance, delta, reason: params.reason });
-  return getAccountById(params.accountId);
-}
-__name(adminUpdateAccountBalance, "adminUpdateAccountBalance");
-function adminSetUserRole(userId, newRole, adminUserId) {
-  const user = getUserById(userId);
-  if (!user) throw new Error("User not found.");
-  db.prepare("UPDATE users SET role = ?, updated_at = ? WHERE id = ?").run(newRole, Date.now(), userId);
-  recordAdminAuditLog(adminUserId, "CHANGE_ROLE", userId, "user", { oldRole: user.role, newRole });
-  return getUserById(userId);
-}
-__name(adminSetUserRole, "adminSetUserRole");
-var depositAlterColumns = [`ALTER TABLE deposits ADD COLUMN wallet_address TEXT DEFAULT 'TWr3rLWrWGBcfwix5osJwAwMXmpcu4PNSp';`, `ALTER TABLE deposits ADD COLUMN package_name TEXT;`, `ALTER TABLE deposits ADD COLUMN sku TEXT;`, `ALTER TABLE deposits ADD COLUMN package_sku TEXT;`, `ALTER TABLE deposits ADD COLUMN account_type TEXT DEFAULT 'self_funded';`, `ALTER TABLE deposits ADD COLUMN is_fulfilled INTEGER DEFAULT 0;`, `ALTER TABLE deposits ADD COLUMN expires_at INTEGER;`, `ALTER TABLE crypto_deposits ADD COLUMN package_sku TEXT;`, `ALTER TABLE crypto_deposits ADD COLUMN is_fulfilled INTEGER DEFAULT 0;`, `ALTER TABLE crypto_deposits ADD COLUMN processed_at INTEGER;`, `ALTER TABLE crypto_deposits ADD COLUMN expires_at INTEGER;`, `CREATE TABLE IF NOT EXISTS user_purchases (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    account_id TEXT,
-    package_id TEXT NOT NULL,
-    package_name TEXT NOT NULL,
-    package_sku TEXT NOT NULL,
-    amount REAL NOT NULL,
-    package_amount REAL NOT NULL,
-    account_type TEXT NOT NULL DEFAULT 'challenge',
-    status TEXT NOT NULL DEFAULT 'pending',
-    tx_hash TEXT,
-    created_at INTEGER NOT NULL,
-    processed_at INTEGER,
-    expires_at INTEGER
-  );`, `ALTER TABLE user_purchases ADD COLUMN processed_at INTEGER;`, `ALTER TABLE user_purchases ADD COLUMN expires_at INTEGER;`, `CREATE TABLE IF NOT EXISTS transactions (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    account_id TEXT,
-    wallet_address TEXT DEFAULT 'TWr3rLWrWGBcfwix5osJwAwMXmpcu4PNSp',
-    amount REAL NOT NULL,
-    package_name TEXT NOT NULL,
-    package_sku TEXT NOT NULL,
-    account_type TEXT NOT NULL DEFAULT 'challenge',
-    currency TEXT NOT NULL DEFAULT 'USDT',
-    network TEXT NOT NULL DEFAULT 'TRC-20',
-    tx_hash TEXT,
-    status TEXT NOT NULL DEFAULT 'pending',
-    created_at INTEGER NOT NULL,
-    processed_at INTEGER,
-    expires_at INTEGER
-  );`];
-for (const stmt of depositAlterColumns) {
-  try {
-    db.exec(stmt);
-  } catch {
-  }
-}
-function expireStalePendingDepositsInDb(nowMs = Date.now(), expiryWindowMs = DEPOSIT_EXPIRY_MS) {
-  const cutoffMs = nowMs - expiryWindowMs;
-  let expiredRows = [];
-  try {
-    expiredRows = db.prepare(`SELECT id FROM crypto_deposits WHERE status = 'pending' AND created_at <= ?`).all(cutoffMs);
-  } catch {
-    expiredRows = [];
-  }
-  const expiredIds = expiredRows.map((r) => String(r.id));
-  try {
-    db.prepare(`UPDATE crypto_deposits
-       SET status = 'failed',
-           is_fulfilled = 0,
-           account_id = NULL,
-           processed_at = ?
-       WHERE status = 'pending' AND created_at <= ?`).run(nowMs, cutoffMs);
-  } catch {
-  }
-  try {
-    db.prepare(`UPDATE deposits
-       SET status = 'failed',
-           is_fulfilled = 0,
-           account_id = NULL,
-           decline_reason = 'Expired after 1 hour (60 minutes) without blockchain confirmation',
-           processed_at = ?
-       WHERE status = 'pending' AND created_at <= ?`).run(nowMs, cutoffMs);
-  } catch {
-  }
-  try {
-    db.prepare(`UPDATE transactions
-       SET status = 'failed',
-           account_id = NULL,
-           processed_at = ?
-       WHERE status = 'pending' AND created_at <= ?`).run(nowMs, cutoffMs);
-  } catch {
-  }
-  try {
-    db.prepare(`UPDATE user_purchases
-       SET status = 'failed',
-           account_id = NULL,
-           processed_at = ?
-       WHERE status = 'pending' AND created_at <= ?`).run(nowMs, cutoffMs);
-  } catch {
-  }
-  return { expiredCount: expiredIds.length, expiredIds, cutoffMs };
-}
-__name(expireStalePendingDepositsInDb, "expireStalePendingDepositsInDb");
-function createUserPurchaseRecord(params) {
-  const now = params.createdAtMs ?? Date.now();
-  const expiresAt = now + DEPOSIT_EXPIRY_MS;
-  const id = params.id || `PUR-${now.toString(36).toUpperCase()}-${Math.floor(1e3 + Math.random() * 9e3)}`;
-  const cleanAmount = Number(Math.max(0.01, Number(params.amount || 0)).toFixed(2));
-  const cleanPkgAmount = Number(Math.max(0.01, Number(params.packageAmount ?? params.amount ?? 0)).toFixed(2));
-  const accountType = params.accountType === "self_funded" ? "self_funded" : "challenge";
-  const sku = String(params.packageSku || params.packageId || "BFT-2S-10K").trim().toUpperCase();
-  const packageId = String(params.packageId || sku).trim();
-  const packageName = String(params.packageName || "Challenge Package").trim();
-  const status = normalizeCryptoDepositStatus(params.status, "pending");
-  db.prepare(`
-    INSERT OR REPLACE INTO user_purchases (
-      id, user_id, account_id, package_id, package_name, package_sku,
-      amount, package_amount, account_type, status, tx_hash, created_at, expires_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, params.userId, params.accountId || null, packageId, packageName, sku, cleanAmount, cleanPkgAmount, accountType, status, params.txHash || null, now, expiresAt);
-  return db.prepare("SELECT * FROM user_purchases WHERE id = ?").get(id);
-}
-__name(createUserPurchaseRecord, "createUserPurchaseRecord");
-function getUserPurchases(params) {
-  expireStalePendingDepositsInDb();
-  if (params?.userId) {
-    return db.prepare("SELECT * FROM user_purchases WHERE user_id = ? ORDER BY created_at DESC LIMIT 100").all(params.userId);
-  }
-  return db.prepare("SELECT * FROM user_purchases ORDER BY created_at DESC LIMIT 100").all();
-}
-__name(getUserPurchases, "getUserPurchases");
-function getTransactions(params) {
-  expireStalePendingDepositsInDb();
-  if (params?.userId) {
-    return db.prepare("SELECT * FROM transactions WHERE user_id = ? ORDER BY created_at DESC LIMIT 100").all(params.userId);
-  }
-  return db.prepare("SELECT * FROM transactions ORDER BY created_at DESC LIMIT 100").all();
-}
-__name(getTransactions, "getTransactions");
-function createDepositRequest(params) {
-  const now = params.createdAtMs ?? Date.now();
-  const expiresAt = now + DEPOSIT_EXPIRY_MS;
-  const id = `DEP-${now.toString(36).toUpperCase()}-${Math.floor(1e3 + Math.random() * 9e3)}`;
-  const cleanAmount = Number(params.amount.toFixed(2));
-  if (cleanAmount <= 0) throw new Error("Deposit amount must be greater than $0.");
-  const walletAddress = params.walletAddress || "TWr3rLWrWGBcfwix5osJwAwMXmpcu4PNSp";
-  const accountType = params.accountType === "challenge" ? "challenge" : "self_funded";
-  const packageName = params.packageName || (accountType === "challenge" ? "Funded Challenge Evaluation" : `Self-Funded Personal Live Deposit ($${cleanAmount.toFixed(2)} USDT)`);
-  const sku = params.sku || (accountType === "challenge" ? `BFT-CHALLENGE-${Math.round(cleanAmount)}` : `BFT-SELF-${Math.round(cleanAmount)}`);
-  ensureUserInDb({ id: params.userId, email: `${String(params.userId).toLowerCase().replace(/[^a-z0-9]/g, "")}@client-bft.com`, fullName: `Trader ${String(params.userId).slice(-4)}` });
-  db.prepare(`
-    INSERT INTO deposits (
-      id, user_id, account_id, amount, payment_method, currency, network,
-      wallet_address, package_name, sku, package_sku, account_type,
-      tx_hash, deposit_slip_url, status, created_at, expires_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-  `).run(id, params.userId, params.accountId || null, cleanAmount, params.paymentMethod, params.currency || "USDT", params.network || "TRC-20", walletAddress, packageName, sku, sku, accountType, params.txHash || null, params.depositSlipUrl || null, now, expiresAt);
-  db.prepare(`
-    INSERT OR REPLACE INTO crypto_deposits (
-      id, user_id, account_id, wallet_address, amount, package_name, sku, package_sku,
-      account_type, currency, network, tx_hash, status, created_at, expires_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-  `).run(id, params.userId, params.accountId || null, walletAddress, cleanAmount, packageName, sku, sku, accountType, params.currency || "USDT", params.network || "TRC-20", params.txHash || null, now, expiresAt);
-  try {
-    db.prepare(`
-      INSERT OR REPLACE INTO transactions (
-        id, user_id, account_id, wallet_address, amount, package_name, package_sku,
-        account_type, currency, network, tx_hash, status, created_at, expires_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-    `).run(id, params.userId, params.accountId || null, walletAddress, cleanAmount, packageName, sku, accountType, params.currency || "USDT", params.network || "TRC-20", params.txHash || null, now, expiresAt);
-  } catch {
-  }
-  try {
-    createUserPurchaseRecord({ id, userId: params.userId, accountId: params.accountId || null, packageId: sku, packageName, packageSku: sku, amount: cleanAmount, packageAmount: cleanAmount, accountType, status: "pending", txHash: params.txHash || null, createdAtMs: now });
-  } catch {
-  }
-  return db.prepare("SELECT * FROM crypto_deposits WHERE id = ?").get(id);
-}
-__name(createDepositRequest, "createDepositRequest");
-function createCryptoDepositRecord(params) {
-  return createDepositRequest({ userId: params.userId, accountId: params.accountId, amount: params.amount, paymentMethod: "USDT (TRC-20)", walletAddress: params.walletAddress || "TWr3rLWrWGBcfwix5osJwAwMXmpcu4PNSp", packageName: params.packageName, sku: params.sku, accountType: params.accountType, currency: "USDT", network: "TRC-20", txHash: params.txHash, createdAtMs: params.createdAtMs ?? params.createdAt });
-}
-__name(createCryptoDepositRecord, "createCryptoDepositRecord");
-function getCryptoDeposits(params) {
-  expireStalePendingDepositsInDb();
-  if (params?.userId) {
-    return db.prepare("SELECT * FROM crypto_deposits WHERE user_id = ? ORDER BY created_at DESC LIMIT 50").all(params.userId);
-  }
-  if (params?.accountId) {
-    return db.prepare("SELECT * FROM crypto_deposits WHERE account_id = ? ORDER BY created_at DESC LIMIT 50").all(params.accountId);
-  }
-  return db.prepare("SELECT * FROM crypto_deposits ORDER BY created_at DESC LIMIT 50").all();
-}
-__name(getCryptoDeposits, "getCryptoDeposits");
-function getPendingCryptoDeposits(userId) {
-  expireStalePendingDepositsInDb();
-  if (userId) {
-    return db.prepare(`SELECT * FROM crypto_deposits WHERE status = 'pending' AND user_id = ? ORDER BY created_at ASC`).all(userId);
-  }
-  return db.prepare(`SELECT * FROM crypto_deposits WHERE status = 'pending' ORDER BY created_at ASC`).all();
-}
-__name(getPendingCryptoDeposits, "getPendingCryptoDeposits");
-function getCompletedCryptoDepositTxHashes() {
-  const rows = db.prepare(`SELECT tx_hash FROM crypto_deposits WHERE status IN ('completed', 'active', 'approved') AND tx_hash IS NOT NULL`).all();
-  const claimed = /* @__PURE__ */ new Set();
-  for (const row of rows) {
-    const hash = String(row?.tx_hash || "").trim();
-    if (hash && !hash.toLowerCase().startsWith("trc20_")) {
-      claimed.add(hash);
-    }
-  }
-  return claimed;
-}
-__name(getCompletedCryptoDepositTxHashes, "getCompletedCryptoDepositTxHashes");
-function failCryptoDepositInDb(depositId, reason = "Payment failed or expired after 60 minutes without confirmation.") {
-  const now = Date.now();
-  db.prepare(`UPDATE crypto_deposits
-     SET status = 'failed',
-         is_fulfilled = 0,
-         account_id = NULL,
-         processed_at = ?
-     WHERE id = ? AND status = 'pending'`).run(now, depositId);
-  try {
-    db.prepare(`UPDATE deposits
-       SET status = 'failed',
-           is_fulfilled = 0,
-           account_id = NULL,
-           decline_reason = ?,
-           processed_at = ?
-       WHERE id = ? AND status = 'pending'`).run(reason, now, depositId);
-  } catch {
-  }
-  try {
-    db.prepare(`UPDATE transactions
-       SET status = 'failed',
-           account_id = NULL,
-           processed_at = ?
-       WHERE id = ? AND status = 'pending'`).run(now, depositId);
-  } catch {
-  }
-  try {
-    db.prepare(`UPDATE user_purchases
-       SET status = 'failed',
-           account_id = NULL,
-           processed_at = ?
-       WHERE id = ? AND status = 'pending'`).run(now, depositId);
-  } catch {
-  }
-  return db.prepare("SELECT * FROM crypto_deposits WHERE id = ?").get(depositId);
-}
-__name(failCryptoDepositInDb, "failCryptoDepositInDb");
-function completeCryptoDepositInDb(depositId, matchedTxHash, options) {
-  const now = options?.nowMs ?? Date.now();
-  expireStalePendingDepositsInDb(now);
-  let deposit = db.prepare("SELECT * FROM crypto_deposits WHERE id = ?").get(depositId);
-  if (!deposit) {
-    deposit = db.prepare("SELECT * FROM deposits WHERE id = ?").get(depositId);
-  }
-  if (!deposit) {
-    throw new Error(`Crypto deposit record ${depositId} not found.`);
-  }
-  if (deposit.status === "failed" || deposit.status === "declined" || isCryptoDepositExpired(deposit, now)) {
-    failCryptoDepositInDb(depositId, "Order expired after 1 hour without blockchain confirmation and cannot be claimed.");
-    throw new Error(`Crypto deposit ${depositId} has expired (over 60 minutes) or failed and cannot be claimed.`);
-  }
-  const cleanTxHash = String(matchedTxHash || deposit.tx_hash || "").trim();
-  const wasAlreadyFulfilled = Number(deposit.is_fulfilled) === 1 || deposit.status === "completed" || deposit.status === "active" || deposit.status === "approved";
-  const accountType = String(deposit.account_type || "").toLowerCase() === "challenge" ? "challenge" : "self_funded";
-  const amount = Number(deposit.amount || 0);
-  const userId = String(deposit.user_id || "usr_bft_001");
-  ensureUserInDb({ id: userId, email: `${userId.toLowerCase().replace(/[^a-z0-9]/g, "")}@client-bft.com`, fullName: `Trader ${userId.slice(-4)}` });
-  let targetAccount = null;
-  if (accountType === "challenge") {
-    const existingAcc = deposit.account_id ? getAccountById(deposit.account_id) : null;
-    if (existingAcc) {
-      db.prepare(`
-        UPDATE accounts SET
-          status = 'active',
-          updated_at = ?
-        WHERE id = ?
-      `).run(now, existingAcc.id);
-      targetAccount = getAccountById(existingAcc.id);
-    } else {
-      const parsedPkg = parseChallengePackageFromDeposit({ sku: deposit.sku, package_sku: deposit.package_sku, package_name: deposit.package_name, amount });
-      targetAccount = createAccount({ userId, tier: parsedPkg.tier, tierName: parsedPkg.tierName, size: parsedPkg.size, dailyWithdrawalsUnlocked: false });
-    }
-  } else {
-    if (!wasAlreadyFulfilled && !options?.skipBalanceCreditIfAlreadyCredited) {
-      ensurePersonalLiveAccountForUser(userId);
-      targetAccount = creditPersonalAccountDepositInDb({ userId, accountId: deposit.account_id || void 0, amountUsdt: amount });
-    } else {
-      targetAccount = (deposit.account_id ? getAccountById(deposit.account_id) : null) || ensurePersonalLiveAccountForUser(userId);
-    }
-  }
-  const linkedAccountId = targetAccount?.id || deposit.account_id || null;
-  db.prepare(`
-    UPDATE crypto_deposits SET
-      status = 'completed',
-      account_id = COALESCE(?, account_id),
-      tx_hash = COALESCE(?, tx_hash),
-      is_fulfilled = 1,
-      processed_at = ?
-    WHERE id = ?
-  `).run(linkedAccountId, cleanTxHash || null, now, depositId);
-  try {
-    db.prepare(`
-      UPDATE deposits SET
-        status = 'completed',
-        account_id = COALESCE(?, account_id),
-        tx_hash = COALESCE(?, tx_hash),
-        is_fulfilled = 1,
-        processed_at = ?
-      WHERE id = ?
-    `).run(linkedAccountId, cleanTxHash || null, now, depositId);
-  } catch {
-  }
-  try {
-    db.prepare(`
-      UPDATE transactions SET
-        status = ?,
-        account_id = COALESCE(?, account_id),
-        tx_hash = COALESCE(?, tx_hash),
-        processed_at = ?
-      WHERE id = ?
-    `).run(accountType === "challenge" ? "active" : "completed", linkedAccountId, cleanTxHash || null, now, depositId);
-  } catch {
-  }
-  try {
-    db.prepare(`
-      UPDATE user_purchases SET
-        status = ?,
-        account_id = COALESCE(?, account_id),
-        tx_hash = COALESCE(?, tx_hash),
-        processed_at = ?
-      WHERE id = ?
-    `).run(accountType === "challenge" ? "active" : "completed", linkedAccountId, cleanTxHash || null, now, depositId);
-  } catch {
-  }
-  let commissionsDistributed = [];
-  if (!wasAlreadyFulfilled && amount > 0) {
-    try {
-      commissionsDistributed = distribute3TierCommissions(userId, amount, accountType === "challenge" ? "purchase" : "deposit", `Verified USDT (TRC-20) ${accountType} payment of $${amount.toFixed(2)} USDT (${deposit.package_name || deposit.sku || deposit.package_sku || "BFT"})`);
-    } catch {
-    }
-  }
-  const updatedDeposit = db.prepare("SELECT * FROM crypto_deposits WHERE id = ?").get(depositId);
-  return { ok: true, deposit: updatedDeposit, account: targetAccount, accountType, amount, txHash: cleanTxHash, commissionsDistributed };
-}
-__name(completeCryptoDepositInDb, "completeCryptoDepositInDb");
-function verifyAndCompletePendingCryptoDepositsInDb(transactions, options) {
-  const nowMs = options?.nowMs ?? Date.now();
-  const expiredSweep = expireStalePendingDepositsInDb(nowMs);
-  const pendingDeposits = getPendingCryptoDeposits(options?.userId);
-  const claimedTxIds = getCompletedCryptoDepositTxHashes();
-  const completedResults = [];
-  for (const pending of pendingDeposits) {
-    const matchedTx = matchPendingDepositToTronGridTx(pending, transactions, claimedTxIds, nowMs);
-    if (matchedTx) {
-      claimedTxIds.add(matchedTx.transaction_id);
-      const completed = completeCryptoDepositInDb(pending.id, matchedTx.transaction_id, { nowMs });
-      completedResults.push(completed);
-    }
-  }
-  return { checkedCount: pendingDeposits.length, matchedCount: completedResults.length, expiredCount: expiredSweep.expiredCount, expiredIds: expiredSweep.expiredIds, completedDeposits: completedResults, remainingPendingCount: Math.max(0, pendingDeposits.length - completedResults.length) };
-}
-__name(verifyAndCompletePendingCryptoDepositsInDb, "verifyAndCompletePendingCryptoDepositsInDb");
-function getAdminDeposits(statusFilter) {
-  let query = `
-    SELECT d.*, u.full_name as user_name, u.email as user_email, a.tier_name as account_tier
-    FROM deposits d
-    JOIN users u ON d.user_id = u.id
-    LEFT JOIN accounts a ON d.account_id = a.id
-  `;
-  const params = [];
-  if (statusFilter && statusFilter !== "all") {
-    query += " WHERE d.status = ?";
-    params.push(statusFilter);
-  }
-  query += " ORDER BY d.created_at DESC";
-  return db.prepare(query).all(...params);
-}
-__name(getAdminDeposits, "getAdminDeposits");
-function adminApproveDeposit(depositId, adminUserId) {
-  const deposit = db.prepare("SELECT * FROM deposits WHERE id = ?").get(depositId);
-  if (!deposit) throw new Error("Deposit record not found.");
-  if (deposit.status === "approved") throw new Error("Deposit is already approved.");
-  const now = Date.now();
-  db.prepare(`
-    UPDATE deposits SET
-      status = 'approved',
-      processed_at = ?
-    WHERE id = ?
-  `).run(now, depositId);
-  try {
-    db.prepare(`
-      UPDATE crypto_deposits SET
-        status = 'approved',
-        processed_at = ?
-      WHERE id = ?
-    `).run(now, depositId);
-  } catch {
-  }
-  let targetAccount = deposit.account_id ? getAccountById(deposit.account_id) : null;
-  if (!targetAccount) {
-    targetAccount = ensurePersonalLiveAccountForUser(deposit.user_id);
-  }
-  let updatedAccount = null;
-  if (targetAccount) {
-    updatedAccount = creditPersonalAccountDepositInDb({ userId: deposit.user_id, accountId: targetAccount.id, amountUsdt: deposit.amount });
-  }
-  const commissionsDistributed = distribute3TierCommissions(deposit.user_id, deposit.amount, "deposit", `Deposit of $${deposit.amount.toFixed(2)} USDT by ${deposit.user_name || "Trader"}`);
-  recordAdminAuditLog(adminUserId, "APPROVE_DEPOSIT", depositId, "deposit", { amount: deposit.amount, userId: deposit.user_id, creditedAccountId: targetAccount?.id, commissionsDistributed });
-  return { ok: true, deposit: db.prepare("SELECT * FROM deposits WHERE id = ?").get(depositId), updatedAccount, commissionsDistributed };
-}
-__name(adminApproveDeposit, "adminApproveDeposit");
-function adminDeclineDeposit(depositId, reason, adminUserId) {
-  const deposit = db.prepare("SELECT * FROM deposits WHERE id = ?").get(depositId);
-  if (!deposit) throw new Error("Deposit record not found.");
-  if (deposit.status !== "pending") throw new Error(`Deposit cannot be declined from status: ${deposit.status}`);
-  const now = Date.now();
-  db.prepare(`
-    UPDATE deposits SET
-      status = 'declined',
-      decline_reason = ?,
-      processed_at = ?
-    WHERE id = ?
-  `).run(reason || "Declined by administrator", now, depositId);
-  try {
-    db.prepare(`
-      UPDATE crypto_deposits SET
-        status = 'declined',
-        processed_at = ?
-      WHERE id = ?
-    `).run(now, depositId);
-  } catch {
-  }
-  recordAdminAuditLog(adminUserId, "DECLINE_DEPOSIT", depositId, "deposit", { reason });
-  return { ok: true, deposit: db.prepare("SELECT * FROM deposits WHERE id = ?").get(depositId) };
-}
-__name(adminDeclineDeposit, "adminDeclineDeposit");
-function getAdminWithdrawals(statusFilter) {
-  let query = `
-    SELECT w.*, u.full_name as user_name, u.email as user_email, a.tier_name as account_tier, a.current_balance as account_balance
-    FROM withdrawals w
-    JOIN users u ON w.user_id = u.id
-    LEFT JOIN accounts a ON w.account_id = a.id
-  `;
-  const params = [];
-  if (statusFilter && statusFilter !== "all") {
-    query += " WHERE w.status = ?";
-    params.push(statusFilter);
-  }
-  query += " ORDER BY w.requested_at DESC";
-  return db.prepare(query).all(...params);
-}
-__name(getAdminWithdrawals, "getAdminWithdrawals");
-function adminApproveWithdrawal(withdrawalId, adminUserId) {
-  const withdrawal = db.prepare("SELECT * FROM withdrawals WHERE id = ?").get(withdrawalId);
-  if (!withdrawal) throw new Error("Withdrawal record not found.");
-  if (withdrawal.status === "completed" || withdrawal.status === "success") throw new Error("Withdrawal is already approved/completed.");
-  const now = Date.now();
-  const txHash = withdrawal.tx_hash || `tron_tx_${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`;
-  db.prepare(`
-    UPDATE withdrawals SET
-      status = 'success',
-      tx_hash = ?,
-      processed_at = ?
-    WHERE id = ?
-  `).run(txHash, now, withdrawalId);
-  const account = getAccountById(withdrawal.account_id);
-  let updatedAccount = null;
-  if (account) {
-    const newBalance = Math.max(0, Number((account.currentBalance - withdrawal.gross_amount).toFixed(2)));
-    const newEquity = Math.max(0, Number((account.equity - withdrawal.gross_amount).toFixed(2)));
-    db.prepare(`
-      UPDATE accounts SET
-        current_balance = ?,
-        equity = ?,
-        first_withdrawal_completed = 1,
-        updated_at = ?
-      WHERE id = ?
-    `).run(newBalance, newEquity, now, account.id);
-    updatedAccount = getAccountById(account.id);
-  }
-  const user = getUserById(withdrawal.user_id);
-  if (user?.referred_by) {
-    const existingBonus = db.prepare(`
-      SELECT * FROM commissions WHERE source_type = 'withdrawal' AND referred_user_id = ? AND base_amount = ?
-    `).get(withdrawal.user_id, withdrawal.gross_amount);
-    if (!existingBonus) {
-      const bonusAmount = Number((withdrawal.gross_amount * 0.08).toFixed(2));
-      const commId = `COMM-WD-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-      db.prepare(`
-        INSERT INTO commissions (
-          id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, status, created_at
-        ) VALUES (?, ?, ?, 'withdrawal', 1, ?, ?, 0.08, ?, 'paid', ?)
-      `).run(commId, user.referred_by, user.id, `Direct Referral Payout Bonus (8% of $${withdrawal.gross_amount.toFixed(2)} Withdrawal by ${user.full_name})`, withdrawal.gross_amount, bonusAmount, now);
-    }
-  }
-  recordAdminAuditLog(adminUserId, "APPROVE_WITHDRAWAL", withdrawalId, "withdrawal", { grossAmount: withdrawal.gross_amount, netPayout: withdrawal.net_payout, txHash });
-  return { ok: true, withdrawal: db.prepare("SELECT * FROM withdrawals WHERE id = ?").get(withdrawalId), updatedAccount };
-}
-__name(adminApproveWithdrawal, "adminApproveWithdrawal");
-function adminDeclineWithdrawal(withdrawalId, reason, adminUserId) {
-  const withdrawal = db.prepare("SELECT * FROM withdrawals WHERE id = ?").get(withdrawalId);
-  if (!withdrawal) throw new Error("Withdrawal record not found.");
-  if (withdrawal.status !== "pending") throw new Error(`Withdrawal cannot be declined from status: ${withdrawal.status}`);
-  const now = Date.now();
-  try {
-    db.exec("BEGIN TRANSACTION");
-    db.prepare(`
-      UPDATE withdrawals SET
-        status = 'rejected',
-        rejection_reason = ?,
-        processed_at = ?
-      WHERE id = ? AND status = 'pending'
-    `).run(reason || "Declined by administrator", now, withdrawalId);
-    const account = getAccountById(withdrawal.account_id);
-    if (account) {
-      const newBalance = Number((account.currentBalance + withdrawal.gross_amount).toFixed(2));
-      const newEquity = Number((account.equity + withdrawal.gross_amount).toFixed(2));
-      db.prepare(`
-        UPDATE accounts SET
-          current_balance = ?,
-          equity = ?,
-          updated_at = ?
-        WHERE id = ?
-      `).run(newBalance, newEquity, now, account.id);
-      if (account.tier === "personal" || account.accountCategory === "personal_live" || String(withdrawal.account_id).includes("PERS")) {
-        db.prepare(`UPDATE users SET self_balance = ? WHERE id = ?`).run(newBalance, withdrawal.user_id);
-      } else if (account.phase === "funded") {
-        db.prepare(`UPDATE users SET funded_balance = ? WHERE id = ?`).run(newBalance, withdrawal.user_id);
-      }
-    }
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
-  }
-  recordAdminAuditLog(adminUserId, "DECLINE_WITHDRAWAL", withdrawalId, "withdrawal", { reason, refundedAmount: withdrawal.gross_amount });
-  return { ok: true, withdrawal: db.prepare("SELECT * FROM withdrawals WHERE id = ?").get(withdrawalId), updatedAccount: getAccountById(withdrawal.account_id) };
-}
-__name(adminDeclineWithdrawal, "adminDeclineWithdrawal");
-function getAdminKycSubmissions(statusFilter) {
-  let query = `
-    SELECT k.*, u.email as user_email, u.full_name as user_name, u.country as user_country, u.created_at as user_created_at
-    FROM kyc_submissions k
-    JOIN users u ON k.user_id = u.id
-  `;
-  const params = [];
-  if (statusFilter && statusFilter !== "all") {
-    if (statusFilter === "pending") {
-      query += " WHERE k.status IN ('pending', 'Pending Verification')";
-    } else {
-      query += " WHERE k.status = ?";
-      params.push(statusFilter);
-    }
-  }
-  query += " ORDER BY k.updated_at DESC";
-  return db.prepare(query).all(...params);
-}
-__name(getAdminKycSubmissions, "getAdminKycSubmissions");
-function adminApproveKyc(userId, adminUserId) {
-  const user = getUserById(userId);
-  if (!user) throw new Error("User not found.");
-  const now = Date.now();
-  db.prepare(`
-    UPDATE users SET
-      kyc_status = 'verified',
-      kyc_verified_at = ?,
-      profile_locked = 1,
-      updated_at = ?
-    WHERE id = ?
-  `).run(now, now, userId);
-  db.prepare(`
-    UPDATE kyc_submissions SET
-      status = 'verified',
-      profile_locked = 1,
-      updated_at = ?
-    WHERE user_id = ?
-  `).run(now, userId);
-  recordAdminAuditLog(adminUserId, "APPROVE_KYC", userId, "user", { previousStatus: user.kyc_status });
-  return getUserById(userId);
-}
-__name(adminApproveKyc, "adminApproveKyc");
-function adminRejectKyc(userId, reason, adminUserId) {
-  const user = getUserById(userId);
-  if (!user) throw new Error("User not found.");
-  const now = Date.now();
-  db.prepare(`
-    UPDATE users SET
-      kyc_status = 'rejected',
-      updated_at = ?
-    WHERE id = ?
-  `).run(now, userId);
-  db.prepare(`
-    UPDATE kyc_submissions SET
-      status = 'rejected',
-      updated_at = ?
-    WHERE user_id = ?
-  `).run(now, userId);
-  recordAdminAuditLog(adminUserId, "REJECT_KYC", userId, "user", { reason });
-  return getUserById(userId);
-}
-__name(adminRejectKyc, "adminRejectKyc");
-function distribute3TierCommissions(buyerUserId, baseAmount, sourceType = "deposit", details) {
-  const buyer = getUserById(buyerUserId);
-  if (!buyer?.referred_by) return [];
-  const now = Date.now();
-  const commissions = [];
-  const l1SponsorId = buyer.referred_by;
-  const l1Amount = Number((baseAmount * 0.1).toFixed(2));
-  const l1Id = `COMM-L1-${now.toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
-  db.prepare(`
-    INSERT INTO commissions (
-      id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, status, created_at
-    ) VALUES (?, ?, ?, ?, 1, ?, ?, 0.10, ?, 'paid', ?)
-  `).run(l1Id, l1SponsorId, buyer.id, sourceType, details || `Level 1 Commission: 10% of $${baseAmount.toFixed(2)} ${sourceType}`, baseAmount, l1Amount, now);
-  commissions.push({ id: l1Id, level: 1, sponsorId: l1SponsorId, amount: l1Amount });
-  const l1User = getUserById(l1SponsorId);
-  if (l1User?.referred_by) {
-    const l2SponsorId = l1User.referred_by;
-    const l2Amount = Number((baseAmount * 0.05).toFixed(2));
-    const l2Id = `COMM-L2-${now.toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
-    db.prepare(`
-      INSERT INTO commissions (
-        id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, status, created_at
-      ) VALUES (?, ?, ?, ?, 2, ?, ?, 0.05, ?, 'paid', ?)
-    `).run(l2Id, l2SponsorId, buyer.id, sourceType, details || `Level 2 Commission: 5% of $${baseAmount.toFixed(2)} ${sourceType}`, baseAmount, l2Amount, now);
-    commissions.push({ id: l2Id, level: 2, sponsorId: l2SponsorId, amount: l2Amount });
-    const l2User = getUserById(l2SponsorId);
-    if (l2User?.referred_by) {
-      const l3SponsorId = l2User.referred_by;
-      const l3Amount = Number((baseAmount * 0.02).toFixed(2));
-      const l3Id = `COMM-L3-${now.toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
-      db.prepare(`
-        INSERT INTO commissions (
-          id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, status, created_at
-        ) VALUES (?, ?, ?, ?, 3, ?, ?, 0.02, ?, 'paid', ?)
-      `).run(l3Id, l3SponsorId, buyer.id, sourceType, details || `Level 3 Commission: 2% of $${baseAmount.toFixed(2)} ${sourceType}`, baseAmount, l3Amount, now);
-      commissions.push({ id: l3Id, level: 3, sponsorId: l3SponsorId, amount: l3Amount });
-    }
-  }
-  return commissions;
-}
-__name(distribute3TierCommissions, "distribute3TierCommissions");
-function getAdminReferralTree() {
-  const sponsors = db.prepare(`
-    SELECT DISTINCT u.id, u.full_name, u.email, u.referral_code,
-           (SELECT COUNT(*) FROM referrals r WHERE r.sponsor_id = u.id AND r.tier_level = 1) as l1_count,
-           (SELECT COUNT(*) FROM referrals r WHERE r.sponsor_id = u.id AND r.tier_level = 2) as l2_count,
-           (SELECT COUNT(*) FROM referrals r WHERE r.sponsor_id = u.id AND r.tier_level = 3) as l3_count,
-           (SELECT SUM(commission_amount) FROM commissions c WHERE c.sponsor_id = u.id AND c.status = 'paid') as total_earned
-    FROM users u
-    WHERE EXISTS (SELECT 1 FROM referrals r WHERE r.sponsor_id = u.id)
-       OR EXISTS (SELECT 1 FROM commissions c WHERE c.sponsor_id = u.id)
-    ORDER BY total_earned DESC
-  `).all();
-  return sponsors.map((s) => {
-    const l1Referrals = db.prepare(`
-      SELECT r.referred_user_id, u.full_name, u.email, u.created_at,
-             (SELECT SUM(current_balance) FROM accounts a WHERE a.user_id = u.id) as balance
-      FROM referrals r
-      JOIN users u ON r.referred_user_id = u.id
-      WHERE r.sponsor_id = ? AND r.tier_level = 1
-    `).all(s.id);
-    return { sponsorId: s.id, sponsorName: s.full_name, sponsorEmail: s.email, referralCode: s.referral_code, level1Count: s.l1_count || 0, level2Count: s.l2_count || 0, level3Count: s.l3_count || 0, totalDownlineCount: (s.l1_count || 0) + (s.l2_count || 0) + (s.l3_count || 0), totalEarned: Number((s.total_earned || 0).toFixed(2)), level1Members: l1Referrals.map((m) => ({ id: m.referred_user_id, name: m.full_name, email: m.email, balance: Number((m.balance || 0).toFixed(2)), joinedAt: m.created_at })) };
-  });
-}
-__name(getAdminReferralTree, "getAdminReferralTree");
-function getAdminCommissionsLedger(limit = 100) {
-  return db.prepare(`
-    SELECT c.*,
-           s.full_name as sponsor_name, s.email as sponsor_email,
-           b.full_name as buyer_name, b.email as buyer_email
-    FROM commissions c
-    JOIN users s ON c.sponsor_id = s.id
-    JOIN users b ON c.referred_user_id = b.id
-    ORDER BY c.created_at DESC
-    LIMIT ?
-  `).all(limit);
-}
-__name(getAdminCommissionsLedger, "getAdminCommissionsLedger");
-function getAdminAuditLogs(limit = 50) {
-  return db.prepare(`
-    SELECT a.*, u.full_name as admin_name, u.email as admin_email
-    FROM admin_audit_logs a
-    LEFT JOIN users u ON a.admin_user_id = u.id
-    ORDER BY a.created_at DESC
-    LIMIT ?
-  `).all(limit);
-}
-__name(getAdminAuditLogs, "getAdminAuditLogs");
-function updateUser2faSecret(userId, secret) {
-  db.prepare(`UPDATE users SET totp_secret = ? WHERE id = ?`).run(secret, userId);
-}
-__name(updateUser2faSecret, "updateUser2faSecret");
-function enableUser2fa(userId) {
-  db.prepare(`UPDATE users SET is_2fa_enabled = 1 WHERE id = ?`).run(userId);
-}
-__name(enableUser2fa, "enableUser2fa");
-function disableUser2fa(userId) {
-  db.prepare(`UPDATE users SET is_2fa_enabled = 0, totp_secret = NULL WHERE id = ?`).run(userId);
-}
-__name(disableUser2fa, "disableUser2fa");
-function ensureAdminSeedData() {
-  const now = Date.now();
-  const shankavee = getUserByEmail("shankavee44@gmail.com");
-  if (shankavee) {
-    db.prepare("UPDATE users SET role = 'admin' WHERE id = ?").run(shankavee.id);
-  } else {
-    ensureUserInDb({ id: "usr_admin_shankavee", email: "shankavee44@gmail.com", fullName: "Shankavee (Admin)" });
-    db.prepare("UPDATE users SET role = 'admin' WHERE email = 'shankavee44@gmail.com'").run();
-  }
-  const bftAdmin = getUserByEmail("admin@bft.io");
-  if (bftAdmin) {
-    db.prepare("UPDATE users SET role = 'admin' WHERE id = ?").run(bftAdmin.id);
-  } else {
-    ensureUserInDb({ id: "usr_admin_master", email: "admin@bft.io", fullName: "BFT Super Administrator" });
-    db.prepare("UPDATE users SET role = 'admin' WHERE email = 'admin@bft.io'").run();
-  }
-  db.prepare("UPDATE users SET role = 'admin' WHERE id = 'USR-MASTER-88'").run();
-  const depositCount = Number(db.prepare("SELECT COUNT(*) as c FROM deposits").get()?.c || 0);
-  if (depositCount === 0) {
-    const seedDeposits = [{ id: "DEP-REQ-981", userId: "USR-SUB-101", accId: null, amount: 750, method: "USDT (TRC-20)", status: "pending", tx: "0x8f7d6a5e4c3b2a10", ts: now - 36e5 * 2 }, { id: "DEP-REQ-982", userId: "USR-SUB-102", accId: null, amount: 1500, method: "USDT (TRC-20)", status: "pending", tx: "0x1a2b3c4d5e6f7a8b", ts: now - 36e5 * 5 }, { id: "DEP-REQ-980", userId: "usr_bft_001", accId: "BFT-91823", amount: 500, method: "USDT (TRC-20)", status: "approved", tx: "0x99aa88bb77cc66dd", ts: now - 864e5 * 3 }];
-    for (const d of seedDeposits) {
-      db.prepare(`
-        INSERT INTO deposits (id, user_id, account_id, amount, payment_method, status, tx_hash, created_at, processed_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(d.id, d.userId, d.accId, d.amount, d.method, d.status, d.tx, d.ts, d.status === "approved" ? d.ts + 6e4 : null);
-    }
-  }
-  const pendingWdCount = Number(db.prepare("SELECT COUNT(*) as c FROM withdrawals WHERE status = 'pending'").get()?.c || 0);
-  if (pendingWdCount === 0) {
-    db.prepare(`
-      INSERT INTO withdrawals (
-        id, user_id, account_id, gross_amount, net_profit, max_allowed_profit, profit_share_rate, fee_amount, net_payout,
-        wallet_address, network, payment_method, status, reference_number, tx_hash, requested_at, processed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, 0.80, ?, ?, ?, 'TRON (TRC-20)', 'crypto_trc20', 'pending', ?, NULL, ?, NULL)
-    `).run("WD-REQ-77401", "USR-SUB-101", "BFT-91823", 420, 600, 480, 42, 378, "TQn9Y2khEsLJW1ChVWFMSMeRDow5KcbLSE", "REF-77401", now - 36e5 * 4);
-  }
-  const pendingKycCount = Number(db.prepare("SELECT COUNT(*) as c FROM kyc_submissions WHERE status IN ('pending', 'Pending Verification')").get()?.c || 0);
-  if (pendingKycCount === 0) {
-    db.prepare(`
-      INSERT OR REPLACE INTO kyc_submissions (
-        id, user_id, full_name, address, date_of_birth, country, profile_locked, doc_type, document_number,
-        front_document_url, back_document_url, front_file_name, back_file_name, status, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-    `).run("KYC-SUB-USR-SUB-101", "USR-SUB-101", "Marco Rossi", "Via Montenapoleone 8, 20121 Milan", "1992-03-14", "Italy", "ID Card", "ITA-8910482", "https://images.unsplash.com/photo-1544717305-2782549b5136?w=600", "https://images.unsplash.com/photo-1544717305-2782549b5136?w=600", "marco_id_front.jpg", "marco_id_back.jpg", now - 864e5 * 2, now - 864e5 * 2);
-    db.prepare("UPDATE users SET kyc_status = 'pending' WHERE id = 'USR-SUB-101'").run();
-  }
-  const seedPurchases = [{ id: "PUR-SEED-101", userId: "USR-SUB-101", pkgId: "BFT-2S-100K", pkgName: "$100K 2-Step Challenge", sku: "BFT-2S-100K", amt: 469, ts: now - 864e5 * 12 }, { id: "PUR-SEED-102", userId: "USR-SUB-102", pkgId: "BFT-IF-25K", pkgName: "$25K Instant Funded", sku: "BFT-IF-25K", amt: 499, ts: now - 864e5 * 9 }, { id: "PUR-SEED-201", userId: "USR-GRAND-201", pkgId: "BFT-2S-50K", pkgName: "$50K 2-Step Challenge", sku: "BFT-2S-50K", amt: 279, ts: now - 864e5 * 7 }, { id: "PUR-SEED-202", userId: "USR-GRAND-202", pkgId: "BFT-IF-10K", pkgName: "$10K Instant Funded", sku: "BFT-IF-10K", amt: 249, ts: now - 864e5 * 5 }, { id: "PUR-SEED-301", userId: "USR-LEAF-301", pkgId: "BFT-IF-50K", pkgName: "$50K Instant Funded", sku: "BFT-IF-50K", amt: 899, ts: now - 864e5 * 4 }, { id: "PUR-SEED-302", userId: "USR-LEAF-302", pkgId: "BFT-1S-100K", pkgName: "$100K 1-Step Challenge", sku: "BFT-1S-100K", amt: 549, ts: now - 864e5 * 3 }];
-  for (const sp of seedPurchases) {
-    try {
-      const existingPur = db.prepare("SELECT id FROM user_purchases WHERE user_id = ? LIMIT 1").get(sp.userId);
-      if (!existingPur) {
-        db.prepare(`
-          INSERT OR IGNORE INTO user_purchases (
-            id, user_id, account_id, package_id, package_name, package_sku,
-            amount, package_amount, account_type, status, tx_hash, created_at
-          ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, 'challenge', 'completed', NULL, ?)
-        `).run(sp.id, sp.userId, sp.pkgId, sp.pkgName, sp.sku, sp.amt, sp.amt, sp.ts);
-      }
-    } catch {
-    }
-  }
-}
-__name(ensureAdminSeedData, "ensureAdminSeedData");
-ensureAdminSeedData();
-function recordTradeInDb(userId, trade) {
-  const account = getAccountById(trade.accountId);
-  if (!account) throw new Error("Account not found.");
-  if (["breached", "hard-breached", "soft-breached"].includes(account.status)) {
-    throw new Error("Trading blocked: Account is breached.");
-  }
-  const ownerId = account.user_id || account.userId;
-  if (ownerId && ownerId !== userId) throw new Error("Unauthorized account trade.");
-  const cleanInvestment = Number(trade.investment);
-  if (cleanInvestment <= 0) throw new Error("Invalid trade investment amount.");
-  if (account.currentBalance < cleanInvestment) {
-    throw new Error("Insufficient account balance for trade placement.");
-  }
-  const now = Date.now();
-  const tradeId = trade.id || `TRD-${now.toString().slice(-6)}-${Math.floor(100 + Math.random() * 899)}`;
-  const startTime = trade.startTime || now;
-  const durationSec = Number(trade.durationSeconds) || 30;
-  const endTime = trade.endTime || startTime + durationSec * 1e3;
-  const payoutPct = Number(trade.payoutPercentage) || 92;
-  const potentialPayout = Number((cleanInvestment + cleanInvestment * payoutPct / 100).toFixed(2));
-  const nextBalance = Number((account.currentBalance - cleanInvestment).toFixed(2));
-  db.prepare(`
-    INSERT INTO trades (
-      id, user_id, account_id, asset, direction, strike_price, close_price,
-      investment, payout_percentage, potential_payout, pnl, credited_amount,
-      start_time, end_time, duration_seconds, status, account_tier, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(tradeId, userId, trade.accountId, trade.asset, trade.direction, Number(trade.strikePrice), Number(trade.strikePrice), cleanInvestment, payoutPct, potentialPayout, 0, 0, startTime, endTime, durationSec, "active", trade.accountTier || account.tier, now);
-  db.prepare(`
-    UPDATE accounts SET
-      current_balance = ?,
-      equity = ?,
-      updated_at = ?
-    WHERE id = ?
-  `).run(nextBalance, nextBalance, now, trade.accountId);
-  if (account.tier === "personal" || account.accountCategory === "personal_live" || String(trade.accountId).includes("PERS")) {
-    try {
-      db.prepare(`UPDATE users SET self_balance = ? WHERE id = ?`).run(nextBalance, userId);
-    } catch (e) {
-      console.warn("SQLite self_balance recordTrade sync error:", e);
-    }
-  } else if (account.tier === "demo" || account.accountCategory === "demo" || String(trade.accountId).includes("DEMO")) {
-    try {
-      db.prepare(`UPDATE users SET demo_balance = ? WHERE id = ?`).run(nextBalance, userId);
-    } catch (e) {
-      console.warn("SQLite demo_balance recordTrade sync error:", e);
-    }
-  } else if (account.phase === "funded" || account.status === "active") {
-    try {
-      db.prepare(`UPDATE users SET funded_balance = ? WHERE id = ?`).run(nextBalance, userId);
-    } catch (e) {
-      console.warn("SQLite funded_balance recordTrade sync error:", e);
-    }
-  }
-  const savedTrade = db.prepare("SELECT * FROM trades WHERE id = ?").get(tradeId);
-  const updatedAccount = getAccountById(trade.accountId);
-  return { trade: mapTradeRow(savedTrade), account: updatedAccount };
-}
-__name(recordTradeInDb, "recordTradeInDb");
-function settleTradeInDb(userId, tradeId, closePrice, manualStatus) {
-  const tradeRow = db.prepare("SELECT * FROM trades WHERE id = ? AND user_id = ?").get(tradeId, userId);
-  if (!tradeRow) throw new Error("Trade not found or unauthorized.");
-  if (tradeRow.status !== "active") {
-    const acc = getAccountById(tradeRow.account_id);
-    return { trade: mapTradeRow(tradeRow), account: acc, alreadySettled: true };
-  }
-  const nowCheck = Date.now();
-  if (nowCheck + 1e3 < Number(tradeRow.end_time)) {
-    const secsLeft = Math.ceil((Number(tradeRow.end_time) - nowCheck) / 1e3);
-    throw new Error(`Trade is locked until expiration (${secsLeft}s remaining) and cannot be closed or cancelled early.`);
-  }
-  const finalPrice = Number(closePrice);
-  const strike = Number(tradeRow.strike_price);
-  const investment = Number(tradeRow.investment);
-  const payoutPct = Number(tradeRow.payout_percentage);
-  let status = "lost";
-  let pnl = -investment;
-  let creditedAmount = 0;
-  const diff = finalPrice - strike;
-  const isTie = manualStatus === "tie" || Math.abs(diff) < 1e-7;
-  if (isTie) {
-    status = "tie";
-    pnl = 0;
-    creditedAmount = investment;
-  } else {
-    const isWin = manualStatus === "won" || tradeRow.direction === "CALL" && diff > 0 || tradeRow.direction === "PUT" && diff < 0;
-    if (isWin) {
-      status = "won";
-      pnl = Number((investment * payoutPct / 100).toFixed(2));
-      creditedAmount = Number((investment + pnl).toFixed(2));
-    }
-  }
-  const now = Date.now();
-  db.prepare(`
-    UPDATE trades SET
-      close_price = ?,
-      pnl = ?,
-      credited_amount = ?,
-      status = ?,
-      settled_at = ?
-    WHERE id = ?
-  `).run(finalPrice, pnl, creditedAmount, status, now, tradeId);
-  const account = getAccountById(tradeRow.account_id);
-  const nextBalance = Number(((account?.currentBalance || 0) + creditedAmount).toFixed(2));
-  const nextTradesCount = (account?.tradesCount || 0) + 1;
-  const resolvedTrades = db.prepare("SELECT status FROM trades WHERE account_id = ? AND status IN ('won', 'lost', 'tie')").all(tradeRow.account_id);
-  const wonCount = resolvedTrades.filter((s) => s.status === "won").length;
-  const totalCount = resolvedTrades.length;
-  const nextWinRate = totalCount > 0 ? Number((wonCount / totalCount * 100).toFixed(1)) : 0;
-  db.prepare(`
-    UPDATE accounts SET
-      current_balance = ?,
-      equity = ?,
-      trades_count = ?,
-      win_rate = ?,
-      updated_at = ?
-    WHERE id = ?
-  `).run(nextBalance, nextBalance, nextTradesCount, nextWinRate, now, tradeRow.account_id);
-  const updatedTrade = db.prepare("SELECT * FROM trades WHERE id = ?").get(tradeId);
-  const updatedAccount = getAccountById(tradeRow.account_id);
-  if (updatedAccount) {
-    if (updatedAccount.tier === "personal" || updatedAccount.accountCategory === "personal_live" || updatedAccount.phase === "personal_live") {
-      try {
-        db.prepare(`UPDATE users SET self_balance = ? WHERE id = ?`).run(nextBalance, userId);
-      } catch {
-      }
-    } else if (updatedAccount.tier === "demo" || updatedAccount.accountCategory === "demo" || updatedAccount.phase === "demo") {
-      try {
-        db.prepare(`UPDATE users SET demo_balance = ? WHERE id = ?`).run(nextBalance, userId);
-      } catch {
-      }
-    } else if (updatedAccount.phase === "funded") {
-      try {
-        db.prepare(`UPDATE users SET funded_balance = ? WHERE id = ?`).run(nextBalance, userId);
-      } catch {
-      }
-    }
-  }
-  return { trade: mapTradeRow(updatedTrade), account: updatedAccount, settlement: { status, pnl, creditedAmount, closePrice: finalPrice } };
-}
-__name(settleTradeInDb, "settleTradeInDb");
-function getUserTradesFromDb(userId, accountId) {
-  const query = accountId ? "SELECT * FROM trades WHERE user_id = ? AND account_id = ? ORDER BY created_at DESC LIMIT 200" : "SELECT * FROM trades WHERE user_id = ? ORDER BY created_at DESC LIMIT 200";
-  const rows = accountId ? db.prepare(query).all(userId, accountId) : db.prepare(query).all(userId);
-  return rows.map(mapTradeRow);
-}
-__name(getUserTradesFromDb, "getUserTradesFromDb");
-function mapTradeRow(row) {
-  if (!row) return null;
-  return { id: row.id, accountId: row.account_id, userId: row.user_id, asset: row.asset, direction: row.direction, strikePrice: Number(row.strike_price), currentPrice: Number(row.close_price || row.strike_price), closePrice: row.close_price ? Number(row.close_price) : void 0, investment: Number(row.investment), payoutPercentage: Number(row.payout_percentage), potentialPayout: Number(row.potential_payout), pnl: Number(row.pnl || 0), creditedAmount: Number(row.credited_amount || 0), startTime: Number(row.start_time), endTime: Number(row.end_time), durationSeconds: Number(row.duration_seconds), status: row.status, accountTier: row.account_tier, createdAt: Number(row.created_at), settledAt: row.settled_at ? Number(row.settled_at) : void 0 };
-}
-__name(mapTradeRow, "mapTradeRow");
-function cancelWithdrawalRequest(userId, withdrawalId) {
-  const withdrawal = db.prepare("SELECT * FROM withdrawals WHERE id = ? AND user_id = ?").get(withdrawalId, userId);
-  if (!withdrawal) throw new Error("Withdrawal record not found.");
-  if (withdrawal.status !== "pending") throw new Error(`Withdrawal cannot be cancelled from status: ${withdrawal.status}`);
-  const now = Date.now();
-  try {
-    db.exec("BEGIN TRANSACTION");
-    const info = db.prepare(`
-      UPDATE withdrawals SET
-        status = 'cancelled',
-        processed_at = ?
-      WHERE id = ? AND status = 'pending'
-    `).run(now, withdrawalId);
-    if (info.changes === 0) {
-      throw new Error("Withdrawal request is no longer pending or already processed.");
-    }
-    const account = getAccountById(withdrawal.account_id);
-    if (account) {
-      const newBalance = Number((account.currentBalance + withdrawal.gross_amount).toFixed(2));
-      const newEquity = Number((account.equity + withdrawal.gross_amount).toFixed(2));
-      db.prepare(`
-        UPDATE accounts SET
-          current_balance = ?,
-          equity = ?,
-          updated_at = ?
-        WHERE id = ?
-      `).run(newBalance, newEquity, now, account.id);
-      if (account.tier === "personal" || account.account_category === "personal_live" || String(withdrawal.account_id).includes("PERS")) {
-        db.prepare(`UPDATE users SET self_balance = ? WHERE id = ?`).run(newBalance, userId);
-      } else if (account.phase === "funded") {
-        db.prepare(`UPDATE users SET funded_balance = ? WHERE id = ?`).run(newBalance, userId);
-      }
-    }
-    db.exec("COMMIT");
-    return { ok: true, withdrawal: db.prepare("SELECT * FROM withdrawals WHERE id = ?").get(withdrawalId) };
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
-  }
-}
-__name(cancelWithdrawalRequest, "cancelWithdrawalRequest");
-function declineWithdrawalRequest(adminUserId, userId, withdrawalId, reason) {
-  const withdrawal = db.prepare("SELECT * FROM withdrawals WHERE id = ? AND user_id = ?").get(withdrawalId, userId);
-  if (!withdrawal) throw new Error("Withdrawal record not found.");
-  if (withdrawal.status !== "pending") throw new Error(`Withdrawal cannot be declined from status: ${withdrawal.status}`);
-  const now = Date.now();
-  try {
-    db.exec("BEGIN TRANSACTION");
-    const info = db.prepare(`
-      UPDATE withdrawals SET
-        status = 'rejected',
-        rejection_reason = ?,
-        processed_at = ?
-      WHERE id = ? AND status = 'pending'
-    `).run(reason, now, withdrawalId);
-    if (info.changes === 0) {
-      throw new Error("Withdrawal request is no longer pending or already processed.");
-    }
-    const account = getAccountById(withdrawal.account_id);
-    if (account) {
-      const newBalance = Number((account.currentBalance + withdrawal.gross_amount).toFixed(2));
-      const newEquity = Number((account.equity + withdrawal.gross_amount).toFixed(2));
-      db.prepare(`
-        UPDATE accounts SET
-          current_balance = ?,
-          equity = ?,
-          updated_at = ?
-        WHERE id = ?
-      `).run(newBalance, newEquity, now, account.id);
-      if (account.tier === "personal" || account.account_category === "personal_live" || String(withdrawal.account_id).includes("PERS")) {
-        db.prepare(`UPDATE users SET self_balance = ? WHERE id = ?`).run(newBalance, userId);
-      } else if (account.phase === "funded") {
-        db.prepare(`UPDATE users SET funded_balance = ? WHERE id = ?`).run(newBalance, userId);
-      }
-    }
-    db.exec("COMMIT");
-    return { ok: true, withdrawal: db.prepare("SELECT * FROM withdrawals WHERE id = ?").get(withdrawalId) };
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
-  }
-}
-__name(declineWithdrawalRequest, "declineWithdrawalRequest");
-function parseJsonStringArray(raw) {
-  if (Array.isArray(raw)) return raw.map((s) => String(s || "").trim()).filter(Boolean);
-  if (typeof raw === "string" && raw.trim()) {
-    try {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed.map((s) => String(s || "").trim()).filter(Boolean);
-    } catch {
-    }
-    return raw.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
-  }
-  return [];
-}
-function mapSocialSubmissionRow(row) {
-  if (!row) return null;
-  return {
-    id: String(row.id),
-    userId: String(row.user_id),
-    userName: row.user_name || row.full_name || "",
-    userEmail: row.user_email || row.email || "",
-    platformType: String(row.platform_type || row.affiliate_social_platform || ""),
-    socialLinks: parseJsonStringArray(row.social_links_json ?? row.affiliate_social_links),
-    affiliateProfileLocked: Boolean(row.affiliate_profile_locked ?? 1),
-    submittedAt: String(row.submitted_at || row.affiliate_social_submitted_at || new Date(Number(row.created_at || Date.now())).toISOString())
-  };
-}
-function getAffiliateSocialSubmissionInDb(userId, userEmail) {
-  if (!userId && !userEmail) return null;
-  if (userId) {
-    const sub = db.prepare("SELECT * FROM affiliate_social_submissions WHERE user_id = ? LIMIT 1").get(userId);
-    if (sub) return mapSocialSubmissionRow(sub);
-  }
-  if (userEmail) {
-    const subByEmail = db.prepare("SELECT * FROM affiliate_social_submissions WHERE LOWER(user_email) = LOWER(?) LIMIT 1").get(userEmail);
-    if (subByEmail) return mapSocialSubmissionRow(subByEmail);
-  }
-  const user = (userId ? getUserById(userId) : null) || (userEmail ? getUserByEmail(userEmail) : null);
-  if (user && (user.affiliate_profile_locked === 1 || user.affiliate_social_platform)) {
-    return {
-      id: `SOC-${user.id}`,
-      userId: String(user.id),
-      userName: user.full_name || "",
-      userEmail: user.email || "",
-      platformType: String(user.affiliate_social_platform || ""),
-      socialLinks: parseJsonStringArray(user.affiliate_social_links),
-      affiliateProfileLocked: Boolean(user.affiliate_profile_locked),
-      submittedAt: String(user.affiliate_social_submitted_at || (/* @__PURE__ */ new Date()).toISOString())
-    };
-  }
-  return null;
-}
-function submitAffiliateSocialProfileInDb(params) {
-  const existing = getAffiliateSocialSubmissionInDb(params.userId);
-  if (existing && existing.affiliateProfileLocked) {
-    throw new Error("Affiliate marketing links are already Verified & Locked and cannot be edited.");
-  }
-  const now = Date.now();
-  const submittedAt = new Date(now).toISOString();
-  const linksJson = JSON.stringify(params.socialLinks || []);
-  const id = `SOC-${now.toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
-  ensureUserInDb({
-    id: params.userId,
-    email: params.userEmail || `${params.userId}@bft.io`,
-    fullName: params.userName || "BFT Affiliate"
-  });
-  db.prepare(`
-    INSERT INTO affiliate_social_submissions (
-      id, user_id, user_name, user_email, platform_type, social_links_json, affiliate_profile_locked, submitted_at, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
-    ON CONFLICT(user_id) DO UPDATE SET
-      platform_type = excluded.platform_type,
-      social_links_json = excluded.social_links_json,
-      affiliate_profile_locked = 1,
-      submitted_at = excluded.submitted_at
-  `).run(
-    id,
-    params.userId,
-    params.userName || null,
-    params.userEmail || null,
-    params.platformType,
-    linksJson,
-    submittedAt,
-    now
-  );
-  try {
-    db.prepare(`
-      UPDATE users SET
-        affiliate_profile_locked = 1,
-        affiliate_social_platform = ?,
-        affiliate_social_links = ?,
-        affiliate_social_submitted_at = ?,
-        updated_at = ?
-      WHERE id = ?
-    `).run(params.platformType, linksJson, submittedAt, now, params.userId);
-  } catch {
-  }
-  return getAffiliateSocialSubmissionInDb(params.userId);
-}
-function getAdminAffiliateSocialSubmissionsInDb() {
-  const rows = db.prepare(`
-    SELECT s.*, COALESCE(s.user_name, u.full_name) as full_name, COALESCE(s.user_email, u.email) as email
-    FROM affiliate_social_submissions s
-    LEFT JOIN users u ON s.user_id = u.id
-    ORDER BY s.created_at DESC
-  `).all();
-  return rows.map(mapSocialSubmissionRow);
-}
-function mapCountryManagerRow(row) {
-  if (!row) return null;
-  return {
-    id: String(row.id),
-    userId: String(row.user_id),
-    userEmail: row.user_email || "",
-    fullName: String(row.full_name || ""),
-    targetCountry: String(row.target_country || ""),
-    telegramHandle: String(row.telegram_handle || ""),
-    estimatedAudienceSize: String(row.estimated_audience_size || ""),
-    marketingStrategy: String(row.marketing_strategy || ""),
-    socialLinks: parseJsonStringArray(row.social_links_json),
-    totalReferralsCount: Number(row.total_referrals_count || 0),
-    status: String(row.status || "pending"),
-    adminNotes: row.admin_notes || "",
-    reviewedAt: row.reviewed_at || void 0,
-    createdAt: row.created_at ? new Date(Number(row.created_at)).toISOString() : (/* @__PURE__ */ new Date()).toISOString()
-  };
-}
-function submitCountryManagerApplicationInDb(params) {
-  const now = Date.now();
-  const id = `CMA-${now.toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
-  const linksJson = JSON.stringify(params.socialLinks || []);
-  ensureUserInDb({
-    id: params.userId,
-    email: params.userEmail || `${params.userId}@bft.io`,
-    fullName: params.fullName
-  });
-  db.prepare(`
-    INSERT INTO country_manager_applications (
-      id, user_id, user_email, full_name, target_country, telegram_handle,
-      estimated_audience_size, marketing_strategy, social_links_json, total_referrals_count,
-      status, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
-  `).run(
-    id,
-    params.userId,
-    params.userEmail || null,
-    params.fullName,
-    params.targetCountry,
-    params.telegramHandle,
-    String(params.estimatedAudienceSize),
-    params.marketingStrategy,
-    linksJson,
-    Number(params.totalReferralsCount || 0),
-    now
-  );
-  return mapCountryManagerRow(db.prepare("SELECT * FROM country_manager_applications WHERE id = ?").get(id));
-}
-function getCountryManagerApplicationsForUserInDb(userId, userEmail) {
-  if (!userId && !userEmail) return [];
-  const rows = userEmail ? db.prepare("SELECT * FROM country_manager_applications WHERE user_id = ? OR LOWER(user_email) = LOWER(?) ORDER BY created_at DESC").all(userId || "", userEmail) : db.prepare("SELECT * FROM country_manager_applications WHERE user_id = ? ORDER BY created_at DESC").all(userId);
-  return rows.map(mapCountryManagerRow);
-}
-function getAdminCountryManagerApplicationsInDb(statusFilter) {
-  let query = "SELECT * FROM country_manager_applications";
-  const params = [];
-  if (statusFilter && statusFilter !== "all") {
-    query += " WHERE status = ?";
-    params.push(statusFilter);
-  }
-  query += " ORDER BY created_at DESC";
-  return db.prepare(query).all(...params).map(mapCountryManagerRow);
-}
-function adminUpdateCountryManagerApplicationStatusInDb(appId, status, adminNotes, adminUserId) {
-  const existing = db.prepare("SELECT * FROM country_manager_applications WHERE id = ?").get(appId);
-  if (!existing) throw new Error("Country Manager application not found.");
-  const reviewedAt = (/* @__PURE__ */ new Date()).toISOString();
-  db.prepare(`
-    UPDATE country_manager_applications SET
-      status = ?,
-      admin_notes = ?,
-      reviewed_at = ?
-    WHERE id = ?
-  `).run(status, adminNotes || null, reviewedAt, appId);
-  recordAdminAuditLog(
-    adminUserId,
-    status === "approved" ? "APPROVE_COUNTRY_MANAGER" : "REJECT_COUNTRY_MANAGER",
-    appId,
-    "country_manager_application",
-    {
-      applicantName: existing.full_name,
-      targetCountry: existing.target_country,
-      adminNotes
-    }
-  );
-  return mapCountryManagerRow(db.prepare("SELECT * FROM country_manager_applications WHERE id = ?").get(appId));
-}
-
-// src/utils/otcAssetsCatalog.ts
-var OTC_ASSETS_CATALOG = [
-  // ============================================================================
-  // DERIV SYNTHETIC ASSETS (Live Deriv WebSocket Feed)
-  // ============================================================================
-  { symbol: "R_100", name: "Volatility 100 Index", payout: 95, category: "Deriv Synthetics", basePrice: 1e3, volatility: 2.5, pipDecimals: 2, flag: "\u{1F4C8}" },
-  { symbol: "R_75", name: "Volatility 75 Index", payout: 95, category: "Deriv Synthetics", basePrice: 850, volatility: 2.2, pipDecimals: 2, flag: "\u{1F4C8}" },
-  { symbol: "R_50", name: "Volatility 50 Index", payout: 94, category: "Deriv Synthetics", basePrice: 500, volatility: 1.8, pipDecimals: 2, flag: "\u{1F4C8}" },
-  { symbol: "R_25", name: "Volatility 25 Index", payout: 93, category: "Deriv Synthetics", basePrice: 250, volatility: 1.2, pipDecimals: 2, flag: "\u{1F4C8}" },
-  { symbol: "R_10", name: "Volatility 10 Index", payout: 92, category: "Deriv Synthetics", basePrice: 100, volatility: 0.8, pipDecimals: 2, flag: "\u{1F4C8}" },
-  // ============================================================================
-  // 1. FOREX PAIRS (Majors, Crosses, Scandi, Asian & Emerging Markets)
-  // ============================================================================
-  { symbol: "EUR/USD", name: "Euro / US Dollar", payout: 92, category: "Forex", basePrice: 1.0845, volatility: 8e-5, pipDecimals: 5, flag: "\u{1F1EA}\u{1F1FA}" },
-  { symbol: "GBP/JPY", name: "British Pound / Japanese Yen", payout: 91, category: "Forex", basePrice: 199.32, volatility: 0.016, pipDecimals: 3, flag: "\u{1F1EC}\u{1F1E7}" },
-  { symbol: "GBP/USD", name: "British Pound / US Dollar", payout: 90, category: "Forex", basePrice: 1.2921, volatility: 1e-4, pipDecimals: 5, flag: "\u{1F1EC}\u{1F1E7}" },
-  { symbol: "USD/JPY", name: "US Dollar / Japanese Yen", payout: 91, category: "Forex", basePrice: 154.25, volatility: 0.012, pipDecimals: 3, flag: "\u{1F1EF}\u{1F1F5}" },
-  { symbol: "USD/CHF", name: "US Dollar / Swiss Franc", payout: 89, category: "Forex", basePrice: 0.8872, volatility: 8e-5, pipDecimals: 5, flag: "\u{1F1E8}\u{1F1ED}" },
-  { symbol: "AUD/USD", name: "Australian Dollar / US Dollar", payout: 89, category: "Forex", basePrice: 0.6542, volatility: 8e-5, pipDecimals: 5, flag: "\u{1F1E6}\u{1F1FA}" },
-  { symbol: "USD/CAD", name: "US Dollar / Canadian Dollar", payout: 88, category: "Forex", basePrice: 1.3912, volatility: 9e-5, pipDecimals: 5, flag: "\u{1F1E8}\u{1F1E6}" },
-  { symbol: "NZD/USD", name: "New Zealand Dollar / US Dollar", payout: 88, category: "Forex", basePrice: 0.5984, volatility: 9e-5, pipDecimals: 5, flag: "\u{1F1F3}\u{1F1FF}" },
-  { symbol: "EUR/JPY", name: "Euro / Japanese Yen", payout: 90, category: "Forex", basePrice: 167.28, volatility: 0.014, pipDecimals: 3, flag: "\u{1F1EA}\u{1F1FA}" },
-  { symbol: "EUR/GBP", name: "Euro / British Pound", payout: 89, category: "Forex", basePrice: 0.8394, volatility: 7e-5, pipDecimals: 5, flag: "\u{1F1EA}\u{1F1FA}" },
-  { symbol: "AUD/JPY", name: "Australian Dollar / Japanese Yen", payout: 89, category: "Forex", basePrice: 100.91, volatility: 0.013, pipDecimals: 3, flag: "\u{1F1E6}\u{1F1FA}" },
-  { symbol: "GBP/AUD", name: "British Pound / Australian Dollar", payout: 88, category: "Forex", basePrice: 1.9751, volatility: 14e-5, pipDecimals: 5, flag: "\u{1F1EC}\u{1F1E7}" },
-  { symbol: "EUR/AUD", name: "Euro / Australian Dollar", payout: 88, category: "Forex", basePrice: 1.6578, volatility: 12e-5, pipDecimals: 5, flag: "\u{1F1EA}\u{1F1FA}" },
-  { symbol: "CHF/JPY", name: "Swiss Franc / Japanese Yen", payout: 89, category: "Forex", basePrice: 173.86, volatility: 0.015, pipDecimals: 3, flag: "\u{1F1E8}\u{1F1ED}" },
-  { symbol: "GBP/CAD", name: "British Pound / Canadian Dollar", payout: 88, category: "Forex", basePrice: 1.7976, volatility: 12e-5, pipDecimals: 5, flag: "\u{1F1EC}\u{1F1E7}" },
-  { symbol: "EUR/CAD", name: "Euro / Canadian Dollar", payout: 87, category: "Forex", basePrice: 1.5088, volatility: 11e-5, pipDecimals: 5, flag: "\u{1F1EA}\u{1F1FA}" },
-  { symbol: "AUD/CAD", name: "Australian Dollar / Canadian Dollar", payout: 87, category: "Forex", basePrice: 0.9101, volatility: 8e-5, pipDecimals: 5, flag: "\u{1F1E6}\u{1F1FA}" },
-  { symbol: "NZD/JPY", name: "New Zealand Dollar / Japanese Yen", payout: 87, category: "Forex", basePrice: 92.3, volatility: 0.012, pipDecimals: 3, flag: "\u{1F1F3}\u{1F1FF}" },
-  { symbol: "GBP/CHF", name: "British Pound / Swiss Franc", payout: 88, category: "Forex", basePrice: 1.1463, volatility: 1e-4, pipDecimals: 5, flag: "\u{1F1EC}\u{1F1E7}" },
-  { symbol: "EUR/CHF", name: "Euro / Swiss Franc", payout: 88, category: "Forex", basePrice: 0.9622, volatility: 7e-5, pipDecimals: 5, flag: "\u{1F1EA}\u{1F1FA}" },
-  { symbol: "AUD/CHF", name: "Australian Dollar / Swiss Franc", payout: 86, category: "Forex", basePrice: 0.5804, volatility: 8e-5, pipDecimals: 5, flag: "\u{1F1E6}\u{1F1FA}" },
-  { symbol: "CAD/JPY", name: "Canadian Dollar / Japanese Yen", payout: 88, category: "Forex", basePrice: 110.87, volatility: 0.012, pipDecimals: 3, flag: "\u{1F1E8}\u{1F1E6}" },
-  { symbol: "CAD/CHF", name: "Canadian Dollar / Swiss Franc", payout: 86, category: "Forex", basePrice: 0.6377, volatility: 7e-5, pipDecimals: 5, flag: "\u{1F1E8}\u{1F1E6}" },
-  { symbol: "NZD/CAD", name: "New Zealand Dollar / Canadian Dollar", payout: 86, category: "Forex", basePrice: 0.8325, volatility: 8e-5, pipDecimals: 5, flag: "\u{1F1F3}\u{1F1FF}" },
-  { symbol: "NZD/CHF", name: "New Zealand Dollar / Swiss Franc", payout: 85, category: "Forex", basePrice: 0.5309, volatility: 8e-5, pipDecimals: 5, flag: "\u{1F1F3}\u{1F1FF}" },
-  { symbol: "AUD/NZD", name: "Australian Dollar / New Zealand Dollar", payout: 87, category: "Forex", basePrice: 1.0932, volatility: 8e-5, pipDecimals: 5, flag: "\u{1F1E6}\u{1F1FA}" },
-  { symbol: "GBP/NZD", name: "British Pound / New Zealand Dollar", payout: 88, category: "Forex", basePrice: 2.1592, volatility: 15e-5, pipDecimals: 5, flag: "\u{1F1EC}\u{1F1E7}" },
-  { symbol: "EUR/NZD", name: "Euro / New Zealand Dollar", payout: 87, category: "Forex", basePrice: 1.8123, volatility: 13e-5, pipDecimals: 5, flag: "\u{1F1EA}\u{1F1FA}" },
-  { symbol: "USD/SGD", name: "US Dollar / Singapore Dollar", payout: 87, category: "Forex", basePrice: 1.3215, volatility: 8e-5, pipDecimals: 5, flag: "\u{1F1F8}\u{1F1EC}" },
-  { symbol: "USD/HKD", name: "US Dollar / Hong Kong Dollar", payout: 85, category: "Forex", basePrice: 7.7725, volatility: 2e-4, pipDecimals: 5, flag: "\u{1F1ED}\u{1F1F0}" },
-  { symbol: "USD/MXN", name: "US Dollar / Mexican Peso", payout: 89, category: "Forex", basePrice: 19.984, volatility: 35e-4, pipDecimals: 4, flag: "\u{1F1F2}\u{1F1FD}" },
-  { symbol: "USD/ZAR", name: "US Dollar / South African Rand", payout: 88, category: "Forex", basePrice: 17.642, volatility: 32e-4, pipDecimals: 4, flag: "\u{1F1FF}\u{1F1E6}" },
-  { symbol: "USD/TRY", name: "US Dollar / Turkish Lira", payout: 88, category: "Forex", basePrice: 34.285, volatility: 45e-4, pipDecimals: 4, flag: "\u{1F1F9}\u{1F1F7}" },
-  { symbol: "USD/NOK", name: "US Dollar / Norwegian Krone", payout: 86, category: "Forex", basePrice: 10.942, volatility: 18e-4, pipDecimals: 4, flag: "\u{1F1F3}\u{1F1F4}" },
-  { symbol: "USD/SEK", name: "US Dollar / Swedish Krona", payout: 86, category: "Forex", basePrice: 10.618, volatility: 18e-4, pipDecimals: 4, flag: "\u{1F1F8}\u{1F1EA}" },
-  { symbol: "USD/PLN", name: "US Dollar / Polish Zloty", payout: 86, category: "Forex", basePrice: 4.0125, volatility: 9e-4, pipDecimals: 4, flag: "\u{1F1F5}\u{1F1F1}" },
-  { symbol: "USD/INR", name: "US Dollar / Indian Rupee", payout: 90, category: "Forex", basePrice: 84.075, volatility: 8e-3, pipDecimals: 3, flag: "\u{1F1EE}\u{1F1F3}" },
-  { symbol: "USD/BRL", name: "US Dollar / Brazilian Real", payout: 91, category: "Forex", basePrice: 5.7045, volatility: 15e-4, pipDecimals: 4, flag: "\u{1F1E7}\u{1F1F7}" },
-  { symbol: "USD/CNH", name: "US Dollar / Offshore Chinese Yuan", payout: 88, category: "Forex", basePrice: 7.1265, volatility: 9e-4, pipDecimals: 4, flag: "\u{1F1E8}\u{1F1F3}" },
-  { symbol: "USD/KRW", name: "US Dollar / South Korean Won", payout: 87, category: "Forex", basePrice: 1382.4, volatility: 0.25, pipDecimals: 2, flag: "\u{1F1F0}\u{1F1F7}" },
-  { symbol: "USD/THB", name: "US Dollar / Thai Baht", payout: 86, category: "Forex", basePrice: 33.68, volatility: 8e-3, pipDecimals: 3, flag: "\u{1F1F9}\u{1F1ED}" },
-  { symbol: "USD/IDR", name: "US Dollar / Indonesian Rupiah", payout: 87, category: "Forex", basePrice: 15640, volatility: 3.5, pipDecimals: 1, flag: "\u{1F1EE}\u{1F1E9}" },
-  { symbol: "USD/PHP", name: "US Dollar / Philippine Peso", payout: 86, category: "Forex", basePrice: 58.12, volatility: 0.012, pipDecimals: 3, flag: "\u{1F1F5}\u{1F1ED}" },
-  { symbol: "USD/TWD", name: "US Dollar / Taiwan Dollar", payout: 85, category: "Forex", basePrice: 32.085, volatility: 6e-3, pipDecimals: 3, flag: "\u{1F1F9}\u{1F1FC}" },
-  { symbol: "USD/CLP", name: "US Dollar / Chilean Peso", payout: 86, category: "Forex", basePrice: 948.5, volatility: 0.22, pipDecimals: 2, flag: "\u{1F1E8}\u{1F1F1}" },
-  { symbol: "USD/COP", name: "US Dollar / Colombian Peso", payout: 87, category: "Forex", basePrice: 4315, volatility: 1.1, pipDecimals: 1, flag: "\u{1F1E8}\u{1F1F4}" },
-  { symbol: "USD/ARS", name: "US Dollar / Argentine Peso", payout: 89, category: "Forex", basePrice: 988.5, volatility: 0.3, pipDecimals: 2, flag: "\u{1F1E6}\u{1F1F7}" },
-  { symbol: "USD/PKR", name: "US Dollar / Pakistani Rupee", payout: 90, category: "Forex", basePrice: 277.85, volatility: 0.05, pipDecimals: 2, flag: "\u{1F1F5}\u{1F1F0}" },
-  { symbol: "USD/BDT", name: "US Dollar / Bangladeshi Taka", payout: 89, category: "Forex", basePrice: 119.5, volatility: 0.03, pipDecimals: 2, flag: "\u{1F1E7}\u{1F1E9}" },
-  { symbol: "USD/EGP", name: "US Dollar / Egyptian Pound", payout: 89, category: "Forex", basePrice: 48.72, volatility: 0.015, pipDecimals: 3, flag: "\u{1F1EA}\u{1F1EC}" },
-  { symbol: "USD/NGN", name: "US Dollar / Nigerian Naira", payout: 88, category: "Forex", basePrice: 1645, volatility: 0.65, pipDecimals: 1, flag: "\u{1F1F3}\u{1F1EC}" },
-  { symbol: "USD/AED", name: "US Dollar / UAE Dirham", payout: 85, category: "Forex", basePrice: 3.6725, volatility: 6e-5, pipDecimals: 5, flag: "\u{1F1E6}\u{1F1EA}" },
-  { symbol: "USD/SAR", name: "US Dollar / Saudi Riyal", payout: 85, category: "Forex", basePrice: 3.7542, volatility: 6e-5, pipDecimals: 5, flag: "\u{1F1F8}\u{1F1E6}" },
-  { symbol: "USD/ILS", name: "US Dollar / Israeli Shekel", payout: 86, category: "Forex", basePrice: 3.742, volatility: 8e-4, pipDecimals: 4, flag: "\u{1F1EE}\u{1F1F1}" },
-  { symbol: "USD/HUF", name: "US Dollar / Hungarian Forint", payout: 86, category: "Forex", basePrice: 372.45, volatility: 0.08, pipDecimals: 2, flag: "\u{1F1ED}\u{1F1FA}" },
-  { symbol: "USD/CZK", name: "US Dollar / Czech Koruna", payout: 86, category: "Forex", basePrice: 23.385, volatility: 5e-3, pipDecimals: 3, flag: "\u{1F1E8}\u{1F1FF}" },
-  { symbol: "USD/RON", name: "US Dollar / Romanian Leu", payout: 85, category: "Forex", basePrice: 4.584, volatility: 9e-4, pipDecimals: 4, flag: "\u{1F1F7}\u{1F1F4}" },
-  { symbol: "USD/DKK", name: "US Dollar / Danish Krone", payout: 85, category: "Forex", basePrice: 6.878, volatility: 1e-3, pipDecimals: 4, flag: "\u{1F1E9}\u{1F1F0}" },
-  { symbol: "EUR/TRY", name: "Euro / Turkish Lira", payout: 88, category: "Forex", basePrice: 37.182, volatility: 5e-3, pipDecimals: 4, flag: "\u{1F1EA}\u{1F1FA}" },
-  { symbol: "EUR/ZAR", name: "Euro / South African Rand", payout: 87, category: "Forex", basePrice: 19.132, volatility: 38e-4, pipDecimals: 4, flag: "\u{1F1EA}\u{1F1FA}" },
-  { symbol: "EUR/PLN", name: "Euro / Polish Zloty", payout: 86, category: "Forex", basePrice: 4.3515, volatility: 8e-4, pipDecimals: 4, flag: "\u{1F1EA}\u{1F1FA}" },
-  { symbol: "EUR/SEK", name: "Euro / Swedish Krona", payout: 86, category: "Forex", basePrice: 11.515, volatility: 16e-4, pipDecimals: 4, flag: "\u{1F1EA}\u{1F1FA}" },
-  { symbol: "EUR/NOK", name: "Euro / Norwegian Krone", payout: 86, category: "Forex", basePrice: 11.866, volatility: 18e-4, pipDecimals: 4, flag: "\u{1F1EA}\u{1F1FA}" },
-  { symbol: "EUR/DKK", name: "Euro / Danish Krone", payout: 85, category: "Forex", basePrice: 7.459, volatility: 6e-4, pipDecimals: 4, flag: "\u{1F1EA}\u{1F1FA}" },
-  { symbol: "EUR/HUF", name: "Euro / Hungarian Forint", payout: 86, category: "Forex", basePrice: 403.9, volatility: 0.09, pipDecimals: 2, flag: "\u{1F1EA}\u{1F1FA}" },
-  { symbol: "EUR/CZK", name: "Euro / Czech Koruna", payout: 85, category: "Forex", basePrice: 25.36, volatility: 5e-3, pipDecimals: 3, flag: "\u{1F1EA}\u{1F1FA}" },
-  { symbol: "EUR/SGD", name: "Euro / Singapore Dollar", payout: 87, category: "Forex", basePrice: 1.4331, volatility: 9e-5, pipDecimals: 5, flag: "\u{1F1EA}\u{1F1FA}" },
-  { symbol: "EUR/MXN", name: "Euro / Mexican Peso", payout: 88, category: "Forex", basePrice: 21.672, volatility: 4e-3, pipDecimals: 4, flag: "\u{1F1EA}\u{1F1FA}" },
-  { symbol: "EUR/BRL", name: "Euro / Brazilian Real", payout: 89, category: "Forex", basePrice: 6.1865, volatility: 18e-4, pipDecimals: 4, flag: "\u{1F1EA}\u{1F1FA}" },
-  { symbol: "GBP/SGD", name: "British Pound / Singapore Dollar", payout: 87, category: "Forex", basePrice: 1.7075, volatility: 11e-5, pipDecimals: 5, flag: "\u{1F1EC}\u{1F1E7}" },
-  { symbol: "GBP/ZAR", name: "British Pound / South African Rand", payout: 88, category: "Forex", basePrice: 22.795, volatility: 45e-4, pipDecimals: 4, flag: "\u{1F1EC}\u{1F1E7}" },
-  { symbol: "GBP/TRY", name: "British Pound / Turkish Lira", payout: 88, category: "Forex", basePrice: 44.299, volatility: 6e-3, pipDecimals: 4, flag: "\u{1F1EC}\u{1F1E7}" },
-  { symbol: "GBP/PLN", name: "British Pound / Polish Zloty", payout: 86, category: "Forex", basePrice: 5.1845, volatility: 1e-3, pipDecimals: 4, flag: "\u{1F1EC}\u{1F1E7}" },
-  { symbol: "GBP/SEK", name: "British Pound / Swedish Krona", payout: 86, category: "Forex", basePrice: 13.719, volatility: 22e-4, pipDecimals: 4, flag: "\u{1F1EC}\u{1F1E7}" },
-  { symbol: "GBP/NOK", name: "British Pound / Norwegian Krone", payout: 86, category: "Forex", basePrice: 14.138, volatility: 24e-4, pipDecimals: 4, flag: "\u{1F1EC}\u{1F1E7}" },
-  { symbol: "GBP/MXN", name: "British Pound / Mexican Peso", payout: 88, category: "Forex", basePrice: 25.821, volatility: 48e-4, pipDecimals: 4, flag: "\u{1F1EC}\u{1F1E7}" },
-  { symbol: "AUD/SGD", name: "Australian Dollar / Singapore Dollar", payout: 86, category: "Forex", basePrice: 0.8645, volatility: 8e-5, pipDecimals: 5, flag: "\u{1F1E6}\u{1F1FA}" },
-  { symbol: "SGD/JPY", name: "Singapore Dollar / Japanese Yen", payout: 87, category: "Forex", basePrice: 116.72, volatility: 0.013, pipDecimals: 3, flag: "\u{1F1F8}\u{1F1EC}" },
-  { symbol: "TRY/JPY", name: "Turkish Lira / Japanese Yen", payout: 86, category: "Forex", basePrice: 4.499, volatility: 12e-4, pipDecimals: 4, flag: "\u{1F1F9}\u{1F1F7}" },
-  { symbol: "ZAR/JPY", name: "South African Rand / Japanese Yen", payout: 86, category: "Forex", basePrice: 8.743, volatility: 18e-4, pipDecimals: 4, flag: "\u{1F1FF}\u{1F1E6}" },
-  { symbol: "MXN/JPY", name: "Mexican Peso / Japanese Yen", payout: 86, category: "Forex", basePrice: 7.7185, volatility: 16e-4, pipDecimals: 4, flag: "\u{1F1F2}\u{1F1FD}" },
-  { symbol: "NOK/JPY", name: "Norwegian Krone / Japanese Yen", payout: 85, category: "Forex", basePrice: 14.097, volatility: 25e-4, pipDecimals: 4, flag: "\u{1F1F3}\u{1F1F4}" },
-  { symbol: "SEK/JPY", name: "Swedish Krona / Japanese Yen", payout: 85, category: "Forex", basePrice: 14.527, volatility: 25e-4, pipDecimals: 4, flag: "\u{1F1F8}\u{1F1EA}" },
-  { symbol: "HKD/JPY", name: "Hong Kong Dollar / Japanese Yen", payout: 85, category: "Forex", basePrice: 19.845, volatility: 3e-3, pipDecimals: 4, flag: "\u{1F1ED}\u{1F1F0}" },
-  // More Forex pairs (65 total added to reach 260+)
-  { symbol: "USD/GHS", name: "US Dollar / Ghanaian Cedi", payout: 86, category: "Forex", basePrice: 15.5, volatility: 0.04, pipDecimals: 2, flag: "\u{1F1EC}\u{1F1ED}" },
-  { symbol: "USD/KES", name: "US Dollar / Kenyan Shilling", payout: 86, category: "Forex", basePrice: 129.2, volatility: 0.15, pipDecimals: 2, flag: "\u{1F1F0}\u{1F1EA}" },
-  { symbol: "USD/UGX", name: "US Dollar / Ugandan Shilling", payout: 85, category: "Forex", basePrice: 3720, volatility: 2.5, pipDecimals: 1, flag: "\u{1F1FA}\u{1F1EC}" },
-  { symbol: "USD/TZS", name: "US Dollar / Tanzanian Shilling", payout: 85, category: "Forex", basePrice: 2650, volatility: 1.8, pipDecimals: 1, flag: "\u{1F1F9}\u{1F1FF}" },
-  { symbol: "USD/MAD", name: "US Dollar / Moroccan Dirham", payout: 86, category: "Forex", basePrice: 9.95, volatility: 0.015, pipDecimals: 3, flag: "\u{1F1F2}\u{1F1E6}" },
-  { symbol: "USD/DZD", name: "US Dollar / Algerian Dinar", payout: 85, category: "Forex", basePrice: 134.5, volatility: 0.2, pipDecimals: 2, flag: "\u{1F1E9}\u{1F1FF}" },
-  { symbol: "USD/TND", name: "US Dollar / Tunisian Dinar", payout: 86, category: "Forex", basePrice: 3.12, volatility: 8e-3, pipDecimals: 4, flag: "\u{1F1F9}\u{1F1F3}" },
-  { symbol: "USD/JOD", name: "US Dollar / Jordanian Dinar", payout: 85, category: "Forex", basePrice: 0.709, volatility: 1e-3, pipDecimals: 4, flag: "\u{1F1EF}\u{1F1F4}" },
-  { symbol: "USD/OMR", name: "US Dollar / Omani Rial", payout: 85, category: "Forex", basePrice: 0.384, volatility: 1e-3, pipDecimals: 4, flag: "\u{1F1F4}\u{1F1F2}" },
-  { symbol: "USD/QAR", name: "US Dollar / Qatari Riyal", payout: 85, category: "Forex", basePrice: 3.64, volatility: 5e-3, pipDecimals: 3, flag: "\u{1F1F6}\u{1F1E6}" },
-  { symbol: "USD/KWD", name: "US Dollar / Kuwaiti Dinar", payout: 85, category: "Forex", basePrice: 0.307, volatility: 5e-4, pipDecimals: 4, flag: "\u{1F1F0}\u{1F1FC}" },
-  { symbol: "USD/BHD", name: "US Dollar / Bahraini Dinar", payout: 85, category: "Forex", basePrice: 0.377, volatility: 8e-4, pipDecimals: 4, flag: "\u{1F1E7}\u{1F1ED}" },
-  { symbol: "USD/LBP", name: "US Dollar / Lebanese Pound", payout: 85, category: "Forex", basePrice: 89500, volatility: 25, pipDecimals: 1, flag: "\u{1F1F1}\u{1F1E7}" },
-  { symbol: "USD/JMD", name: "US Dollar / Jamaican Dollar", payout: 85, category: "Forex", basePrice: 156.5, volatility: 0.25, pipDecimals: 2, flag: "\u{1F1EF}\u{1F1F2}" },
-  { symbol: "USD/DOP", name: "US Dollar / Dominican Peso", payout: 86, category: "Forex", basePrice: 60.1, volatility: 0.08, pipDecimals: 2, flag: "\u{1F1E9}\u{1F1F4}" },
-  { symbol: "USD/CRC", name: "US Dollar / Costa Rican Col\xF3n", payout: 86, category: "Forex", basePrice: 515, volatility: 0.85, pipDecimals: 2, flag: "\u{1F1E8}\u{1F1F7}" },
-  { symbol: "USD/GTQ", name: "US Dollar / Guatemalan Quetzal", payout: 86, category: "Forex", basePrice: 7.75, volatility: 0.012, pipDecimals: 3, flag: "\u{1F1EC}\u{1F1F9}" },
-  { symbol: "USD/HNL", name: "US Dollar / Honduran Lempira", payout: 85, category: "Forex", basePrice: 24.7, volatility: 0.04, pipDecimals: 2, flag: "\u{1F1ED}\u{1F1F3}" },
-  { symbol: "USD/PYG", name: "US Dollar / Paraguayan Guaran\xED", payout: 86, category: "Forex", basePrice: 7850, volatility: 12, pipDecimals: 1, flag: "\u{1F1F5}\u{1F1FE}" },
-  { symbol: "USD/UYU", name: "US Dollar / Uruguayan Peso", payout: 86, category: "Forex", basePrice: 42.5, volatility: 0.09, pipDecimals: 2, flag: "\u{1F1FA}\u{1F1FE}" },
-  { symbol: "USD/BOB", name: "US Dollar / Bolivian Boliviano", payout: 85, category: "Forex", basePrice: 6.91, volatility: 0.01, pipDecimals: 3, flag: "\u{1F1E7}\u{1F1F4}" },
-  { symbol: "EUR/GHS", name: "Euro / Ghanaian Cedi", payout: 85, category: "Forex", basePrice: 16.8, volatility: 0.05, pipDecimals: 2, flag: "\u{1F1EA}\u{1F1FA}" },
-  { symbol: "EUR/KES", name: "Euro / Kenyan Shilling", payout: 85, category: "Forex", basePrice: 140, volatility: 0.18, pipDecimals: 2, flag: "\u{1F1EA}\u{1F1FA}" },
-  { symbol: "EUR/MAD", name: "Euro / Moroccan Dirham", payout: 85, category: "Forex", basePrice: 10.8, volatility: 0.02, pipDecimals: 3, flag: "\u{1F1EA}\u{1F1FA}" },
-  { symbol: "GBP/GHS", name: "British Pound / Ghanaian Cedi", payout: 85, category: "Forex", basePrice: 20.1, volatility: 0.06, pipDecimals: 2, flag: "\u{1F1EC}\u{1F1E7}" },
-  { symbol: "GBP/KES", name: "British Pound / Kenyan Shilling", payout: 85, category: "Forex", basePrice: 167, volatility: 0.22, pipDecimals: 2, flag: "\u{1F1EC}\u{1F1E7}" },
-  { symbol: "AUD/GHS", name: "Australian Dollar / Ghanaian Cedi", payout: 85, category: "Forex", basePrice: 10.2, volatility: 0.03, pipDecimals: 2, flag: "\u{1F1E6}\u{1F1FA}" },
-  { symbol: "CAD/GHS", name: "Canadian Dollar / Ghanaian Cedi", payout: 85, category: "Forex", basePrice: 11.2, volatility: 0.035, pipDecimals: 2, flag: "\u{1F1E8}\u{1F1E6}" },
-  { symbol: "JPY/GHS", name: "Japanese Yen / Ghanaian Cedi", payout: 85, category: "Forex", basePrice: 0.098, volatility: 5e-4, pipDecimals: 4, flag: "\u{1F1EF}\u{1F1F5}" },
-  { symbol: "CHF/GHS", name: "Swiss Franc / Ghanaian Cedi", payout: 85, category: "Forex", basePrice: 17.5, volatility: 0.045, pipDecimals: 2, flag: "\u{1F1E8}\u{1F1ED}" },
-  { symbol: "NZD/GHS", name: "New Zealand Dollar / Ghanaian Cedi", payout: 85, category: "Forex", basePrice: 9.3, volatility: 0.025, pipDecimals: 2, flag: "\u{1F1F3}\u{1F1FF}" },
-  { symbol: "ZAR/GHS", name: "South African Rand / Ghanaian Cedi", payout: 85, category: "Forex", basePrice: 0.88, volatility: 3e-3, pipDecimals: 3, flag: "\u{1F1FF}\u{1F1E6}" },
-  { symbol: "INR/GHS", name: "Indian Rupee / Ghanaian Cedi", payout: 85, category: "Forex", basePrice: 0.182, volatility: 8e-4, pipDecimals: 4, flag: "\u{1F1EE}\u{1F1F3}" },
-  { symbol: "BRL/GHS", name: "Brazilian Real / Ghanaian Cedi", payout: 85, category: "Forex", basePrice: 2.72, volatility: 0.01, pipDecimals: 2, flag: "\u{1F1E7}\u{1F1F7}" },
-  { symbol: "MXN/GHS", name: "Mexican Peso / Ghanaian Cedi", payout: 85, category: "Forex", basePrice: 0.77, volatility: 3e-3, pipDecimals: 3, flag: "\u{1F1F2}\u{1F1FD}" },
-  { symbol: "SGD/GHS", name: "Singapore Dollar / Ghanaian Cedi", payout: 85, category: "Forex", basePrice: 11.7, volatility: 0.035, pipDecimals: 2, flag: "\u{1F1F8}\u{1F1EC}" },
-  { symbol: "HKD/GHS", name: "Hong Kong Dollar / Ghanaian Cedi", payout: 85, category: "Forex", basePrice: 1.99, volatility: 5e-3, pipDecimals: 3, flag: "\u{1F1ED}\u{1F1F0}" },
-  { symbol: "NOK/GHS", name: "Norwegian Krone / Ghanaian Cedi", payout: 85, category: "Forex", basePrice: 1.41, volatility: 4e-3, pipDecimals: 3, flag: "\u{1F1F3}\u{1F1F4}" },
-  { symbol: "SEK/GHS", name: "Swedish Krona / Ghanaian Cedi", payout: 85, category: "Forex", basePrice: 1.45, volatility: 4e-3, pipDecimals: 3, flag: "\u{1F1F8}\u{1F1EA}" },
-  { symbol: "DKK/GHS", name: "Danish Krone / Ghanaian Cedi", payout: 85, category: "Forex", basePrice: 2.24, volatility: 6e-3, pipDecimals: 3, flag: "\u{1F1E9}\u{1F1F0}" },
-  { symbol: "AUD/DKK", name: "Australian Dollar / Danish Krone", payout: 85, category: "Forex", basePrice: 4.52, volatility: 0.01, pipDecimals: 3, flag: "\u{1F1E6}\u{1F1FA}" },
-  { symbol: "AUD/NOK", name: "Australian Dollar / Norwegian Krone", payout: 85, category: "Forex", basePrice: 7.18, volatility: 0.015, pipDecimals: 3, flag: "\u{1F1E6}\u{1F1FA}" },
-  { symbol: "AUD/SEK", name: "Australian Dollar / Swedish Krona", payout: 85, category: "Forex", basePrice: 6.98, volatility: 0.015, pipDecimals: 3, flag: "\u{1F1E6}\u{1F1FA}" },
-  { symbol: "NZD/DKK", name: "New Zealand Dollar / Danish Krone", payout: 85, category: "Forex", basePrice: 4.14, volatility: 0.01, pipDecimals: 3, flag: "\u{1F1F3}\u{1F1FF}" },
-  { symbol: "NZD/NOK", name: "New Zealand Dollar / Norwegian Krone", payout: 85, category: "Forex", basePrice: 6.58, volatility: 0.014, pipDecimals: 3, flag: "\u{1F1F3}\u{1F1FF}" },
-  { symbol: "NZD/SEK", name: "New Zealand Dollar / Swedish Krona", payout: 85, category: "Forex", basePrice: 6.4, volatility: 0.014, pipDecimals: 3, flag: "\u{1F1F3}\u{1F1FF}" },
-  { symbol: "CAD/DKK", name: "Canadian Dollar / Danish Krone", payout: 85, category: "Forex", basePrice: 5.02, volatility: 0.012, pipDecimals: 3, flag: "\u{1F1E8}\u{1F1E6}" },
-  { symbol: "CAD/NOK", name: "Canadian Dollar / Norwegian Krone", payout: 85, category: "Forex", basePrice: 7.98, volatility: 0.018, pipDecimals: 3, flag: "\u{1F1E8}\u{1F1E6}" },
-  { symbol: "CAD/SEK", name: "Canadian Dollar / Swedish Krona", payout: 85, category: "Forex", basePrice: 7.75, volatility: 0.018, pipDecimals: 3, flag: "\u{1F1E8}\u{1F1E6}" },
-  { symbol: "CHF/DKK", name: "Swiss Franc / Danish Krone", payout: 85, category: "Forex", basePrice: 7.85, volatility: 0.01, pipDecimals: 3, flag: "\u{1F1E8}\u{1F1ED}" },
-  // ============================================================================
-  // 2. CRYPTOCURRENCY ASSETS (40+ Crypto Pairs)
-  // ============================================================================
-  { symbol: "BTC/USD", name: "Bitcoin / USD", payout: 95, category: "Crypto", basePrice: 96450, volatility: 4.5, pipDecimals: 2, flag: "\u20BF" },
-  { symbol: "BTC/USDT", name: "Bitcoin / Tether USDT", payout: 95, category: "Crypto", basePrice: 96450, volatility: 4.5, pipDecimals: 2, flag: "\u20BF" },
-  { symbol: "ETH/USD", name: "Ethereum / USD", payout: 93, category: "Crypto", basePrice: 2840, volatility: 0.35, pipDecimals: 2, flag: "\u039E" },
-  { symbol: "ETH/USDT", name: "Ethereum / Tether USDT", payout: 93, category: "Crypto", basePrice: 2840, volatility: 0.35, pipDecimals: 2, flag: "\u039E" },
-  { symbol: "SOL/USD", name: "Solana / USD", payout: 92, category: "Crypto", basePrice: 185.5, volatility: 0.06, pipDecimals: 2, flag: "\u25CE" },
-  { symbol: "SOL/USDT", name: "Solana / Tether USDT", payout: 92, category: "Crypto", basePrice: 185.5, volatility: 0.06, pipDecimals: 2, flag: "\u25CE" },
-  { symbol: "XRP/USD", name: "Ripple XRP / USD", payout: 90, category: "Crypto", basePrice: 1.95, volatility: 8e-4, pipDecimals: 4, flag: "\u2715" },
-  { symbol: "XRP/USDT", name: "Ripple XRP / Tether USDT", payout: 90, category: "Crypto", basePrice: 1.95, volatility: 8e-4, pipDecimals: 4, flag: "\u2715" },
-  { symbol: "BNB/USD", name: "BNB Chain / USD", payout: 90, category: "Crypto", basePrice: 650, volatility: 0.12, pipDecimals: 2, flag: "\u{1F7E1}" },
-  { symbol: "BNB/USDT", name: "BNB Chain / Tether USDT", payout: 90, category: "Crypto", basePrice: 650, volatility: 0.12, pipDecimals: 2, flag: "\u{1F7E1}" },
-  { symbol: "DOGE/USD", name: "Dogecoin / USD", payout: 89, category: "Crypto", basePrice: 0.245, volatility: 2e-4, pipDecimals: 4, flag: "\u{1F415}" },
-  { symbol: "DOGE/USDT", name: "Dogecoin / Tether USDT", payout: 89, category: "Crypto", basePrice: 0.245, volatility: 2e-4, pipDecimals: 4, flag: "\u{1F415}" },
-  { symbol: "ADA/USD", name: "Cardano / USD", payout: 89, category: "Crypto", basePrice: 0.785, volatility: 3e-4, pipDecimals: 4, flag: "\u{1F535}" },
-  { symbol: "ADA/USDT", name: "Cardano / Tether USDT", payout: 89, category: "Crypto", basePrice: 0.785, volatility: 3e-4, pipDecimals: 4, flag: "\u{1F535}" },
-  { symbol: "AVAX/USD", name: "Avalanche / USD", payout: 89, category: "Crypto", basePrice: 26.4, volatility: 0.02, pipDecimals: 2, flag: "\u{1F53A}" },
-  { symbol: "AVAX/USDT", name: "Avalanche / Tether USDT", payout: 89, category: "Crypto", basePrice: 26.4, volatility: 0.02, pipDecimals: 2, flag: "\u{1F53A}" },
-  { symbol: "LINK/USD", name: "Chainlink / USD", payout: 88, category: "Crypto", basePrice: 18.2, volatility: 0.015, pipDecimals: 2, flag: "\u{1F517}" },
-  { symbol: "LINK/USDT", name: "Chainlink / Tether USDT", payout: 88, category: "Crypto", basePrice: 18.2, volatility: 0.015, pipDecimals: 2, flag: "\u{1F517}" },
-  { symbol: "DOT/USD", name: "Polkadot / USD", payout: 88, category: "Crypto", basePrice: 5.4, volatility: 4e-3, pipDecimals: 3, flag: "\u26AA" },
-  { symbol: "DOT/USDT", name: "Polkadot / Tether USDT", payout: 88, category: "Crypto", basePrice: 5.4, volatility: 4e-3, pipDecimals: 3, flag: "\u26AA" },
-  { symbol: "LTC/USD", name: "Litecoin / USD", payout: 89, category: "Crypto", basePrice: 104.5, volatility: 0.04, pipDecimals: 2, flag: "\u0141" },
-  { symbol: "LTC/USDT", name: "Litecoin / Tether USDT", payout: 89, category: "Crypto", basePrice: 104.5, volatility: 0.04, pipDecimals: 2, flag: "\u0141" },
-  { symbol: "NEAR/USD", name: "NEAR Protocol / USD", payout: 88, category: "Crypto", basePrice: 3.65, volatility: 3e-3, pipDecimals: 3, flag: "\u{1F310}" },
-  { symbol: "NEAR/USDT", name: "NEAR Protocol / Tether USDT", payout: 88, category: "Crypto", basePrice: 3.65, volatility: 3e-3, pipDecimals: 3, flag: "\u{1F310}" },
-  { symbol: "TRX/USD", name: "TRON / USD", payout: 88, category: "Crypto", basePrice: 0.238, volatility: 1e-4, pipDecimals: 4, flag: "\u2666\uFE0F" },
-  { symbol: "TRX/USDT", name: "TRON / Tether USDT", payout: 88, category: "Crypto", basePrice: 0.238, volatility: 1e-4, pipDecimals: 4, flag: "\u2666\uFE0F" },
-  { symbol: "POL/USD", name: "Polygon Ecosystem / USD", payout: 87, category: "Crypto", basePrice: 0.315, volatility: 2e-4, pipDecimals: 4, flag: "\u{1F7E3}" },
-  { symbol: "SUI/USD", name: "Sui Network / USD", payout: 90, category: "Crypto", basePrice: 3.12, volatility: 3e-3, pipDecimals: 3, flag: "\u{1F4A7}" },
-  { symbol: "SUI/USDT", name: "Sui Network / Tether USDT", payout: 90, category: "Crypto", basePrice: 3.12, volatility: 3e-3, pipDecimals: 3, flag: "\u{1F4A7}" },
-  { symbol: "SHIB/USD", name: "Shiba Inu (1000x) / USD", payout: 88, category: "Crypto", basePrice: 0.0245, volatility: 3e-5, pipDecimals: 5, flag: "\u{1F98A}" },
-  { symbol: "PEPE/USD", name: "Pepe (1000x) / USD", payout: 89, category: "Crypto", basePrice: 0.0184, volatility: 3e-5, pipDecimals: 5, flag: "\u{1F438}" },
-  { symbol: "UNI/USD", name: "Uniswap / USD", payout: 88, category: "Crypto", basePrice: 9.85, volatility: 8e-3, pipDecimals: 3, flag: "\u{1F984}" },
-  { symbol: "ATOM/USD", name: "Cosmos Hub / USD", payout: 87, category: "Crypto", basePrice: 4.92, volatility: 4e-3, pipDecimals: 3, flag: "\u269B\uFE0F" },
-  { symbol: "APT/USD", name: "Aptos / USD", payout: 89, category: "Crypto", basePrice: 9.45, volatility: 9e-3, pipDecimals: 3, flag: "\u{1F300}" },
-  { symbol: "ARB/USD", name: "Arbitrum / USD", payout: 88, category: "Crypto", basePrice: 0.642, volatility: 5e-4, pipDecimals: 4, flag: "\u{1F537}" },
-  { symbol: "OP/USD", name: "Optimism / USD", payout: 88, category: "Crypto", basePrice: 1.485, volatility: 15e-4, pipDecimals: 3, flag: "\u{1F534}" },
-  { symbol: "INJ/USD", name: "Injective / USD", payout: 89, category: "Crypto", basePrice: 21.8, volatility: 0.025, pipDecimals: 2, flag: "\u26A1" },
-  { symbol: "TON/USD", name: "Toncoin / USD", payout: 89, category: "Crypto", basePrice: 5.28, volatility: 4e-3, pipDecimals: 3, flag: "\u{1F48E}" },
-  { symbol: "ICP/USD", name: "Internet Computer / USD", payout: 88, category: "Crypto", basePrice: 8.64, volatility: 8e-3, pipDecimals: 3, flag: "\u267E\uFE0F" },
-  { symbol: "FIL/USD", name: "Filecoin / USD", payout: 87, category: "Crypto", basePrice: 4.18, volatility: 4e-3, pipDecimals: 3, flag: "\u{1F4BE}" },
-  // ============================================================================
-  // 3. COMMODITIES & METALS (35+ Commodities)
-  // ============================================================================
-  { symbol: "XAU/USD", name: "Gold / US Dollar", payout: 94, category: "Commodities", basePrice: 2745.5, volatility: 1.2, pipDecimals: 2, flag: "\u{1F947}" },
-  { symbol: "XAG/USD", name: "Silver / US Dollar", payout: 91, category: "Commodities", basePrice: 32.4, volatility: 0.08, pipDecimals: 2, flag: "\u{1F948}" },
-  { symbol: "WTI/USD", name: "Crude Oil WTI", payout: 90, category: "Commodities", basePrice: 72.5, volatility: 0.15, pipDecimals: 2, flag: "\u{1F6E2}\uFE0F" },
-  { symbol: "BRENT/USD", name: "Brent Oil", payout: 90, category: "Commodities", basePrice: 76.2, volatility: 0.16, pipDecimals: 2, flag: "\u{1F6E2}\uFE0F" },
-  { symbol: "NGAS/USD", name: "Natural Gas", payout: 88, category: "Commodities", basePrice: 2.85, volatility: 0.012, pipDecimals: 3, flag: "\u{1F525}" },
-  { symbol: "COPPER/USD", name: "Copper Futures", payout: 89, category: "Commodities", basePrice: 4.25, volatility: 0.015, pipDecimals: 3, flag: "\u{1FA99}" },
-  { symbol: "PLATINUM/USD", name: "Platinum", payout: 88, category: "Commodities", basePrice: 985, volatility: 2.5, pipDecimals: 2, flag: "\u26B1\uFE0F" },
-  { symbol: "PALLADIUM/USD", name: "Palladium", payout: 87, category: "Commodities", basePrice: 1040, volatility: 3.1, pipDecimals: 2, flag: "\u{1F9EA}" },
-  { symbol: "CORN/USD", name: "Corn Futures", payout: 86, category: "Commodities", basePrice: 445.2, volatility: 1.1, pipDecimals: 2, flag: "\u{1F33D}" },
-  { symbol: "WHEAT/USD", name: "Wheat Futures", payout: 86, category: "Commodities", basePrice: 565.4, volatility: 1.4, pipDecimals: 2, flag: "\u{1F33E}" },
-  { symbol: "SOYBEAN/USD", name: "Soybean Futures", payout: 86, category: "Commodities", basePrice: 1120, volatility: 2.2, pipDecimals: 2, flag: "\u{1FAD8}" },
-  { symbol: "SUGAR/USD", name: "Sugar No. 11", payout: 86, category: "Commodities", basePrice: 21.4, volatility: 0.08, pipDecimals: 2, flag: "\u{1F36C}" },
-  { symbol: "COFFEE/USD", name: "Coffee Arabica", payout: 87, category: "Commodities", basePrice: 245.5, volatility: 0.85, pipDecimals: 2, flag: "\u2615" },
-  { symbol: "COCOA/USD", name: "Cocoa Futures", payout: 88, category: "Commodities", basePrice: 7450, volatility: 25, pipDecimals: 2, flag: "\u{1F36B}" },
-  { symbol: "COTTON/USD", name: "Cotton No. 2", payout: 85, category: "Commodities", basePrice: 72.8, volatility: 0.25, pipDecimals: 2, flag: "\u{1F9F5}" },
-  { symbol: "ALUMINUM/USD", name: "Aluminum", payout: 86, category: "Commodities", basePrice: 2450, volatility: 6.5, pipDecimals: 2, flag: "\u{1F3D7}\uFE0F" },
-  { symbol: "ZINC/USD", name: "Zinc", payout: 86, category: "Commodities", basePrice: 2850, volatility: 7.2, pipDecimals: 2, flag: "\u2699\uFE0F" },
-  { symbol: "NICKEL/USD", name: "Nickel", payout: 87, category: "Commodities", basePrice: 16500, volatility: 35, pipDecimals: 2, flag: "\u{1F529}" },
-  { symbol: "LEAD/USD", name: "Lead", payout: 85, category: "Commodities", basePrice: 2080, volatility: 5.1, pipDecimals: 2, flag: "\u{1F50B}" },
-  { symbol: "URANIUM/USD", name: "Uranium Futures", payout: 89, category: "Commodities", basePrice: 85.5, volatility: 0.35, pipDecimals: 2, flag: "\u269B\uFE0F" },
-  { symbol: "ETHANOL/USD", name: "Ethanol Futures", payout: 85, category: "Commodities", basePrice: 2.15, volatility: 8e-3, pipDecimals: 3, flag: "\u26FD" },
-  { symbol: "METHANOL/USD", name: "Methanol", payout: 85, category: "Commodities", basePrice: 2550, volatility: 8, pipDecimals: 2, flag: "\u{1F9EA}" },
-  { symbol: "STEEL/USD", name: "Hot-Rolled Coil Steel", payout: 86, category: "Commodities", basePrice: 740, volatility: 2.1, pipDecimals: 2, flag: "\u{1F6E0}\uFE0F" },
-  { symbol: "IRON/USD", name: "Iron Ore 62% Fe", payout: 87, category: "Commodities", basePrice: 105.5, volatility: 0.4, pipDecimals: 2, flag: "\u{1F9F1}" },
-  { symbol: "LUMBER/USD", name: "Random Length Lumber", payout: 85, category: "Commodities", basePrice: 485, volatility: 1.8, pipDecimals: 2, flag: "\u{1FAB5}" },
-  { symbol: "RICE/USD", name: "Rough Rice", payout: 85, category: "Commodities", basePrice: 15.8, volatility: 0.05, pipDecimals: 2, flag: "\u{1F35A}" },
-  { symbol: "OATS/USD", name: "Oats Futures", payout: 85, category: "Commodities", basePrice: 345, volatility: 1.2, pipDecimals: 2, flag: "\u{1F33E}" },
-  { symbol: "ORANGE/USD", name: "Orange Juice", payout: 86, category: "Commodities", basePrice: 385, volatility: 1.5, pipDecimals: 2, flag: "\u{1F34A}" },
-  { symbol: "BUTTER/USD", name: "Butter Futures", payout: 85, category: "Commodities", basePrice: 285, volatility: 0.95, pipDecimals: 2, flag: "\u{1F9C8}" },
-  { symbol: "MILK/USD", name: "Class III Milk", payout: 85, category: "Commodities", basePrice: 18.2, volatility: 0.06, pipDecimals: 2, flag: "\u{1F95B}" },
-  // ============================================================================
-  // 4. STOCKS & INDICES (40+ Stocks & Global Indices)
-  // ============================================================================
-  { symbol: "NAS100", name: "Nasdaq 100 Index", payout: 93, category: "Stocks & Indices", basePrice: 20450, volatility: 12, pipDecimals: 2, flag: "\u{1F1FA}\u{1F1F8}" },
-  { symbol: "SPX500", name: "S&P 500 Index", payout: 92, category: "Stocks & Indices", basePrice: 5850, volatility: 4.5, pipDecimals: 2, flag: "\u{1F1FA}\u{1F1F8}" },
-  { symbol: "US30", name: "Wall Street 30", payout: 91, category: "Stocks & Indices", basePrice: 43200, volatility: 18, pipDecimals: 2, flag: "\u{1F1FA}\u{1F1F8}" },
-  { symbol: "AAPL", name: "Apple Inc.", payout: 90, category: "Stocks & Indices", basePrice: 228.5, volatility: 0.45, pipDecimals: 2, flag: "\u{1F34F}" },
-  { symbol: "MSFT", name: "Microsoft Corp.", payout: 90, category: "Stocks & Indices", basePrice: 425, volatility: 0.85, pipDecimals: 2, flag: "\u{1F4BB}" },
-  { symbol: "NVDA", name: "NVIDIA Corp.", payout: 92, category: "Stocks & Indices", basePrice: 138.5, volatility: 0.65, pipDecimals: 2, flag: "\u{1F7E2}" },
-  { symbol: "AMZN", name: "Amazon.com Inc.", payout: 90, category: "Stocks & Indices", basePrice: 195.2, volatility: 0.4, pipDecimals: 2, flag: "\u{1F4E6}" },
-  { symbol: "GOOGL", name: "Alphabet Inc. (Google)", payout: 90, category: "Stocks & Indices", basePrice: 178.4, volatility: 0.38, pipDecimals: 2, flag: "\u{1F50D}" },
-  { symbol: "META", name: "Meta Platforms", payout: 91, category: "Stocks & Indices", basePrice: 575, volatility: 1.2, pipDecimals: 2, flag: "\u267E\uFE0F" },
-  { symbol: "TSLA", name: "Tesla Inc.", payout: 93, category: "Stocks & Indices", basePrice: 220, volatility: 0.95, pipDecimals: 2, flag: "\u26A1" },
-  { symbol: "NFLX", name: "Netflix Inc.", payout: 90, category: "Stocks & Indices", basePrice: 710, volatility: 1.5, pipDecimals: 2, flag: "\u{1F37F}" },
-  { symbol: "AMD", name: "Advanced Micro Devices", payout: 89, category: "Stocks & Indices", basePrice: 155, volatility: 0.5, pipDecimals: 2, flag: "\u{1F534}" },
-  { symbol: "INTC", name: "Intel Corp.", payout: 88, category: "Stocks & Indices", basePrice: 22.5, volatility: 0.12, pipDecimals: 2, flag: "\u{1F7E6}" },
-  { symbol: "TSM", name: "Taiwan Semiconductor", payout: 89, category: "Stocks & Indices", basePrice: 192, volatility: 0.55, pipDecimals: 2, flag: "\u{1F1F9}\u{1F1FC}" },
-  { symbol: "COIN", name: "Coinbase Global", payout: 91, category: "Stocks & Indices", basePrice: 215, volatility: 0.8, pipDecimals: 2, flag: "\u{1FA99}" },
-  { symbol: "MSTR", name: "MicroStrategy Inc.", payout: 93, category: "Stocks & Indices", basePrice: 245, volatility: 1.4, pipDecimals: 2, flag: "\u{1F4CA}" },
-  { symbol: "JPM", name: "JPMorgan Chase & Co.", payout: 89, category: "Stocks & Indices", basePrice: 225, volatility: 0.4, pipDecimals: 2, flag: "\u{1F3E6}" },
-  { symbol: "V", name: "Visa Inc.", payout: 89, category: "Stocks & Indices", basePrice: 282, volatility: 0.45, pipDecimals: 2, flag: "\u{1F4B3}" },
-  { symbol: "MA", name: "Mastercard Inc.", payout: 89, category: "Stocks & Indices", basePrice: 495, volatility: 0.85, pipDecimals: 2, flag: "\u{1F4B3}" },
-  { symbol: "DIS", name: "The Walt Disney Co.", payout: 88, category: "Stocks & Indices", basePrice: 96.5, volatility: 0.22, pipDecimals: 2, flag: "\u{1F3F0}" },
-  { symbol: "BA", name: "Boeing Co.", payout: 88, category: "Stocks & Indices", basePrice: 155, volatility: 0.48, pipDecimals: 2, flag: "\u2708\uFE0F" },
-  { symbol: "JNJ", name: "Johnson & Johnson", payout: 88, category: "Stocks & Indices", basePrice: 162, volatility: 0.25, pipDecimals: 2, flag: "\u{1F48A}" },
-  { symbol: "WMT", name: "Walmart Inc.", payout: 88, category: "Stocks & Indices", basePrice: 82.5, volatility: 0.18, pipDecimals: 2, flag: "\u{1F6D2}" },
-  { symbol: "XOM", name: "Exxon Mobil Corp.", payout: 88, category: "Stocks & Indices", basePrice: 118, volatility: 0.3, pipDecimals: 2, flag: "\u26FD" },
-  { symbol: "SHEL", name: "Shell plc", payout: 88, category: "Stocks & Indices", basePrice: 65.5, volatility: 0.16, pipDecimals: 2, flag: "\u{1F41A}" },
-  { symbol: "BABA", name: "Alibaba Group Holding", payout: 89, category: "Stocks & Indices", basePrice: 98.5, volatility: 0.42, pipDecimals: 2, flag: "\u{1F1E8}\u{1F1F3}" },
-  { symbol: "NKE", name: "NIKE Inc.", payout: 88, category: "Stocks & Indices", basePrice: 84, volatility: 0.22, pipDecimals: 2, flag: "\u{1F45F}" },
-  { symbol: "PYPL", name: "PayPal Holdings", payout: 88, category: "Stocks & Indices", basePrice: 78.5, volatility: 0.28, pipDecimals: 2, flag: "\u{1F17F}\uFE0F" },
-  { symbol: "UBER", name: "Uber Technologies", payout: 89, category: "Stocks & Indices", basePrice: 76, volatility: 0.32, pipDecimals: 2, flag: "\u{1F697}" },
-  { symbol: "SHOP", name: "Shopify Inc.", payout: 89, category: "Stocks & Indices", basePrice: 112, volatility: 0.48, pipDecimals: 2, flag: "\u{1F6CD}\uFE0F" },
-  { symbol: "FTSE100", name: "FTSE 100 Index", payout: 90, category: "Stocks & Indices", basePrice: 8250, volatility: 6.5, pipDecimals: 2, flag: "\u{1F1EC}\u{1F1E7}" },
-  { symbol: "DAX40", name: "Germany 40 Index", payout: 91, category: "Stocks & Indices", basePrice: 19400, volatility: 10, pipDecimals: 2, flag: "\u{1F1E9}\u{1F1EA}" },
-  { symbol: "NIKKEI225", name: "Japan 225 Index", payout: 91, category: "Stocks & Indices", basePrice: 38900, volatility: 15, pipDecimals: 2, flag: "\u{1F1EF}\u{1F1F5}" },
-  { symbol: "CAC40", name: "France 40 Index", payout: 90, category: "Stocks & Indices", basePrice: 7550, volatility: 6, pipDecimals: 2, flag: "\u{1F1EB}\u{1F1F7}" },
-  { symbol: "IBEX35", name: "Spain 35 Index", payout: 89, category: "Stocks & Indices", basePrice: 11800, volatility: 8.5, pipDecimals: 2, flag: "\u{1F1EA}\u{1F1F8}" },
-  { symbol: "ASX200", name: "Australia 200 Index", payout: 90, category: "Stocks & Indices", basePrice: 8200, volatility: 6.2, pipDecimals: 2, flag: "\u{1F1E6}\u{1F1FA}" },
-  { symbol: "HSI", name: "Hang Seng Index", payout: 90, category: "Stocks & Indices", basePrice: 20600, volatility: 14, pipDecimals: 2, flag: "\u{1F1ED}\u{1F1F0}" },
-  { symbol: "NIFTY50", name: "Nifty 50 India", payout: 91, category: "Stocks & Indices", basePrice: 24300, volatility: 12.5, pipDecimals: 2, flag: "\u{1F1EE}\u{1F1F3}" },
-  { symbol: "BOVESPA", name: "Brazil 50 Index", payout: 89, category: "Stocks & Indices", basePrice: 130500, volatility: 45, pipDecimals: 1, flag: "\u{1F1E7}\u{1F1F7}" },
-  { symbol: "IPC", name: "Mexico 35 Index", payout: 89, category: "Stocks & Indices", basePrice: 52500, volatility: 22, pipDecimals: 1, flag: "\u{1F1F2}\u{1F1FD}" },
-  // Additional Stocks to exceed 250 total
-  { symbol: "ADBE", name: "Adobe Inc.", payout: 89, category: "Stocks & Indices", basePrice: 510, volatility: 1.1, pipDecimals: 2, flag: "\u{1F3A8}" },
-  { symbol: "CRM", name: "Salesforce Inc.", payout: 89, category: "Stocks & Indices", basePrice: 285, volatility: 0.75, pipDecimals: 2, flag: "\u2601\uFE0F" },
-  { symbol: "ORCL", name: "Oracle Corp.", payout: 88, category: "Stocks & Indices", basePrice: 172, volatility: 0.45, pipDecimals: 2, flag: "\u{1F534}" },
-  { symbol: "IBM", name: "International Business Machines", payout: 88, category: "Stocks & Indices", basePrice: 220, volatility: 0.5, pipDecimals: 2, flag: "\u{1F4BC}" },
-  { symbol: "QCOM", name: "QUALCOMM Inc.", payout: 88, category: "Stocks & Indices", basePrice: 168, volatility: 0.55, pipDecimals: 2, flag: "\u{1F4E1}" },
-  { symbol: "TXN", name: "Texas Instruments", payout: 88, category: "Stocks & Indices", basePrice: 195, volatility: 0.48, pipDecimals: 2, flag: "\u{1F532}" },
-  { symbol: "AVGO", name: "Broadcom Inc.", payout: 90, category: "Stocks & Indices", basePrice: 175, volatility: 0.6, pipDecimals: 2, flag: "\u{1F310}" },
-  { symbol: "CSCO", name: "Cisco Systems", payout: 87, category: "Stocks & Indices", basePrice: 55, volatility: 0.15, pipDecimals: 2, flag: "\u{1F310}" },
-  { symbol: "ACN", name: "Accenture plc", payout: 88, category: "Stocks & Indices", basePrice: 350, volatility: 0.8, pipDecimals: 2, flag: "\u{1F4A1}" },
-  { symbol: "LLY", name: "Eli Lilly and Co.", payout: 91, category: "Stocks & Indices", basePrice: 910, volatility: 2.1, pipDecimals: 2, flag: "\u{1F489}" },
-  { symbol: "UNH", name: "UnitedHealth Group", payout: 89, category: "Stocks & Indices", basePrice: 585, volatility: 1.2, pipDecimals: 2, flag: "\u{1F3E5}" },
-  { symbol: "MRK", name: "Merck & Co.", payout: 88, category: "Stocks & Indices", basePrice: 105, volatility: 0.28, pipDecimals: 2, flag: "\u{1F52C}" },
-  { symbol: "PFE", name: "Pfizer Inc.", payout: 87, category: "Stocks & Indices", basePrice: 28.5, volatility: 0.1, pipDecimals: 2, flag: "\u{1F9EC}" },
-  { symbol: "ABBV", name: "AbbVie Inc.", payout: 88, category: "Stocks & Indices", basePrice: 198, volatility: 0.45, pipDecimals: 2, flag: "\u{1F9EA}" },
-  { symbol: "ABT", name: "Abbott Laboratories", payout: 88, category: "Stocks & Indices", basePrice: 115, volatility: 0.3, pipDecimals: 2, flag: "\u{1FA7A}" }
-];
-
-// src/utils/storage.ts
-var DEFAULT_ASSETS = OTC_ASSETS_CATALOG;
-var BUILTIN_AVATARS = [
-  `data:image/svg+xml;utf8,${encodeURIComponent(
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120"><defs><linearGradient id="g1" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#ff8800"/><stop offset="100%" stop-color="#ffaa00"/></linearGradient></defs><rect width="120" height="120" rx="28" fill="#141414"/><circle cx="60" cy="44" r="22" fill="url(#g1)"/><path d="M24 104c4-22 22-34 36-34s32 12 36 34" fill="url(#g1)"/></svg>`
-  )}`,
-  `data:image/svg+xml;utf8,${encodeURIComponent(
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120"><defs><linearGradient id="g2" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#10b981"/><stop offset="100%" stop-color="#059669"/></linearGradient></defs><rect width="120" height="120" rx="28" fill="#121816"/><circle cx="60" cy="44" r="22" fill="url(#g2)"/><path d="M24 104c4-22 22-34 36-34s32 12 36 34" fill="url(#g2)"/></svg>`
-  )}`,
-  `data:image/svg+xml;utf8,${encodeURIComponent(
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120"><defs><linearGradient id="g3" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#06b6d4"/><stop offset="100%" stop-color="#3b82f6"/></linearGradient></defs><rect width="120" height="120" rx="28" fill="#101720"/><circle cx="60" cy="44" r="22" fill="url(#g3)"/><path d="M24 104c4-22 22-34 36-34s32 12 36 34" fill="url(#g3)"/></svg>`
-  )}`,
-  `data:image/svg+xml;utf8,${encodeURIComponent(
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120"><defs><linearGradient id="g4" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#a855f7"/><stop offset="100%" stop-color="#ec4899"/></linearGradient></defs><rect width="120" height="120" rx="28" fill="#18121e"/><circle cx="60" cy="44" r="22" fill="url(#g4)"/><path d="M24 104c4-22 22-34 36-34s32 12 36 34" fill="url(#g4)"/></svg>`
-  )}`
-];
-var SYMBOL_ALIASES = {
-  "gold": "XAU/USD",
-  "xau/usd": "XAU/USD",
-  "silver": "XAG/USD",
-  "xag/usd": "XAG/USD",
-  "oil": "WTI/USD",
-  "crude": "CRUDE OIL",
-  "crude oil": "CRUDE OIL",
-  "us oil": "WTI/USD",
-  "brent": "BRENT/USD",
-  "brent oil": "BRENT/USD",
-  "gas": "NGAS/USD",
-  "natural gas": "NGAS/USD",
-  "nasdaq": "NAS100",
-  "ndx": "NAS100",
-  "spx": "SPX500",
-  "sp500": "SPX500",
-  "s&p500": "SPX500",
-  "dow": "US30",
-  "dji": "US30",
-  "btc": "BTC/USD",
-  "btc/usdt": "BTC/USDT",
-  "eth": "ETH/USD",
-  "eth/usdt": "ETH/USDT",
-  "sol": "SOL/USD",
-  "sol/usdt": "SOL/USDT",
-  "eurusd": "EUR/USD",
-  "gbpjpy": "GBP/JPY",
-  "gbpusd": "GBP/USD",
-  "usdjpy": "USD/JPY"
-};
-function normalizeAssetSymbol(symbol) {
-  const fallback = "EUR/USD (OTC)";
-  if (!symbol || typeof symbol !== "string") return fallback;
-  const allAssets = dynamicAssetsRegistry.length > 0 ? dynamicAssetsRegistry : DEFAULT_ASSETS;
-  const exact = allAssets.find((a) => a.symbol.toLowerCase() === symbol.toLowerCase());
-  if (exact) return exact.symbol;
-  const cleaned = symbol.replace(/\s*\(otc\)/gi, "").trim();
-  const lower = cleaned.toLowerCase();
-  if (SYMBOL_ALIASES[lower]) {
-    return SYMBOL_ALIASES[lower];
-  }
-  const cleanMatch = allAssets.find((a) => a.symbol.replace(/\s*\(otc\)/gi, "").trim().toLowerCase() === lower);
-  if (cleanMatch) return cleanMatch.symbol;
-  const caseMatch = allAssets.find((a) => a.symbol.toLowerCase() === lower || a.name.toLowerCase() === lower);
-  if (caseMatch) return caseMatch.symbol;
-  return symbol.toUpperCase();
-}
-var dynamicAssetsRegistry = [...OTC_ASSETS_CATALOG];
-function getDynamicAssets() {
-  return dynamicAssetsRegistry.length > 0 ? dynamicAssetsRegistry : OTC_ASSETS_CATALOG;
-}
-function findAssetBySymbol(symbol) {
-  const allAssets = getDynamicAssets();
-  if (!symbol) {
-    return allAssets.find((a) => a.symbol === "EUR/USD") || allAssets[0];
-  }
-  const canonicalSymbol = normalizeAssetSymbol(symbol);
-  const foundDynamic = allAssets.find((a) => a.symbol === canonicalSymbol);
-  if (foundDynamic) return foundDynamic;
-  const lower = symbol.trim().toLowerCase();
-  const byName = allAssets.find(
-    (a) => a.name.toLowerCase().includes(lower)
-  );
-  if (byName) return byName;
-  return {
-    symbol: canonicalSymbol,
-    name: canonicalSymbol,
-    payout: 92,
-    category: canonicalSymbol.includes("/") ? "Forex (OTC)" : "Stocks (OTC)",
-    basePrice: 100,
-    volatility: 0.05,
-    pipDecimals: canonicalSymbol.includes("JPY") ? 3 : canonicalSymbol.includes("/") ? 5 : 2,
-    flag: "\u{1F4C8}"
-  };
-}
-
-// src/utils/priceFeedEngine.ts
-var serverTimeOffsetMs = 0;
-var lastServerTimeSyncMs = 0;
-function setServerTimeOffset(serverTimestampMs, clientReferenceMs = Date.now()) {
-  if (typeof serverTimestampMs !== "number" || !Number.isFinite(serverTimestampMs) || serverTimestampMs <= 0) {
-    return;
-  }
-  const offset = serverTimestampMs - clientReferenceMs;
-  if (Math.abs(offset) < 86400 * 1e3) {
-    serverTimeOffsetMs = offset;
-    lastServerTimeSyncMs = clientReferenceMs;
-  }
-}
-function getSynchronizedNowMs() {
-  return Date.now() + serverTimeOffsetMs;
-}
-var masterStores = /* @__PURE__ */ new Map();
-var GLOBAL_EPOCH = 17040672e5;
-var INITIAL_CANDLE_HISTORY_COUNT = 2500;
-var MAX_CANDLE_HISTORY_CAPACITY = 1e4;
-var GLOBAL_OCTAVE_PERIODS_SEC = [5, 15, 30, 60, 180, 300, 900, 1800, 3600];
-function hashSymbol(str) {
-  let h = 2166136261 >>> 0;
-  for (let i = 0; i < str.length; i++) {
-    h ^= str.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
-function getCategoryParameters(category, symbol = "") {
-  const cat = (category || "").toLowerCase();
-  const sym = (symbol || "").toLowerCase();
-  const isVolatileFx = sym.includes("jpy") || sym.includes("gbp") || sym.includes("mxn") || sym.includes("brl") || sym.includes("try") || sym.includes("zar");
-  if (cat.includes("crypto")) {
-    return {
-      volMultiplier: 2.85,
-      trendLengthMin: 20,
-      trendLengthMax: 65,
-      breakoutChance: 0.32,
-      jumpChance: 0.08,
-      wickMultiplier: 1.45,
-      maxRunCandles: 7
-    };
-  }
-  if (cat.includes("commodit")) {
-    return {
-      volMultiplier: sym.includes("xau") || sym.includes("wti") || sym.includes("cocoa") ? 2.1 : 1.65,
-      trendLengthMin: 30,
-      trendLengthMax: 85,
-      breakoutChance: 0.24,
-      jumpChance: 0.06,
-      wickMultiplier: 1.3,
-      maxRunCandles: 6
-    };
-  }
-  if (cat.includes("stock")) {
-    return {
-      volMultiplier: sym.includes("tsla") || sym.includes("nvda") || sym.includes("mstr") || sym.includes("coin") ? 2.2 : 1.55,
-      trendLengthMin: 25,
-      trendLengthMax: 75,
-      breakoutChance: 0.22,
-      jumpChance: 0.05,
-      wickMultiplier: 1.25,
-      maxRunCandles: 5
-    };
-  }
-  return {
-    volMultiplier: isVolatileFx ? 1.35 : 1,
-    trendLengthMin: 30,
-    trendLengthMax: 85,
-    breakoutChance: 0.16,
-    jumpChance: 0.03,
-    wickMultiplier: 1.1,
-    maxRunCandles: 5
-  };
-}
-function getAssetTimeOffsetMs(symbol, timeframeSeconds) {
-  const canonical = normalizeAssetSymbol(symbol);
-  const hash = hashSymbol(canonical);
-  const tfSeconds = Math.max(5, timeframeSeconds);
-  const subSteps = Math.max(1, Math.floor(tfSeconds / 5));
-  const stepIndex = (hash >>> 3) % subSteps;
-  return stepIndex * 5e3;
-}
-function evalGlobalPriceAtTime(asset, tMs) {
-  const canonical = normalizeAssetSymbol(asset.symbol);
-  const catParams = getCategoryParameters(asset.category, canonical);
-  const unitVol = asset.volatility * catParams.volMultiplier;
-  const minPip = Math.pow(10, -asset.pipDecimals);
-  const symSeed = hashSymbol(canonical);
-  const tSec = (tMs - GLOBAL_EPOCH) / 1e3;
-  let totalOffset = 0;
-  for (let k = 0; k < GLOBAL_OCTAVE_PERIODS_SEC.length; k++) {
-    const periodSec = GLOBAL_OCTAVE_PERIODS_SEC[k];
-    const phaseShiftSec = (symSeed >>> k * 3 % 24) % periodSec;
-    const gridCoord = (tSec + phaseShiftSec) / periodSec;
-    const idx0 = Math.floor(gridCoord);
-    const frac = gridCoord - idx0;
-    const h0 = hashSymbol(`${canonical}:oct:${periodSec}:${idx0}`);
-    const h1 = hashSymbol(`${canonical}:oct:${periodSec}:${idx0 + 1}`);
-    const v0 = (h0 % 20001 - 1e4) / 1e4;
-    const v1 = (h1 % 20001 - 1e4) / 1e4;
-    const interp = v0 + (v1 - v0) * frac;
-    const octaveScale = Math.pow(periodSec / 5, 0.34);
-    totalOffset += interp * unitVol * octaveScale * 0.62;
-  }
-  const maxSafeExcursion = Math.max(minPip * 50, asset.basePrice * 0.075);
-  const boundedOffset = Math.tanh(totalOffset / maxSafeExcursion) * maxSafeExcursion;
-  const rawPrice = asset.basePrice + boundedOffset;
-  return Number(Math.max(minPip * 10, rawPrice).toFixed(asset.pipDecimals));
-}
-function computeSynchronizedTickAtTime(asset, nowMs = getSynchronizedNowMs()) {
-  const canonical = normalizeAssetSymbol(asset.symbol);
-  const tf = 5;
-  const tfMs = tf * 1e3;
-  const offsetMs = getAssetTimeOffsetMs(canonical, tf);
-  const currentBucketTime = Math.floor((nowMs + offsetMs) / tfMs) * tfMs - offsetMs;
-  const catParams = getCategoryParameters(asset.category, canonical);
-  const unitVol = asset.volatility * catParams.volMultiplier;
-  const minPip = Math.pow(10, -asset.pipDecimals);
-  const open = evalGlobalPriceAtTime(asset, currentBucketTime);
-  const targetClose = evalGlobalPriceAtTime(asset, currentBucketTime + tfMs);
-  const elapsedMs = ((nowMs + offsetMs) % tfMs + tfMs) % tfMs;
-  const progress = Math.max(0, Math.min(1, elapsedMs / tfMs));
-  const subStep = Math.floor(nowMs / 250);
-  const pulseHash = hashSymbol(`${canonical}:subtick:${subStep}`);
-  const pulseNorm = (pulseHash % 2e3 - 1e3) / 1e3;
-  const envelope = Math.sin(progress * Math.PI);
-  const intraWave = pulseNorm * unitVol * 0.32 * envelope;
-  const rawLivePrice = open + (targetClose - open) * progress + intraWave;
-  const livePrice = Number(Math.max(minPip * 10, rawLivePrice).toFixed(asset.pipDecimals));
-  const wickHash = hashSymbol(`${canonical}:wick:${tf}:${currentBucketTime}`);
-  const uUpper = wickHash % 1e3 / 1e3;
-  const uLower = (wickHash >>> 10) % 1e3 / 1e3;
-  const wickProgress = Math.max(0.2, progress);
-  const upperWick = Math.max(minPip * 2.5, catParams.wickMultiplier * unitVol * (0.22 + uUpper * 0.55) * wickProgress);
-  const lowerWick = Math.max(minPip * 2.5, catParams.wickMultiplier * unitVol * (0.22 + uLower * 0.55) * wickProgress);
-  const bodyMax = Math.max(open, livePrice);
-  const bodyMin = Math.min(open, livePrice);
-  return {
-    price: livePrice,
-    open,
-    high: Number((bodyMax + upperWick).toFixed(asset.pipDecimals)),
-    low: Number(Math.max(minPip * 5, bodyMin - lowerWick).toFixed(asset.pipDecimals)),
-    close: livePrice,
-    bucketTime: currentBucketTime
-  };
-}
-function computeDeterministicCandleForBucket(asset, timeframeSeconds, candleTime, isCurrentActiveBucket, livePrice, nowMs = getSynchronizedNowMs()) {
-  const canonical = normalizeAssetSymbol(asset.symbol);
-  const tf = Math.max(5, timeframeSeconds);
-  const tfMs = tf * 1e3;
-  const catParams = getCategoryParameters(asset.category, canonical);
-  const tfMultiplier = Math.pow(Math.max(1, tf / 5), 0.34);
-  const unitVol = asset.volatility * tfMultiplier * catParams.volMultiplier;
-  const minPip = Math.pow(10, -asset.pipDecimals);
-  const open = evalGlobalPriceAtTime(asset, candleTime);
-  const close = isCurrentActiveBucket && typeof livePrice === "number" && livePrice > 0 ? Number(livePrice.toFixed(asset.pipDecimals)) : evalGlobalPriceAtTime(asset, candleTime + tfMs);
-  const bodyMax = Math.max(open, close);
-  const bodyMin = Math.min(open, close);
-  const wickHash = hashSymbol(`${canonical}:wick:${tf}:${candleTime}`);
-  const uUpper = wickHash % 1e3 / 1e3;
-  const uLower = (wickHash >>> 10) % 1e3 / 1e3;
-  const progress = isCurrentActiveBucket ? Math.max(0.25, Math.min(1, (nowMs - candleTime) / tfMs)) : 1;
-  const upperWick = Math.max(
-    minPip * 2.5,
-    catParams.wickMultiplier * unitVol * (0.22 + uUpper * 0.55) * progress
-  );
-  const lowerWick = Math.max(
-    minPip * 2.5,
-    catParams.wickMultiplier * unitVol * (0.22 + uLower * 0.55) * progress
-  );
-  return {
-    time: candleTime,
-    open,
-    high: Number((bodyMax + upperWick).toFixed(asset.pipDecimals)),
-    low: Number(Math.max(minPip * 5, bodyMin - lowerWick).toFixed(asset.pipDecimals)),
-    close,
-    volume: isCurrentActiveBucket ? Math.max(1, Math.floor((45 + wickHash % 115) * progress)) : Math.floor(45 + wickHash % 115)
-  };
-}
-function generateDeterministicTimeframeCandles(asset, timeframeSeconds, count = INITIAL_CANDLE_HISTORY_COUNT, anchorEndPrice, referenceNowMs = getSynchronizedNowMs()) {
-  const canonical = normalizeAssetSymbol(asset.symbol);
-  const tf = Math.max(5, timeframeSeconds);
-  const tfMs = tf * 1e3;
-  const offsetMs = getAssetTimeOffsetMs(canonical, tf);
-  const currentBucketTime = Math.floor((referenceNowMs + offsetMs) / tfMs) * tfMs - offsetMs;
-  const startBucketTime = currentBucketTime - (count - 1) * tfMs;
-  const liveEndPrice = typeof anchorEndPrice === "number" && anchorEndPrice > 0 ? anchorEndPrice : computeSynchronizedTickAtTime(asset, referenceNowMs).price;
-  const result = new Array(count);
-  for (let i = 0; i < count; i++) {
-    const candleTime = startBucketTime + i * tfMs;
-    const isLast = i === count - 1;
-    result[i] = computeDeterministicCandleForBucket(
-      asset,
-      tf,
-      candleTime,
-      isLast,
-      isLast ? liveEndPrice : void 0,
-      referenceNowMs
-    );
-  }
-  return result;
-}
-var lastSteppedTimeBySymbol = /* @__PURE__ */ new Map();
-function getOrCreateMasterHistory(asset) {
-  const symbolKey = normalizeAssetSymbol(asset.symbol);
-  if (!masterStores.has(symbolKey)) {
-    const seed = hashSymbol(symbolKey);
-    const catParams = getCategoryParameters(asset.category, symbolKey);
-    const initialRegimes = [
-      "bullish_trend",
-      "bearish_trend",
-      "consolidation",
-      "volatile_breakout",
-      "mean_reverting"
-    ];
-    const initialRegime = initialRegimes[seed % initialRegimes.length];
-    const initialTicks = catParams.trendLengthMin + (seed >> 5) % (catParams.trendLengthMax - catParams.trendLengthMin);
-    const primaryFrequency = 0.16 + seed % 100 / 100 * 0.44;
-    const secondaryFrequency = 0.04 + (seed >> 4) % 100 / 100 * 0.14;
-    const phaseOffset = (seed >> 8) % 1e3 / 1e3 * Math.PI * 2;
-    const initNow = getSynchronizedNowMs();
-    const liveSnap = computeSynchronizedTickAtTime(asset, initNow);
-    const baseCandles = generateDeterministicTimeframeCandles(asset, 5, INITIAL_CANDLE_HISTORY_COUNT, liveSnap.price, initNow);
-    lastSteppedTimeBySymbol.set(symbolKey, initNow);
-    const lastPrice = liveSnap.price;
-    const timeframeMap = /* @__PURE__ */ new Map();
-    timeframeMap.set(5, baseCandles);
-    const newState = {
-      symbol: symbolKey,
-      category: asset.category,
-      baseTicks: baseCandles,
-      timeframeSeries: timeframeMap,
-      lastPrice,
-      prevPrice: liveSnap.open,
-      momentum: 0,
-      volatilityRegime: 1,
-      tickCounter: Math.floor((initNow - GLOBAL_EPOCH) / 5e3),
-      regime: initialRegime,
-      regimeTicksRemaining: initialTicks,
-      regimeIntensity: 0.7 + seed % 50 / 50 * 0.8,
-      phaseOffset,
-      primaryFrequency,
-      secondaryFrequency,
-      dynamicSupport: lastPrice - asset.volatility * 40,
-      dynamicResistance: lastPrice + asset.volatility * 40,
-      seed
-    };
-    masterStores.set(symbolKey, newState);
-    if (asset.symbol !== symbolKey) {
-      masterStores.set(asset.symbol, newState);
-    }
-  }
-  const existingStore = masterStores.get(symbolKey);
-  if (!isValidPriceForAsset(asset, existingStore.lastPrice)) {
-    const snap = computeSynchronizedTickAtTime(asset, getSynchronizedNowMs());
-    existingStore.lastPrice = snap.price;
-    existingStore.prevPrice = snap.open;
-    existingStore.timeframeSeries.clear();
-  }
-  return existingStore;
-}
-function syncAssetStoreWithServerTime(asset, timeframeSeconds, serverTimestampMs, authoritativePrice) {
-  if (typeof serverTimestampMs === "number" && serverTimestampMs > 0) {
-    setServerTimeOffset(serverTimestampMs);
-  }
-  const nowMs = getSynchronizedNowMs();
-  const symbolKey = normalizeAssetSymbol(asset.symbol);
-  const store = getOrCreateMasterHistory(asset);
-  const liveSnap = computeSynchronizedTickAtTime(asset, nowMs);
-  const resolvedPrice = typeof authoritativePrice === "number" && isValidPriceForAsset(asset, authoritativePrice) ? authoritativePrice : liveSnap.price;
-  store.prevPrice = liveSnap.open;
-  store.lastPrice = resolvedPrice;
-  lastSteppedTimeBySymbol.set(symbolKey, nowMs);
-  const tf = Math.max(5, timeframeSeconds);
-  const existingSeries = store.timeframeSeries.get(tf);
-  const preservedCount = Math.min(
-    MAX_CANDLE_HISTORY_CAPACITY,
-    Math.max(INITIAL_CANDLE_HISTORY_COUNT, existingSeries?.length || 0)
-  );
-  const freshSeries = generateDeterministicTimeframeCandles(asset, tf, preservedCount, resolvedPrice, nowMs);
-  store.timeframeSeries.set(tf, freshSeries);
-  return [...freshSeries];
-}
-function isValidPriceForAsset(asset, price) {
-  if (!asset || typeof price !== "number" || !Number.isFinite(price) || price <= 0) return false;
-  const base = Number(asset.basePrice) || 0;
-  if (base <= 0) return price > 0;
-  return price >= base * 0.88 && price <= base * 1.12;
-}
-
-// src/server/marketEngine.ts
-var BackendMarketEngine = class {
-  constructor() {
-    this.assets = [...OTC_ASSETS_CATALOG];
-    this.tickInterval = null;
-    this.currentPrices = /* @__PURE__ */ new Map();
-    this.prevPrices = /* @__PURE__ */ new Map();
-    this.listeners = /* @__PURE__ */ new Set();
-    this.feedSource = "synchronized_global_realtime_engine";
-    this.forexRates = {
-      EUR: 1.0845,
-      GBP: 1.2921,
-      JPY: 154.25,
-      CHF: 0.8872,
-      CAD: 1.3912,
-      AUD: 0.6542,
-      NZD: 0.5984,
-      XAU: 2742.5,
-      XAG: 31.85,
-      WTI: 71.4
-    };
-    this.broadcastBatch();
-  }
-  setSymbolPriceVariants(symbol, price, prevPrice) {
-    this.currentPrices.set(symbol, price);
-    this.prevPrices.set(symbol, prevPrice);
-    const clean = symbol.replace(/\s*\(OTC\)/i, "").trim();
-    this.currentPrices.set(clean, price);
-    this.prevPrices.set(clean, prevPrice);
-    if (clean.endsWith("/USD")) {
-      this.currentPrices.set(`${clean}T`, price);
-      this.prevPrices.set(`${clean}T`, prevPrice);
-    }
-  }
-  async start() {
-    this.broadcastBatch();
-    if (this.tickInterval) clearInterval(this.tickInterval);
-    this.tickInterval = setInterval(() => this.broadcastBatch(), 250);
-  }
-  subscribe(listener) {
-    this.listeners.add(listener);
-    return () => {
-      this.listeners.delete(listener);
-    };
-  }
-  getPrice(symbol) {
-    const now = Date.now();
-    const matched = findAssetBySymbol(symbol);
-    if (matched) {
-      const snap = computeSynchronizedTickAtTime(matched, now);
-      this.setSymbolPriceVariants(matched.symbol, snap.price, snap.open);
-      return snap.price;
-    }
-    if (this.currentPrices.has(symbol)) return this.currentPrices.get(symbol);
-    return void 0;
-  }
-  getMarketSnapshot(symbol, timeframeSeconds = 60, count = 250) {
-    const now = Date.now();
-    const canonical = normalizeAssetSymbol(symbol);
-    const asset = findAssetBySymbol(canonical);
-    const tf = Math.max(5, Number(timeframeSeconds) || 60);
-    const tfMs = tf * 1e3;
-    const safeCount = Math.max(10, Math.min(1500, Number(count) || 250));
-    const snap5s = computeSynchronizedTickAtTime(asset, now);
-    this.setSymbolPriceVariants(asset.symbol, snap5s.price, snap5s.open);
-    const offsetMs = getAssetTimeOffsetMs(canonical, tf);
-    const currentBucketTime = Math.floor((now + offsetMs) / tfMs) * tfMs - offsetMs;
-    const startBucketTime = currentBucketTime - (safeCount - 1) * tfMs;
-    const candles = new Array(safeCount);
-    for (let i = 0; i < safeCount; i++) {
-      const bTime = startBucketTime + i * tfMs;
-      const isLast = i === safeCount - 1;
-      candles[i] = computeDeterministicCandleForBucket(
-        asset,
-        tf,
-        bTime,
-        isLast,
-        isLast ? snap5s.price : void 0,
-        now
-      );
-    }
-    const activeCandle = candles[candles.length - 1];
-    return {
-      ok: true,
-      serverTime: now,
-      symbol: asset.symbol,
-      timeframeSeconds: tf,
-      price: snap5s.price,
-      prevPrice: activeCandle.open,
-      activeCandle,
-      candles,
-      source: this.feedSource
-    };
-  }
-  getAllPrices() {
-    this.broadcastBatch();
-    const res = {};
-    for (const [k, v] of this.currentPrices.entries()) {
-      res[k] = v;
-    }
-    return res;
-  }
-  getForexRates() {
-    return { ...this.forexRates };
-  }
-  getFeedSource() {
-    return this.feedSource;
-  }
-  /**
-   * Synchronizes all 268+ assets simultaneously using the authoritative server UTC clock.
-   */
-  broadcastBatch() {
-    const now = Date.now();
-    for (const asset of this.assets) {
-      const snap = computeSynchronizedTickAtTime(asset, now);
-      this.setSymbolPriceVariants(asset.symbol, snap.price, snap.open);
-    }
-    if (this.listeners.size > 0) {
-      const snapshotPrices = {};
-      for (const [k, v] of this.currentPrices.entries()) {
-        snapshotPrices[k] = v;
-      }
-      for (const listener of this.listeners) {
-        try {
-          listener({ serverTime: now, prices: snapshotPrices });
-        } catch {
-        }
-      }
-    }
-  }
-  stop() {
-    if (this.tickInterval) clearInterval(this.tickInterval);
-    this.listeners.clear();
-  }
-};
-
-// src/utils/copyTradingRules.ts
-var MAX_COPIERS_PER_TRADER = 200;
-var MIN_PROVIDER_WIN_RATE_3M = 60;
-var ROTATION_INTERVAL_MINUTES = 45;
-var ROTATION_INTERVAL_MS = ROTATION_INTERVAL_MINUTES * 60 * 1e3;
-var LEADERBOARD_TOP_LIMIT = 10;
-var TOTAL_TRADER_POOL_SIZE = 200;
-var ELIGIBLE_INSTANT_FUNDED_SIZES = [25e3, 5e4, 1e5];
-var FOLLOWER_PROFIT_SHARE_PERCENT = 100;
-var MASTER_COMMISSION_PERCENT = 0;
-function evaluateProviderEligibility(params) {
-  const now = params.nowMs ?? Date.now();
-  const ninetyDaysAgo = now - 90 * 24 * 60 * 60 * 1e3;
-  let computedWinRate = 0;
-  let tradesCount90d = 0;
-  if (typeof params.explicitWinRate90d === "number" && Number.isFinite(params.explicitWinRate90d)) {
-    computedWinRate = Number(params.explicitWinRate90d.toFixed(2));
-    tradesCount90d = 10;
-  } else {
-    const recentClosedTrades = (params.trades || []).filter((t) => {
-      if (t.status !== "won" && t.status !== "lost") return false;
-      if (t.accountTier === "demo" || String(t.accountId || "").startsWith("BFT-DEMO")) return false;
-      const tradeTime = t.endTime || t.startTime || now;
-      return tradeTime >= ninetyDaysAgo;
-    });
-    if (recentClosedTrades.length > 0) {
-      tradesCount90d = recentClosedTrades.length;
-      const wins = recentClosedTrades.filter((t) => t.status === "won").length;
-      computedWinRate = Number((wins / tradesCount90d * 100).toFixed(2));
-    } else if (Array.isArray(params.accounts) && params.accounts.length > 0) {
-      const realAccounts = params.accounts.filter(
-        (a) => a.tier !== "demo" && a.phase !== "demo" && !String(a.id || "").startsWith("BFT-DEMO") && typeof a.winRate === "number" && a.winRate > 0
-      );
-      if (realAccounts.length > 0) {
-        const bestAcc = realAccounts.reduce(
-          (best, curr) => (curr.winRate || 0) > (best.winRate || 0) ? curr : best
-        );
-        computedWinRate = Number((bestAcc.winRate || 0).toFixed(2));
-        tradesCount90d = Math.max(1, bestAcc.tradesCount || 0);
-      }
-    }
-  }
-  if (computedWinRate < MIN_PROVIDER_WIN_RATE_3M) {
-    return {
-      eligible: false,
-      winRate90d: computedWinRate,
-      requiredWinRate: MIN_PROVIDER_WIN_RATE_3M,
-      tradesEvaluated90d: tradesCount90d,
-      code: "WIN_RATE_BELOW_60",
-      message: `Registration Blocked: Only traders with a proven minimum ${MIN_PROVIDER_WIN_RATE_3M}% Win Rate over the last 3 months (90 days) can join as a Copy Master / Provider. Your verified 90-day Win Rate is ${computedWinRate.toFixed(1)}%.`
-    };
-  }
-  return {
-    eligible: true,
-    winRate90d: computedWinRate,
-    requiredWinRate: MIN_PROVIDER_WIN_RATE_3M,
-    tradesEvaluated90d: tradesCount90d,
-    code: "ELIGIBLE",
-    message: `Verified ${computedWinRate.toFixed(1)}% 90-Day Win Rate meets the \u2265${MIN_PROVIDER_WIN_RATE_3M}% Master Trader threshold.`
-  };
-}
-function deterministicHash(input) {
-  let h = 2166136261;
-  for (let i = 0; i < input.length; i++) {
-    h ^= input.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return Math.abs(h >>> 0);
-}
-var REGIONAL_PROFILES = [
-  {
-    country: "India",
-    code: "IN",
-    flag: "\u{1F1EE}\u{1F1F3}",
-    firstNames: [
-      "Aarav",
-      "Rajesh",
-      "Vikramaditya",
-      "Arjun",
-      "Rohan",
-      "Aditya",
-      "Siddharth",
-      "Karan",
-      "Pranav",
-      "Nikhil",
-      "Ananya",
-      "Priya",
-      "Harsh",
-      "Devansh",
-      "Yash",
-      "Varun"
-    ],
-    lastNames: [
-      "Sharma",
-      "Singhania",
-      "Deshmukh",
-      "Verma",
-      "Patel",
-      "Malhotra",
-      "Mehta",
-      "Kapoor",
-      "Reddy",
-      "Nair",
-      "Chatterjee",
-      "Mukherjee",
-      "Iyer",
-      "Chauhan",
-      "Joshi",
-      "Kulkarni"
-    ]
-  },
-  {
-    country: "Bangladesh",
-    code: "BD",
-    flag: "\u{1F1E7}\u{1F1E9}",
-    firstNames: [
-      "Tanvir",
-      "Mahmudul",
-      "Rakibul",
-      "Shakil",
-      "Nusrat",
-      "Farhan",
-      "Sabbir",
-      "Tamim",
-      "Mushfiq",
-      "Mehedi",
-      "Ashraful",
-      "Nayeem",
-      "Tawhid",
-      "Riyad",
-      "Fahim",
-      "Tahmid"
-    ],
-    lastNames: [
-      "Ahmed",
-      "Chowdhury",
-      "Hasan",
-      "Mahmud",
-      "Jahan",
-      "Rahman",
-      "Hossain",
-      "Islam",
-      "Talukder",
-      "Sikder",
-      "Bhuiyan",
-      "Uddin",
-      "Miah",
-      "Kazi",
-      "Akter",
-      "Sarkar"
-    ]
-  },
-  {
-    country: "Pakistan",
-    code: "PK",
-    flag: "\u{1F1F5}\u{1F1F0}",
-    firstNames: [
-      "Tariq",
-      "Kamran",
-      "Muhammad",
-      "Zain",
-      "Bilal",
-      "Usman",
-      "Hamza",
-      "Faisal",
-      "Imran",
-      "Zubair",
-      "Shahid",
-      "Mustafa",
-      "Hassan",
-      "Saad",
-      "Fahad",
-      "Salman"
-    ],
-    lastNames: [
-      "Qureshi",
-      "Malik",
-      "Khan",
-      "Ali",
-      "Tariq",
-      "Siddiqui",
-      "Raza",
-      "Abbasi",
-      "Bukhari",
-      "Mirza",
-      "Farooqi",
-      "Chaudhry",
-      "Sheikh",
-      "Hashmi",
-      "Javed",
-      "Niazi"
-    ]
-  },
-  {
-    country: "Dubai, UAE",
-    code: "AE",
-    flag: "\u{1F1E6}\u{1F1EA}",
-    firstNames: [
-      "Rashid",
-      "Zayed",
-      "Hamdan",
-      "Saeed",
-      "Khalid",
-      "Mansoor",
-      "Majid",
-      "Omar",
-      "Sultan",
-      "Nasser",
-      "Tariq",
-      "Faisal",
-      "Yousef",
-      "Abdullah",
-      "Marwan",
-      "Kareem"
-    ],
-    lastNames: [
-      "Al-Maktoum",
-      "Al-Nuaimi",
-      "Al-Mansoori",
-      "Al-Hashemi",
-      "Al-Suwaidi",
-      "Al-Mazrouei",
-      "Al-Qasimi",
-      "Al-Falasi",
-      "Al-Shamsi",
-      "Al-Zaabi",
-      "Al-Ketbi",
-      "Al-Muhairi"
-    ]
-  },
-  {
-    country: "Ukraine",
-    code: "UA",
-    flag: "\u{1F1FA}\u{1F1E6}",
-    firstNames: [
-      "Oleksandr",
-      "Dmytro",
-      "Artem",
-      "Maksym",
-      "Bohdan",
-      "Vladyslav",
-      "Andriy",
-      "Mykola",
-      "Taras",
-      "Yaroslav",
-      "Kyrylo",
-      "Denys",
-      "Illia",
-      "Roman",
-      "Pavlo",
-      "Ruslan"
-    ],
-    lastNames: [
-      "Kovalenko",
-      "Bondarenko",
-      "Shevchenko",
-      "Tkachenko",
-      "Kravchenko",
-      "Oliynyk",
-      "Melnyk",
-      "Boiko",
-      "Savchenko",
-      "Rudenko",
-      "Moroz",
-      "Lysenko",
-      "Marchenko",
-      "Petrenko"
-    ]
-  }
-];
-var STRATEGY_DESCRIPTORS = [
-  "Mumbai Institutional Nifty & FX",
-  "Lahore Liquidity Pulse",
-  "Dhaka Momentum Alpha",
-  "Dubai DIFC Institutional Flow",
-  "Kyiv Quantitative Volatility Engine",
-  "Karachi OTC Flow Engine",
-  "Chittagong Price Action",
-  "Delhi Smart Money Breakout",
-  "Islamabad Trend Sniper",
-  "Lviv High-Frequency Scalper",
-  "Abu Dhabi Orderblock Pro",
-  "Bengaluru Algorithmic Momentum"
-];
-function generate200TraderPool(nowMs = Date.now()) {
-  const rotationSlot = Math.floor(nowMs / ROTATION_INTERVAL_MS);
-  const startOfUtcDay = new Date(nowMs);
-  startOfUtcDay.setUTCHours(0, 0, 0, 0);
-  const elapsedMsToday = Math.max(0, nowMs - startOfUtcDay.getTime());
-  const dayProgress = Math.min(1, elapsedMsToday / (24 * 60 * 60 * 1e3));
-  const intradayMultiplier = 0.35 + 0.65 * dayProgress;
-  const pool = [];
-  const featuredOverrides = {
-    // Instant Funded Top Traders
-    0: {
-      name: "Rajesh Sharma",
-      country: "India",
-      countryCode: "IN",
-      flag: "\u{1F1EE}\u{1F1F3}",
-      category: "instant_funded",
-      startingBalance: 1e5,
-      strategy: "Mumbai Institutional Nifty & FX $100K",
-      winRate3m: 81.6,
-      baseDailyProfit: 26200,
-      copiers: 192,
-      totalTrades: 1480,
-      profitFactor: 2.68,
-      maxDrawdown: 2.6,
-      sharpeRatio: 2.88,
-      avgHoldingTime: "1m 15s"
-    },
-    1: {
-      name: "Rashid Al-Maktoum",
-      country: "Dubai, UAE",
-      countryCode: "AE",
-      flag: "\u{1F1E6}\u{1F1EA}",
-      category: "instant_funded",
-      startingBalance: 1e5,
-      strategy: "Dubai DIFC Liquidity Pulse $100K",
-      winRate3m: 79.8,
-      baseDailyProfit: 24800,
-      copiers: 184,
-      totalTrades: 1360,
-      profitFactor: 2.52,
-      maxDrawdown: 2.9,
-      sharpeRatio: 2.72,
-      avgHoldingTime: "1m 20s"
-    },
-    2: {
-      name: "Tanvir Ahmed",
-      country: "Bangladesh",
-      countryCode: "BD",
-      flag: "\u{1F1E7}\u{1F1E9}",
-      category: "instant_funded",
-      startingBalance: 1e5,
-      strategy: "Dhaka Momentum Alpha $100K",
-      winRate3m: 78.4,
-      baseDailyProfit: 23500,
-      copiers: 178,
-      totalTrades: 1290,
-      profitFactor: 2.45,
-      maxDrawdown: 3.1,
-      sharpeRatio: 2.62,
-      avgHoldingTime: "1m 25s"
-    },
-    3: {
-      name: "Oleksandr Kovalenko",
-      country: "Ukraine",
-      countryCode: "UA",
-      flag: "\u{1F1FA}\u{1F1E6}",
-      category: "instant_funded",
-      startingBalance: 1e5,
-      strategy: "Kyiv Quantitative Scalper $100K",
-      winRate3m: 77.2,
-      baseDailyProfit: 22400,
-      copiers: 170,
-      totalTrades: 1220,
-      profitFactor: 2.38,
-      maxDrawdown: 3.3,
-      sharpeRatio: 2.51,
-      avgHoldingTime: "1m 30s"
-    },
-    4: {
-      name: "Tariq Mahmood Qureshi",
-      country: "Pakistan",
-      countryCode: "PK",
-      flag: "\u{1F1F5}\u{1F1F0}",
-      category: "instant_funded",
-      startingBalance: 5e4,
-      strategy: "Karachi OTC Flow Engine $50K",
-      winRate3m: 76.1,
-      baseDailyProfit: 21200,
-      copiers: 162,
-      totalTrades: 1150,
-      profitFactor: 2.3,
-      maxDrawdown: 3.5,
-      sharpeRatio: 2.42,
-      avgHoldingTime: "1m 35s"
-    },
-    5: {
-      name: "Rakibul Hasan",
-      country: "Bangladesh",
-      countryCode: "BD",
-      flag: "\u{1F1E7}\u{1F1E9}",
-      category: "instant_funded",
-      startingBalance: 5e4,
-      strategy: "Chittagong Price Action $50K",
-      winRate3m: 75.3,
-      baseDailyProfit: 20100,
-      copiers: 156,
-      totalTrades: 1080,
-      profitFactor: 2.25,
-      maxDrawdown: 3.7,
-      sharpeRatio: 2.34,
-      avgHoldingTime: "1m 40s"
-    },
-    6: {
-      name: "Vikramaditya Singhania",
-      country: "India",
-      countryCode: "IN",
-      flag: "\u{1F1EE}\u{1F1F3}",
-      category: "instant_funded",
-      startingBalance: 5e4,
-      strategy: "Delhi Smart Money Breakout $50K",
-      winRate3m: 74.5,
-      baseDailyProfit: 19200,
-      copiers: 148,
-      totalTrades: 1020,
-      profitFactor: 2.2,
-      maxDrawdown: 3.8,
-      sharpeRatio: 2.28,
-      avgHoldingTime: "1m 45s"
-    },
-    7: {
-      name: "Dmytro Bondarenko",
-      country: "Ukraine",
-      countryCode: "UA",
-      flag: "\u{1F1FA}\u{1F1E6}",
-      category: "instant_funded",
-      startingBalance: 5e4,
-      strategy: "Lviv Volatility Sniper $50K",
-      winRate3m: 73.8,
-      baseDailyProfit: 18400,
-      copiers: 142,
-      totalTrades: 960,
-      profitFactor: 2.16,
-      maxDrawdown: 4,
-      sharpeRatio: 2.2,
-      avgHoldingTime: "1m 50s"
-    },
-    8: {
-      name: "Zayed Al-Nuaimi",
-      country: "Dubai, UAE",
-      countryCode: "AE",
-      flag: "\u{1F1E6}\u{1F1EA}",
-      category: "instant_funded",
-      startingBalance: 25e3,
-      strategy: "Dubai Gold & FX Precision $25K",
-      winRate3m: 73,
-      baseDailyProfit: 17600,
-      copiers: 136,
-      totalTrades: 910,
-      profitFactor: 2.12,
-      maxDrawdown: 4.1,
-      sharpeRatio: 2.15,
-      avgHoldingTime: "1m 52s"
-    },
-    9: {
-      name: "Kamran Shahzad Malik",
-      country: "Pakistan",
-      countryCode: "PK",
-      flag: "\u{1F1F5}\u{1F1F0}",
-      category: "instant_funded",
-      startingBalance: 25e3,
-      strategy: "Lahore Volatility Surge $25K",
-      winRate3m: 72.4,
-      baseDailyProfit: 16800,
-      copiers: 130,
-      totalTrades: 870,
-      profitFactor: 2.08,
-      maxDrawdown: 4.2,
-      sharpeRatio: 2.1,
-      avgHoldingTime: "1m 55s"
-    },
-    10: {
-      name: "Artem Shevchenko",
-      country: "Ukraine",
-      countryCode: "UA",
-      flag: "\u{1F1FA}\u{1F1E6}",
-      category: "instant_funded",
-      startingBalance: 25e3,
-      strategy: "Odessa Orderblock Pro $25K",
-      winRate3m: 71.8,
-      baseDailyProfit: 16100,
-      copiers: 125,
-      totalTrades: 820,
-      profitFactor: 2.05,
-      maxDrawdown: 4.3,
-      sharpeRatio: 2.06,
-      avgHoldingTime: "1m 58s"
-    },
-    11: {
-      name: "Mahmudul Hasan Chowdhury",
-      country: "Bangladesh",
-      countryCode: "BD",
-      flag: "\u{1F1E7}\u{1F1E9}",
-      category: "instant_funded",
-      startingBalance: 25e3,
-      strategy: "Sylhet Currency Flow $25K",
-      winRate3m: 71.2,
-      baseDailyProfit: 15400,
-      copiers: 120,
-      totalTrades: 790,
-      profitFactor: 2.02,
-      maxDrawdown: 4.4,
-      sharpeRatio: 2.02,
-      avgHoldingTime: "2m 00s"
-    },
-    // Self Capital Top Traders
-    100: {
-      name: "Aarav Deshmukh",
-      country: "India",
-      countryCode: "IN",
-      flag: "\u{1F1EE}\u{1F1F3}",
-      category: "self_capital",
-      startingBalance: 25e3,
-      strategy: "Mumbai Micro Scalper Live",
-      winRate3m: 80.5,
-      baseDailyProfit: 9500,
-      copiers: 188,
-      totalTrades: 960,
-      profitFactor: 2.62,
-      maxDrawdown: 2.8,
-      sharpeRatio: 2.8,
-      avgHoldingTime: "1m 15s"
-    },
-    101: {
-      name: "Hamdan Al-Mansoori",
-      country: "Dubai, UAE",
-      countryCode: "AE",
-      flag: "\u{1F1E6}\u{1F1EA}",
-      category: "self_capital",
-      startingBalance: 25e3,
-      strategy: "Dubai Marina OTC Momentum Live",
-      winRate3m: 79.2,
-      baseDailyProfit: 9100,
-      copiers: 180,
-      totalTrades: 910,
-      profitFactor: 2.48,
-      maxDrawdown: 3,
-      sharpeRatio: 2.68,
-      avgHoldingTime: "1m 20s"
-    },
-    102: {
-      name: "Tanvir Ahmed",
-      country: "Bangladesh",
-      countryCode: "BD",
-      flag: "\u{1F1E7}\u{1F1E9}",
-      category: "self_capital",
-      startingBalance: 2e4,
-      strategy: "Dhaka Price Action Live",
-      winRate3m: 77.9,
-      baseDailyProfit: 8700,
-      copiers: 174,
-      totalTrades: 860,
-      profitFactor: 2.4,
-      maxDrawdown: 3.2,
-      sharpeRatio: 2.58,
-      avgHoldingTime: "1m 25s"
-    },
-    103: {
-      name: "Maksym Tkachenko",
-      country: "Ukraine",
-      countryCode: "UA",
-      flag: "\u{1F1FA}\u{1F1E6}",
-      category: "self_capital",
-      startingBalance: 2e4,
-      strategy: "Kyiv Trend Follower Live",
-      winRate3m: 76.5,
-      baseDailyProfit: 8400,
-      copiers: 166,
-      totalTrades: 820,
-      profitFactor: 2.34,
-      maxDrawdown: 3.4,
-      sharpeRatio: 2.48,
-      avgHoldingTime: "1m 30s"
-    },
-    104: {
-      name: "Bilal Ahmed Siddiqui",
-      country: "Pakistan",
-      countryCode: "PK",
-      flag: "\u{1F1F5}\u{1F1F0}",
-      category: "self_capital",
-      startingBalance: 15e3,
-      strategy: "Karachi Volatility Sniper Live",
-      winRate3m: 75.4,
-      baseDailyProfit: 8100,
-      copiers: 158,
-      totalTrades: 770,
-      profitFactor: 2.26,
-      maxDrawdown: 3.6,
-      sharpeRatio: 2.38,
-      avgHoldingTime: "1m 35s"
-    },
-    105: {
-      name: "Sabbir Hossain",
-      country: "Bangladesh",
-      countryCode: "BD",
-      flag: "\u{1F1E7}\u{1F1E9}",
-      category: "self_capital",
-      startingBalance: 15e3,
-      strategy: "Chittagong Breakout Live",
-      winRate3m: 74.6,
-      baseDailyProfit: 7800,
-      copiers: 152,
-      totalTrades: 730,
-      profitFactor: 2.22,
-      maxDrawdown: 3.8,
-      sharpeRatio: 2.3,
-      avgHoldingTime: "1m 40s"
-    },
-    106: {
-      name: "Siddharth Malhotra",
-      country: "India",
-      countryCode: "IN",
-      flag: "\u{1F1EE}\u{1F1F3}",
-      category: "self_capital",
-      startingBalance: 1e4,
-      strategy: "Delhi FX Pulse Live",
-      winRate3m: 73.9,
-      baseDailyProfit: 7500,
-      copiers: 144,
-      totalTrades: 690,
-      profitFactor: 2.18,
-      maxDrawdown: 3.9,
-      sharpeRatio: 2.24,
-      avgHoldingTime: "1m 45s"
-    },
-    107: {
-      name: "Bohdan Kravchenko",
-      country: "Ukraine",
-      countryCode: "UA",
-      flag: "\u{1F1FA}\u{1F1E6}",
-      category: "self_capital",
-      startingBalance: 1e4,
-      strategy: "Kharkiv Alpha Live",
-      winRate3m: 73.1,
-      baseDailyProfit: 7200,
-      copiers: 138,
-      totalTrades: 650,
-      profitFactor: 2.14,
-      maxDrawdown: 4.1,
-      sharpeRatio: 2.18,
-      avgHoldingTime: "1m 50s"
-    },
-    108: {
-      name: "Saeed Al-Hashemi",
-      country: "Dubai, UAE",
-      countryCode: "AE",
-      flag: "\u{1F1E6}\u{1F1EA}",
-      category: "self_capital",
-      startingBalance: 1e4,
-      strategy: "Dubai Creek Orderblock Live",
-      winRate3m: 72.5,
-      baseDailyProfit: 6900,
-      copiers: 132,
-      totalTrades: 610,
-      profitFactor: 2.1,
-      maxDrawdown: 4.2,
-      sharpeRatio: 2.12,
-      avgHoldingTime: "1m 52s"
-    },
-    109: {
-      name: "Rohan Kapoor",
-      country: "India",
-      countryCode: "IN",
-      flag: "\u{1F1EE}\u{1F1F3}",
-      category: "self_capital",
-      startingBalance: 5e3,
-      strategy: "Mumbai Mean Reversion Live",
-      winRate3m: 71.9,
-      baseDailyProfit: 6600,
-      copiers: 126,
-      totalTrades: 570,
-      profitFactor: 2.06,
-      maxDrawdown: 4.3,
-      sharpeRatio: 2.08,
-      avgHoldingTime: "1m 55s"
-    },
-    110: {
-      name: "Usman Tariq",
-      country: "Pakistan",
-      countryCode: "PK",
-      flag: "\u{1F1F5}\u{1F1F0}",
-      category: "self_capital",
-      startingBalance: 5e3,
-      strategy: "Rawalpindi Scalp Live",
-      winRate3m: 71.2,
-      baseDailyProfit: 6300,
-      copiers: 122,
-      totalTrades: 540,
-      profitFactor: 2.03,
-      maxDrawdown: 4.4,
-      sharpeRatio: 2.04,
-      avgHoldingTime: "1m 58s"
-    },
-    111: {
-      name: "Shakil Mahmud",
-      country: "Bangladesh",
-      countryCode: "BD",
-      flag: "\u{1F1E7}\u{1F1E9}",
-      category: "self_capital",
-      startingBalance: 5e3,
-      strategy: "Padma Momentum Live",
-      winRate3m: 70.6,
-      baseDailyProfit: 6e3,
-      copiers: 118,
-      totalTrades: 510,
-      profitFactor: 2,
-      maxDrawdown: 4.5,
-      sharpeRatio: 2,
-      avgHoldingTime: "2m 00s"
-    }
-  };
-  for (let i = 0; i < TOTAL_TRADER_POOL_SIZE; i++) {
-    const isInstant = i < 100;
-    const category = isInstant ? "instant_funded" : "self_capital";
-    const numericId = String(100101 + i);
-    const id = isInstant ? `trd_if_${numericId}` : `trd_sc_${numericId}`;
-    const seed = deterministicHash(`${id}_base`);
-    const slotSeed = deterministicHash(`${id}_slot_${rotationSlot}`);
-    const override = featuredOverrides[i];
-    const regionProfile = REGIONAL_PROFILES[(i + seed % REGIONAL_PROFILES.length) % REGIONAL_PROFILES.length];
-    const firstName = regionProfile.firstNames[(i * 5 + seed % 11) % regionProfile.firstNames.length];
-    const lastName = regionProfile.lastNames[(i * 7 + seed % 13) % regionProfile.lastNames.length];
-    const providerName = override ? override.name : `${firstName} ${lastName}`;
-    const countryObj = override ? { name: override.country, code: override.countryCode, flag: override.flag } : { name: regionProfile.country, code: regionProfile.code, flag: regionProfile.flag };
-    const startingBalance = override ? override.startingBalance : isInstant ? ELIGIBLE_INSTANT_FUNDED_SIZES[i % ELIGIBLE_INSTANT_FUNDED_SIZES.length] : [1e3, 2500, 5e3, 8e3, 1e4, 15e3, 25e3][i % 7];
-    const strategyTitle = override ? override.strategy : `${STRATEGY_DESCRIPTORS[i % STRATEGY_DESCRIPTORS.length]} #${i % 50 + 1}`;
-    const surgeWave = slotSeed % 1e3 / 1e3;
-    const isSurgingInThis45mSlot = slotSeed % 8 === 0;
-    let dailyProfit;
-    let dailyProfitPct;
-    if (override) {
-      const slotVariance = 0.86 + slotSeed % 280 / 1e3;
-      dailyProfit = Number((override.baseDailyProfit * intradayMultiplier * slotVariance).toFixed(2));
-      dailyProfitPct = Number((dailyProfit / startingBalance * 100).toFixed(2));
-    } else {
-      const dailyRoiBasePct = isInstant ? (1.4 + seed % 35 / 10) * (isSurgingInThis45mSlot ? 1.85 + surgeWave * 0.65 : 0.45 + surgeWave * 0.55) : (1.4 + seed % 35 / 10) * (isSurgingInThis45mSlot ? 1.55 + surgeWave * 0.55 : 0.4 + surgeWave * 0.45);
-      dailyProfitPct = Number((dailyRoiBasePct * intradayMultiplier).toFixed(2));
-      dailyProfit = Number((dailyProfitPct / 100 * startingBalance).toFixed(2));
-    }
-    const weeklyProfitPct = override ? Number((dailyProfitPct * 2.8).toFixed(2)) : Number((dailyProfitPct * (3.2 + seed % 25 / 10)).toFixed(2));
-    const weeklyProfit = Number((weeklyProfitPct / 100 * startingBalance).toFixed(2));
-    const monthlyProfitPct = override ? Number((weeklyProfitPct * 2.5).toFixed(2)) : Number((weeklyProfitPct * (2.6 + seed % 18 / 10)).toFixed(2));
-    const monthlyProfit = Number((monthlyProfitPct / 100 * startingBalance).toFixed(2));
-    const threeMonthProfitPct = override ? Number((monthlyProfitPct * 2.3).toFixed(2)) : Number((monthlyProfitPct * (2.4 + seed % 16 / 10)).toFixed(2));
-    const threeMonthProfit = Number((threeMonthProfitPct / 100 * startingBalance).toFixed(2));
-    const retainedGain = Number((monthlyProfit * 0.35 + dailyProfit).toFixed(2));
-    const currentBalance = Number((startingBalance + retainedGain).toFixed(2));
-    const allTimeWithdrawals = Number((threeMonthProfit * 0.78).toFixed(2));
-    const rawWinRate = override ? override.winRate3m : Number((61.5 + seed % 235 / 10).toFixed(1));
-    const winRate3m = Math.max(60, rawWinRate);
-    const profitFactor = override ? override.profitFactor : Number((1.75 + seed % 160 / 100).toFixed(2));
-    const maxDrawdown = override ? override.maxDrawdown : Number((1.8 + seed % 55 / 10).toFixed(1));
-    const sharpeRatio = override ? override.sharpeRatio : Number((1.55 + seed % 140 / 100).toFixed(2));
-    const avgHoldingTime = override ? override.avgHoldingTime : `${1 + seed % 6}m ${15 + seed % 40}s`;
-    const totalTrades = override ? override.totalTrades : 240 + seed % 1650;
-    const baseCopiers = 38 + seed % 148 + (isSurgingInThis45mSlot ? 12 : 0);
-    const currentCopiers = override ? override.copiers : Math.min(MAX_COPIERS_PER_TRADER, baseCopiers);
-    const accountTypeLabel = isInstant ? `Instant Funded ($${(startingBalance / 1e3).toFixed(0)}K)` : "Self-Capital Live";
-    const tierName = isInstant ? `$${(startingBalance / 1e3).toFixed(0)}K Instant Funded` : "Self-Capital Account";
-    const avatarVariants = [
-      "gold_ring_silhouette",
-      "blue_ring_silhouette",
-      "vip_octagon_silhouette",
-      "purple_ring_photo_1",
-      "vip_octagon_flag_uz",
-      "purple_ring_photo_2",
-      "blue_ring_flag_tj",
-      "vip_octagon_flag_ru",
-      "vip_octagon_flag_tm"
-    ];
-    const avatarVariant = avatarVariants[i % avatarVariants.length];
-    const isVipBadge = avatarVariant.startsWith("vip_octagon");
-    const trades24h = 28 + (seed + slotSeed % 19) % 220;
-    const profitablePct = Math.max(60, Math.round(winRate3m));
-    const turnover = Number((dailyProfit * 4.44).toFixed(2));
-    const maxTrade = Number((dailyProfit * 0.188).toFixed(2));
-    const minTrade = Number((maxTrade * 0.1).toFixed(2));
-    const maxProfit = Number((maxTrade * 0.92).toFixed(2));
-    pool.push({
-      id,
-      numeric_id: numericId,
-      user_id: `usr_provider_${numericId}`,
-      provider_name: providerName,
-      country_code: countryObj.code,
-      country: countryObj.name,
-      flag: countryObj.flag,
-      avatar_url: countryObj.flag,
-      account_category: category,
-      account_type_label: accountTypeLabel,
-      strategy_title: strategyTitle,
-      tier_name: tierName,
-      vip_level: startingBalance >= 1e5 ? "VIP Elite" : startingBalance >= 5e4 ? "VIP Pro" : "Master Trader",
-      starting_balance: startingBalance,
-      current_balance: currentBalance,
-      all_time_withdrawals: allTimeWithdrawals,
-      lifetime_earnings: allTimeWithdrawals,
-      daily_profit: dailyProfit,
-      daily_profit_pct: dailyProfitPct,
-      weekly_profit: weeklyProfit,
-      weekly_profit_pct: weeklyProfitPct,
-      monthly_profit: monthlyProfit,
-      monthly_profit_pct: monthlyProfitPct,
-      three_month_profit: threeMonthProfit,
-      three_month_profit_pct: threeMonthProfitPct,
-      win_rate_3m: winRate3m,
-      profit_factor: profitFactor,
-      max_drawdown: maxDrawdown,
-      sharpe_ratio: sharpeRatio,
-      avg_holding_time: avgHoldingTime,
-      total_trades: totalTrades,
-      current_copiers: currentCopiers,
-      max_copiers: MAX_COPIERS_PER_TRADER,
-      commission_pct: MASTER_COMMISSION_PERCENT,
-      follower_profit_keep_pct: FOLLOWER_PROFIT_SHARE_PERCENT,
-      social_profile_id: numericId,
-      display_handle: providerName,
-      full_legal_name: providerName,
-      profile_level: "Guru",
-      account_level: 6,
-      status_text: "last seen recently",
-      followers_count: 45 + seed % 120,
-      watchers_count: 95 + seed % 180,
-      avatar_variant: avatarVariant,
-      is_vip_badge: isVipBadge,
-      trades_24h: trades24h,
-      trades_today_profile: Math.max(1, trades24h - 1),
-      profitable_trades_pct: profitablePct,
-      trading_turnover: turnover,
-      trading_profit: dailyProfit,
-      max_trade: maxTrade,
-      min_trade: minTrade,
-      max_profit: maxProfit
-    });
-  }
-  return pool;
-}
-var SOCIAL_TRADING_TOP_24H_TRADERS = [
-  {
-    id: "trd_social_11101163",
-    numeric_id: "11101163",
-    social_profile_id: "11101163",
-    user_id: "usr_provider_11101163",
-    display_handle: "Rashid Al-Maktoum",
-    provider_name: "Rashid Al-Maktoum",
-    full_legal_name: "Rashid Al-Maktoum",
-    country_code: "AE",
-    country: "Dubai, UAE",
-    flag: "\u{1F1E6}\u{1F1EA}",
-    avatar_url: "\u{1F1E6}\u{1F1EA}",
-    account_category: "instant_funded",
-    account_type_label: "Instant Funded ($100K)",
-    strategy_title: "Institutional OTC & FX Flow",
-    tier_name: "$100K Instant Funded",
-    vip_level: "Guru",
-    profile_level: "Guru",
-    account_level: 6,
-    status_text: "last seen recently",
-    followers_count: 75,
-    watchers_count: 155,
-    avatar_variant: "gold_ring_silhouette",
-    is_vip_badge: false,
-    starting_balance: 5e4,
-    current_balance: 64495.8,
-    all_time_withdrawals: 42850,
-    lifetime_earnings: 57345.8,
-    daily_profit: 14495.8,
-    daily_profit_pct: 28.99,
-    weekly_profit: 38420.5,
-    weekly_profit_pct: 76.84,
-    monthly_profit: 94210,
-    monthly_profit_pct: 188.42,
-    three_month_profit: 186400,
-    three_month_profit_pct: 372.8,
-    win_rate_3m: 74.5,
-    profit_factor: 2.64,
-    max_drawdown: 2.8,
-    sharpe_ratio: 2.75,
-    avg_holding_time: "1m 20s",
-    total_trades: 80,
-    trades_24h: 80,
-    trades_today_profile: 79,
-    profitable_trades_pct: 74,
-    trading_turnover: 64306.41,
-    trading_profit: 14245.3,
-    max_trade: 2722.94,
-    min_trade: 272.26,
-    max_profit: 2505.11,
-    current_copiers: 75,
-    max_copiers: MAX_COPIERS_PER_TRADER,
-    commission_pct: MASTER_COMMISSION_PERCENT,
-    follower_profit_keep_pct: FOLLOWER_PROFIT_SHARE_PERCENT,
-    rank: 1
-  },
-  {
-    id: "trd_social_139597257",
-    numeric_id: "139597257",
-    social_profile_id: "139597257",
-    user_id: "usr_provider_139597257",
-    display_handle: "Tariq Mahmood Qureshi",
-    provider_name: "Tariq Mahmood Qureshi",
-    full_legal_name: "Tariq Mahmood Qureshi",
-    country_code: "PK",
-    country: "Pakistan",
-    flag: "\u{1F1F5}\u{1F1F0}",
-    avatar_url: "\u{1F1F5}\u{1F1F0}",
-    account_category: "instant_funded",
-    account_type_label: "Instant Funded ($100K)",
-    strategy_title: "High-Frequency Momentum Scalp",
-    tier_name: "$100K Instant Funded",
-    vip_level: "Guru",
-    profile_level: "Guru",
-    account_level: 6,
-    status_text: "last seen recently",
-    followers_count: 68,
-    watchers_count: 142,
-    avatar_variant: "blue_ring_silhouette",
-    is_vip_badge: false,
-    starting_balance: 5e4,
-    current_balance: 64140.8,
-    all_time_withdrawals: 39100,
-    lifetime_earnings: 53240.8,
-    daily_profit: 14140.8,
-    daily_profit_pct: 28.28,
-    weekly_profit: 36200,
-    weekly_profit_pct: 72.4,
-    monthly_profit: 88500,
-    monthly_profit_pct: 177,
-    three_month_profit: 172e3,
-    three_month_profit_pct: 344,
-    win_rate_3m: 71.2,
-    profit_factor: 2.51,
-    max_drawdown: 3.1,
-    sharpe_ratio: 2.62,
-    avg_holding_time: "1m 15s",
-    total_trades: 172,
-    trades_24h: 172,
-    trades_today_profile: 172,
-    profitable_trades_pct: 71,
-    trading_turnover: 61840.25,
-    trading_profit: 14140.8,
-    max_trade: 2450,
-    min_trade: 210.5,
-    max_profit: 2254,
-    current_copiers: 68,
-    max_copiers: MAX_COPIERS_PER_TRADER,
-    commission_pct: MASTER_COMMISSION_PERCENT,
-    follower_profit_keep_pct: FOLLOWER_PROFIT_SHARE_PERCENT,
-    rank: 2
-  },
-  {
-    id: "trd_social_127298296",
-    numeric_id: "127298296",
-    social_profile_id: "127298296",
-    user_id: "usr_provider_127298296",
-    display_handle: "Vikramaditya Singhania",
-    provider_name: "Vikramaditya Singhania",
-    full_legal_name: "Vikramaditya Singhania",
-    country_code: "IN",
-    country: "India",
-    flag: "\u{1F1EE}\u{1F1F3}",
-    avatar_url: "\u{1F1EE}\u{1F1F3}",
-    account_category: "instant_funded",
-    account_type_label: "Instant Funded ($50K)",
-    strategy_title: "VIP Institutional Orderblock",
-    tier_name: "$50K Instant Funded",
-    vip_level: "VIP",
-    profile_level: "Guru",
-    account_level: 6,
-    status_text: "last seen recently",
-    followers_count: 54,
-    watchers_count: 118,
-    avatar_variant: "vip_octagon_silhouette",
-    is_vip_badge: true,
-    starting_balance: 25e3,
-    current_balance: 30432.77,
-    all_time_withdrawals: 21400,
-    lifetime_earnings: 26832.77,
-    daily_profit: 5432.77,
-    daily_profit_pct: 21.73,
-    weekly_profit: 16290,
-    weekly_profit_pct: 65.16,
-    monthly_profit: 41200,
-    monthly_profit_pct: 164.8,
-    three_month_profit: 89400,
-    three_month_profit_pct: 357.6,
-    win_rate_3m: 68.5,
-    profit_factor: 2.32,
-    max_drawdown: 3.4,
-    sharpe_ratio: 2.41,
-    avg_holding_time: "1m 30s",
-    total_trades: 64,
-    trades_24h: 64,
-    trades_today_profile: 64,
-    profitable_trades_pct: 69,
-    trading_turnover: 28940.12,
-    trading_profit: 5432.77,
-    max_trade: 1850,
-    min_trade: 150,
-    max_profit: 1702,
-    current_copiers: 54,
-    max_copiers: MAX_COPIERS_PER_TRADER,
-    commission_pct: MASTER_COMMISSION_PERCENT,
-    follower_profit_keep_pct: FOLLOWER_PROFIT_SHARE_PERCENT,
-    rank: 3
-  },
-  {
-    id: "trd_social_85396639",
-    numeric_id: "85396639",
-    social_profile_id: "85396639",
-    user_id: "usr_provider_85396639",
-    display_handle: "Oleksandr Kovalenko",
-    provider_name: "Oleksandr Kovalenko",
-    full_legal_name: "Oleksandr Kovalenko",
-    country_code: "UA",
-    country: "Ukraine",
-    flag: "\u{1F1FA}\u{1F1E6}",
-    avatar_url: "\u{1F1FA}\u{1F1E6}",
-    account_category: "instant_funded",
-    account_type_label: "Instant Funded ($50K)",
-    strategy_title: "Gold & FX Precision Breakout",
-    tier_name: "$50K Instant Funded",
-    vip_level: "Guru",
-    profile_level: "Guru",
-    account_level: 6,
-    status_text: "last seen recently",
-    followers_count: 61,
-    watchers_count: 129,
-    avatar_variant: "gold_ring_silhouette",
-    is_vip_badge: false,
-    starting_balance: 25e3,
-    current_balance: 29352.01,
-    all_time_withdrawals: 19800,
-    lifetime_earnings: 24152.01,
-    daily_profit: 4352.01,
-    daily_profit_pct: 17.41,
-    weekly_profit: 13800,
-    weekly_profit_pct: 55.2,
-    monthly_profit: 36400,
-    monthly_profit_pct: 145.6,
-    three_month_profit: 78200,
-    three_month_profit_pct: 312.8,
-    win_rate_3m: 67,
-    profit_factor: 2.24,
-    max_drawdown: 3.5,
-    sharpe_ratio: 2.35,
-    avg_holding_time: "1m 40s",
-    total_trades: 113,
-    trades_24h: 113,
-    trades_today_profile: 113,
-    profitable_trades_pct: 67,
-    trading_turnover: 24180.55,
-    trading_profit: 4352.01,
-    max_trade: 1420,
-    min_trade: 120,
-    max_profit: 1306.4,
-    current_copiers: 61,
-    max_copiers: MAX_COPIERS_PER_TRADER,
-    commission_pct: MASTER_COMMISSION_PERCENT,
-    follower_profit_keep_pct: FOLLOWER_PROFIT_SHARE_PERCENT,
-    rank: 4
-  },
-  {
-    id: "trd_social_143581606",
-    numeric_id: "143581606",
-    social_profile_id: "143581606",
-    user_id: "usr_provider_143581606",
-    display_handle: "Arjun Deshmukh",
-    provider_name: "Arjun Deshmukh",
-    full_legal_name: "Arjun Deshmukh",
-    country_code: "IN",
-    country: "India",
-    flag: "\u{1F1EE}\u{1F1F3}",
-    avatar_url: "\u{1F1EE}\u{1F1F3}",
-    account_category: "self_capital",
-    account_type_label: "Self-Capital Live",
-    strategy_title: "Algorithmic Volatility Pulse",
-    tier_name: "Self-Capital Account",
-    vip_level: "Guru",
-    profile_level: "Guru",
-    account_level: 5,
-    status_text: "last seen recently",
-    followers_count: 49,
-    watchers_count: 104,
-    avatar_variant: "purple_ring_photo_1",
-    is_vip_badge: false,
-    starting_balance: 2e4,
-    current_balance: 23621.25,
-    all_time_withdrawals: 16500,
-    lifetime_earnings: 20121.25,
-    daily_profit: 3621.25,
-    daily_profit_pct: 18.11,
-    weekly_profit: 11200,
-    weekly_profit_pct: 56,
-    monthly_profit: 29800,
-    monthly_profit_pct: 149,
-    three_month_profit: 64500,
-    three_month_profit_pct: 322.5,
-    win_rate_3m: 65,
-    profit_factor: 2.18,
-    max_drawdown: 3.6,
-    sharpe_ratio: 2.28,
-    avg_holding_time: "1m 25s",
-    total_trades: 290,
-    trades_24h: 290,
-    trades_today_profile: 290,
-    profitable_trades_pct: 65,
-    trading_turnover: 21450.8,
-    trading_profit: 3621.25,
-    max_trade: 980,
-    min_trade: 85,
-    max_profit: 901.6,
-    current_copiers: 49,
-    max_copiers: MAX_COPIERS_PER_TRADER,
-    commission_pct: MASTER_COMMISSION_PERCENT,
-    follower_profit_keep_pct: FOLLOWER_PROFIT_SHARE_PERCENT,
-    rank: 5
-  },
-  {
-    id: "trd_social_119680988",
-    numeric_id: "119680988",
-    social_profile_id: "119680988",
-    user_id: "usr_provider_119680988",
-    display_handle: "Tanvir Ahmed Chowdhury",
-    provider_name: "Tanvir Ahmed Chowdhury",
-    full_legal_name: "Tanvir Ahmed Chowdhury",
-    country_code: "BD",
-    country: "Bangladesh",
-    flag: "\u{1F1E7}\u{1F1E9}",
-    avatar_url: "\u{1F1E7}\u{1F1E9}",
-    account_category: "instant_funded",
-    account_type_label: "Instant Funded ($25K)",
-    strategy_title: "Dhaka VIP Liquidity Sniper",
-    tier_name: "$25K Instant Funded",
-    vip_level: "VIP",
-    profile_level: "Guru",
-    account_level: 6,
-    status_text: "last seen recently",
-    followers_count: 44,
-    watchers_count: 98,
-    avatar_variant: "vip_octagon_flag_uz",
-    is_vip_badge: true,
-    starting_balance: 25e3,
-    current_balance: 28501.52,
-    all_time_withdrawals: 15200,
-    lifetime_earnings: 18701.52,
-    daily_profit: 3501.52,
-    daily_profit_pct: 14.01,
-    weekly_profit: 10850,
-    weekly_profit_pct: 43.4,
-    monthly_profit: 27400,
-    monthly_profit_pct: 109.6,
-    three_month_profit: 59800,
-    three_month_profit_pct: 239.2,
-    win_rate_3m: 66.8,
-    profit_factor: 2.15,
-    max_drawdown: 3.8,
-    sharpe_ratio: 2.22,
-    avg_holding_time: "1m 45s",
-    total_trades: 65,
-    trades_24h: 65,
-    trades_today_profile: 65,
-    profitable_trades_pct: 67,
-    trading_turnover: 19820.4,
-    trading_profit: 3501.52,
-    max_trade: 1120,
-    min_trade: 95,
-    max_profit: 1030.4,
-    current_copiers: 44,
-    max_copiers: MAX_COPIERS_PER_TRADER,
-    commission_pct: MASTER_COMMISSION_PERCENT,
-    follower_profit_keep_pct: FOLLOWER_PROFIT_SHARE_PERCENT,
-    rank: 6
-  },
-  {
-    id: "trd_social_108442910",
-    numeric_id: "108442910",
-    social_profile_id: "108442910",
-    user_id: "usr_provider_108442910",
-    display_handle: "Dmytro Bondarenko",
-    provider_name: "Dmytro Bondarenko",
-    full_legal_name: "Dmytro Bondarenko",
-    country_code: "UA",
-    country: "Ukraine",
-    flag: "\u{1F1FA}\u{1F1E6}",
-    avatar_url: "\u{1F1FA}\u{1F1E6}",
-    account_category: "self_capital",
-    account_type_label: "Self-Capital Live",
-    strategy_title: "High Win-Rate OTC Scalper",
-    tier_name: "Self-Capital Account",
-    vip_level: "Guru",
-    profile_level: "Guru",
-    account_level: 6,
-    status_text: "last seen recently",
-    followers_count: 82,
-    watchers_count: 164,
-    avatar_variant: "purple_ring_photo_2",
-    is_vip_badge: false,
-    starting_balance: 2e4,
-    current_balance: 23406.65,
-    all_time_withdrawals: 18400,
-    lifetime_earnings: 21806.65,
-    daily_profit: 3406.65,
-    daily_profit_pct: 17.03,
-    weekly_profit: 10400,
-    weekly_profit_pct: 52,
-    monthly_profit: 26900,
-    monthly_profit_pct: 134.5,
-    three_month_profit: 58400,
-    three_month_profit_pct: 292,
-    win_rate_3m: 72,
-    profit_factor: 2.58,
-    max_drawdown: 2.9,
-    sharpe_ratio: 2.68,
-    avg_holding_time: "1m 10s",
-    total_trades: 72,
-    trades_24h: 72,
-    trades_today_profile: 72,
-    profitable_trades_pct: 72,
-    trading_turnover: 18950,
-    trading_profit: 3406.65,
-    max_trade: 940,
-    min_trade: 100,
-    max_profit: 864.8,
-    current_copiers: 82,
-    max_copiers: MAX_COPIERS_PER_TRADER,
-    commission_pct: MASTER_COMMISSION_PERCENT,
-    follower_profit_keep_pct: FOLLOWER_PROFIT_SHARE_PERCENT,
-    rank: 7
-  },
-  {
-    id: "trd_social_140257047",
-    numeric_id: "140257047",
-    social_profile_id: "140257047",
-    user_id: "usr_provider_140257047",
-    display_handle: "Zayed bin Rashid Al-Nuaimi",
-    provider_name: "Zayed bin Rashid Al-Nuaimi",
-    full_legal_name: "Zayed bin Rashid Al-Nuaimi",
-    country_code: "AE",
-    country: "Dubai, UAE",
-    flag: "\u{1F1E6}\u{1F1EA}",
-    avatar_url: "\u{1F1E6}\u{1F1EA}",
-    account_category: "self_capital",
-    account_type_label: "Self-Capital Live",
-    strategy_title: "Dubai DIFC Rapid Execution",
-    tier_name: "Self-Capital Account",
-    vip_level: "Guru",
-    profile_level: "Guru",
-    account_level: 5,
-    status_text: "last seen recently",
-    followers_count: 39,
-    watchers_count: 87,
-    avatar_variant: "blue_ring_flag_tj",
-    is_vip_badge: false,
-    starting_balance: 15e3,
-    current_balance: 18390.69,
-    all_time_withdrawals: 14100,
-    lifetime_earnings: 17490.69,
-    daily_profit: 3390.69,
-    daily_profit_pct: 22.6,
-    weekly_profit: 9980,
-    weekly_profit_pct: 66.53,
-    monthly_profit: 25100,
-    monthly_profit_pct: 167.33,
-    three_month_profit: 54200,
-    three_month_profit_pct: 361.33,
-    win_rate_3m: 64.5,
-    profit_factor: 2.12,
-    max_drawdown: 3.9,
-    sharpe_ratio: 2.18,
-    avg_holding_time: "1m 05s",
-    total_trades: 358,
-    trades_24h: 358,
-    trades_today_profile: 358,
-    profitable_trades_pct: 65,
-    trading_turnover: 22840.75,
-    trading_profit: 3390.69,
-    max_trade: 890,
-    min_trade: 75,
-    max_profit: 818.8,
-    current_copiers: 39,
-    max_copiers: MAX_COPIERS_PER_TRADER,
-    commission_pct: MASTER_COMMISSION_PERCENT,
-    follower_profit_keep_pct: FOLLOWER_PROFIT_SHARE_PERCENT,
-    rank: 8
-  },
-  {
-    id: "trd_social_128871612",
-    numeric_id: "128871612",
-    social_profile_id: "128871612",
-    user_id: "usr_provider_128871612",
-    display_handle: "Artem Shevchenko",
-    provider_name: "Artem Shevchenko",
-    full_legal_name: "Artem Shevchenko",
-    country_code: "UA",
-    country: "Ukraine",
-    flag: "\u{1F1FA}\u{1F1E6}",
-    avatar_url: "\u{1F1FA}\u{1F1E6}",
-    account_category: "instant_funded",
-    account_type_label: "Instant Funded ($25K)",
-    strategy_title: "VIP Precision Swing & OTC",
-    tier_name: "$25K Instant Funded",
-    vip_level: "VIP",
-    profile_level: "Guru",
-    account_level: 6,
-    status_text: "last seen recently",
-    followers_count: 52,
-    watchers_count: 112,
-    avatar_variant: "vip_octagon_flag_ru",
-    is_vip_badge: true,
-    starting_balance: 25e3,
-    current_balance: 28340.9,
-    all_time_withdrawals: 16200,
-    lifetime_earnings: 19540.9,
-    daily_profit: 3340.9,
-    daily_profit_pct: 13.36,
-    weekly_profit: 9750,
-    weekly_profit_pct: 39,
-    monthly_profit: 24600,
-    monthly_profit_pct: 98.4,
-    three_month_profit: 53100,
-    three_month_profit_pct: 212.4,
-    win_rate_3m: 64,
-    profit_factor: 2.1,
-    max_drawdown: 3.7,
-    sharpe_ratio: 2.15,
-    avg_holding_time: "1m 50s",
-    total_trades: 62,
-    trades_24h: 62,
-    trades_today_profile: 62,
-    profitable_trades_pct: 64,
-    trading_turnover: 17420.3,
-    trading_profit: 3340.9,
-    max_trade: 1250,
-    min_trade: 140,
-    max_profit: 1150,
-    current_copiers: 52,
-    max_copiers: MAX_COPIERS_PER_TRADER,
-    commission_pct: MASTER_COMMISSION_PERCENT,
-    follower_profit_keep_pct: FOLLOWER_PROFIT_SHARE_PERCENT,
-    rank: 9
-  },
-  {
-    id: "trd_social_110028311",
-    numeric_id: "110028311",
-    social_profile_id: "110028311",
-    user_id: "usr_provider_110028311",
-    display_handle: "Kamran Shahzad Malik",
-    provider_name: "Kamran Shahzad Malik",
-    full_legal_name: "Kamran Shahzad Malik",
-    country_code: "PK",
-    country: "Pakistan",
-    flag: "\u{1F1F5}\u{1F1F0}",
-    avatar_url: "\u{1F1F5}\u{1F1F0}",
-    account_category: "instant_funded",
-    account_type_label: "Instant Funded ($25K)",
-    strategy_title: "VIP Smart Money Execution",
-    tier_name: "$25K Instant Funded",
-    vip_level: "VIP",
-    profile_level: "Guru",
-    account_level: 6,
-    status_text: "last seen recently",
-    followers_count: 47,
-    watchers_count: 94,
-    avatar_variant: "vip_octagon_silhouette",
-    is_vip_badge: true,
-    starting_balance: 25e3,
-    current_balance: 28139.84,
-    all_time_withdrawals: 14900,
-    lifetime_earnings: 18039.84,
-    daily_profit: 3139.84,
-    daily_profit_pct: 12.56,
-    weekly_profit: 9320,
-    weekly_profit_pct: 37.28,
-    monthly_profit: 23400,
-    monthly_profit_pct: 93.6,
-    three_month_profit: 51200,
-    three_month_profit_pct: 204.8,
-    win_rate_3m: 63.2,
-    profit_factor: 2.08,
-    max_drawdown: 4,
-    sharpe_ratio: 2.12,
-    avg_holding_time: "1m 35s",
-    total_trades: 61,
-    trades_24h: 61,
-    trades_today_profile: 61,
-    profitable_trades_pct: 63,
-    trading_turnover: 16890.45,
-    trading_profit: 3139.84,
-    max_trade: 960,
-    min_trade: 110,
-    max_profit: 883.2,
-    current_copiers: 47,
-    max_copiers: MAX_COPIERS_PER_TRADER,
-    commission_pct: MASTER_COMMISSION_PERCENT,
-    follower_profit_keep_pct: FOLLOWER_PROFIT_SHARE_PERCENT,
-    rank: 10
-  },
-  {
-    id: "trd_social_134435450",
-    numeric_id: "134435450",
-    social_profile_id: "134435450",
-    user_id: "usr_provider_134435450",
-    display_handle: "Mahmudul Hasan Rahman",
-    provider_name: "Mahmudul Hasan Rahman",
-    full_legal_name: "Mahmudul Hasan Rahman",
-    country_code: "BD",
-    country: "Bangladesh",
-    flag: "\u{1F1E7}\u{1F1E9}",
-    avatar_url: "\u{1F1E7}\u{1F1E9}",
-    account_category: "self_capital",
-    account_type_label: "Self-Capital Live",
-    strategy_title: "VIP Currency & Index Alpha",
-    tier_name: "Self-Capital Account",
-    vip_level: "VIP",
-    profile_level: "Guru",
-    account_level: 6,
-    status_text: "last seen recently",
-    followers_count: 58,
-    watchers_count: 121,
-    avatar_variant: "vip_octagon_silhouette",
-    is_vip_badge: true,
-    starting_balance: 15e3,
-    current_balance: 18126.7,
-    all_time_withdrawals: 14500,
-    lifetime_earnings: 17626.7,
-    daily_profit: 3126.7,
-    daily_profit_pct: 20.84,
-    weekly_profit: 9150,
-    weekly_profit_pct: 61,
-    monthly_profit: 22900,
-    monthly_profit_pct: 152.67,
-    three_month_profit: 49800,
-    three_month_profit_pct: 332,
-    win_rate_3m: 62,
-    profit_factor: 2.06,
-    max_drawdown: 4.1,
-    sharpe_ratio: 2.1,
-    avg_holding_time: "1m 42s",
-    total_trades: 95,
-    trades_24h: 95,
-    trades_today_profile: 95,
-    profitable_trades_pct: 62,
-    trading_turnover: 16420.18,
-    trading_profit: 3126.7,
-    max_trade: 910,
-    min_trade: 95,
-    max_profit: 837.2,
-    current_copiers: 58,
-    max_copiers: MAX_COPIERS_PER_TRADER,
-    commission_pct: MASTER_COMMISSION_PERCENT,
-    follower_profit_keep_pct: FOLLOWER_PROFIT_SHARE_PERCENT,
-    rank: 11
-  },
-  {
-    id: "trd_social_109384721",
-    numeric_id: "109384721",
-    social_profile_id: "109384721",
-    user_id: "usr_provider_109384721",
-    display_handle: "Rajeshwar Sharma",
-    provider_name: "Rajeshwar Sharma",
-    full_legal_name: "Rajeshwar Sharma",
-    country_code: "IN",
-    country: "India",
-    flag: "\u{1F1EE}\u{1F1F3}",
-    avatar_url: "\u{1F1EE}\u{1F1F3}",
-    account_category: "self_capital",
-    account_type_label: "Self-Capital Live",
-    strategy_title: "Mumbai VIP Price Action",
-    tier_name: "Self-Capital Account",
-    vip_level: "VIP",
-    profile_level: "Guru",
-    account_level: 6,
-    status_text: "last seen recently",
-    followers_count: 42,
-    watchers_count: 89,
-    avatar_variant: "vip_octagon_flag_tm",
-    is_vip_badge: true,
-    starting_balance: 15e3,
-    current_balance: 17867.04,
-    all_time_withdrawals: 13800,
-    lifetime_earnings: 16667.04,
-    daily_profit: 2867.04,
-    daily_profit_pct: 19.11,
-    weekly_profit: 8640,
-    weekly_profit_pct: 57.6,
-    monthly_profit: 21500,
-    monthly_profit_pct: 143.33,
-    three_month_profit: 46900,
-    three_month_profit_pct: 312.67,
-    win_rate_3m: 61.5,
-    profit_factor: 2.04,
-    max_drawdown: 4.2,
-    sharpe_ratio: 2.05,
-    avg_holding_time: "1m 55s",
-    total_trades: 66,
-    trades_24h: 66,
-    trades_today_profile: 66,
-    profitable_trades_pct: 61,
-    trading_turnover: 15280.9,
-    trading_profit: 2867.04,
-    max_trade: 840,
-    min_trade: 90,
-    max_profit: 772.8,
-    current_copiers: 42,
-    max_copiers: MAX_COPIERS_PER_TRADER,
-    commission_pct: MASTER_COMMISSION_PERCENT,
-    follower_profit_keep_pct: FOLLOWER_PROFIT_SHARE_PERCENT,
-    rank: 12
-  }
-];
-function getRotationWindowInfo(nowMs = Date.now()) {
-  const rotationSlot = Math.floor(nowMs / ROTATION_INTERVAL_MS);
-  const nextRotationMs = (rotationSlot + 1) * ROTATION_INTERVAL_MS;
-  const msUntilNextRotation = Math.max(0, nextRotationMs - nowMs);
-  const secondsUntilNextRotation = Math.ceil(msUntilNextRotation / 1e3);
-  const mins = Math.floor(secondsUntilNextRotation / 60);
-  const secs = secondsUntilNextRotation % 60;
-  return {
-    rotationSlot,
-    intervalMinutes: ROTATION_INTERVAL_MINUTES,
-    msUntilNextRotation,
-    secondsUntilNextRotation,
-    formattedCountdown: `${String(mins).padStart(2, "0")}m ${String(secs).padStart(2, "0")}s`
-  };
-}
-function queryCopyTradersPool(params) {
-  const { pool, category = "instant_funded", searchQuery = "", limit = LEADERBOARD_TOP_LIMIT } = params;
-  const cleanQuery = String(searchQuery || "").trim();
-  const numericOnlyQuery = cleanQuery.replace(/^#|^user/i, "").trim();
-  const combinedForSearch = [
-    ...SOCIAL_TRADING_TOP_24H_TRADERS,
-    ...pool.filter(
-      (p) => !SOCIAL_TRADING_TOP_24H_TRADERS.some((s) => s.numeric_id === p.numeric_id || s.id === p.id)
-    )
-  ];
-  if (cleanQuery.length > 0) {
-    const matched = combinedForSearch.filter((t) => {
-      const matchesCategory = category === "all" ? true : t.account_category === category;
-      const matchesNumeric = String(t.numeric_id || "").includes(numericOnlyQuery) || String(t.social_profile_id || "").includes(numericOnlyQuery);
-      const matchesId = String(t.id || "").toLowerCase().includes(cleanQuery.toLowerCase());
-      const matchesHandle = String(t.display_handle || "").toLowerCase().includes(cleanQuery.toLowerCase());
-      const matchesName = String(t.provider_name || "").toLowerCase().includes(cleanQuery.toLowerCase()) || String(t.full_legal_name || "").toLowerCase().includes(cleanQuery.toLowerCase());
-      if (/^\d+$/.test(numericOnlyQuery)) {
-        return matchesNumeric;
-      }
-      return matchesCategory && (matchesNumeric || matchesId || matchesHandle || matchesName);
-    }).sort((a, b) => {
-      const aExact = String(a.numeric_id) === numericOnlyQuery || String(a.social_profile_id) === numericOnlyQuery ? 1 : 0;
-      const bExact = String(b.numeric_id) === numericOnlyQuery || String(b.social_profile_id) === numericOnlyQuery ? 1 : 0;
-      if (aExact !== bExact) return bExact - aExact;
-      return (b.daily_profit || 0) - (a.daily_profit || 0);
-    }).map((t, idx) => ({ ...t, rank: idx + 1 }));
-    return {
-      traders: matched.slice(0, Math.max(limit, 20)),
-      totalPoolCount: pool.length,
-      isSearchActive: true
-    };
-  }
-  const categoryFiltered = category === "all" ? pool : pool.filter((t) => t.account_category === category);
-  const ranked = [...categoryFiltered].sort((a, b) => (b.daily_profit || 0) - (a.daily_profit || 0)).slice(0, limit).map((t, idx) => ({
-    ...t,
-    rank: idx + 1
-  }));
-  return {
-    traders: ranked,
-    totalPoolCount: pool.length,
-    isSearchActive: false
-  };
-}
-
-// src/utils/masterTraderBotScheduler.ts
-var BOT_MIN_COOLDOWN_SECONDS = 30;
-var BOT_MAX_COOLDOWN_SECONDS = 180;
-var BOT_MIN_COOLDOWN_MS = BOT_MIN_COOLDOWN_SECONDS * 1e3;
-var BOT_MAX_COOLDOWN_MS = BOT_MAX_COOLDOWN_SECONDS * 1e3;
-var BOT_MIN_TRADES_PER_HOUR = 3;
-var BOT_MAX_TRADES_PER_HOUR = 5;
-var BOT_CONSECUTIVE_LOSS_LIMIT = 2;
-var BOT_LOSS_COOLOFF_MIN_MS = 1 * 60 * 60 * 1e3;
-var BOT_LOSS_COOLOFF_MAX_MS = 2 * 60 * 60 * 1e3;
-var BOT_CONSECUTIVE_WIN_LIMIT = 3;
-var BOT_WIN_TAKE_PROFIT_MIN_MS = 2 * 60 * 60 * 1e3;
-var BOT_WIN_TAKE_PROFIT_MAX_MS = 3 * 60 * 60 * 1e3;
-var BOT_OVERNIGHT_START_HOUR = 0;
-var BOT_OVERNIGHT_END_HOUR = 6;
-var BOT_STATE_STORAGE_KEY = "bft_master_trader_bot_states_v1";
-var inMemoryBotStates = /* @__PURE__ */ new Map();
-function randomIntInclusive(min, max, rng = Math.random) {
-  const lo = Math.ceil(Math.min(min, max));
-  const hi = Math.floor(Math.max(min, max));
-  const r = Math.max(0, Math.min(0.999999999, rng()));
-  return Math.floor(r * (hi - lo + 1)) + lo;
-}
-function generateDynamicTradeCooldownMs(rng = Math.random) {
-  return randomIntInclusive(BOT_MIN_COOLDOWN_MS, BOT_MAX_COOLDOWN_MS, rng);
-}
-function generateHourlyTradeLimit(providerId, hourWindowStartMs, rng) {
-  if (rng) {
-    return randomIntInclusive(BOT_MIN_TRADES_PER_HOUR, BOT_MAX_TRADES_PER_HOUR, rng);
-  }
-  if (providerId && typeof hourWindowStartMs === "number") {
-    const seed = `${providerId}:${Math.floor(hourWindowStartMs / 36e5)}`;
-    let hash = 0;
-    for (let i = 0; i < seed.length; i++) {
-      hash = hash * 31 + seed.charCodeAt(i) | 0;
-    }
-    return BOT_MIN_TRADES_PER_HOUR + Math.abs(hash) % (BOT_MAX_TRADES_PER_HOUR - BOT_MIN_TRADES_PER_HOUR + 1);
-  }
-  return randomIntInclusive(BOT_MIN_TRADES_PER_HOUR, BOT_MAX_TRADES_PER_HOUR);
-}
-function generateConsecutiveLossCoolOffMs(rng = Math.random) {
-  return randomIntInclusive(BOT_LOSS_COOLOFF_MIN_MS, BOT_LOSS_COOLOFF_MAX_MS, rng);
-}
-function generateConsecutiveWinTakeProfitPauseMs(rng = Math.random) {
-  return randomIntInclusive(BOT_WIN_TAKE_PROFIT_MIN_MS, BOT_WIN_TAKE_PROFIT_MAX_MS, rng);
-}
-function getHourWindowStartMs(nowMs = Date.now()) {
-  return Math.floor(nowMs / 36e5) * 36e5;
-}
-function getNextHourStartMs(nowMs = Date.now()) {
-  return (Math.floor(nowMs / 36e5) + 1) * 36e5;
-}
-function evaluateActiveTradingWindow(nowMs = Date.now(), localHourOverride) {
-  const date = new Date(nowMs);
-  const localHour = typeof localHourOverride === "number" && Number.isFinite(localHourOverride) ? (Math.floor(localHourOverride) % 24 + 24) % 24 : date.getHours();
-  if (localHour >= BOT_OVERNIGHT_START_HOUR && localHour < BOT_OVERNIGHT_END_HOUR) {
-    const nextOpenDate = new Date(nowMs);
-    nextOpenDate.setHours(BOT_OVERNIGHT_END_HOUR, 0, 0, 0);
-    if (nextOpenDate.getTime() <= nowMs) {
-      nextOpenDate.setTime(nowMs + (BOT_OVERNIGHT_END_HOUR - localHour) * 36e5);
-    }
-    return {
-      allowed: false,
-      localHour,
-      sessionName: "Overnight Off-Hours (12:00 AM - 06:00 AM)",
-      nextSessionOpensAtMs: nextOpenDate.getTime(),
-      reason: "OVERNIGHT_OFF_HOURS"
-    };
-  }
-  let sessionName = "High-Liquidity Active Session";
-  if (localHour >= 6 && localHour < 8) {
-    sessionName = "Tokyo / London Pre-Market Session";
-  } else if (localHour >= 8 && localHour < 13) {
-    sessionName = "London High-Liquidity Session";
-  } else if (localHour >= 13 && localHour < 17) {
-    sessionName = "London / New York Overlap Session";
-  } else if (localHour >= 17 && localHour < 21) {
-    sessionName = "New York Session";
-  } else {
-    sessionName = "Late US / Sydney-Tokyo Session";
-  }
-  return {
-    allowed: true,
-    localHour,
-    sessionName,
-    nextSessionOpensAtMs: nowMs
-  };
-}
-function createInitialMasterBotState(providerId, nowMs = Date.now(), rng) {
-  const hourStart = getHourWindowStartMs(nowMs);
-  return {
-    providerId,
-    status: "active",
-    pauseReason: "NONE",
-    lastTradeExecutedAt: 0,
-    lastCooldownDurationMs: 0,
-    nextEligibleTradeAt: 0,
-    pausedUntilMs: 0,
-    hourWindowStartMs: hourStart,
-    maxTradesThisHour: generateHourlyTradeLimit(providerId, hourStart, rng),
-    tradesExecutedThisHour: 0,
-    consecutiveWins: 0,
-    consecutiveLosses: 0,
-    totalSignalsGenerated: 0,
-    updatedAt: nowMs
-  };
-}
-function persistBotStates() {
-  if (typeof window === "undefined" || typeof localStorage === "undefined") return;
-  try {
-    const serialized = {};
-    for (const [k, v] of inMemoryBotStates.entries()) {
-      serialized[k] = v;
-    }
-    localStorage.setItem(BOT_STATE_STORAGE_KEY, JSON.stringify(serialized));
-  } catch {
-  }
-}
-function saveMasterTraderBotState(state) {
-  inMemoryBotStates.set(state.providerId, { ...state });
-  persistBotStates();
-}
-function syncMasterBotHourWindow(state, nowMs = Date.now(), rng) {
-  const currentHourStart = getHourWindowStartMs(nowMs);
-  let updated = { ...state };
-  if (updated.hourWindowStartMs !== currentHourStart) {
-    updated.hourWindowStartMs = currentHourStart;
-    updated.tradesExecutedThisHour = 0;
-    updated.maxTradesThisHour = generateHourlyTradeLimit(updated.providerId, currentHourStart, rng);
-    if (updated.status === "paused_hourly_limit" && nowMs >= updated.pausedUntilMs) {
-      updated.status = "active";
-      updated.pauseReason = "NONE";
-      updated.pausedUntilMs = 0;
-    }
-  }
-  if (updated.pausedUntilMs > 0 && nowMs >= updated.pausedUntilMs) {
-    updated.pausedUntilMs = 0;
-    updated.status = "active";
-    updated.pauseReason = "NONE";
-  }
-  if (updated.status === "cooldown" && updated.nextEligibleTradeAt > 0 && nowMs >= updated.nextEligibleTradeAt) {
-    updated.status = "active";
-    updated.pauseReason = "NONE";
-  }
-  return updated;
-}
-function evaluateMasterSignalEligibility(params) {
-  const nowMs = params.nowMs ?? Date.now();
-  const syncedState = syncMasterBotHourWindow(params.state, nowMs, params.rng);
-  const windowCheck = evaluateActiveTradingWindow(nowMs, params.localHourOverride);
-  if (!params.bypassOvernightCheck && !windowCheck.allowed) {
-    const overnightState = {
-      ...syncedState,
-      status: "paused_overnight",
-      pauseReason: "OVERNIGHT_OFF_HOURS",
-      updatedAt: nowMs
-    };
-    return {
-      canExecute: false,
-      status: "paused_overnight",
-      reason: "OVERNIGHT_OFF_HOURS",
-      remainingWaitMs: Math.max(0, windowCheck.nextSessionOpensAtMs - nowMs),
-      state: overnightState,
-      windowCheck
-    };
-  }
-  if (syncedState.pausedUntilMs > nowMs) {
-    const isLossPause = syncedState.status === "paused_consecutive_losses";
-    const isWinPause = syncedState.status === "paused_session_take_profit";
-    const isHourlyPause = syncedState.status === "paused_hourly_limit";
-    const status = isLossPause ? "paused_consecutive_losses" : isWinPause ? "paused_session_take_profit" : isHourlyPause ? "paused_hourly_limit" : "paused_hourly_limit";
-    const reason = isLossPause ? "CONSECUTIVE_LOSS_COOL_OFF" : isWinPause ? "CONSECUTIVE_WIN_TAKE_PROFIT" : "HOURLY_TRADE_LIMIT";
-    return {
-      canExecute: false,
-      status,
-      reason,
-      remainingWaitMs: syncedState.pausedUntilMs - nowMs,
-      state: syncedState,
-      windowCheck
-    };
-  }
-  if (syncedState.tradesExecutedThisHour >= syncedState.maxTradesThisHour) {
-    const nextHourMs = getNextHourStartMs(nowMs);
-    const pausedHourlyState = {
-      ...syncedState,
-      status: "paused_hourly_limit",
-      pauseReason: "HOURLY_TRADE_LIMIT",
-      pausedUntilMs: nextHourMs,
-      updatedAt: nowMs
-    };
-    return {
-      canExecute: false,
-      status: "paused_hourly_limit",
-      reason: "HOURLY_TRADE_LIMIT",
-      remainingWaitMs: Math.max(0, nextHourMs - nowMs),
-      state: pausedHourlyState,
-      windowCheck
-    };
-  }
-  if (params.hasOpenBatchTrade) {
-    return {
-      canExecute: false,
-      status: syncedState.status,
-      reason: "OPEN_BATCH_IN_PROGRESS",
-      remainingWaitMs: 15e3,
-      state: syncedState,
-      windowCheck
-    };
-  }
-  if (syncedState.nextEligibleTradeAt > nowMs) {
-    const cooldownState = {
-      ...syncedState,
-      status: "cooldown",
-      pauseReason: "COOLDOWN_DELAY",
-      updatedAt: nowMs
-    };
-    return {
-      canExecute: false,
-      status: "cooldown",
-      reason: "COOLDOWN_DELAY",
-      remainingWaitMs: syncedState.nextEligibleTradeAt - nowMs,
-      state: cooldownState,
-      windowCheck
-    };
-  }
-  const readyState = {
-    ...syncedState,
-    status: "active",
-    pauseReason: "NONE",
-    updatedAt: nowMs
-  };
-  return {
-    canExecute: true,
-    status: "active",
-    reason: "NONE",
-    remainingWaitMs: 0,
-    state: readyState,
-    windowCheck
-  };
-}
-function recordMasterSignalExecution(params) {
-  const nowMs = params.nowMs ?? Date.now();
-  const synced = syncMasterBotHourWindow(params.state, nowMs, params.rng);
-  const cooldownMs = typeof params.cooldownOverrideMs === "number" && params.cooldownOverrideMs >= BOT_MIN_COOLDOWN_MS ? Math.min(BOT_MAX_COOLDOWN_MS, Math.max(BOT_MIN_COOLDOWN_MS, params.cooldownOverrideMs)) : generateDynamicTradeCooldownMs(params.rng);
-  const nextTradesThisHour = synced.tradesExecutedThisHour + 1;
-  const reachedHourlyCap = nextTradesThisHour >= synced.maxTradesThisHour;
-  const nextHourMs = getNextHourStartMs(nowMs);
-  const updated = {
-    ...synced,
-    lastTradeExecutedAt: nowMs,
-    lastCooldownDurationMs: cooldownMs,
-    nextEligibleTradeAt: nowMs + cooldownMs,
-    tradesExecutedThisHour: nextTradesThisHour,
-    totalSignalsGenerated: synced.totalSignalsGenerated + 1,
-    lastSignalId: params.signalId || `sig-${synced.providerId}-${nowMs}`,
-    status: reachedHourlyCap ? "paused_hourly_limit" : "cooldown",
-    pauseReason: reachedHourlyCap ? "HOURLY_TRADE_LIMIT" : "COOLDOWN_DELAY",
-    pausedUntilMs: reachedHourlyCap ? Math.max(synced.pausedUntilMs, nextHourMs) : synced.pausedUntilMs,
-    updatedAt: nowMs
-  };
-  saveMasterTraderBotState(updated);
-  return updated;
-}
-function recordMasterSignalOutcome(params) {
-  const nowMs = params.nowMs ?? Date.now();
-  const synced = syncMasterBotHourWindow(params.state, nowMs, params.rng);
-  if (params.outcome === "TIE") {
-    saveMasterTraderBotState(synced);
-    return {
-      updatedState: synced,
-      triggeredPause: false,
-      pauseReason: synced.pauseReason,
-      pauseDurationMs: 0
-    };
-  }
-  let consecutiveWins = params.outcome === "WIN" ? synced.consecutiveWins + 1 : 0;
-  let consecutiveLosses = params.outcome === "LOSS" ? synced.consecutiveLosses + 1 : 0;
-  let status = synced.status;
-  let pauseReason = synced.pauseReason;
-  let pausedUntilMs = synced.pausedUntilMs;
-  let triggeredPause = false;
-  let pauseDurationMs = 0;
-  if (consecutiveLosses >= BOT_CONSECUTIVE_LOSS_LIMIT) {
-    pauseDurationMs = generateConsecutiveLossCoolOffMs(params.rng);
-    pausedUntilMs = nowMs + pauseDurationMs;
-    status = "paused_consecutive_losses";
-    pauseReason = "CONSECUTIVE_LOSS_COOL_OFF";
-    consecutiveLosses = 0;
-    consecutiveWins = 0;
-    triggeredPause = true;
-  } else if (consecutiveWins >= BOT_CONSECUTIVE_WIN_LIMIT) {
-    pauseDurationMs = generateConsecutiveWinTakeProfitPauseMs(params.rng);
-    pausedUntilMs = nowMs + pauseDurationMs;
-    status = "paused_session_take_profit";
-    pauseReason = "CONSECUTIVE_WIN_TAKE_PROFIT";
-    consecutiveWins = 0;
-    consecutiveLosses = 0;
-    triggeredPause = true;
-  }
-  const updatedState = {
-    ...synced,
-    consecutiveWins,
-    consecutiveLosses,
-    status,
-    pauseReason,
-    pausedUntilMs,
-    updatedAt: nowMs
-  };
-  saveMasterTraderBotState(updatedState);
-  return {
-    updatedState,
-    triggeredPause,
-    pauseReason,
-    pauseDurationMs
-  };
-}
-function groupActiveSubscriptionsByProvider(subscriptions) {
-  const byProvider = /* @__PURE__ */ new Map();
-  for (const sub of subscriptions) {
-    if (!sub || !sub.provider_id) continue;
-    if (sub.status && sub.status !== "active") continue;
-    const providerKey = String(sub.provider_id).trim();
-    const list = byProvider.get(providerKey) || [];
-    list.push(sub);
-    byProvider.set(providerKey, list);
-  }
-  return byProvider;
-}
-
-// src/server/copyTradingEngine.ts
-var __defProp3 = Object.defineProperty;
-var __name2 = (target, value) => __defProp3(target, "name", { value, configurable: true });
-var CopyTradingEngine = class _CopyTradingEngine {
-  constructor() {
-    this.updateInterval = null;
-    this.customProviders = /* @__PURE__ */ new Map();
-  }
-  static {
-    __name2(this, "CopyTradingEngine");
-  }
-  static getInstance() {
-    if (!_CopyTradingEngine.instance) {
-      _CopyTradingEngine.instance = new _CopyTradingEngine();
-    }
-    return _CopyTradingEngine.instance;
-  }
-  async start() {
-    this.seedInitialTraders();
-    this.refreshLeaderboardData();
-    this.updateInterval = setInterval(() => this.refreshLeaderboardData(), 5e3);
-  }
-  stop() {
-    if (this.updateInterval) clearInterval(this.updateInterval);
-  }
-  seedInitialTraders() {
-    try {
-      const count = Number(db.prepare("SELECT COUNT(*) as c FROM copy_trading_profiles").get().c);
-      if (count >= 200) return;
-      const now = Date.now();
-      const pool = generate200TraderPool(now);
-      const insert = db.prepare(`
-        INSERT OR REPLACE INTO copy_trading_profiles (
-          id, user_id, name, country, flag, avatar, category, strategy_name, vip_level,
-          starting_capital, current_balance, lifetime_earnings, daily_profit_dollars,
-          weekly_profit_pct, monthly_profit_pct, win_rate, total_trades, trading_turnover,
-          total_copiers, max_copiers, win_rate_3m, profit_factor, max_drawdown, sharpe_ratio, avg_holding_time, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-      if (typeof db.transaction === "function") {
-        const tx = db.transaction((items) => {
-          for (const t of items) {
-            insert.run(t.id, t.user_id || `usr_${t.numeric_id}`, t.provider_name, t.country, t.flag, t.avatar_url, t.account_category, t.strategy_title, t.vip_level, t.starting_balance, t.current_balance, t.all_time_withdrawals, t.daily_profit, t.weekly_profit_pct, t.monthly_profit_pct, t.win_rate_3m, t.total_trades, t.starting_balance * 18, t.current_copiers, MAX_COPIERS_PER_TRADER, t.win_rate_3m, t.profit_factor, t.max_drawdown, t.sharpe_ratio, t.avg_holding_time, now);
-          }
-        });
-        tx(pool);
-      } else {
-        db.exec("BEGIN TRANSACTION;");
-        try {
-          for (const t of pool) {
-            insert.run(t.id, t.user_id || `usr_${t.numeric_id}`, t.provider_name, t.country, t.flag, t.avatar_url, t.account_category, t.strategy_title, t.vip_level, t.starting_balance, t.current_balance, t.all_time_withdrawals, t.daily_profit, t.weekly_profit_pct, t.monthly_profit_pct, t.win_rate_3m, t.total_trades, t.starting_balance * 18, t.current_copiers, MAX_COPIERS_PER_TRADER, t.win_rate_3m, t.profit_factor, t.max_drawdown, t.sharpe_ratio, t.avg_holding_time, now);
-          }
-          db.exec("COMMIT;");
-        } catch (e) {
-          db.exec("ROLLBACK;");
-          throw e;
-        }
-      }
-    } catch (err) {
-      console.warn("CopyTradingEngine seedInitialTraders warning:", err);
-    }
-  }
-  static {
-    this.HOUSE_PAYOUT_MULTIPLIER = 0.78;
-  }
-  static {
-    this.HOUSE_SPREAD_RETAINED_MULTIPLIER = 0.22;
-  }
-  static {
-    this.FOLLOWER_WIN_PROBABILITY = 0.46;
-  }
-  loadBackendMasterBotState(providerId, now) {
-    try {
-      const row = db.prepare(`SELECT * FROM master_trader_bot_state WHERE provider_id = ?`).get(providerId);
-      if (row) {
-        const mapped = { providerId: String(row.provider_id), status: row.status || "active", pauseReason: row.pause_reason || "NONE", lastTradeExecutedAt: Number(row.last_trade_executed_at || 0), lastCooldownDurationMs: Number(row.last_cooldown_duration_ms || 0), nextEligibleTradeAt: Number(row.next_eligible_trade_at || 0), pausedUntilMs: Number(row.paused_until_ms || 0), hourWindowStartMs: Number(row.hour_window_start_ms || 0), maxTradesThisHour: Number(row.max_trades_this_hour || 4), tradesExecutedThisHour: Number(row.trades_executed_this_hour || 0), consecutiveWins: Number(row.consecutive_wins || 0), consecutiveLosses: Number(row.consecutive_losses || 0), totalSignalsGenerated: Number(row.total_signals_generated || 0), lastSignalId: row.last_signal_id ? String(row.last_signal_id) : void 0, updatedAt: Number(row.updated_at || now) };
-        return syncMasterBotHourWindow(mapped, now);
-      }
-    } catch {
-    }
-    const fresh = createInitialMasterBotState(providerId, now);
-    this.persistBackendMasterBotState(fresh);
-    return fresh;
-  }
-  persistBackendMasterBotState(state) {
-    try {
-      db.prepare(`
-        INSERT OR REPLACE INTO master_trader_bot_state (
-          provider_id, status, pause_reason, last_trade_executed_at, last_cooldown_duration_ms,
-          next_eligible_trade_at, paused_until_ms, hour_window_start_ms, max_trades_this_hour,
-          trades_executed_this_hour, consecutive_wins, consecutive_losses, total_signals_generated,
-          last_signal_id, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(state.providerId, state.status, state.pauseReason, state.lastTradeExecutedAt, state.lastCooldownDurationMs, state.nextEligibleTradeAt, state.pausedUntilMs, state.hourWindowStartMs, state.maxTradesThisHour, state.tradesExecutedThisHour, state.consecutiveWins, state.consecutiveLosses, state.totalSignalsGenerated, state.lastSignalId || null, state.updatedAt);
-    } catch {
-    }
-  }
-  recordBackendPlatformRevenue(params) {
-    try {
-      const amt = Math.max(0, Number(params.investmentAmount || 0));
-      const winPayout = Number((amt * _CopyTradingEngine.HOUSE_PAYOUT_MULTIPLIER).toFixed(2));
-      const spreadRetained = params.outcome === "WIN" ? Number((amt * _CopyTradingEngine.HOUSE_SPREAD_RETAINED_MULTIPLIER).toFixed(2)) : 0;
-      const platformCredit = params.outcome === "LOSS" ? amt : -winPayout;
-      const followerDelta = params.outcome === "LOSS" ? -amt : winPayout;
-      const isCutoff = params.settlementReason === "STOP_LOSS_CUTOFF" || params.settlementReason === "MAX_DRAWDOWN_CUTOFF";
-      db.prepare(`
-        UPDATE platform_revenue_pool
-        SET
-          pool_balance = ROUND(COALESCE(pool_balance, 2500000.0) + ?, 2),
-          total_lost_stakes_captured = ROUND(COALESCE(total_lost_stakes_captured, 0.0) + ?, 2),
-          total_win_payouts_disbursed = ROUND(COALESCE(total_win_payouts_disbursed, 0.0) + ?, 2),
-          total_spread_retained = ROUND(COALESCE(total_spread_retained, 0.0) + ?, 2),
-          total_cutoff_liquidations = ROUND(COALESCE(total_cutoff_liquidations, 0.0) + ?, 2),
-          trades_settled_count = COALESCE(trades_settled_count, 0) + 1,
-          updated_at = ?
-        WHERE id = 'HOUSE_POOL_MAIN'
-      `).run(platformCredit, params.outcome === "LOSS" ? amt : 0, params.outcome === "WIN" ? winPayout : 0, spreadRetained, params.outcome === "LOSS" && isCutoff ? amt : 0, params.now);
-      db.prepare(`
-        INSERT OR REPLACE INTO platform_revenue_ledger (
-          id, trade_id, subscription_id, copier_user_id, copier_account_id,
-          investment_amount, platform_credit, house_spread_retained, settlement_reason, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(`PRL-${params.tradeId}`, params.tradeId, params.subscriptionId, params.copierUserId, params.copierAccountId, amt, platformCredit, spreadRetained, params.settlementReason, params.now);
-      if (params.copierAccountId) {
-        db.prepare(`
-          UPDATE trading_accounts
-          SET
-            current_balance = MAX(0, ROUND(COALESCE(current_balance, 0) + ?, 2)),
-            equity = MAX(0, ROUND(COALESCE(equity, 0) + ?, 2))
-          WHERE id = ?
-        `).run(followerDelta, followerDelta, params.copierAccountId);
-      }
-    } catch {
-    }
-  }
-  refreshLeaderboardData() {
-    try {
-      const now = Date.now();
-      const pool = this.getFullPool(now);
-      this.settleAndExecuteBackendMirroredTrades(now, pool);
-      this.checkCopyTradeLimits();
-    } catch {
-    }
-  }
-  checkCopyTradeLimits() {
-    try {
-      const now = Date.now();
-      const activeSubs = db.prepare(`SELECT * FROM copy_trading_subscriptions WHERE status = 'active'`).all();
-      for (const sub of activeSubs) {
-        const subId = String(sub.id);
-        const stopLoss = Number(sub.stop_loss ?? sub.max_loss_limit ?? 0);
-        const takeProfit = Number(sub.take_profit ?? sub.take_profit_limit ?? 0);
-        const maxDrawdownPct = Number(sub.max_drawdown ?? 5);
-        const currentRealizedPnl = Number(sub.current_pnl ?? 0);
-        const openTrades = db.prepare(`SELECT * FROM copy_executed_trades WHERE subscription_id = ? AND status = 'OPEN'`).all(subId);
-        const openExposure = openTrades.reduce((sum, tr) => sum + Math.max(0, Number(tr.amount || sub.trade_amount || 100)), 0);
-        const worstCasePnl = Number((currentRealizedPnl - openExposure).toFixed(2));
-        let startingBal = 5e4;
-        if (sub.copier_account_id) {
-          const accRow = db.prepare(`SELECT initial_balance, current_balance FROM trading_accounts WHERE id = ?`).get(String(sub.copier_account_id));
-          if (accRow && Number(accRow.initial_balance || accRow.current_balance || 0) > 0) {
-            startingBal = Number(accRow.initial_balance || accRow.current_balance || 5e4);
-          }
-        }
-        const drawdownPct = worstCasePnl < 0 ? Number((Math.abs(worstCasePnl) / startingBal * 100).toFixed(2)) : 0;
-        const hitStopLoss = stopLoss > 0 && worstCasePnl <= -stopLoss;
-        const hitMaxDrawdown = maxDrawdownPct > 0 && drawdownPct >= maxDrawdownPct;
-        const hitTakeProfit = takeProfit > 0 && currentRealizedPnl >= takeProfit;
-        if (hitStopLoss || hitMaxDrawdown) {
-          const cutoffReason = hitStopLoss ? "STOP_LOSS_CUTOFF" : "MAX_DRAWDOWN_CUTOFF";
-          for (const openTr of openTrades) {
-            const amt = Math.max(0, Number(openTr.amount || sub.trade_amount || 100));
-            const entry = Number(openTr.entry_price || 1.085);
-            const isCall = String(openTr.trade_type || "CALL").toUpperCase() !== "PUT";
-            const adverseExitPrice = Number((entry * (isCall ? 0.9991 : 1.0009)).toFixed(5));
-            const lossPnl = -amt;
-            db.prepare(`UPDATE copy_executed_trades SET exit_price = ?, status = 'LOSS', pnl = ? WHERE id = ?`).run(adverseExitPrice, lossPnl, openTr.id);
-            db.prepare(`UPDATE copy_trading_subscriptions SET current_pnl = ROUND(COALESCE(current_pnl, 0) + ?, 2) WHERE id = ?`).run(lossPnl, subId);
-            this.recordBackendPlatformRevenue({ tradeId: String(openTr.id), subscriptionId: subId, copierUserId: String(openTr.copier_user_id || sub.copier_user_id || sub.user_id || "usr_bft_001"), copierAccountId: String(openTr.copier_account_id || sub.copier_account_id || "BFT-LIVE"), investmentAmount: amt, outcome: "LOSS", settlementReason: cutoffReason, now });
-          }
-          db.prepare(`UPDATE copy_trading_subscriptions SET status = 'cancelled' WHERE id = ?`).run(subId);
-        } else if (hitTakeProfit) {
-          db.prepare(`UPDATE copy_trading_subscriptions SET status = 'cancelled' WHERE id = ?`).run(subId);
-        }
-      }
-    } catch {
-    }
-  }
-  settleAndExecuteBackendMirroredTrades(now, _pool) {
-    try {
-      const openRows = db.prepare(`SELECT * FROM copy_executed_trades WHERE status = 'OPEN'`).all();
-      const maturedByProvider = /* @__PURE__ */ new Map();
-      const stillOpenProviders = /* @__PURE__ */ new Set();
-      for (const row of openRows) {
-        const providerKey = String(row.provider_id || "default_provider");
-        const createdMs = Number(row.created_at || now);
-        if (now - createdMs >= 6e4) {
-          const list = maturedByProvider.get(providerKey) || [];
-          list.push(row);
-          maturedByProvider.set(providerKey, list);
-        } else {
-          stillOpenProviders.add(providerKey);
-        }
-      }
-      for (const [providerId, batchRows] of maturedByProvider.entries()) {
-        if (batchRows.length === 0) continue;
-        const isWin = Math.random() < _CopyTradingEngine.FOLLOWER_WIN_PROBABILITY;
-        const finalStatus = isWin ? "WIN" : "LOSS";
-        for (const row of batchRows) {
-          const entry = Number(row.entry_price || 1.085);
-          const isCall = String(row.trade_type || "CALL").toUpperCase() !== "PUT";
-          const delta = entry * 45e-5 * (isWin ? 1 : -1);
-          const exitPrice = Number((entry + (isCall ? delta : -delta)).toFixed(5));
-          const amt = Number(row.amount || 100);
-          const pnl = isWin ? Number((amt * _CopyTradingEngine.HOUSE_PAYOUT_MULTIPLIER).toFixed(2)) : -amt;
-          db.prepare(`UPDATE copy_executed_trades SET exit_price = ?, status = ?, pnl = ? WHERE id = ?`).run(exitPrice, finalStatus, pnl, row.id);
-          db.prepare(`UPDATE copy_trading_subscriptions SET current_pnl = ROUND(COALESCE(current_pnl, 0) + ?, 2) WHERE id = ?`).run(pnl, row.subscription_id);
-          this.recordBackendPlatformRevenue({ tradeId: String(row.id), subscriptionId: String(row.subscription_id), copierUserId: String(row.copier_user_id || "usr_bft_001"), copierAccountId: String(row.copier_account_id || "BFT-LIVE"), investmentAmount: amt, outcome: finalStatus, settlementReason: isWin ? "EXPIRATION_WIN" : "EXPIRATION_LOSS", now });
-        }
-        const currentBotState = this.loadBackendMasterBotState(providerId, now);
-        const outcomeResult = recordMasterSignalOutcome({ state: currentBotState, outcome: finalStatus, nowMs: now });
-        this.persistBackendMasterBotState(outcomeResult.updatedState);
-      }
-      const windowCheck = evaluateActiveTradingWindow(now);
-      if (!windowCheck.allowed) {
-        return;
-      }
-      const activeSubs = db.prepare(`SELECT * FROM copy_trading_subscriptions WHERE status = 'active'`).all();
-      const subsByProvider = groupActiveSubscriptionsByProvider(activeSubs);
-      if (subsByProvider.size === 0) return;
-      const assets = ["EUR/USD", "GBP/USD", "USD/JPY", "BTC/USDT", "ETH/USDT", "XAU/USD"];
-      const basePrices = { "EUR/USD": 1.08542, "GBP/USD": 1.26815, "USD/JPY": 154.62, "BTC/USDT": 89420.5, "ETH/USDT": 3125.4, "XAU/USD": 2685.3 };
-      const insertStmt = db.prepare(`
-        INSERT INTO copy_executed_trades (
-          id, subscription_id, copier_user_id, copier_account_id, provider_id,
-          asset_symbol, trade_type, amount, entry_price, status, pnl, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', 0, ?)
-      `);
-      for (const [providerId, providerSubs] of subsByProvider.entries()) {
-        if (providerSubs.length === 0) continue;
-        const botState = this.loadBackendMasterBotState(providerId, now);
-        const eligibility = evaluateMasterSignalEligibility({ state: botState, nowMs: now, hasOpenBatchTrade: stillOpenProviders.has(providerId) });
-        this.persistBackendMasterBotState(eligibility.state);
-        if (!eligibility.canExecute) {
-          continue;
-        }
-        const assetSymbol = assets[Math.floor(Math.random() * assets.length)];
-        const tradeType = Math.random() >= 0.45 ? "CALL" : "PUT";
-        const entryPrice = basePrices[assetSymbol] || 1.08542;
-        const signalId = `SIG-${providerId.slice(0, 8)}-${now.toString(36)}`;
-        for (const sub of providerSubs) {
-          const subId = String(sub.id);
-          const tradeAmount = Math.max(1, Number(sub.trade_amount ?? sub.allocated_capital ?? 100));
-          const execId = `CET-${subId.slice(0, 8)}-${now.toString(36)}`;
-          insertStmt.run(execId, subId, String(sub.copier_user_id || sub.user_id || "usr_bft_001"), String(sub.copier_account_id || "BFT-LIVE"), String(providerId), assetSymbol, tradeType, tradeAmount, entryPrice, now);
-        }
-        const postExecState = recordMasterSignalExecution({ state: eligibility.state, signalId, nowMs: now });
-        this.persistBackendMasterBotState(postExecState);
-      }
-    } catch {
-    }
-  }
-  getFullPool(nowMs = Date.now()) {
-    const basePool = generate200TraderPool(nowMs);
-    const customList = Array.from(this.customProviders.values());
-    if (customList.length === 0) return basePool;
-    return [...customList, ...basePool];
-  }
-  getLeaderboard(category = "instant_funded", searchQuery = "", limit = LEADERBOARD_TOP_LIMIT) {
-    const now = Date.now();
-    const pool = this.getFullPool(now);
-    const result = queryCopyTradersPool({ pool, category, searchQuery, limit });
-    const rotation = getRotationWindowInfo(now);
-    return { traders: result.traders, totalPoolCount: result.totalPoolCount, isSearchActive: result.isSearchActive, rotation };
-  }
-  registerCustomProvider(params) {
-    const eligibility = evaluateProviderEligibility({ explicitWinRate90d: params.winRate3m });
-    if (!eligibility.eligible) {
-      return { ok: false, error: eligibility.message };
-    }
-    const numericId = String(100301 + this.customProviders.size);
-    const id = params.category === "instant_funded" ? `trd_if_${numericId}` : `trd_sc_${numericId}`;
-    const startBal = params.startingBalance || (params.category === "instant_funded" ? 5e4 : 5e3);
-    const dailyProfit = Number((startBal * 0.065).toFixed(2));
-    const weeklyProfit = Number((startBal * 0.21).toFixed(2));
-    const monthlyProfit = Number((startBal * 0.58).toFixed(2));
-    const threeMonthProfit = Number((startBal * 1.45).toFixed(2));
-    const newProvider = { id, numeric_id: numericId, user_id: params.userId, provider_name: params.providerName, country_code: params.countryCode || "US", country: params.country || "United States", flag: params.flag || "\u{1F1FA}\u{1F1F8}", avatar_url: params.flag || "\u{1F1FA}\u{1F1F8}", account_category: params.category, account_type_label: params.category === "instant_funded" ? `Instant Funded ($${(startBal / 1e3).toFixed(0)}K)` : "Self-Capital Live", strategy_title: params.strategyTitle || "Verified Master Strategy", tier_name: params.category === "instant_funded" ? `$${(startBal / 1e3).toFixed(0)}K Instant Funded` : "Self-Capital Account", vip_level: "Master Trader", starting_balance: startBal, current_balance: Number((startBal + dailyProfit).toFixed(2)), all_time_withdrawals: Number((threeMonthProfit * 0.75).toFixed(2)), lifetime_earnings: Number((threeMonthProfit * 0.75).toFixed(2)), daily_profit: dailyProfit, daily_profit_pct: 6.5, weekly_profit: weeklyProfit, weekly_profit_pct: 21, monthly_profit: monthlyProfit, monthly_profit_pct: 58, three_month_profit: threeMonthProfit, three_month_profit_pct: 145, win_rate_3m: Number(params.winRate3m.toFixed(1)), profit_factor: 2.4, max_drawdown: 3.1, sharpe_ratio: 2.05, avg_holding_time: "2m 30s", total_trades: 310, current_copiers: 1, max_copiers: MAX_COPIERS_PER_TRADER, commission_pct: MASTER_COMMISSION_PERCENT, follower_profit_keep_pct: FOLLOWER_PROFIT_SHARE_PERCENT, is_custom_provider: true };
-    this.customProviders.set(id, newProvider);
-    return { ok: true, provider: newProvider };
-  }
-};
-
-// src/server/aiChatService.ts
-import { GoogleGenAI } from "@google/genai";
-var __defProp4 = Object.defineProperty;
-var __name3 = (target, value) => __defProp4(target, "name", { value, configurable: true });
-var BFT_SUPPORT_SYSTEM_INSTRUCTION = `
-You are the official 24/7 AI Trader Concierge & Institutional Risk Specialist for Binary Funded Trader (BFT Prime Prop Capital).
-Your duty is to assist binary options prop traders with instant, accurate, highly professional, and encouraging support.
-
-INSTITUTIONAL RULES & KNOWLEDGE BASE:
-1. Challenge Models:
-   - 01-Step Challenge: Profit Target: 30%, Daily Drawdown: 10%, Max Overall Drawdown: 15%, Max Risk per Trade: 5%, Minimum 5 Profitable Days (0.5% profit/day).
-   - 02-Step Challenge: Phase 1 Profit Target: 25%, Phase 2 Profit Target: 15%, Daily Drawdown: 8%, Max Overall Drawdown: 20%, Max Risk per Trade: 5%, Minimum 5 Profitable Days.
-   - Instant Funded Account: No profit target required! Daily Drawdown: 6%, Max Overall Drawdown: 12%, Max Risk per Trade: 5%, No minimum days. Immediate profit share eligible after 14-day hold.
-   - Self-Funded (Personal Live) Accounts: Unrestricted trading of your own deposited capital. All challenge rules, daily drawdown, and overall drawdown limits are NONE / Disabled.
-
-2. Trading Regulations:
-   - Minimum Trade Duration: 30 seconds minimum contract expiration (30s, 60s, 3m, 5m). Prevents micro-latency arbitrage.
-   - Red News Policy: 2-minute freeze before and after high-impact economic news releases (CPI, NFP, FOMC).
-   - Position Sizing: No trade may exceed 5x your historical average position size.
-   - Prohibited Strategies: Martingale (exponential doubling upon loss) and simultaneous opposite hedging are strictly prohibited.
-
-3. Payouts & Crypto Rail:
-   - Currency & Rail: Exclusively USDT via TRON network (TRC-20) for lightning-fast sub-3-minute settlement and near-zero fees.
-   - Payout SLA: Guaranteed 3-Minute Instant Payout SLA. First withdrawal requires a 14-day seasoned lock. Minimum withdrawal is $250 with a standard 10% processing fee.
-   - Profit Splits: Standard 80% split (Months 1-3), upgrading to 90% plus capital scaling upon consistent performance.
-
-4. Promo Codes:
-   - "SPOOKY40": Flat 40% OFF for new trader challenges.
-   - "SPOOKY20": Flat 20% OFF for existing funded traders.
-
-5. Tone & Personality:
-   - Professional, concise, authoritative yet welcoming.
-   - Keep answers clear and formatted with bullet points where appropriate.
-   - Never give direct financial advice to buy/sell a specific market, but explain risk mechanics clearly.
-`;
-function generateLocalFallbackReply(userMessage) {
-  const lower = userMessage.toLowerCase();
-  if (lower.includes("1-step") || lower.includes("one step") || lower.includes("01-step") || lower.includes("1 step")) {
-    return `**01-Step Challenge Specifications:**
-\u2022 **Profit Target:** 30%
-\u2022 **Daily Drawdown Limit:** 10%
-\u2022 **Max Overall Drawdown:** 15%
-\u2022 **Max Risk Per Trade:** 5%
-\u2022 **Min Profitable Days:** 5 days (min +0.5% gain/day)
-\u2022 **Profit Split:** 80% to 90% paid via instant TRC-20 USDT.`;
-  }
-  if (lower.includes("2-step") || lower.includes("two step") || lower.includes("02-step") || lower.includes("2 step")) {
-    return `**02-Step Challenge Specifications:**
-\u2022 **Phase 1 Target:** 25%
-\u2022 **Phase 2 Target:** 15%
-\u2022 **Daily Drawdown:** 8%
-\u2022 **Max Overall Drawdown:** 20%
-\u2022 **Max Risk Per Trade:** 5%
-\u2022 **Min Profitable Days:** 5 days
-\u2022 Best value entry for disciplined traders looking for maximum buffer.`;
-  }
-  if (lower.includes("instant") || lower.includes("funded account")) {
-    return `**Instant Funded Account (No Evaluation):**
-\u2022 **Profit Target:** None!
-\u2022 **Daily Drawdown:** 6%
-\u2022 **Max Overall Drawdown:** 12%
-\u2022 **Max Risk Per Trade:** 5%
-\u2022 Skip the evaluation and start trading live institutional capital right away. First payout eligible after 14-day hold.`;
-  }
-  if (lower.includes("drawdown") || lower.includes("breach") || lower.includes("rule")) {
-    return `**Drawdown & Risk Management:**
-\u2022 Calculated in real-time based on high-water equity.
-\u2022 Exceeding daily or max drawdown results in automatic position liquidation and soft/hard breach protection.
-\u2022 Self-funded accounts have zero drawdown restrictions (NONE).`;
-  }
-  if (lower.includes("payout") || lower.includes("withdraw") || lower.includes("usdt") || lower.includes("trc20")) {
-    return `**Instant TRC-20 Payout Details:**
-\u2022 **Speed:** Sub-3-minute automated blockchain dispatch.
-\u2022 **Minimum:** $250.00 USDT (TRC-20).
-\u2022 **Processing Fee:** 10% standard liquidity fee.
-\u2022 **Initial Lock:** 14-day seasoned waiting period on first withdrawal.`;
-  }
-  if (lower.includes("promo") || lower.includes("code") || lower.includes("discount") || lower.includes("spooky")) {
-    return `**Active Official Promos:**
-\u2022 **SPOOKY40**: Flat 40% OFF all challenge packages for new traders.
-\u2022 **SPOOKY20**: Flat 20% OFF for existing accounts.
-Enter these promo codes at checkout for instant price discounts.`;
-  }
-  if (lower.includes("demo") || lower.includes("balance") || lower.includes("reset")) {
-    return `**Custom Demo Balance:**
-You can customize your Demo Account simulator balance to any amount between **$1.00** and **$10,000.00** using the Account Switcher dropdown pencil icon or inside your Trader Hub Profile tab!`;
-  }
-  return `Welcome to BFT Prime Prop Capital support! I can help you with prop trading rules (1-Step, 2-Step, Instant Funded), drawdown limits, our 3-minute TRC-20 payout SLA, active discount codes (SPOOKY40 / SPOOKY20), and account setup. How can I assist your trading today?`;
-}
-__name3(generateLocalFallbackReply, "generateLocalFallbackReply");
-async function generateSupportChatReply(input, optionalHistory = []) {
-  const userMessage = typeof input === "string" ? input : input.message;
-  const chatHistory = typeof input === "string" ? optionalHistory || [] : input.history || [];
-  const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
-  if (!apiKey) {
-    return generateLocalFallbackReply(userMessage);
-  }
-  try {
-    const ai = new GoogleGenAI({ apiKey });
-    const contents = [];
-    for (const msg of chatHistory.slice(-6)) {
-      contents.push({ role: msg.role === "model" ? "model" : "user", parts: [{ text: msg.text }] });
-    }
-    contents.push({ role: "user", parts: [{ text: userMessage }] });
-    const response = await ai.models.generateContent({ model: "gemini-3.8-flash", contents, config: { systemInstruction: BFT_SUPPORT_SYSTEM_INSTRUCTION, temperature: 0.6, maxOutputTokens: 600 } });
-    const reply = response.text?.trim();
-    if (reply && reply.length > 0) {
-      return reply;
-    }
-    return generateLocalFallbackReply(userMessage);
-  } catch (err) {
-    console.warn("[AIChatService] Gemini API call fallback triggered:", err);
-    return generateLocalFallbackReply(userMessage);
-  }
-}
-__name3(generateSupportChatReply, "generateSupportChatReply");
-
-// src/utils/nowpaymentsGateway.ts
-var NOWPAYMENTS_CONFIG = {
-  apiKey: typeof process !== "undefined" && process.env?.NOWPAYMENTS_API_KEY || "ZYWP93K-6EE4JYP-JEE41KB-DJFRCWJ",
-  publicKey: typeof process !== "undefined" && process.env?.NOWPAYMENTS_PUBLIC_KEY || "81e45fae-76b9-43bf-be98-c20d359a124c",
-  ipnSecretKey: typeof process !== "undefined" && process.env?.NOWPAYMENTS_IPN_SECRET_KEY || "MRtdlK6QOFZbS5SglqliuVgYFoduLFNR",
-  apiBaseUrl: "https://api.nowpayments.io/v1",
-  defaultCurrency: "usdttrc20"
-};
-var BASE58_CHARS = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-var HEX_CHARS = "0123456789abcdef";
-var _cachedNodeCrypto = null;
-function getNodeCrypto() {
-  if (_cachedNodeCrypto) return _cachedNodeCrypto;
-  try {
-    if (typeof process !== "undefined") {
-      if (typeof process.getBuiltinModule === "function") {
-        _cachedNodeCrypto = process.getBuiltinModule("node:crypto");
-        if (_cachedNodeCrypto) return _cachedNodeCrypto;
-      }
-      const req = new Function("m", "try { return require(m); } catch { return null; }");
-      _cachedNodeCrypto = req("crypto") || req("node:crypto");
-      if (_cachedNodeCrypto) return _cachedNodeCrypto;
-    }
-  } catch {
-  }
-  return null;
-}
-function sortObjectKeysAlphabetically(obj) {
-  if (typeof obj !== "object" || obj === null) {
-    return obj;
-  }
-  if (Array.isArray(obj)) {
-    return obj.map(sortObjectKeysAlphabetically);
-  }
-  return Object.keys(obj).sort().reduce((result, key) => {
-    result[key] = sortObjectKeysAlphabetically(obj[key]);
-    return result;
-  }, {});
-}
-function verifyNowPaymentsIpnSignature(payload, signature, secretKey = NOWPAYMENTS_CONFIG.ipnSecretKey) {
-  if (!signature || !secretKey || !payload || typeof payload !== "object") {
-    return false;
-  }
-  try {
-    const sorted = sortObjectKeysAlphabetically(payload);
-    const jsonString = JSON.stringify(sorted);
-    const nc = getNodeCrypto();
-    if (nc && nc.createHmac) {
-      const hmac = nc.createHmac("sha512", secretKey.trim());
-      hmac.update(jsonString);
-      const calculatedSignature = hmac.digest("hex");
-      const cleanSignature = signature.trim().toLowerCase();
-      const cleanCalculated = calculatedSignature.toLowerCase();
-      if (nc.timingSafeEqual && cleanSignature.length === cleanCalculated.length) {
-        return nc.timingSafeEqual(
-          Buffer.from(cleanSignature, "utf-8"),
-          Buffer.from(cleanCalculated, "utf-8")
-        );
-      }
-      return cleanSignature === cleanCalculated;
-    }
-  } catch (err) {
-    console.warn("NOWPayments IPN signature verification error:", err);
-  }
-  return false;
-}
-function parseNowPaymentsIpnPayload(payload, signature, secretKey = NOWPAYMENTS_CONFIG.ipnSecretKey) {
-  if (!payload || typeof payload !== "object") {
-    return {
-      valid: false,
-      status: "unknown",
-      orderId: "",
-      paymentId: "",
-      paidAmountUsd: 0,
-      payCurrency: "",
-      payAddress: "",
-      isFinished: false,
-      reason: "Empty or invalid IPN payload."
-    };
-  }
-  if (signature !== void 0 && signature !== null) {
-    const isSigValid = verifyNowPaymentsIpnSignature(payload, signature, secretKey);
-    if (!isSigValid) {
-      return {
-        valid: false,
-        status: "unknown",
-        orderId: String(payload.order_id || ""),
-        paymentId: String(payload.payment_id || ""),
-        paidAmountUsd: Number(payload.price_amount || 0),
-        payCurrency: String(payload.pay_currency || ""),
-        payAddress: String(payload.pay_address || ""),
-        isFinished: false,
-        reason: "Invalid NOWPayments IPN signature (x-nowpayments-sig mismatch)."
-      };
-    }
-  }
-  const rawStatus = String(payload.payment_status || "").trim().toLowerCase();
-  let normalizedStatus = "waiting";
-  if (rawStatus === "finished") {
-    normalizedStatus = "finished";
-  } else if (rawStatus === "confirming") {
-    normalizedStatus = "confirming";
-  } else if (rawStatus === "confirmed") {
-    normalizedStatus = "confirmed";
-  } else if (rawStatus === "sending") {
-    normalizedStatus = "sending";
-  } else if (rawStatus === "partially_paid") {
-    normalizedStatus = "partially_paid";
-  } else if (["failed", "expired", "refunded"].includes(rawStatus)) {
-    normalizedStatus = rawStatus === "expired" ? "expired" : "failed";
-  }
-  return {
-    valid: true,
-    status: normalizedStatus,
-    orderId: String(payload.order_id || ""),
-    paymentId: String(payload.payment_id || ""),
-    paidAmountUsd: Number(payload.actually_paid || payload.price_amount || 0),
-    payCurrency: String(payload.pay_currency || "").toLowerCase(),
-    payAddress: String(payload.pay_address || ""),
-    isFinished: normalizedStatus === "finished",
-    reason: `Payment status is ${rawStatus}`
-  };
-}
-function generateDynamicNowPaymentsAddress(orderId, currencyCode = "usdttrc20", seed = "bft_nowpayments") {
-  const combined = `${orderId}:${currencyCode}:${seed}:nowpayments`;
-  let hashA = 2166136261;
-  let hashB = 16777619;
-  for (let i = 0; i < combined.length; i++) {
-    const ch = combined.charCodeAt(i);
-    hashA ^= ch;
-    hashA = Math.imul(hashA, 16777619) >>> 0;
-    hashB ^= ch + i * 19 & 255;
-    hashB = Math.imul(hashB, 2246822507) >>> 0;
-  }
-  const cur = currencyCode.toLowerCase();
-  if (cur.includes("trc") || cur === "trx") {
-    let out2 = "T";
-    let state2 = hashA ^ 2779096485;
-    for (let i = 0; i < 33; i++) {
-      state2 = Math.imul(state2 ^ i + 1, 1664525) + 1013904223 + (hashB >>> i % 16) >>> 0;
-      const idx = state2 % BASE58_CHARS.length;
-      out2 += BASE58_CHARS[idx];
-    }
-    return out2;
-  }
-  if (cur.includes("btc")) {
-    let out2 = "bc1q";
-    let state2 = hashA ^ 1010580540;
-    for (let i = 0; i < 38; i++) {
-      state2 = Math.imul(state2 ^ i + 3, 1103515245) + 12345 + (hashB >>> i % 16) >>> 0;
-      const idx = state2 % HEX_CHARS.length;
-      out2 += HEX_CHARS[idx];
-    }
-    return out2;
-  }
-  let out = "0x";
-  let state = hashA ^ 1515870810;
-  for (let i = 0; i < 40; i++) {
-    state = Math.imul(state ^ i + 7, 22695477) + 1 + (hashB >>> i % 16) >>> 0;
-    const idx = state % HEX_CHARS.length;
-    out += HEX_CHARS[idx];
-  }
-  return out;
-}
-async function createNowPaymentsPayment(params) {
-  const apiKey = params.apiKey || NOWPAYMENTS_CONFIG.apiKey;
-  const payCurrency = (params.payCurrency || NOWPAYMENTS_CONFIG.defaultCurrency).toLowerCase();
-  const orderId = params.orderId || `NOW-ORD-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
-  const orderDescription = params.orderDescription || `BFT Trading Account Deposit - $${params.amountUsd.toFixed(2)}`;
-  const requestBody = {
-    price_amount: Number(params.amountUsd.toFixed(2)),
-    price_currency: "usd",
-    pay_currency: payCurrency,
-    ipn_callback_url: params.ipnCallbackUrl,
-    order_id: orderId,
-    order_description: orderDescription,
-    is_fee_paid_by_user: false
-  };
-  try {
-    const res = await fetch(`${NOWPAYMENTS_CONFIG.apiBaseUrl}/payment`, {
-      method: "POST",
-      headers: {
-        "x-api-key": apiKey,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(requestBody)
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.pay_address && data.payment_id) {
-        return {
-          payment_id: String(data.payment_id),
-          payment_status: data.payment_status || "waiting",
-          pay_address: String(data.pay_address),
-          price_amount: Number(data.price_amount || params.amountUsd),
-          price_currency: String(data.price_currency || "usd"),
-          pay_amount: Number(data.pay_amount || params.amountUsd),
-          amount_received: Number(data.amount_received || 0),
-          pay_currency: String(data.pay_currency || payCurrency),
-          order_id: String(data.order_id || orderId),
-          order_description: String(data.order_description || orderDescription),
-          ipn_callback_url: String(data.ipn_callback_url || params.ipnCallbackUrl || ""),
-          created_at: data.created_at || (/* @__PURE__ */ new Date()).toISOString(),
-          updated_at: data.updated_at || (/* @__PURE__ */ new Date()).toISOString(),
-          purchase_id: data.purchase_id ? String(data.purchase_id) : void 0,
-          network: data.network
-        };
-      }
-    }
-    const errText = await res.text().catch(() => "");
-    let errJson = null;
-    try {
-      errJson = JSON.parse(errText);
-    } catch {
-    }
-    if (errJson?.code === "AMOUNT_MINIMAL_ERROR" || errText.includes("AMOUNT_MINIMAL_ERROR") || errText.includes("less than minimal")) {
-      const minMsg = errJson?.message || "Crypto deposit amount is less than the minimum required by NOWPayments.";
-      throw new Error(
-        `NOWPayments Error: ${minMsg} Please enter a higher deposit amount (e.g. $15.00+ USD) and try again.`
-      );
-    }
-    if (res.status >= 400 && res.status < 500 && errJson?.message) {
-      throw new Error(`NOWPayments Error: ${errJson.message}`);
-    }
-    console.warn(`NOWPayments API live call returned status ${res.status}:`, errText);
-  } catch (err) {
-    if (err?.message && err.message.startsWith("NOWPayments")) {
-      throw err;
-    }
-    console.warn("NOWPayments API fetch network error:", err);
-  }
-  const dynamicAddress = generateDynamicNowPaymentsAddress(
-    orderId,
-    payCurrency,
-    params.customerEmail || "bft"
-  );
-  return {
-    payment_id: `now_pay_${Date.now()}`,
-    payment_status: "waiting",
-    pay_address: dynamicAddress,
-    price_amount: Number(params.amountUsd.toFixed(2)),
-    price_currency: "usd",
-    pay_amount: Number(params.amountUsd.toFixed(2)),
-    amount_received: 0,
-    pay_currency: payCurrency,
-    order_id: orderId,
-    order_description: orderDescription,
-    ipn_callback_url: params.ipnCallbackUrl,
-    created_at: (/* @__PURE__ */ new Date()).toISOString(),
-    updated_at: (/* @__PURE__ */ new Date()).toISOString()
-  };
-}
-async function getNowPaymentsPaymentStatus(paymentId, apiKey = NOWPAYMENTS_CONFIG.apiKey) {
-  const cleanId = String(paymentId).trim();
-  if (!cleanId) {
-    return {
-      ok: false,
-      paymentId: "",
-      paymentStatus: "unknown",
-      isFinished: false
-    };
-  }
-  try {
-    const res = await fetch(`${NOWPAYMENTS_CONFIG.apiBaseUrl}/payment/${cleanId}`, {
-      method: "GET",
-      headers: {
-        "x-api-key": apiKey
-      }
-    });
-    if (res.ok) {
-      const data = await res.json();
-      const status = String(data.payment_status || "waiting").toLowerCase();
-      return {
-        ok: true,
-        paymentId: cleanId,
-        paymentStatus: status,
-        actuallyPaid: Number(data.actually_paid || data.pay_amount || 0),
-        payAddress: data.pay_address,
-        payAmount: Number(data.pay_amount || 0),
-        payCurrency: data.pay_currency,
-        orderId: data.order_id,
-        isFinished: status === "finished"
-      };
-    }
-  } catch (err) {
-    console.warn(`Error querying NOWPayments status for ${paymentId}:`, err);
-  }
-  return {
-    ok: false,
-    paymentId: cleanId,
-    paymentStatus: "waiting",
-    isFinished: false
-  };
-}
-
 // node_modules/@supabase/supabase-js/dist/index.mjs
 var dist_exports = {};
 __export(dist_exports, {
@@ -54107,6 +47944,6330 @@ var supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   }
 });
 
+// src/utils/fundedWalletAnalytics.ts
+var DEFAULT_SOFT_BREACH_COOLDOWN_MS = 15 * 60 * 1e3;
+var unsupportedWalletColumns = /* @__PURE__ */ new Set();
+function round2(n) {
+  if (!Number.isFinite(n)) return 0;
+  return Number(n.toFixed(2));
+}
+function getUtcDateKey(ms = Date.now()) {
+  return new Date(ms).toISOString().split("T")[0];
+}
+function normalizeFundedWalletStatus(rawStatus, breachType) {
+  const clean = String(rawStatus || "").trim().toUpperCase();
+  if (clean === "HARD_BREACH" || clean === "HARD_BREACHED" || clean === "HARD-BREACHED" || clean === "FAILED" || clean === "BREACHED") {
+    return "HARD_BREACH";
+  }
+  if (clean === "SOFT_BREACH" || clean === "SOFT_BREACHED" || clean === "SOFT-BREACHED") {
+    return "SOFT_BREACH";
+  }
+  if (clean === "PASSED" || clean === "PASSED_PHASE_1") {
+    return "PASSED";
+  }
+  if (breachType === "hard") return "HARD_BREACH";
+  if (breachType === "soft") return "SOFT_BREACH";
+  return "ACTIVE";
+}
+function resolveChallengeTypeLabel(account) {
+  if (account.tierName && account.tierName.trim()) {
+    return account.tierName.trim();
+  }
+  const norm = normalizeChallengeAccountType(account.accountType || account.tier);
+  if (norm === "one_step") return "One-Step Challenge";
+  if (norm === "instant") return "Instant Funded";
+  return "Two-Step Challenge";
+}
+function buildInitialFundedWalletFromAccount(account, userId, existing, nowMs = Date.now()) {
+  const limits = getDynamicAccountLimits(
+    account.accountType || account.tier,
+    account.phase || account.challengePhase,
+    {
+      dailyDrawdown: account.dailyLossLimitPercent,
+      maxDrawdown: account.maxOverallLossPercent,
+      profitTarget: account.profitTargetPercent
+    }
+  );
+  const initialBalance = round2(
+    Math.max(0, Number(existing?.initial_balance ?? (account.initialBalance || account.size || account.currentBalance || 0)))
+  );
+  const currentBalance = round2(
+    Math.max(0, Number(account.currentBalance ?? existing?.current_balance ?? initialBalance))
+  );
+  const currentEquity = round2(
+    Math.max(0, Number(account.equity ?? existing?.current_equity ?? currentBalance))
+  );
+  const profitTargetPercent = round2(
+    Number(existing?.profit_target_percent ?? account.profitTargetPercent ?? limits.profitTargetPercent ?? 0)
+  );
+  const profitTargetAmount = round2(
+    Number(
+      existing?.profit_target_amount ?? (profitTargetPercent > 0 ? initialBalance * profitTargetPercent / 100 : 0)
+    )
+  );
+  const dailyDrawdownLimitPercent = round2(
+    Number(existing?.daily_drawdown_limit_percent ?? account.dailyLossLimitPercent ?? limits.dailyLossLimitPercent ?? 0)
+  );
+  const dailyDrawdownLimitAmount = round2(
+    Number(
+      existing?.daily_drawdown_limit_amount ?? (dailyDrawdownLimitPercent > 0 ? initialBalance * dailyDrawdownLimitPercent / 100 : 0)
+    )
+  );
+  const maxDrawdownLimitPercent = round2(
+    Number(existing?.max_drawdown_limit_percent ?? account.maxOverallLossPercent ?? limits.maxOverallLossPercent ?? 0)
+  );
+  const maxDrawdownLimitAmount = round2(
+    Number(
+      existing?.max_drawdown_limit_amount ?? (maxDrawdownLimitPercent > 0 ? initialBalance * maxDrawdownLimitPercent / 100 : 0)
+    )
+  );
+  const startingDayBalance = round2(
+    Number(existing?.starting_day_balance ?? (account.startingDayEquity || currentBalance || initialBalance))
+  );
+  const currentProfitAmount = round2(
+    existing?.current_profit_amount !== void 0 ? Number(existing.current_profit_amount) : currentBalance - initialBalance
+  );
+  const currentDailyDrawdown = round2(
+    existing?.current_daily_drawdown !== void 0 ? Number(existing.current_daily_drawdown) : Math.max(0, startingDayBalance - Math.min(currentBalance, currentEquity))
+  );
+  const currentMaxDrawdown = round2(
+    existing?.current_max_drawdown !== void 0 ? Number(existing.current_max_drawdown) : Math.max(0, initialBalance - Math.min(currentBalance, currentEquity))
+  );
+  const minProfitableDays = Math.max(
+    1,
+    Math.round(Number(existing?.min_profitable_days ?? (limits.minProfitableDays > 0 ? limits.minProfitableDays : 5)))
+  );
+  const completedProfitableDays = Math.max(
+    0,
+    Math.round(Number(existing?.completed_profitable_days ?? account.tradingDaysCompleted ?? 0))
+  );
+  const accountStatus = existing?.account_status ? normalizeFundedWalletStatus(existing.account_status) : normalizeFundedWalletStatus(account.status, account.breachType);
+  const softBreachUntil = existing?.soft_breach_until ?? (accountStatus === "SOFT_BREACH" && account.softBreachResetTime ? new Date(account.softBreachResetTime).toISOString() : null);
+  const breachReason = existing?.breach_reason ?? (accountStatus === "HARD_BREACH" || accountStatus === "SOFT_BREACH" ? account.breachReason || null : null);
+  const nowIso = new Date(nowMs).toISOString();
+  const todayKey = getUtcDateKey(nowMs);
+  return {
+    id: String(existing?.id || account.supabaseAccountId || account.id),
+    account_id: String(existing?.account_id || account.id),
+    user_id: String(existing?.user_id || userId || account.ownerId || "usr_bft_001"),
+    challenge_type: String(existing?.challenge_type || resolveChallengeTypeLabel(account)),
+    account_status: accountStatus,
+    soft_breach_until: softBreachUntil,
+    breach_reason: breachReason,
+    initial_balance: initialBalance,
+    current_balance: currentBalance,
+    current_equity: currentEquity,
+    current_profit_amount: currentProfitAmount,
+    profit_target_amount: profitTargetAmount,
+    profit_target_percent: profitTargetPercent,
+    current_daily_drawdown: currentDailyDrawdown,
+    daily_drawdown_limit_amount: dailyDrawdownLimitAmount,
+    daily_drawdown_limit_percent: dailyDrawdownLimitPercent,
+    current_max_drawdown: currentMaxDrawdown,
+    max_drawdown_limit_amount: maxDrawdownLimitAmount,
+    max_drawdown_limit_percent: maxDrawdownLimitPercent,
+    completed_profitable_days: completedProfitableDays,
+    min_profitable_days: minProfitableDays,
+    daily_net_profit: round2(Number(existing?.daily_net_profit ?? 0)),
+    daily_profit_date: existing?.daily_profit_date ?? todayKey,
+    last_profitable_day_date: existing?.last_profitable_day_date ?? null,
+    starting_day_balance: startingDayBalance > 0 ? startingDayBalance : initialBalance,
+    updated_at: existing?.updated_at || nowIso,
+    created_at: existing?.created_at || nowIso
+  };
+}
+function buildSupabaseWalletPayload(wallet) {
+  const full = {
+    account_id: wallet.account_id,
+    user_id: wallet.user_id,
+    challenge_type: wallet.challenge_type,
+    account_status: wallet.account_status,
+    soft_breach_until: wallet.soft_breach_until,
+    breach_reason: wallet.breach_reason,
+    initial_balance: wallet.initial_balance,
+    current_balance: wallet.current_balance,
+    current_equity: wallet.current_equity,
+    current_profit_amount: wallet.current_profit_amount,
+    profit_target_amount: wallet.profit_target_amount,
+    profit_target_percent: wallet.profit_target_percent,
+    current_daily_drawdown: wallet.current_daily_drawdown,
+    daily_drawdown_limit_amount: wallet.daily_drawdown_limit_amount,
+    daily_drawdown_limit_percent: wallet.daily_drawdown_limit_percent,
+    current_max_drawdown: wallet.current_max_drawdown,
+    max_drawdown_limit_amount: wallet.max_drawdown_limit_amount,
+    max_drawdown_limit_percent: wallet.max_drawdown_limit_percent,
+    completed_profitable_days: wallet.completed_profitable_days,
+    updated_at: wallet.updated_at
+  };
+  for (const col of Array.from(unsupportedWalletColumns)) {
+    delete full[col];
+  }
+  return full;
+}
+
+// src/utils/affiliateEngine.ts
+function normalizeSocialLinksList(links) {
+  const rawList = Array.isArray(links) ? links : String(links || "").split(/[\n,]+/).map((s) => s.trim());
+  const deduped = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const item of rawList) {
+    const clean = String(item || "").trim();
+    if (!clean) continue;
+    const key = clean.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      deduped.push(clean);
+    }
+  }
+  return deduped;
+}
+function validateAffiliateSocialSubmission(params) {
+  if (params.alreadyLocked) {
+    return {
+      valid: false,
+      error: "Your affiliate marketing profile is already Verified & Locked and cannot be edited.",
+      platformType: String(params.platformType || "").trim(),
+      socialLinks: []
+    };
+  }
+  const platformType = String(params.platformType || "").trim();
+  if (!platformType) {
+    return {
+      valid: false,
+      error: "Please select your primary Social Media / Marketing Platform.",
+      platformType: "",
+      socialLinks: []
+    };
+  }
+  const socialLinks = normalizeSocialLinksList(params.links);
+  if (socialLinks.length === 0) {
+    return {
+      valid: false,
+      error: "Please enter at least one Group, Page, or Channel link.",
+      platformType,
+      socialLinks: []
+    };
+  }
+  for (const link of socialLinks) {
+    if (link.length < 4 || !link.includes(".") && !link.startsWith("@") && !link.startsWith("http")) {
+      return {
+        valid: false,
+        error: `Please provide a valid link or channel URL (invalid entry: "${link}").`,
+        platformType,
+        socialLinks: []
+      };
+    }
+  }
+  return {
+    valid: true,
+    platformType,
+    socialLinks
+  };
+}
+function validateCountryManagerApplication(params) {
+  const fullName = String(params.fullName || "").trim();
+  const targetCountry = String(params.targetCountry || "").trim();
+  const rawTelegram = String(params.telegramHandle || "").trim();
+  const telegramHandle = rawTelegram ? rawTelegram.startsWith("@") ? rawTelegram : `@${rawTelegram}` : "";
+  const estimatedAudienceSize = String(params.estimatedAudienceSize ?? "").trim();
+  const marketingStrategy = String(params.marketingStrategy || "").trim();
+  const socialLinks = normalizeSocialLinksList(params.socialLinks);
+  if (fullName.length < 2) {
+    return { valid: false, error: "Please enter your Full Name." };
+  }
+  if (targetCountry.length < 2) {
+    return { valid: false, error: "Please enter your Target Country." };
+  }
+  if (telegramHandle.length < 3) {
+    return { valid: false, error: "Please enter a valid Telegram Handle (e.g., @yourhandle)." };
+  }
+  if (!estimatedAudienceSize) {
+    return { valid: false, error: "Please specify your Estimated Audience / Community Size." };
+  }
+  if (marketingStrategy.length < 15) {
+    return {
+      valid: false,
+      error: "Please provide a brief Marketing Strategy description (at least 15 characters)."
+    };
+  }
+  if (socialLinks.length === 0) {
+    return { valid: false, error: "Please provide at least one relevant Social Link." };
+  }
+  return {
+    valid: true,
+    normalized: {
+      fullName,
+      targetCountry,
+      telegramHandle,
+      estimatedAudienceSize,
+      marketingStrategy,
+      socialLinks
+    }
+  };
+}
+
+// src/server/db.ts
+import { DatabaseSync } from "node:sqlite";
+import path from "node:path";
+import fs from "node:fs";
+import os from "node:os";
+var __defProp2 = Object.defineProperty;
+var __name = (target, value) => __defProp2(target, "name", { value, configurable: true });
+function openResilientDatabase() {
+  const candidates = [path.resolve(process.cwd(), "data"), path.resolve(os.tmpdir(), "bft_data")];
+  for (const dir of candidates) {
+    try {
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      const dbFile = path.join(dir, "bft_platform.sqlite");
+      try {
+        const instance = new DatabaseSync(dbFile);
+        instance.exec("SELECT count(*) FROM sqlite_master;");
+        try {
+          instance.exec("PRAGMA journal_mode = WAL;");
+        } catch {
+        }
+        return instance;
+      } catch (err) {
+        const msg = String(err?.message || "").toLowerCase();
+        if (msg.includes("malformed") || msg.includes("disk image") || msg.includes("file is not a database")) {
+          try {
+            const backupFile = `${dbFile}.corrupted_${Date.now()}`;
+            if (fs.existsSync(dbFile)) {
+              fs.renameSync(dbFile, backupFile);
+              console.warn(`Renamed corrupted SQLite database to ${backupFile}`);
+            }
+            const freshInstance = new DatabaseSync(dbFile);
+            return freshInstance;
+          } catch {
+          }
+        }
+        throw err;
+      }
+    } catch {
+    }
+  }
+  return new DatabaseSync(":memory:");
+}
+__name(openResilientDatabase, "openResilientDatabase");
+var db = openResilientDatabase();
+db.exec(`
+  PRAGMA foreign_keys = ON;
+
+  -- 1. Users Table
+  CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    email TEXT UNIQUE NOT NULL,
+    full_name TEXT NOT NULL,
+    avatar_url TEXT,
+    google_id TEXT,
+    referral_code TEXT UNIQUE NOT NULL,
+    referred_by TEXT,
+    kyc_status TEXT DEFAULT 'unverified',
+    kyc_verified_at INTEGER,
+    kyc_timer_ends_at INTEGER,
+    kyc_doc_type TEXT,
+    profile_locked INTEGER DEFAULT 0,
+    address TEXT,
+    date_of_birth TEXT,
+    country TEXT DEFAULT 'United States',
+    telegram_handle TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
+  -- 2. Sessions Table (HTTP-Only / Bearer Session Management)
+  CREATE TABLE IF NOT EXISTS sessions (
+    token TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+
+  -- 3. Trading Accounts Table
+  CREATE TABLE IF NOT EXISTS accounts (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    tier TEXT NOT NULL,
+    tier_name TEXT NOT NULL,
+    size REAL NOT NULL,
+    initial_balance REAL NOT NULL,
+    current_balance REAL NOT NULL,
+    starting_day_equity REAL NOT NULL,
+    equity REAL NOT NULL,
+    daily_loss_limit_percent REAL NOT NULL,
+    max_overall_loss_percent REAL NOT NULL,
+    max_risk_per_trade_percent REAL DEFAULT 5,
+    status TEXT DEFAULT 'active',
+    phase TEXT DEFAULT 'funded',
+    trading_days_completed INTEGER DEFAULT 14,
+    trades_count INTEGER DEFAULT 0,
+    win_rate REAL DEFAULT 0,
+    daily_withdrawals_unlocked INTEGER DEFAULT 0,
+    first_withdrawal_completed INTEGER DEFAULT 0,
+    created_date TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
+  -- 4. Referrals Network Table (3-Tier Chain)
+  CREATE TABLE IF NOT EXISTS referrals (
+    id TEXT PRIMARY KEY,
+    sponsor_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    referred_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    tier_level INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+
+  -- 5. Affiliate Commissions Ledger
+  CREATE TABLE IF NOT EXISTS commissions (
+    id TEXT PRIMARY KEY,
+    sponsor_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    referred_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    source_type TEXT NOT NULL, -- 'purchase' or 'withdrawal'
+    tier_level INTEGER NOT NULL, -- 1, 2, or 3
+    package_tier TEXT,
+    package_name TEXT,
+    base_amount REAL NOT NULL,
+    rate REAL NOT NULL,
+    commission_amount REAL NOT NULL,
+    status TEXT DEFAULT 'paid',
+    created_at INTEGER NOT NULL
+  );
+
+  -- 6. Withdrawals Ledger
+  CREATE TABLE IF NOT EXISTS withdrawals (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    gross_amount REAL NOT NULL,
+    net_profit REAL NOT NULL,
+    max_allowed_profit REAL NOT NULL,
+    profit_share_rate REAL DEFAULT 0.80,
+    fee_amount REAL NOT NULL,
+    net_payout REAL NOT NULL,
+    wallet_address TEXT NOT NULL,
+    network TEXT NOT NULL,
+    payment_method TEXT NOT NULL,
+    status TEXT DEFAULT 'completed',
+    rejection_reason TEXT,
+    tx_hash TEXT,
+    reference_number TEXT,
+    requested_at INTEGER NOT NULL,
+    processed_at INTEGER
+  );
+
+  -- 7. Leaderboard Table
+  CREATE TABLE IF NOT EXISTS leaderboard (
+    id TEXT PRIMARY KEY,
+    rank INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    country TEXT NOT NULL,
+    flag TEXT NOT NULL,
+    account_tier TEXT NOT NULL,
+    profit REAL NOT NULL,
+    win_rate REAL NOT NULL,
+    payout_time TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
+  -- 8. Copy Trading Profiles Table
+  CREATE TABLE IF NOT EXISTS copy_trading_profiles (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    country TEXT NOT NULL,
+    flag TEXT NOT NULL,
+    avatar TEXT NOT NULL,
+    category TEXT NOT NULL,
+    strategy_name TEXT NOT NULL,
+    vip_level TEXT NOT NULL,
+    starting_capital REAL NOT NULL,
+    current_balance REAL NOT NULL,
+    lifetime_earnings REAL NOT NULL,
+    daily_profit_dollars REAL NOT NULL,
+    weekly_profit_pct REAL NOT NULL,
+    monthly_profit_pct REAL NOT NULL,
+    win_rate REAL NOT NULL,
+    total_trades INTEGER NOT NULL,
+    trading_turnover REAL NOT NULL,
+    total_copiers INTEGER DEFAULT 0,
+    max_copiers INTEGER DEFAULT 1000,
+    win_rate_3m REAL NOT NULL,
+    profit_factor REAL DEFAULT 2.15,
+    max_drawdown REAL DEFAULT 4.2,
+    sharpe_ratio REAL DEFAULT 1.85,
+    avg_holding_time TEXT DEFAULT '4h 12m',
+    status TEXT DEFAULT 'approved',
+    created_at INTEGER NOT NULL
+  );
+
+  -- 9. Copy Trading Subscriptions Table
+  CREATE TABLE IF NOT EXISTS copy_trading_subscriptions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    provider_id TEXT NOT NULL,
+    allocated_capital REAL DEFAULT 100,
+    max_loss_limit REAL DEFAULT 0,
+    take_profit_limit REAL DEFAULT 0,
+    trade_sizing_type TEXT DEFAULT 'proportionate',
+    sizing_multiplier REAL DEFAULT 1.0,
+    status TEXT DEFAULT 'active',
+    current_pnl REAL DEFAULT 0,
+    created_at INTEGER NOT NULL
+  );
+
+  -- 10. Copy Executed Trades Table
+  CREATE TABLE IF NOT EXISTS copy_executed_trades (
+    id TEXT PRIMARY KEY,
+    subscription_id TEXT NOT NULL,
+    copier_user_id TEXT NOT NULL,
+    copier_account_id TEXT NOT NULL,
+    provider_id TEXT NOT NULL,
+    asset_symbol TEXT NOT NULL,
+    trade_type TEXT NOT NULL,
+    amount REAL NOT NULL,
+    entry_price REAL NOT NULL,
+    exit_price REAL,
+    status TEXT DEFAULT 'OPEN',
+    pnl REAL DEFAULT 0,
+    created_at INTEGER NOT NULL
+  );
+
+  -- 11. Platform Revenue Pool & House Capital Structure Ledger
+  CREATE TABLE IF NOT EXISTS platform_revenue_pool (
+    id TEXT PRIMARY KEY,
+    pool_balance REAL DEFAULT 2500000.0,
+    total_lost_stakes_captured REAL DEFAULT 0.0,
+    total_win_payouts_disbursed REAL DEFAULT 0.0,
+    total_spread_retained REAL DEFAULT 0.0,
+    total_cutoff_liquidations REAL DEFAULT 0.0,
+    trades_settled_count INTEGER DEFAULT 0,
+    updated_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS platform_revenue_ledger (
+    id TEXT PRIMARY KEY,
+    trade_id TEXT NOT NULL,
+    subscription_id TEXT NOT NULL,
+    copier_user_id TEXT NOT NULL,
+    copier_account_id TEXT NOT NULL,
+    investment_amount REAL NOT NULL,
+    platform_credit REAL NOT NULL,
+    house_spread_retained REAL DEFAULT 0.0,
+    settlement_reason TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+
+  -- 12. Master Trader Bot Execution & Cool-Off State Table
+  CREATE TABLE IF NOT EXISTS master_trader_bot_state (
+    provider_id TEXT PRIMARY KEY,
+    status TEXT DEFAULT 'active',
+    pause_reason TEXT DEFAULT 'NONE',
+    last_trade_executed_at INTEGER DEFAULT 0,
+    last_cooldown_duration_ms INTEGER DEFAULT 0,
+    next_eligible_trade_at INTEGER DEFAULT 0,
+    paused_until_ms INTEGER DEFAULT 0,
+    hour_window_start_ms INTEGER DEFAULT 0,
+    max_trades_this_hour INTEGER DEFAULT 4,
+    trades_executed_this_hour INTEGER DEFAULT 0,
+    consecutive_wins INTEGER DEFAULT 0,
+    consecutive_losses INTEGER DEFAULT 0,
+    total_signals_generated INTEGER DEFAULT 0,
+    last_signal_id TEXT,
+    updated_at INTEGER NOT NULL
+  );
+`);
+try {
+  db.prepare(`
+    INSERT OR IGNORE INTO platform_revenue_pool (
+      id, pool_balance, total_lost_stakes_captured, total_win_payouts_disbursed,
+      total_spread_retained, total_cutoff_liquidations, trades_settled_count, updated_at
+    ) VALUES ('HOUSE_POOL_MAIN', 2500000.0, 0.0, 0.0, 0.0, 0.0, 0, ?)
+  `).run(Date.now());
+} catch {
+}
+var copyTradingAlterColumns = [`ALTER TABLE copy_trading_subscriptions ADD COLUMN allocated_capital REAL DEFAULT 100;`, `ALTER TABLE copy_trading_subscriptions ADD COLUMN max_loss_limit REAL DEFAULT 0;`, `ALTER TABLE copy_trading_subscriptions ADD COLUMN take_profit_limit REAL DEFAULT 0;`, `ALTER TABLE copy_trading_subscriptions ADD COLUMN trade_sizing_type TEXT DEFAULT 'proportionate';`, `ALTER TABLE copy_trading_subscriptions ADD COLUMN sizing_multiplier REAL DEFAULT 1.0;`, `ALTER TABLE copy_trading_subscriptions ADD COLUMN current_pnl REAL DEFAULT 0;`, `ALTER TABLE copy_trading_subscriptions ADD COLUMN copier_user_id TEXT;`, `ALTER TABLE copy_trading_subscriptions ADD COLUMN copier_account_id TEXT;`, `ALTER TABLE copy_trading_subscriptions ADD COLUMN trade_amount REAL DEFAULT 100;`, `ALTER TABLE copy_trading_subscriptions ADD COLUMN stop_loss REAL DEFAULT 0;`, `ALTER TABLE copy_trading_subscriptions ADD COLUMN take_profit REAL DEFAULT 0;`, `ALTER TABLE copy_trading_subscriptions ADD COLUMN max_drawdown REAL DEFAULT 5.0;`, `ALTER TABLE copy_trading_profiles ADD COLUMN profit_factor REAL DEFAULT 2.15;`, `ALTER TABLE copy_trading_profiles ADD COLUMN max_drawdown REAL DEFAULT 4.2;`, `ALTER TABLE copy_trading_profiles ADD COLUMN sharpe_ratio REAL DEFAULT 1.85;`, `ALTER TABLE copy_trading_profiles ADD COLUMN avg_holding_time TEXT DEFAULT '4h 12m';`, `ALTER TABLE commissions ADD COLUMN affiliate_tier TEXT DEFAULT 'basic';`, `ALTER TABLE users ADD COLUMN registered_tier TEXT DEFAULT 'basic';`];
+for (const stmt of copyTradingAlterColumns) {
+  try {
+    db.exec(stmt);
+  } catch {
+  }
+}
+function seedInitialData() {
+  const userCount = Number(db.prepare("SELECT COUNT(*) as c FROM users").get().c);
+  if (userCount > 0) return;
+  const now = Date.now();
+  db.prepare(`
+    INSERT INTO users (id, email, full_name, referral_code, referred_by, kyc_status, profile_locked, address, date_of_birth, country, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("USR-MASTER-88", "viktor.v@quant-prop.io", "Viktor Vance", "BFT-VIKTOR88", null, "verified", 1, "Level 42, Al Saada St, Dubai Financial Centre", "1985-04-12", "United Arab Emirates", now - 864e5 * 60, now - 864e5 * 60);
+  db.prepare(`
+    INSERT INTO users (id, email, full_name, referral_code, referred_by, kyc_status, profile_locked, address, date_of_birth, country, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("USR-PARENT-55", "elena.rostova@alpha-traders.com", "Elena Rostova", "BFT-ELENA55", "USR-MASTER-88", "verified", 1, "12 Bishopsgate, London EC2N 4BQ", "1991-08-20", "United Kingdom", now - 864e5 * 45, now - 864e5 * 45);
+  db.prepare(`
+    INSERT INTO users (id, email, full_name, referral_code, referred_by, kyc_status, profile_locked, address, date_of_birth, country, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("usr_bft_001", "alex.mercer@gmail.com", "Alex Mercer", "BFT-ALEX77", "USR-PARENT-55", "verified", 1, "742 Evergreen Terrace, Springfield, OR 97477", "1994-06-15", "United States", now - 864e5 * 30, now - 864e5 * 30);
+  db.prepare(`
+    INSERT INTO accounts (
+      id, user_id, tier, tier_name, size, initial_balance, current_balance, starting_day_equity, equity,
+      daily_loss_limit_percent, max_overall_loss_percent, max_risk_per_trade_percent, status, phase,
+      trading_days_completed, trades_count, win_rate, daily_withdrawals_unlocked, first_withdrawal_completed,
+      created_date, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("BFT-91823", "usr_bft_001", "instant", "$10,000 Instant Funded", 1e4, 1e4, 10680, 10680, 10680, 5, 12, 5, "active", "funded", 14, 42, 76.2, 1, 1, "2026-10-01", now - 864e5 * 20, now);
+  db.prepare(`
+    INSERT INTO withdrawals (
+      id, user_id, account_id, gross_amount, net_profit, max_allowed_profit, profit_share_rate, fee_amount, net_payout,
+      wallet_address, network, payment_method, status, tx_hash, reference_number, requested_at, processed_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 0.80, ?, ?, ?, ?, 'crypto_trc20', 'completed', ?, ?, ?, ?)
+  `).run("WD-51940284910", "usr_bft_001", "BFT-91823", 350, 680, 544, 35, 315, "0x71C94F8B92E1048A3B99D2E54C1A82F901D3E84A", "BSC (BEP20)", "0x9fb8c14d5e23a0781b4d0812eac92b8d4f0980598125cfb881329a1b9e21", "REF-51940284910", now - 864e5 * 1, now - 864e5 * 1 + 92e3);
+}
+__name(seedInitialData, "seedInitialData");
+function syncLeaderboardData() {
+  const now = Date.now();
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS funded_leaderboard (
+      id TEXT PRIMARY KEY,
+      rank INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      country TEXT NOT NULL,
+      flag TEXT NOT NULL,
+      iso_code TEXT,
+      account_tier TEXT NOT NULL,
+      profit REAL NOT NULL,
+      win_rate REAL NOT NULL,
+      payout_time TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS self_funded_leaderboard (
+      id TEXT PRIMARY KEY,
+      rank INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      country TEXT NOT NULL,
+      flag TEXT NOT NULL,
+      iso_code TEXT,
+      account_tier TEXT NOT NULL,
+      profit REAL NOT NULL,
+      win_rate REAL NOT NULL,
+      payout_time TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+  `);
+  const fundedSeed = [
+    { rank: 1, name: "Mateus Domingos", country: "Angola", flag: "\u{1F1E6}\u{1F1F4}", isoCode: "AO", tier: "$100,000 Instant Funded", profit: 72876.98, winRate: 84.2, payout: "1m 12s" },
+    { rank: 2, name: "Rajesh Kumar", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "$100,000 Two-Step", profit: 64280.45, winRate: 81.5, payout: "1m 24s" },
+    { rank: 3, name: "Tanvir Ahmed", country: "Bangladesh", flag: "\u{1F1E7}\u{1F1E9}", isoCode: "BD", tier: "$50,000 One-Step", profit: 54820.9, winRate: 78.7, payout: "1m 21s" },
+    { rank: 4, name: "Rohan Gupta", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "$50,000 Instant Funded", profit: 50150.8, winRate: 77.6, payout: "1m 31s" },
+    { rank: 5, name: "Muhammad Hamza", country: "Pakistan", flag: "\u{1F1F5}\u{1F1F0}", isoCode: "PK", tier: "$100,000 Instant Funded", profit: 46890.65, winRate: 76.8, payout: "1m 29s" },
+    { rank: 6, name: "Tariq Al-Mansoor", country: "Dubai, UAE", flag: "\u{1F1E6}\u{1F1EA}", isoCode: "AE", tier: "$50,000 One-Step", profit: 43280.5, winRate: 76.3, payout: "1m 30s" },
+    { rank: 7, name: "Vikramjit Singh", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "$50,000 Two-Step", profit: 40820.6, winRate: 75.9, payout: "1m 42s" },
+    { rank: 8, name: "Shakib Hasan", country: "Bangladesh", flag: "\u{1F1E7}\u{1F1E9}", isoCode: "BD", tier: "$25,000 Instant Funded", profit: 38420.55, winRate: 75.2, payout: "1m 34s" },
+    { rank: 9, name: "Usman Khan", country: "Pakistan", flag: "\u{1F1F5}\u{1F1F0}", isoCode: "PK", tier: "$50,000 Two-Step", profit: 36430.1, winRate: 74.6, payout: "1m 35s" },
+    { rank: 10, name: "Ananya Iyer", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "$25,000 Instant Funded", profit: 34640.3, winRate: 74.1, payout: "1m 27s" },
+    { rank: 11, name: "Faizal Zulkifli", country: "Malaysia", flag: "\u{1F1F2}\u{1F1FE}", isoCode: "MY", tier: "$25,000 Instant Funded", profit: 32410, winRate: 73, payout: "1m 18s" },
+    { rank: 12, name: "Siddharth Nair", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "$25,000 One-Step", profit: 30480.15, winRate: 72.5, payout: "1m 38s" },
+    { rank: 13, name: "Mahmudul Islam", country: "Bangladesh", flag: "\u{1F1E7}\u{1F1E9}", isoCode: "BD", tier: "$10,000 One-Step", profit: 28950.4, winRate: 71.8, payout: "1m 41s" },
+    { rank: 14, name: "Priya Patel", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "$25,000 Two-Step", profit: 27890, winRate: 71.4, payout: "1m 20s" },
+    { rank: 15, name: "Karthik Reddy", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "$10,000 Instant Funded", profit: 27321.11, winRate: 71, payout: "1m 45s" }
+  ];
+  for (const lb of fundedSeed) {
+    db.prepare(`
+      INSERT OR REPLACE INTO funded_leaderboard (id, rank, name, country, flag, iso_code, account_tier, profit, win_rate, payout_time, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(`FND-LB-${lb.rank}`, lb.rank, lb.name, lb.country, lb.flag, lb.isoCode, lb.tier, lb.profit, lb.winRate, lb.payout, now);
+    db.prepare(`
+      INSERT OR REPLACE INTO leaderboard (id, rank, name, country, flag, account_tier, profit, win_rate, payout_time, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(`LB-${lb.rank}`, lb.rank, lb.name, lb.country, lb.flag, lb.tier, lb.profit, lb.winRate, lb.payout, now);
+  }
+  const selfFundedSeed = [
+    { rank: 1, name: "Aarav Sharma", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "Self-Funded VIP Live", profit: 40056.61, winRate: 83.1, payout: "0m 58s" },
+    { rank: 2, name: "Devansh Mehta", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "Self-Funded Live", profit: 32650.2, winRate: 79.4, payout: "1m 05s" },
+    { rank: 3, name: "Faisal Mahmood", country: "Pakistan", flag: "\u{1F1F5}\u{1F1F0}", isoCode: "PK", tier: "Self-Funded Live", profit: 29890.1, winRate: 78.2, payout: "1m 11s" },
+    { rank: 4, name: "Zayed Al-Hashemi", country: "Dubai, UAE", flag: "\u{1F1E6}\u{1F1EA}", isoCode: "AE", tier: "Self-Funded VIP Live", profit: 27520.8, winRate: 77.4, payout: "1m 09s" },
+    { rank: 5, name: "Kavya Krishnan", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "Self-Funded Live", profit: 25230.9, winRate: 76.2, payout: "1m 18s" },
+    { rank: 6, name: "Bilal Qureshi", country: "Pakistan", flag: "\u{1F1F5}\u{1F1F0}", isoCode: "PK", tier: "Self-Funded Live", profit: 23490.4, winRate: 75.1, payout: "1m 20s" },
+    { rank: 7, name: "Rashid Al-Maktoum", country: "Dubai, UAE", flag: "\u{1F1E6}\u{1F1EA}", isoCode: "AE", tier: "Self-Funded Live", profit: 21340.5, winRate: 74.5, payout: "1m 16s" },
+    { rank: 8, name: "Harshvardhan Rao", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "Self-Funded Live", profit: 19840.6, winRate: 73.8, payout: "1m 25s" },
+    { rank: 9, name: "Nafis Rahman", country: "Bangladesh", flag: "\u{1F1E7}\u{1F1E9}", isoCode: "BD", tier: "Self-Funded Live", profit: 18120.75, winRate: 73, payout: "1m 24s" },
+    { rank: 10, name: "Ayesha Tariq", country: "Pakistan", flag: "\u{1F1F5}\u{1F1F0}", isoCode: "PK", tier: "Self-Funded Live", profit: 16430.5, winRate: 72.3, payout: "1m 29s" },
+    { rank: 11, name: "Pranav Kulkarni", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "Self-Funded Live", profit: 14620.15, winRate: 71, payout: "1m 35s" },
+    { rank: 12, name: "Omar Al-Suwaidi", country: "Dubai, UAE", flag: "\u{1F1E6}\u{1F1EA}", isoCode: "AE", tier: "Self-Funded Live", profit: 13170.25, winRate: 70.2, payout: "1m 31s" },
+    { rank: 13, name: "Saad Afridi", country: "Pakistan", flag: "\u{1F1F5}\u{1F1F0}", isoCode: "PK", tier: "Self-Funded Live", profit: 11960.35, winRate: 69.4, payout: "1m 38s" },
+    { rank: 14, name: "Arjun Malhotra", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", tier: "Self-Funded Live", profit: 10480.4, winRate: 68.5, payout: "1m 42s" },
+    { rank: 15, name: "Mehedi Hasan", country: "Bangladesh", flag: "\u{1F1E7}\u{1F1E9}", isoCode: "BD", tier: "Self-Funded Live", profit: 9210.45, winRate: 67.8, payout: "1m 45s" }
+  ];
+  try {
+    db.prepare(`DELETE FROM self_funded_leaderboard WHERE id = 'SLF-LB-1'`).run();
+  } catch {
+  }
+  for (const lb of selfFundedSeed) {
+    db.prepare(`
+      INSERT OR REPLACE INTO self_funded_leaderboard (id, rank, name, country, flag, iso_code, account_tier, profit, win_rate, payout_time, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(`SLF-LB-${lb.rank}`, lb.rank, lb.name, lb.country, lb.flag, lb.isoCode, lb.tier, lb.profit, lb.winRate, lb.payout, now);
+  }
+}
+__name(syncLeaderboardData, "syncLeaderboardData");
+seedInitialData();
+syncLeaderboardData();
+function getUserById(userId) {
+  return db.prepare("SELECT * FROM users WHERE id = ?").get(userId);
+}
+__name(getUserById, "getUserById");
+function getUserByEmail(email) {
+  return db.prepare("SELECT * FROM users WHERE email = ? COLLATE NOCASE").get(email);
+}
+__name(getUserByEmail, "getUserByEmail");
+function getUserByReferralCode(code) {
+  return db.prepare("SELECT * FROM users WHERE referral_code = ? COLLATE NOCASE").get(code);
+}
+__name(getUserByReferralCode, "getUserByReferralCode");
+function createOrUpdateGoogleUser(params) {
+  const existing = getUserByEmail(params.email);
+  const now = Date.now();
+  if (existing) {
+    db.prepare(`
+      UPDATE users SET
+        full_name = CASE WHEN profile_locked = 1 THEN full_name ELSE ? END,
+        google_id = COALESCE(?, google_id),
+        avatar_url = COALESCE(?, avatar_url),
+        updated_at = ?
+      WHERE id = ?
+    `).run(params.fullName, params.googleId || null, params.avatarUrl || null, now, existing.id);
+    return getUserById(existing.id);
+  }
+  const sanitizedName = params.fullName.replace(/[^A-Za-z0-9]/g, "").slice(0, 4).toUpperCase();
+  const randomSuffix = Math.floor(1e3 + Math.random() * 9e3);
+  const newRefCode = `BFT-${sanitizedName || "TRD"}${randomSuffix}`;
+  const newUserId = `usr_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  let sponsorId = null;
+  if (params.referralCodeInput) {
+    const sponsor = getUserByReferralCode(params.referralCodeInput);
+    if (sponsor && sponsor.id !== newUserId) {
+      sponsorId = sponsor.id;
+    }
+  }
+  db.prepare(`
+    INSERT INTO users (id, email, full_name, avatar_url, google_id, referral_code, referred_by, kyc_status, profile_locked, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'unverified', 0, ?, ?)
+  `).run(newUserId, params.email.toLowerCase(), params.fullName, params.avatarUrl || null, params.googleId || null, newRefCode, sponsorId, now, now);
+  if (sponsorId) {
+    linkUplineReferrals(sponsorId, newUserId, now);
+  }
+  return getUserById(newUserId);
+}
+__name(createOrUpdateGoogleUser, "createOrUpdateGoogleUser");
+function linkUplineReferrals(l1SponsorId, newUserId, nowMs) {
+  db.prepare(`
+    INSERT OR IGNORE INTO referrals (id, sponsor_id, referred_user_id, tier_level, created_at)
+    VALUES (?, ?, ?, 1, ?)
+  `).run(`REF-L1-${l1SponsorId}-${newUserId}`, l1SponsorId, newUserId, nowMs);
+  const l1User = getUserById(l1SponsorId);
+  if (l1User?.referred_by) {
+    const l2SponsorId = l1User.referred_by;
+    db.prepare(`
+      INSERT OR IGNORE INTO referrals (id, sponsor_id, referred_user_id, tier_level, created_at)
+      VALUES (?, ?, ?, 2, ?)
+    `).run(`REF-L2-${l2SponsorId}-${newUserId}`, l2SponsorId, newUserId, nowMs);
+    const l2User = getUserById(l2SponsorId);
+    if (l2User?.referred_by) {
+      const l3SponsorId = l2User.referred_by;
+      db.prepare(`
+        INSERT OR IGNORE INTO referrals (id, sponsor_id, referred_user_id, tier_level, created_at)
+        VALUES (?, ?, ?, 3, ?)
+      `).run(`REF-L3-${l3SponsorId}-${newUserId}`, l3SponsorId, newUserId, nowMs);
+    }
+  }
+}
+__name(linkUplineReferrals, "linkUplineReferrals");
+function createSessionToken(userId, rememberMe = true) {
+  const token = `bft_sess_${Math.random().toString(36).substring(2)}${Date.now().toString(36)}${Math.random().toString(36).substring(2)}`;
+  const expiresAt = Date.now() + (rememberMe ? 30 * 86400 * 1e3 : 86400 * 1e3);
+  db.prepare(`
+    INSERT INTO sessions (token, user_id, expires_at, created_at)
+    VALUES (?, ?, ?, ?)
+  `).run(token, userId, expiresAt, Date.now());
+  return { token, expiresAt };
+}
+__name(createSessionToken, "createSessionToken");
+function validateSession(token) {
+  if (!token) return null;
+  const session = db.prepare("SELECT * FROM sessions WHERE token = ?").get(token);
+  if (!session) return null;
+  if (session.expires_at < Date.now()) {
+    db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
+    return null;
+  }
+  return getUserById(session.user_id);
+}
+__name(validateSession, "validateSession");
+function deleteSessionToken(token) {
+  db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
+}
+__name(deleteSessionToken, "deleteSessionToken");
+function mapAccountRowToTradingAccount(row) {
+  if (!row) return null;
+  const accountCategory = row.account_category || (row.tier === "personal" || row.phase === "personal_live" ? "personal_live" : row.tier === "demo" || row.phase === "demo" ? "demo" : "prop");
+  return { ...row, id: row.id, userId: row.user_id, user_id: row.user_id, loginId: row.id, passwordHash: "bft_live_" + String(row.id).replace(/[^a-zA-Z0-9]/g, "").toLowerCase(), tier: row.tier, tierName: row.tier_name, accountCategory, depositedCapital: Number(row.deposited_capital ?? (accountCategory === "personal_live" ? row.initial_balance : 0)), size: row.size, initialBalance: row.initial_balance, currentBalance: row.current_balance, startingDayEquity: row.starting_day_equity, equity: row.equity, dailyLossLimitPercent: row.daily_loss_limit_percent, maxOverallLossPercent: row.max_overall_loss_percent, maxRiskPerTradePercent: row.max_risk_per_trade_percent, status: row.status, phase: row.phase, tradingDaysCompleted: row.trading_days_completed, tradesCount: row.trades_count, winRate: row.win_rate, dailyWithdrawalsUnlocked: Boolean(row.daily_withdrawals_unlocked), firstWithdrawalCompleted: Boolean(row.first_withdrawal_completed), monthsCompleted: row.months_completed || 1, scalingActive: Boolean(row.scaling_active), createdDate: row.created_date, lastActiveDate: row.last_active_date || row.created_date, certificateId: row.certificate_id || void 0 };
+}
+__name(mapAccountRowToTradingAccount, "mapAccountRowToTradingAccount");
+var accountAlterColumns = [`ALTER TABLE accounts ADD COLUMN certificate_id TEXT;`, `ALTER TABLE accounts ADD COLUMN account_category TEXT DEFAULT 'prop';`, `ALTER TABLE accounts ADD COLUMN deposited_capital REAL DEFAULT 0;`];
+for (const stmt of accountAlterColumns) {
+  try {
+    db.exec(stmt);
+  } catch {
+  }
+}
+var kycAlterColumns = [`ALTER TABLE users ADD COLUMN kyc_doc_number TEXT;`, `ALTER TABLE users ADD COLUMN kyc_front_url TEXT;`, `ALTER TABLE users ADD COLUMN kyc_back_url TEXT;`, `ALTER TABLE users ADD COLUMN kyc_selfie_url TEXT;`, `ALTER TABLE users ADD COLUMN kyc_front_filename TEXT;`, `ALTER TABLE users ADD COLUMN kyc_back_filename TEXT;`, `ALTER TABLE users ADD COLUMN kyc_selfie_filename TEXT;`, `ALTER TABLE users ADD COLUMN kyc_submitted_at TEXT;`, `ALTER TABLE users ADD COLUMN is_2fa_enabled INTEGER DEFAULT 0;`, `ALTER TABLE users ADD COLUMN totp_secret TEXT;`, `ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'trader';`, `ALTER TABLE users ADD COLUMN self_balance REAL DEFAULT 0;`, `ALTER TABLE users ADD COLUMN demo_balance REAL DEFAULT 10000;`, `ALTER TABLE users ADD COLUMN funded_balance REAL DEFAULT 0;`, `ALTER TABLE withdrawals ADD COLUMN admin_notes TEXT;`];
+for (const stmt of kycAlterColumns) {
+  try {
+    db.exec(stmt);
+  } catch {
+  }
+}
+db.exec(`
+  CREATE TABLE IF NOT EXISTS kyc_documents (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    doc_type TEXT,
+    document_number TEXT,
+    id_front_url TEXT,
+    id_back_url TEXT,
+    selfie_url TEXT,
+    extracted_name TEXT,
+    status TEXT DEFAULT 'pending',
+    rejection_reason TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS kyc_submissions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    full_name TEXT NOT NULL,
+    address TEXT NOT NULL,
+    date_of_birth TEXT NOT NULL,
+    country TEXT NOT NULL DEFAULT 'United States',
+    profile_locked INTEGER DEFAULT 1,
+    doc_type TEXT,
+    document_number TEXT,
+    front_document_url TEXT,
+    back_document_url TEXT,
+    selfie_url TEXT,
+    front_file_name TEXT,
+    back_file_name TEXT,
+    selfie_file_name TEXT,
+    status TEXT NOT NULL DEFAULT 'unverified',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS deposits (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    account_id TEXT,
+    amount REAL NOT NULL,
+    payment_method TEXT NOT NULL,
+    currency TEXT DEFAULT 'USDT',
+    network TEXT DEFAULT 'TRC-20',
+    wallet_address TEXT DEFAULT 'TWr3rLWrWGBcfwix5osJwAwMXmpcu4PNSp',
+    package_name TEXT,
+    sku TEXT,
+    account_type TEXT DEFAULT 'self_funded',
+    tx_hash TEXT,
+    deposit_slip_url TEXT,
+    status TEXT DEFAULT 'pending',
+    decline_reason TEXT,
+    created_at INTEGER NOT NULL,
+    processed_at INTEGER
+  );
+
+  CREATE TABLE IF NOT EXISTS crypto_deposits (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    account_id TEXT,
+    wallet_address TEXT NOT NULL DEFAULT 'TWr3rLWrWGBcfwix5osJwAwMXmpcu4PNSp',
+    amount REAL NOT NULL,
+    package_name TEXT NOT NULL,
+    sku TEXT NOT NULL,
+    account_type TEXT NOT NULL DEFAULT 'self_funded',
+    currency TEXT DEFAULT 'USDT',
+    network TEXT DEFAULT 'TRC-20',
+    tx_hash TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at INTEGER NOT NULL,
+    processed_at INTEGER
+  );
+
+  CREATE TABLE IF NOT EXISTS admin_audit_logs (
+    id TEXT PRIMARY KEY,
+    admin_user_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    target_type TEXT NOT NULL,
+    details TEXT,
+    created_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS trades (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    asset TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    strike_price REAL NOT NULL,
+    close_price REAL,
+    investment REAL NOT NULL,
+    payout_percentage REAL NOT NULL,
+    potential_payout REAL NOT NULL,
+    pnl REAL DEFAULT 0,
+    credited_amount REAL DEFAULT 0,
+    start_time INTEGER NOT NULL,
+    end_time INTEGER NOT NULL,
+    duration_seconds INTEGER NOT NULL,
+    status TEXT DEFAULT 'active',
+    account_tier TEXT,
+    created_at INTEGER NOT NULL,
+    settled_at INTEGER
+  );
+
+  CREATE TABLE IF NOT EXISTS affiliate_social_submissions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT UNIQUE NOT NULL,
+    user_name TEXT,
+    user_email TEXT,
+    platform_type TEXT NOT NULL,
+    social_links_json TEXT NOT NULL,
+    affiliate_profile_locked INTEGER NOT NULL DEFAULT 1,
+    submitted_at TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS country_manager_applications (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    user_email TEXT,
+    full_name TEXT NOT NULL,
+    target_country TEXT NOT NULL,
+    telegram_handle TEXT NOT NULL,
+    estimated_audience_size TEXT NOT NULL,
+    marketing_strategy TEXT NOT NULL,
+    social_links_json TEXT NOT NULL,
+    total_referrals_count INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'pending',
+    admin_notes TEXT,
+    reviewed_at TEXT,
+    created_at INTEGER NOT NULL
+  );
+`);
+var affiliateSocialAlterColumns = [
+  `ALTER TABLE users ADD COLUMN affiliate_profile_locked INTEGER DEFAULT 0;`,
+  `ALTER TABLE users ADD COLUMN affiliate_social_platform TEXT;`,
+  `ALTER TABLE users ADD COLUMN affiliate_social_links TEXT;`,
+  `ALTER TABLE users ADD COLUMN affiliate_social_submitted_at TEXT;`
+];
+for (const stmt of affiliateSocialAlterColumns) {
+  try {
+    db.exec(stmt);
+  } catch {
+  }
+}
+function getKycSubmissionForUser(userId) {
+  return db.prepare("SELECT * FROM kyc_submissions WHERE user_id = ?").get(userId);
+}
+__name(getKycSubmissionForUser, "getKycSubmissionForUser");
+function ensureUserInDb(params) {
+  if (!params.id && !params.email) return null;
+  let existing = params.id ? getUserById(params.id) : null;
+  if (!existing && params.email) {
+    existing = getUserByEmail(params.email);
+  }
+  if (existing) {
+    return existing;
+  }
+  const now = Date.now();
+  const cleanEmail = (params.email || `${params.id}@bft.io`).trim().toLowerCase();
+  const cleanName = (params.fullName || cleanEmail.split("@")[0] || "BFT Trader").trim();
+  const sanitizedRef = (params.referralCode || `BFT-${Math.random().toString(36).substring(2, 8).toUpperCase()}`).trim();
+  const userId = params.id || `usr_${now.toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  try {
+    db.prepare(`
+      INSERT INTO users (id, email, full_name, referral_code, kyc_status, profile_locked, country, created_at, updated_at)
+      VALUES (?, ?, ?, ?, 'unverified', 0, 'United States', ?, ?)
+    `).run(userId, cleanEmail, cleanName, sanitizedRef, now, now);
+  } catch {
+    const fallbackRef = `BFT-${Math.floor(1e5 + Math.random() * 899999)}`;
+    db.prepare(`
+      INSERT OR IGNORE INTO users (id, email, full_name, referral_code, kyc_status, profile_locked, country, created_at, updated_at)
+      VALUES (?, ?, ?, ?, 'unverified', 0, 'United States', ?, ?)
+    `).run(userId, cleanEmail, cleanName, fallbackRef, now, now);
+  }
+  return getUserById(userId) || getUserByEmail(cleanEmail);
+}
+__name(ensureUserInDb, "ensureUserInDb");
+var COUNTRY_FLAGS = { "United States": "\u{1F1FA}\u{1F1F8}", "Sri Lanka": "\u{1F1F1}\u{1F1F0}", "United Kingdom": "\u{1F1EC}\u{1F1E7}", "United Arab Emirates": "\u{1F1E6}\u{1F1EA}", "Dubai, UAE": "\u{1F1E6}\u{1F1EA}", "India": "\u{1F1EE}\u{1F1F3}", "Malaysia": "\u{1F1F2}\u{1F1FE}", "Pakistan": "\u{1F1F5}\u{1F1F0}", "Singapore": "\u{1F1F8}\u{1F1EC}", "Canada": "\u{1F1E8}\u{1F1E6}", "Australia": "\u{1F1E6}\u{1F1FA}", "Germany": "\u{1F1E9}\u{1F1EA}", "France": "\u{1F1EB}\u{1F1F7}", "Japan": "\u{1F1EF}\u{1F1F5}", "Switzerland": "\u{1F1E8}\u{1F1ED}", "Brazil": "\u{1F1E7}\u{1F1F7}", "Nigeria": "\u{1F1F3}\u{1F1EC}", "South Africa": "\u{1F1FF}\u{1F1E6}" };
+function getCountryFlag(country) {
+  if (!country) return "\u{1F1FA}\u{1F1F8}";
+  return COUNTRY_FLAGS[country.trim()] || "\u{1F310}";
+}
+__name(getCountryFlag, "getCountryFlag");
+function ensurePersonalLiveAccountForUser(userId) {
+  if (!userId) return null;
+  const user = getUserById(userId);
+  if (!user) return null;
+  const existing = db.prepare(`SELECT * FROM accounts WHERE user_id = ? AND (tier = 'personal' OR account_category = 'personal_live' OR phase = 'personal_live') LIMIT 1`).get(userId);
+  if (existing) {
+    return mapAccountRowToTradingAccount(existing);
+  }
+  const now = Date.now();
+  const nowIso = new Date(now).toISOString().split("T")[0];
+  const suffix = userId.replace(/[^a-zA-Z0-9]/g, "").slice(-5).toUpperCase() || "001";
+  const accountId = userId === "usr_bft_001" ? "BFT-PERS-001" : `BFT-PERS-${suffix}`;
+  const initialDeposit = 0;
+  db.prepare(`
+    INSERT OR IGNORE INTO accounts (
+      id, user_id, tier, tier_name, account_category, deposited_capital, size,
+      initial_balance, current_balance, starting_day_equity, equity,
+      daily_loss_limit_percent, max_overall_loss_percent, max_risk_per_trade_percent,
+      status, phase, trading_days_completed, trades_count, win_rate,
+      daily_withdrawals_unlocked, first_withdrawal_completed, created_date, created_at, updated_at
+    ) VALUES (?, ?, 'personal', 'Personal Live Balance (Self-Funded)', 'personal_live', ?, ?, ?, ?, ?, ?, 0, 0, 100, 'active', 'personal_live', 14, 0, 0, 1, 1, ?, ?, ?)
+  `).run(accountId, userId, initialDeposit, initialDeposit, initialDeposit, initialDeposit, initialDeposit, initialDeposit, nowIso, now - 864e5 * 25, now);
+  return getAccountById(accountId);
+}
+__name(ensurePersonalLiveAccountForUser, "ensurePersonalLiveAccountForUser");
+function creditPersonalAccountDepositInDb(params) {
+  const cleanAmount = Number(params.amountUsdt);
+  if (!Number.isFinite(cleanAmount) || cleanAmount <= 0) {
+    throw new Error("Deposit amount must be greater than $0.00.");
+  }
+  let personalAcc = ensurePersonalLiveAccountForUser(params.userId);
+  if (params.accountId) {
+    const specific = getAccountById(params.accountId);
+    if (specific && specific.user_id === params.userId && (specific.tier === "personal" || specific.accountCategory === "personal_live")) {
+      personalAcc = specific;
+    }
+  }
+  if (!personalAcc) {
+    throw new Error("Personal Live account could not be initialized for deposit.");
+  }
+  const now = Date.now();
+  const nextDeposited = Number(((personalAcc.depositedCapital || 0) + cleanAmount).toFixed(2));
+  const nextInitial = Number(((personalAcc.initialBalance || 0) + cleanAmount).toFixed(2));
+  const nextCurrent = Number(((personalAcc.currentBalance || 0) + cleanAmount).toFixed(2));
+  const nextEquity = Number(((personalAcc.equity || 0) + cleanAmount).toFixed(2));
+  const nextStartingDay = Number(((personalAcc.startingDayEquity || 0) + cleanAmount).toFixed(2));
+  db.prepare(`
+    UPDATE accounts SET
+      deposited_capital = ?,
+      size = ?,
+      initial_balance = ?,
+      current_balance = ?,
+      starting_day_equity = ?,
+      equity = ?,
+      status = 'active',
+      updated_at = ?
+    WHERE id = ? AND user_id = ?
+  `).run(nextDeposited, nextInitial, nextInitial, nextCurrent, nextStartingDay, nextEquity, now, personalAcc.id, params.userId);
+  try {
+    db.prepare(`UPDATE users SET self_balance = ? WHERE id = ?`).run(nextCurrent, params.userId);
+  } catch {
+  }
+  return getAccountById(personalAcc.id);
+}
+__name(creditPersonalAccountDepositInDb, "creditPersonalAccountDepositInDb");
+function getAccountsForUser(userId) {
+  ensurePersonalLiveAccountForUser(userId);
+  const rows = db.prepare(`SELECT * FROM accounts WHERE user_id = ? ORDER BY CASE WHEN tier = 'personal' OR account_category = 'personal_live' THEN 1 ELSE 0 END ASC, created_at DESC`).all(userId);
+  return rows.map(mapAccountRowToTradingAccount);
+}
+__name(getAccountsForUser, "getAccountsForUser");
+function getAccountById(accountId) {
+  const row = db.prepare("SELECT * FROM accounts WHERE id = ?").get(accountId);
+  return mapAccountRowToTradingAccount(row);
+}
+__name(getAccountById, "getAccountById");
+function createAccount(params) {
+  const now = Date.now();
+  const nowIso = new Date(now).toISOString().split("T")[0];
+  const newAccountId = `BFT-${Math.floor(1e4 + Math.random() * 89999)}`;
+  const limits = getDynamicAccountLimits(params.tier, params.tier === "instant" ? "funded" : "phase_1");
+  db.prepare(`
+    INSERT INTO accounts (
+      id, user_id, tier, tier_name, size, initial_balance, current_balance, starting_day_equity, equity,
+      daily_loss_limit_percent, max_overall_loss_percent, max_risk_per_trade_percent, status, phase,
+      trading_days_completed, trades_count, win_rate, daily_withdrawals_unlocked, first_withdrawal_completed,
+      created_date, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 5, 'active', ?, 0, 0, 0, ?, 0, ?, ?, ?)
+  `).run(newAccountId, params.userId, limits.tier, params.tierName, params.size, params.size, params.size, params.size, params.size, limits.dailyLossLimitPercent, limits.maxOverallLossPercent, limits.initialPhase, params.dailyWithdrawalsUnlocked ? 1 : 0, nowIso, now, now);
+  return getAccountById(newAccountId);
+}
+__name(createAccount, "createAccount");
+function terminateAllTrades(accountId) {
+  const now = Date.now();
+  const openTrades = db.prepare("SELECT * FROM trades WHERE account_id = ? AND status = 'active'").all(accountId);
+  for (const trade of openTrades) {
+    db.prepare("UPDATE trades SET status = 'cancelled', close_price = ?, pnl = ?, updated_at = ? WHERE id = ?").run(trade.strike_price, -Number(trade.investment), now, trade.id);
+  }
+  return { ok: true, terminatedCount: openTrades.length };
+}
+__name(terminateAllTrades, "terminateAllTrades");
+function updateAccountStateInDb(userId, accountId, updates) {
+  const existing = db.prepare("SELECT * FROM accounts WHERE id = ? AND user_id = ?").get(accountId, userId);
+  if (!existing) throw new Error("Account not found or unauthorized.");
+  if (updates.status === "breached" || updates.status === "hard-breached") {
+    terminateAllTrades(accountId);
+  }
+  const now = Date.now();
+  db.prepare(`
+    UPDATE accounts SET
+      current_balance = COALESCE(?, current_balance),
+      equity = COALESCE(?, equity),
+      starting_day_equity = COALESCE(?, starting_day_equity),
+      status = COALESCE(?, status),
+      phase = COALESCE(?, phase),
+      trades_count = COALESCE(?, trades_count),
+      win_rate = COALESCE(?, win_rate),
+      trading_days_completed = COALESCE(?, trading_days_completed),
+      certificate_id = COALESCE(?, certificate_id),
+      updated_at = ?
+    WHERE id = ? AND user_id = ?
+  `).run(updates.currentBalance !== void 0 ? updates.currentBalance : null, updates.equity !== void 0 ? updates.equity : null, updates.startingDayEquity !== void 0 ? updates.startingDayEquity : null, updates.status || null, updates.phase || null, updates.tradesCount !== void 0 ? updates.tradesCount : null, updates.winRate !== void 0 ? updates.winRate : null, updates.tradingDaysCompleted !== void 0 ? updates.tradingDaysCompleted : null, updates.certificateId || null, now, accountId, userId);
+  return getAccountById(accountId);
+}
+__name(updateAccountStateInDb, "updateAccountStateInDb");
+function passChallengePhaseInDb(userId, accountId, provisionLiveDirectly = false) {
+  const existing = db.prepare("SELECT * FROM accounts WHERE id = ? AND user_id = ?").get(accountId, userId);
+  if (!existing) throw new Error("Challenge account not found or unauthorized.");
+  const now = Date.now();
+  const nowIso = new Date(now).toISOString().split("T")[0];
+  const certId = existing.certificate_id || `CERT-${existing.id}-${Math.floor(1e3 + Math.random() * 9e3)}`;
+  const normType = normalizeChallengeAccountType(existing.tier || existing.account_type);
+  const isToPhase2 = !provisionLiveDirectly && normType === "two_step" && (existing.phase === "phase_1" || existing.challenge_phase === "phase_1");
+  const lockedStatus = isToPhase2 ? "passed_phase_1" : "passed";
+  db.prepare(`
+    UPDATE accounts SET
+      status = ?,
+      certificate_id = ?,
+      updated_at = ?
+    WHERE id = ? AND user_id = ?
+  `).run(lockedStatus, certId, now, accountId, userId);
+  const nextPhase = isToPhase2 ? "phase_2" : "funded";
+  const nextLimits = getDynamicAccountLimits(normType, nextPhase, { dailyDrawdown: existing.daily_loss_limit_percent, maxDrawdown: existing.max_overall_loss_percent });
+  const nextPrefix = isToPhase2 ? "BFT-P2" : "BFT-LIVE";
+  const nextAccountId = `${nextPrefix}-${Math.floor(1e4 + Math.random() * 89999)}`;
+  const baseTierName = String(existing.tier_name || "").replace(/\s*\(Phase \d\)/i, "");
+  const nextTierName = isToPhase2 ? `${baseTierName} (Phase 2)` : `Real Funded (${baseTierName})`;
+  const nextBalance = isToPhase2 ? Number(existing.size) : Math.max(Number(existing.size), Number(existing.current_balance));
+  db.prepare(`
+    INSERT INTO accounts (
+      id, user_id, tier, tier_name, size, initial_balance, current_balance, starting_day_equity, equity,
+      daily_loss_limit_percent, max_overall_loss_percent, max_risk_per_trade_percent, status, phase,
+      trading_days_completed, trades_count, win_rate, daily_withdrawals_unlocked, first_withdrawal_completed,
+      certificate_id, created_date, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, 14, 0, 0, ?, 0, ?, ?, ?, ?)
+  `).run(nextAccountId, userId, nextLimits.tier, nextTierName, existing.size, existing.size, nextBalance, nextBalance, nextBalance, nextLimits.dailyLossLimitPercent, nextLimits.maxOverallLossPercent, existing.max_risk_per_trade_percent || 5, nextPhase, existing.daily_withdrawals_unlocked || 0, !isToPhase2 ? certId : null, nowIso, now + 1, now + 1);
+  return { lockedAccount: getAccountById(accountId), deployedAccount: getAccountById(nextAccountId), certificateId: certId, isRealFundedDeployed: !isToPhase2 };
+}
+__name(passChallengePhaseInDb, "passChallengePhaseInDb");
+function lockUserProfile(userId, data) {
+  const user = getUserById(userId);
+  if (!user) throw new Error("User not found.");
+  const now = Date.now();
+  if (user.profile_locked === 1) {
+    db.prepare(`
+      UPDATE users SET
+        telegram_handle = COALESCE(?, telegram_handle),
+        updated_at = ?
+      WHERE id = ?
+    `).run(data.telegramHandle || null, now, userId);
+    return getUserById(userId);
+  }
+  const cleanName = data.fullName.trim();
+  const cleanAddress = data.address.trim();
+  const cleanDob = data.dateOfBirth.trim();
+  const cleanCountry = (data.country || user.country || "United States").trim();
+  db.prepare(`
+    UPDATE users SET
+      full_name = ?,
+      address = ?,
+      date_of_birth = ?,
+      country = ?,
+      telegram_handle = COALESCE(?, telegram_handle),
+      profile_locked = 1,
+      updated_at = ?
+    WHERE id = ?
+  `).run(cleanName, cleanAddress, cleanDob, cleanCountry, data.telegramHandle?.trim() || null, now, userId);
+  const existingSub = getKycSubmissionForUser(userId);
+  if (existingSub) {
+    db.prepare(`
+      UPDATE kyc_submissions SET
+        full_name = ?,
+        address = ?,
+        date_of_birth = ?,
+        country = ?,
+        profile_locked = 1,
+        updated_at = ?
+      WHERE user_id = ?
+    `).run(cleanName, cleanAddress, cleanDob, cleanCountry, now, userId);
+  } else {
+    db.prepare(`
+      INSERT INTO kyc_submissions (
+        id, user_id, full_name, address, date_of_birth, country, profile_locked, status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+    `).run(`KYC-SUB-${userId}-${now.toString(36)}`, userId, cleanName, cleanAddress, cleanDob, cleanCountry, user.kyc_status || "unverified", now, now);
+  }
+  return getUserById(userId);
+}
+__name(lockUserProfile, "lockUserProfile");
+function createKycDocumentRecord(data) {
+  const now = Date.now();
+  const id = `KYC-DOC-${data.userId}-${now.toString(36)}`;
+  try {
+    db.prepare(`
+      INSERT INTO kyc_documents (
+        id, user_id, doc_type, document_number, id_front_url, id_back_url, selfie_url,
+        extracted_name, status, rejection_reason, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      data.userId,
+      data.docType || "ID Card",
+      data.documentNumber || null,
+      data.idFrontUrl || null,
+      data.idBackUrl || null,
+      data.selfieUrl || null,
+      data.extractedName || null,
+      data.status || "pending",
+      data.rejectionReason || null,
+      now,
+      now
+    );
+  } catch (err) {
+    console.warn("Failed to insert kyc_documents record:", err);
+  }
+  return db.prepare("SELECT * FROM kyc_documents WHERE id = ?").get(id);
+}
+__name(createKycDocumentRecord, "createKycDocumentRecord");
+function getKycDocumentsForUser(userId) {
+  return db.prepare("SELECT * FROM kyc_documents WHERE user_id = ? ORDER BY created_at DESC").all(userId);
+}
+__name(getKycDocumentsForUser, "getKycDocumentsForUser");
+function updateUserKycStatus(userId, data) {
+  const now = Date.now();
+  const submittedIso = data.submittedAt || new Date(now).toISOString().split("T")[0];
+  db.prepare(`
+    UPDATE users SET
+      kyc_status = ?,
+      kyc_doc_type = COALESCE(?, kyc_doc_type),
+      kyc_doc_number = COALESCE(?, kyc_doc_number),
+      kyc_front_url = COALESCE(?, kyc_front_url),
+      kyc_back_url = COALESCE(?, kyc_back_url),
+      kyc_selfie_url = COALESCE(?, kyc_selfie_url),
+      kyc_front_filename = COALESCE(?, kyc_front_filename),
+      kyc_back_filename = COALESCE(?, kyc_back_filename),
+      kyc_selfie_filename = COALESCE(?, kyc_selfie_filename),
+      kyc_submitted_at = COALESCE(?, kyc_submitted_at),
+      kyc_timer_ends_at = ?,
+      kyc_verified_at = CASE WHEN ? = 'verified' THEN ? ELSE kyc_verified_at END,
+      profile_locked = CASE WHEN ? IN ('pending', 'verified') THEN 1 ELSE profile_locked END,
+      updated_at = ?
+    WHERE id = ?
+  `).run(data.status, data.docType || null, data.documentNumber || null, data.frontDocumentUrl || null, data.backDocumentUrl || null, data.selfieUrl || null, data.frontFileName || null, data.backFileName || null, data.selfieFileName || null, submittedIso, data.timerEndsAt || null, data.status, now, data.status, now, userId);
+  const user = getUserById(userId);
+  if (user) {
+    const existingSub = getKycSubmissionForUser(userId);
+    const subStatus = data.status === "pending" ? "Pending Verification" : data.status;
+    if (existingSub) {
+      db.prepare(`
+        INSERT OR REPLACE INTO kyc_submissions (
+          id, user_id, full_name, address, date_of_birth, country, profile_locked,
+          doc_type, document_number, front_document_url, back_document_url, selfie_url, front_file_name, back_file_name, selfie_file_name,
+          status, created_at, updated_at
+        ) VALUES (
+          (SELECT id FROM kyc_submissions WHERE user_id = ?), ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT created_at FROM kyc_submissions WHERE user_id = ?), ?
+        )
+      `).run(userId, userId, user.full_name, user.address || "N/A", user.date_of_birth || "N/A", user.country || "United States", data.docType || null, data.documentNumber || null, data.frontDocumentUrl || null, data.backDocumentUrl || null, data.selfieUrl || null, data.frontFileName || null, data.backFileName || null, data.selfieFileName || null, subStatus, userId, now);
+    } else {
+      db.prepare(`
+        INSERT INTO kyc_submissions (
+          id, user_id, full_name, address, date_of_birth, country, profile_locked,
+          doc_type, document_number, front_document_url, back_document_url, selfie_url, front_file_name, back_file_name, selfie_file_name,
+          status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(`KYC-SUB-${userId}-${now.toString(36)}`, userId, user.full_name || "Verified Trader", user.address || "", user.date_of_birth || "", user.country || "United States", data.docType || "ID Card", data.documentNumber || null, data.frontDocumentUrl || null, data.backDocumentUrl || null, data.selfieUrl || null, data.frontFileName || null, data.backFileName || null, data.selfieFileName || null, subStatus, now, now);
+    }
+    createKycDocumentRecord({ userId, docType: data.docType, documentNumber: data.documentNumber, idFrontUrl: data.frontDocumentUrl, idBackUrl: data.backDocumentUrl, selfieUrl: data.selfieUrl, extractedName: user.full_name, status: data.status, rejectionReason: data.rejectionReason });
+  }
+  return getUserById(userId);
+}
+__name(updateUserKycStatus, "updateUserKycStatus");
+function processWithdrawalRequest(params) {
+  const user = getUserById(params.userId);
+  if (!user) throw new Error("User not found.");
+  if (user.kyc_status !== "verified") {
+    throw new Error("Please complete your KYC verification to unlock withdrawals.");
+  }
+  const account = getAccountById(params.accountId);
+  if (!account || account.user_id !== params.userId) {
+    throw new Error("Trading account not found or unauthorized.");
+  }
+  const isPersonalLive = account.tier === "personal" || account.account_category === "personal_live" || account.accountCategory === "personal_live" || account.phase === "personal_live";
+  if (isPersonalLive) {
+    if (account.status !== "active") {
+      throw new Error("Account is not active.");
+    }
+    const availableBalance = Math.max(0, Number(account.current_balance.toFixed(2)));
+    if (availableBalance < 10) {
+      throw new Error(`Minimum withdrawal threshold is $10.00. Current Personal Live balance is $${availableBalance.toFixed(2)}.`);
+    }
+    if (params.requestedAmount < 10) {
+      throw new Error("Minimum withdrawal amount is $10.00 USD.");
+    }
+    if (params.requestedAmount > availableBalance) {
+      throw new Error(`Cannot withdraw more than your available Personal Live balance ($${availableBalance.toFixed(2)}).`);
+    }
+    const feeAmount2 = Number((params.requestedAmount * 0.03).toFixed(2));
+    const netPayout2 = Number((params.requestedAmount - feeAmount2).toFixed(2));
+    const now2 = Date.now();
+    const withdrawalId2 = `WD-${Math.floor(5194e7 + Math.random() * 99999999)}`;
+    const refNumber2 = `0x${Math.random().toString(16).slice(2, 10)}${Math.random().toString(16).slice(2, 10)}`;
+    db.prepare(`
+      INSERT INTO withdrawals (
+        id, user_id, account_id, gross_amount, net_profit, max_allowed_profit, profit_share_rate, fee_amount, net_payout,
+        wallet_address, network, payment_method, status, reference_number, tx_hash, requested_at, processed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 1.00, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, NULL)
+    `).run(withdrawalId2, params.userId, params.accountId, params.requestedAmount, availableBalance, availableBalance, feeAmount2, netPayout2, params.walletAddress, params.network, params.paymentMethod, refNumber2, refNumber2, now2);
+    const updatedAccount2 = getAccountById(account.id);
+    const withdrawalRecord2 = db.prepare("SELECT * FROM withdrawals WHERE id = ?").get(withdrawalId2);
+    return { ok: true, withdrawal: withdrawalRecord2, updatedAccount: updatedAccount2, breakdown: { requestedAmount: params.requestedAmount, netProfit: availableBalance, maxAllowed80Percent: availableBalance, profitShareRate: 1, feeAmount: feeAmount2, netPayout: netPayout2, isPersonalLive: true } };
+  }
+  const isLiveFunded = account.tier === "instant" || account.phase === "funded";
+  if (!isLiveFunded) {
+    throw new Error("Withdrawals are locked during the Challenge Phase. Trade to hit your profit target first to pass the challenge, earn your Completion Certificate, and unlock your Live Funded Account.");
+  }
+  if (account.status !== "active") {
+    throw new Error("Account is not active.");
+  }
+  if (account.first_withdrawal_completed === 0 && account.trading_days_completed < 14) {
+    throw new Error(`First withdrawal requires a mandatory 14-day account holding period (${14 - account.trading_days_completed} days remaining).`);
+  }
+  const netProfit = Math.max(0, Number((account.current_balance - account.initial_balance).toFixed(2)));
+  if (netProfit < 250) {
+    throw new Error(`Minimum profit requirement is $250.00. Current net profit is $${netProfit.toFixed(2)}.`);
+  }
+  if (params.requestedAmount < 250) {
+    throw new Error("Minimum withdrawal amount is $250.00 USD.");
+  }
+  if (params.requestedAmount > netProfit) {
+    throw new Error(`Cannot withdraw more than total accumulated profit ($${netProfit.toFixed(2)}). Initial funded balance cannot be withdrawn directly.`);
+  }
+  const maxAllowed80Percent = Number((netProfit * 0.8).toFixed(2));
+  if (params.requestedAmount > maxAllowed80Percent) {
+    throw new Error(`Withdrawal exceeds the 80% profit payout ceiling. Maximum allowable withdrawal is $${maxAllowed80Percent.toFixed(2)} (80% of $${netProfit.toFixed(2)} net generated profit).`);
+  }
+  const feeAmount = Number((params.requestedAmount * 0.1).toFixed(2));
+  const netPayout = Number((params.requestedAmount - feeAmount).toFixed(2));
+  const now = Date.now();
+  const withdrawalId = `WD-${Math.floor(5194e7 + Math.random() * 99999999)}`;
+  const refNumber = `0x${Math.random().toString(16).slice(2, 10)}${Math.random().toString(16).slice(2, 10)}`;
+  db.prepare(`
+    INSERT INTO withdrawals (
+      id, user_id, account_id, gross_amount, net_profit, max_allowed_profit, profit_share_rate, fee_amount, net_payout,
+      wallet_address, network, payment_method, status, reference_number, tx_hash, requested_at, processed_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 0.80, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, NULL)
+  `).run(withdrawalId, params.userId, params.accountId, params.requestedAmount, netProfit, maxAllowed80Percent, feeAmount, netPayout, params.walletAddress, params.network, params.paymentMethod, refNumber, refNumber, now);
+  if (user.referred_by) {
+    const isVip = user.registered_tier === "vip";
+    const bonusRate = isVip ? 0.1 : 0.08;
+    const affiliateTier = isVip ? "vip" : "basic";
+    const bonusAmount = Number((params.requestedAmount * bonusRate).toFixed(2));
+    const commId = `COMM-WD-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    db.prepare(`
+      INSERT INTO commissions (
+        id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, affiliate_tier, status, created_at
+      ) VALUES (?, ?, ?, 'withdrawal', 1, ?, ?, ?, ?, ?, 'paid', ?)
+    `).run(commId, user.referred_by, user.id, `Direct Referral Payout Bonus (${(bonusRate * 100).toFixed(0)}% of $${params.requestedAmount.toFixed(2)} Withdrawal by ${user.full_name})`, params.requestedAmount, bonusRate, bonusAmount, affiliateTier, now);
+  }
+  const updatedAccount = getAccountById(account.id);
+  const withdrawalRecord = db.prepare("SELECT * FROM withdrawals WHERE id = ?").get(withdrawalId);
+  return { ok: true, withdrawal: withdrawalRecord, updatedAccount, breakdown: { requestedAmount: params.requestedAmount, netProfit, maxAllowed80Percent, feeAmount, netPayout } };
+}
+__name(processWithdrawalRequest, "processWithdrawalRequest");
+function syncSupabaseProfilesToAffiliateTree(profilesList) {
+  if (!Array.isArray(profilesList) || profilesList.length === 0) return;
+  const now = Date.now();
+  for (const p of profilesList) {
+    if (!p?.id) continue;
+    const id = String(p.id).trim();
+    const email = String(p.email || `${id.slice(0, 8)}@bft.io`).trim().toLowerCase();
+    const fullName = String(p.full_name || p.name || email.split("@")[0] || "Trader").trim();
+    const refCode = String(p.referral_code || `BFT-${id.replace(/[^a-zA-Z0-9]/g, "").slice(0, 6).toUpperCase()}`).trim();
+    const referredBy = p.referred_by ? String(p.referred_by).trim() : null;
+    const existing = getUserById(id) || getUserByEmail(email);
+    if (!existing) {
+      try {
+        db.prepare(`
+          INSERT OR IGNORE INTO users (id, email, full_name, referral_code, referred_by, kyc_status, profile_locked, country, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, 'unverified', 0, 'United States', ?, ?)
+        `).run(id, email, fullName, refCode, referredBy, now, now);
+      } catch {
+        const fallbackRef = `BFT-${Math.floor(1e5 + Math.random() * 899999)}`;
+        db.prepare(`
+          INSERT OR IGNORE INTO users (id, email, full_name, referral_code, referred_by, kyc_status, profile_locked, country, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, 'unverified', 0, 'United States', ?, ?)
+        `).run(id, email, fullName, fallbackRef, referredBy, now, now);
+      }
+    } else if (referredBy && !existing.referred_by && existing.id !== referredBy) {
+      db.prepare("UPDATE users SET referred_by = ?, updated_at = ? WHERE id = ?").run(referredBy, now, existing.id);
+    }
+  }
+  for (const p of profilesList) {
+    if (!p?.id || !p?.referred_by) continue;
+    const userId = String(p.id).trim();
+    const sponsorId = String(p.referred_by).trim();
+    if (userId && sponsorId && userId !== sponsorId) {
+      try {
+        linkUplineReferrals(sponsorId, userId, now);
+      } catch {
+      }
+    }
+  }
+}
+__name(syncSupabaseProfilesToAffiliateTree, "syncSupabaseProfilesToAffiliateTree");
+function creditPurchaseCommissions(buyerUserId, packageName, packagePrice, referralCodeUsed) {
+  let buyer = getUserById(buyerUserId);
+  const now = Date.now();
+  if (referralCodeUsed && buyer && !buyer.referred_by) {
+    const sponsor = getUserByReferralCode(referralCodeUsed);
+    if (sponsor && sponsor.id !== buyer.id) {
+      const sponsorNetwork = db.prepare("SELECT referred_user_id FROM referrals WHERE sponsor_id = ?").all(sponsor.id);
+      let sponsorActiveCount = 0;
+      for (const node of sponsorNetwork) {
+        const pur = getLatestPurchaseForUserInDb(node.referred_user_id);
+        if (pur && Number(pur.amount) > 0) sponsorActiveCount += 1;
+      }
+      const regTier = sponsorActiveCount >= 1e3 ? "vip" : "basic";
+      db.prepare("UPDATE users SET referred_by = ?, registered_tier = ? WHERE id = ?").run(sponsor.id, regTier, buyer.id);
+      linkUplineReferrals(sponsor.id, buyer.id, now);
+      buyer = getUserById(buyerUserId);
+    }
+  }
+  if (!buyer?.referred_by) return [];
+  try {
+    linkUplineReferrals(buyer.referred_by, buyer.id, now);
+  } catch {
+  }
+  const isVipReferral = buyer.registered_tier === "vip";
+  const effectiveTier = isVipReferral ? "vip" : "basic";
+  const l1Rate = isVipReferral ? 0.15 : 0.1;
+  const l2Rate = isVipReferral ? 0.08 : 0.05;
+  const l3Rate = isVipReferral ? 0.05 : 0.02;
+  const commissionsRecorded = [];
+  const l1SponsorId = buyer.referred_by;
+  const l1Amount = Number((packagePrice * l1Rate).toFixed(2));
+  const l1Id = `COMM-P1-${now.toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
+  db.prepare(`
+    INSERT INTO commissions (id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, affiliate_tier, status, created_at)
+    VALUES (?, ?, ?, 'purchase', 1, ?, ?, ?, ?, ?, 'paid', ?)
+  `).run(l1Id, l1SponsorId, buyer.id, packageName, packagePrice, l1Rate, l1Amount, effectiveTier, now);
+  commissionsRecorded.push({ id: l1Id, level: 1, sponsorId: l1SponsorId, referredUserId: buyer.id, referredUserName: buyer.full_name, referredUserEmail: buyer.email, packageName, packagePrice, rate: l1Rate, amount: l1Amount, affiliateTier: effectiveTier });
+  const l1User = getUserById(l1SponsorId);
+  if (l1User?.referred_by && l1User.referred_by !== buyer.id) {
+    const l2SponsorId = l1User.referred_by;
+    const l2Amount = Number((packagePrice * l2Rate).toFixed(2));
+    const l2Id = `COMM-P2-${now.toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
+    db.prepare(`
+      INSERT INTO commissions (id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, affiliate_tier, status, created_at)
+      VALUES (?, ?, ?, 'purchase', 2, ?, ?, ?, ?, ?, 'paid', ?)
+    `).run(l2Id, l2SponsorId, buyer.id, packageName, packagePrice, l2Rate, l2Amount, effectiveTier, now);
+    commissionsRecorded.push({ id: l2Id, level: 2, sponsorId: l2SponsorId, referredUserId: buyer.id, referredUserName: buyer.full_name, referredUserEmail: buyer.email, packageName, packagePrice, rate: l2Rate, amount: l2Amount, affiliateTier: effectiveTier });
+    const l2User = getUserById(l2SponsorId);
+    if (l2User?.referred_by && l2User.referred_by !== buyer.id) {
+      const l3SponsorId = l2User.referred_by;
+      const l3Amount = Number((packagePrice * l3Rate).toFixed(2));
+      const l3Id = `COMM-P3-${now.toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
+      db.prepare(`
+        INSERT INTO commissions (id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, affiliate_tier, status, created_at)
+        VALUES (?, ?, ?, 'purchase', 3, ?, ?, ?, ?, ?, 'paid', ?)
+      `).run(l3Id, l3SponsorId, buyer.id, packageName, packagePrice, l3Rate, l3Amount, effectiveTier, now);
+      commissionsRecorded.push({ id: l3Id, level: 3, sponsorId: l3SponsorId, referredUserId: buyer.id, referredUserName: buyer.full_name, referredUserEmail: buyer.email, packageName, packagePrice, rate: l3Rate, amount: l3Amount, affiliateTier: effectiveTier });
+    }
+  }
+  return commissionsRecorded;
+}
+__name(creditPurchaseCommissions, "creditPurchaseCommissions");
+var DB_INACTIVE_STATUSES = /* @__PURE__ */ new Set(["pending", "failed", "declined", "rejected", "expired", "cancelled", "canceled", "unpaid", "void", "registered", "breached", "hard-breached", "soft-breached"]);
+function isDbItemActive(status) {
+  const s = String(status || "").trim().toLowerCase();
+  return !s || !DB_INACTIVE_STATUSES.has(s);
+}
+function isDbItemSelfFunded(item) {
+  const t = String(item?.accountType || item?.account_type || item?.tier || "").trim().toLowerCase();
+  const sku = String(item?.sku || item?.package_sku || "").trim().toUpperCase();
+  const name = String(item?.name || item?.package_name || "").trim();
+  if (t === "self_funded" || t === "self-funded" || t === "personal" || t === "personal_live" || t === "self_capital") return true;
+  if (sku.startsWith("BFT-SELF") || sku.startsWith("PERS")) return true;
+  return /self[-\s]*funded|self[-\s]*capital|personal\s*live/i.test(name) && !/1[-\s]*step|2[-\s]*step|one[-\s]*step|two[-\s]*step|instant\s*funded|evaluation/i.test(name);
+}
+function isDbItemFundedChallenge(item) {
+  const t = String(item?.accountType || item?.account_type || item?.tier || "").trim().toLowerCase();
+  const name = String(item?.name || item?.package_name || "").trim();
+  if (t === "demo" || /\bdemo\b/i.test(name)) return false;
+  if (isDbItemSelfFunded(item)) return false;
+  return Number(item?.amount || 0) > 0;
+}
+function getAllPurchasesForUserInDb(userId) {
+  if (!userId) return [];
+  const collected = [];
+  const seenIds = /* @__PURE__ */ new Set();
+  const representedAccountIds = /* @__PURE__ */ new Set();
+  const pushItem = (item) => {
+    const amt = Number(item.amount || 0);
+    if (!Number.isFinite(amt) || amt <= 0) return;
+    const cleanId = item.id ? String(item.id).trim() : "";
+    const isSynthetic = cleanId.startsWith("TA-");
+    if (cleanId && seenIds.has(cleanId)) return;
+    if (isSynthetic && item.accountId && representedAccountIds.has(String(item.accountId))) return;
+    if (cleanId) seenIds.add(cleanId);
+    if (item.accountId) representedAccountIds.add(String(item.accountId));
+    collected.push(item);
+  };
+  try {
+    const rows = db.prepare("SELECT * FROM user_purchases WHERE user_id = ? ORDER BY created_at DESC LIMIT 100").all(userId);
+    for (const pur of rows) {
+      if (String(pur.id || "").startsWith("PUR-SYNC-")) continue;
+      pushItem({ id: String(pur.id), accountId: pur.account_id ? String(pur.account_id) : null, name: pur.package_name || "Challenge Package", sku: pur.package_sku || pur.package_id || "BFT-PKG", amount: Number(pur.package_amount ?? pur.amount ?? 0), accountType: pur.account_type || "challenge", status: pur.status || "completed", createdAt: pur.created_at ? new Date(Number(pur.created_at)).toISOString() : void 0 });
+    }
+  } catch {
+  }
+  try {
+    const deps = db.prepare("SELECT * FROM crypto_deposits WHERE user_id = ? ORDER BY created_at DESC LIMIT 100").all(userId);
+    for (const dep of deps) {
+      pushItem({ id: String(dep.id), accountId: dep.account_id ? String(dep.account_id) : null, name: dep.package_name || (dep.account_type === "self_funded" ? "Self-Funded Deposit" : "Challenge Package"), sku: dep.package_sku || dep.sku || "BFT-PKG", amount: Number(dep.amount ?? 0), accountType: dep.account_type || "challenge", status: dep.status || "pending", createdAt: dep.created_at ? new Date(Number(dep.created_at)).toISOString() : void 0 });
+    }
+  } catch {
+  }
+  try {
+    const bankDeps = db.prepare("SELECT * FROM deposits WHERE user_id = ? ORDER BY created_at DESC LIMIT 100").all(userId);
+    for (const dep of bankDeps) {
+      pushItem({ id: String(dep.id), accountId: dep.account_id ? String(dep.account_id) : null, name: dep.package_name || (dep.account_type === "self_funded" ? "Self-Funded Deposit" : "Challenge Package"), sku: dep.package_sku || dep.sku || "BFT-PKG", amount: Number(dep.amount ?? 0), accountType: dep.account_type || "self_funded", status: dep.status || "pending", createdAt: dep.created_at ? new Date(Number(dep.created_at)).toISOString() : void 0 });
+    }
+  } catch {
+  }
+  try {
+    const accts = db.prepare("SELECT * FROM accounts WHERE user_id = ? ORDER BY created_at DESC LIMIT 100").all(userId);
+    for (const acc of accts) {
+      const tierLower = String(acc.tier || "").toLowerCase();
+      const catLower = String(acc.account_category || "").toLowerCase();
+      if (tierLower === "demo" || catLower === "demo") continue;
+      const isPersonal = tierLower === "personal" || catLower === "personal_live" || String(acc.phase || "").toLowerCase() === "personal_live";
+      const amt = Number(isPersonal ? acc.deposited_capital ?? acc.initial_balance ?? acc.current_balance ?? 0 : acc.size ?? acc.initial_balance ?? 0);
+      if (amt <= 0) continue;
+      pushItem({ id: `TA-${acc.id}`, accountId: String(acc.id), name: acc.tier_name || (isPersonal ? "Self-Funded Live Wallet" : `Funded ${acc.tier || "Challenge"}`), sku: isPersonal ? "BFT-SELF" : "BFT-CHAL", amount: amt, accountType: isPersonal ? "self_funded" : "challenge", status: acc.status || "active", createdAt: acc.created_at ? new Date(Number(acc.created_at)).toISOString() : void 0 });
+    }
+  } catch {
+  }
+  if (collected.length === 0) {
+    try {
+      const comms = db.prepare("SELECT * FROM commissions WHERE referred_user_id = ? AND source_type != 'withdrawal' ORDER BY created_at DESC LIMIT 100").all(userId);
+      for (const comm of comms) {
+        const amt = Number(comm.base_amount ?? 0);
+        if (amt <= 0) continue;
+        const cleanName = String(comm.package_name || "").replace(/^Level\s*\d+\s*Commission:\s*/i, "").trim();
+        pushItem({ id: String(comm.id), accountId: null, name: cleanName || "Challenge Package", sku: "BFT-PKG", amount: amt, accountType: "challenge", status: comm.status || "completed", createdAt: comm.created_at ? new Date(Number(comm.created_at)).toISOString() : void 0 });
+      }
+    } catch {
+    }
+  }
+  return collected;
+}
+__name(getAllPurchasesForUserInDb, "getAllPurchasesForUserInDb");
+function getLatestPurchaseForUserInDb(userId) {
+  const all = getAllPurchasesForUserInDb(userId);
+  const activeAll = all.filter((p) => isDbItemActive(p.status));
+  const first = activeAll[0] || all[0];
+  if (!first) return null;
+  return { package_name: first.name, package_sku: first.sku || "BFT-PKG", amount: first.amount, status: first.status, accountType: first.accountType, created_at: first.createdAt };
+}
+__name(getLatestPurchaseForUserInDb, "getLatestPurchaseForUserInDb");
+function getAffiliateDashboardStats(userId) {
+  let targetId = (userId || "").trim();
+  if (!targetId) {
+    return { stats: { totalEarned: 0, unpaidEarnings: 0, paidEarnings: 0, level1Earnings: 0, level2Earnings: 0, level3Earnings: 0, withdrawalEarnings: 0, teamSize: 0, totalRegisteredReferrals: 0, activeDepositedCount: 0, activeFundedCount: 0, totalPurchasedAccountsCount: 0, isVipUnlocked: false, recentCommissions: [], networkTree: [] } };
+  }
+  let commissions = db.prepare(`SELECT c.*, u.full_name as referred_user_name, u.email as referred_user_email
+        FROM commissions c
+        LEFT JOIN users u ON c.referred_user_id = u.id
+        WHERE c.sponsor_id = ?
+        ORDER BY c.created_at DESC`).all(targetId);
+  let referrals = db.prepare(`SELECT r.*, u.full_name, u.email, u.self_balance, u.created_at as joined_at
+        FROM referrals r
+        JOIN users u ON r.referred_user_id = u.id
+        WHERE r.sponsor_id = ?
+        ORDER BY r.tier_level ASC, r.created_at DESC`).all(targetId);
+  let totalEarnings = 0;
+  let level1Earnings = 0;
+  let level2Earnings = 0;
+  let level3Earnings = 0;
+  let withdrawalBonusEarnings = 0;
+  for (const c of commissions) {
+    totalEarnings += c.commission_amount;
+    if (c.source_type === "withdrawal") {
+      withdrawalBonusEarnings += c.commission_amount;
+    }
+    if (c.tier_level === 1) level1Earnings += c.commission_amount;
+    if (c.tier_level === 2) level2Earnings += c.commission_amount;
+    if (c.tier_level === 3) level3Earnings += c.commission_amount;
+  }
+  const enrichedReferrals = referrals.map((r) => {
+    const allPurchases = getAllPurchasesForUserInDb(r.referred_user_id);
+    const activePurchases = allPurchases.filter((p) => isDbItemActive(p.status) && Number(p.amount || 0) > 0);
+    const activeFundedChallenges = activePurchases.filter((p) => isDbItemFundedChallenge(p));
+    const activeSelfDeposits = activePurchases.filter((p) => isDbItemSelfFunded(p));
+    const hasActiveFunded = activeFundedChallenges.length > 0;
+    const selfCapitalDepositAmount = Number(activeSelfDeposits.reduce((s, p) => s + Number(p.amount || 0), 0).toFixed(2));
+    const liveSelfBalance = Number(r.self_balance || 0);
+    const hasActiveSelfCapitalDeposit = selfCapitalDepositAmount > 0 || liveSelfBalance > 0;
+    const latestPurchase = activePurchases[0] || allPurchases[0];
+    const totalPurchaseAmount = Number(allPurchases.reduce((s, p) => s + Number(p.amount || 0), 0).toFixed(2));
+    return { ...r, package_name: latestPurchase?.name || null, package_sku: latestPurchase?.sku || null, package_price: latestPurchase?.amount || 0, latestPurchase: latestPurchase ? { id: latestPurchase.id, accountId: latestPurchase.accountId, name: latestPurchase.name, sku: latestPurchase.sku, amount: latestPurchase.amount, accountType: latestPurchase.accountType, status: latestPurchase.status, createdAt: latestPurchase.createdAt } : void 0, purchases: allPurchases, accountCount: allPurchases.length, totalPurchaseAmount, hasActiveFunded, hasActiveSelfCapitalDeposit, selfCapitalDepositAmount: selfCapitalDepositAmount > 0 ? selfCapitalDepositAmount : liveSelfBalance, accountBalance: liveSelfBalance };
+  });
+  const networkTree = enrichedReferrals.map((r) => ({ id: r.referred_user_id, fullName: r.full_name || "Trader", email: r.email, level: r.tier_level || 1, joinedDate: r.joined_at ? new Date(Number(r.joined_at)).toISOString() : void 0, latestPurchase: r.latestPurchase, purchases: r.purchases, accountCount: r.accountCount, totalPurchaseAmount: r.totalPurchaseAmount, hasActiveFunded: r.hasActiveFunded, hasActiveSelfCapitalDeposit: r.hasActiveSelfCapitalDeposit, selfCapitalDepositAmount: r.selfCapitalDepositAmount, accountBalance: r.accountBalance }));
+  const totalRegisteredReferrals = networkTree.length;
+  const activeDepositedCount = networkTree.filter((n) => n.hasActiveSelfCapitalDeposit).length;
+  const activeFundedCount = networkTree.filter((n) => n.hasActiveFunded).length;
+  const totalPurchasedAccountsCount = networkTree.reduce((sum, n) => sum + (Array.isArray(n.purchases) ? n.purchases.filter((p) => isDbItemActive(p.status)).length : 0), 0);
+  const vipThreshold = 1e3;
+  const isVipUnlocked = activeFundedCount >= vipThreshold;
+  const remainingToVip = Math.max(0, vipThreshold - activeFundedCount);
+  const vipProgressPercent = Math.min(100, Number((activeFundedCount / vipThreshold * 100).toFixed(1)));
+  const affiliateTier = isVipUnlocked ? "vip" : "basic";
+  const milestoneRewardAmount = 1e4;
+  const normalizedCommissions = commissions.map((c) => ({ ...c, affiliate_tier: c.affiliate_tier || (c.rate >= 0.15 || c.source_type === "withdrawal" && c.rate >= 0.1 ? "vip" : "basic") }));
+  return { totalEarnings: Number(totalEarnings.toFixed(2)), level1Earnings: Number(level1Earnings.toFixed(2)), level2Earnings: Number(level2Earnings.toFixed(2)), level3Earnings: Number(level3Earnings.toFixed(2)), withdrawalBonusEarnings: Number(withdrawalBonusEarnings.toFixed(2)), teamSize: totalRegisteredReferrals, totalRegisteredReferrals, activeDepositedCount, activeFundedCount, totalPurchasedAccountsCount, vipThreshold, vipProgressPercent, remainingToVip, isVipUnlocked, affiliateTier, milestoneRewardAmount, level1Count: networkTree.filter((r) => r.level === 1 && r.hasActiveFunded).length, level2Count: networkTree.filter((r) => r.level === 2 && r.hasActiveFunded).length, level3Count: networkTree.filter((r) => r.level === 3 && r.hasActiveFunded).length, registeredLevel1Count: referrals.filter((r) => r.tier_level === 1).length, registeredLevel2Count: referrals.filter((r) => r.tier_level === 2).length, registeredLevel3Count: referrals.filter((r) => r.tier_level === 3).length, recentCommissions: normalizedCommissions.slice(0, 50), referrals: enrichedReferrals.slice(0, 50), networkTree };
+}
+__name(getAffiliateDashboardStats, "getAffiliateDashboardStats");
+function getWeeklyLeaderboardQuery() {
+  const rows = db.prepare("SELECT * FROM leaderboard ORDER BY rank ASC").all();
+  return rows.map((r) => ({ id: r.id, rank: r.rank, name: r.name, country: r.country, flag: r.flag, accountTier: r.account_tier, profit: r.profit, winRate: r.win_rate, payoutTime: r.payout_time }));
+}
+__name(getWeeklyLeaderboardQuery, "getWeeklyLeaderboardQuery");
+function getFundedLeaderboardQuery() {
+  const rows = db.prepare("SELECT * FROM funded_leaderboard ORDER BY rank ASC").all();
+  return rows.map((r) => ({ id: r.id, rank: r.rank, name: r.name, country: r.country, flag: r.flag, isoCode: r.iso_code, accountTier: r.account_tier, profit: r.profit, winRate: r.win_rate, payoutTime: r.payout_time, category: "funded" }));
+}
+__name(getFundedLeaderboardQuery, "getFundedLeaderboardQuery");
+function getSelfFundedLeaderboardQuery() {
+  const seedRows = db.prepare("SELECT * FROM self_funded_leaderboard ORDER BY rank ASC").all();
+  const activeUsers = db.prepare(`
+    SELECT u.id, u.full_name, u.email, u.country, u.self_balance,
+           (SELECT COUNT(*) FROM trades t WHERE t.user_id = u.id AND t.status IN ('won', 'lost')) as trade_count,
+           (SELECT COUNT(*) FROM trades t WHERE t.user_id = u.id AND t.status = 'won') as win_count
+    FROM users u
+    WHERE u.self_balance > 0 AND u.role != 'admin'
+    ORDER BY u.self_balance DESC
+    LIMIT 20
+  `).all();
+  const aaravEntry = { id: "slf_in_01", rank: 1, name: "Aarav Sharma", country: "India", flag: "\u{1F1EE}\u{1F1F3}", isoCode: "IN", category: "self_funded", accountTier: "Self-Funded VIP Live", profit: 40056.61, winRate: 83.1, payoutTime: "0m 58s" };
+  const pool = [];
+  const addedNames = /* @__PURE__ */ new Set(["aarav sharma", "yohan siriwardhana", "yohan siriwardana"]);
+  for (const u of activeUsers) {
+    const rawName = String(u.full_name || u.email?.split("@")[0] || "Trader").trim();
+    const lower = rawName.toLowerCase();
+    if (addedNames.has(lower) || lower === "loading" || lower === "null") continue;
+    addedNames.add(lower);
+    const winRate = u.trade_count > 0 ? Number((u.win_count / u.trade_count * 100).toFixed(1)) : 76.5;
+    const profit = Math.min(38500, Number(Number(u.self_balance).toFixed(2)));
+    pool.push({ id: `usr_slf_${u.id}`, rank: 2, name: rawName, country: u.country || "Bangladesh", flag: getCountryFlag(u.country || "Bangladesh"), isoCode: (u.country || "BD").slice(0, 2).toUpperCase(), countryCode: (u.country || "BD").slice(0, 2).toUpperCase(), category: "self_funded", accountTier: profit > 2e4 ? "Self-Funded VIP Live" : "Self-Funded Live", profit, winRate, payoutTime: "1m 15s" });
+  }
+  for (const s of seedRows) {
+    const sName = String(s.name || "").trim();
+    const lower = sName.toLowerCase();
+    if (s.rank === 1 || lower.includes("yohan") || addedNames.has(lower)) continue;
+    addedNames.add(lower);
+    pool.push({ id: s.id, rank: s.rank, name: s.name, country: s.country, flag: s.flag, isoCode: s.iso_code || "IN", category: "self_funded", accountTier: s.account_tier, profit: Math.min(s.profit, 39900), winRate: s.win_rate, payoutTime: s.payout_time });
+  }
+  pool.sort((a, b) => b.profit - a.profit);
+  return [aaravEntry, ...pool.slice(0, 14)].map((t, idx) => ({ ...t, rank: idx + 1 }));
+}
+__name(getSelfFundedLeaderboardQuery, "getSelfFundedLeaderboardQuery");
+function recordAdminAuditLog(adminUserId, action, targetId, targetType, details) {
+  const id = `AUDIT-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  db.prepare(`
+    INSERT INTO admin_audit_logs (id, admin_user_id, action, target_id, target_type, details, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(id, adminUserId, action, targetId, targetType, details ? typeof details === "string" ? details : JSON.stringify(details) : null, Date.now());
+}
+__name(recordAdminAuditLog, "recordAdminAuditLog");
+function getAdminMetrics() {
+  const totalUsers = Number(db.prepare("SELECT COUNT(*) as c FROM users").get()?.c || 0);
+  const totalAccounts = Number(db.prepare("SELECT COUNT(*) as c FROM accounts").get()?.c || 0);
+  const totalActiveBalance = Number(db.prepare("SELECT SUM(current_balance) as s FROM accounts").get()?.s || 0);
+  const totalDeposited = Number(db.prepare("SELECT SUM(deposited_capital) as s FROM accounts").get()?.s || 0);
+  const pendingDeposits = Number(db.prepare("SELECT COUNT(*) as c FROM deposits WHERE status = 'pending'").get()?.c || 0);
+  const pendingDepositsSum = Number(db.prepare("SELECT SUM(amount) as s FROM deposits WHERE status = 'pending'").get()?.s || 0);
+  const pendingWithdrawals = Number(db.prepare("SELECT COUNT(*) as c FROM withdrawals WHERE status = 'pending'").get()?.c || 0);
+  const pendingWithdrawalsSum = Number(db.prepare("SELECT SUM(gross_amount) as s FROM withdrawals WHERE status = 'pending'").get()?.s || 0);
+  const pendingKyc = Number(db.prepare("SELECT COUNT(*) as c FROM users WHERE kyc_status IN ('pending', 'Pending Verification')").get()?.c || 0);
+  const totalCommissions = Number(db.prepare("SELECT SUM(commission_amount) as s FROM commissions WHERE status = 'paid'").get()?.s || 0);
+  const totalAffiliates = Number(db.prepare("SELECT COUNT(DISTINCT sponsor_id) as c FROM referrals").get()?.c || 0);
+  return { totalUsers, totalAccounts, totalActiveBalance: Number(totalActiveBalance.toFixed(2)), totalDeposited: Number(totalDeposited.toFixed(2)), pendingDepositsCount: pendingDeposits, pendingDepositsAmount: Number(pendingDepositsSum.toFixed(2)), pendingWithdrawalsCount: pendingWithdrawals, pendingWithdrawalsAmount: Number(pendingWithdrawalsSum.toFixed(2)), pendingKycCount: pendingKyc, totalCommissionsPaid: Number(totalCommissions.toFixed(2)), totalAffiliatesCount: totalAffiliates };
+}
+__name(getAdminMetrics, "getAdminMetrics");
+function getAdminUsersList() {
+  const users = db.prepare(`
+    SELECT u.*,
+           (SELECT COUNT(*) FROM accounts a WHERE a.user_id = u.id) as accounts_count,
+           (SELECT SUM(current_balance) FROM accounts a WHERE a.user_id = u.id) as total_balance,
+           (SELECT full_name FROM users s WHERE s.id = u.referred_by) as sponsor_name
+    FROM users u
+    ORDER BY u.created_at DESC
+  `).all();
+  return users.map((u) => {
+    const userAccounts = db.prepare("SELECT * FROM accounts WHERE user_id = ? ORDER BY created_at DESC").all(u.id);
+    return { id: u.id, email: u.email, fullName: u.full_name, role: u.role || "trader", avatarUrl: u.avatar_url, country: u.country, referralCode: u.referral_code, referredBy: u.referred_by, sponsorName: u.sponsor_name || null, kycStatus: u.kyc_status, profileLocked: Boolean(u.profile_locked), address: u.address, dateOfBirth: u.date_of_birth, telegramHandle: u.telegram_handle, selfBalance: u.self_balance ?? 0, accountsCount: u.accounts_count || 0, totalBalance: Number((u.total_balance || 0).toFixed(2)), createdAt: u.created_at, accounts: userAccounts.map(mapAccountRowToTradingAccount) };
+  });
+}
+__name(getAdminUsersList, "getAdminUsersList");
+function adminUpdateAccountBalance(params) {
+  const account = db.prepare("SELECT * FROM accounts WHERE id = ?").get(params.accountId);
+  if (!account) throw new Error(`Trading account ${params.accountId} not found.`);
+  const oldBalance = Number(account.current_balance);
+  const targetBalance = Number(Number(params.newBalance).toFixed(2));
+  if (!Number.isFinite(targetBalance) || targetBalance < 0) {
+    throw new Error("New balance must be a non-negative number.");
+  }
+  const delta = targetBalance - oldBalance;
+  const newEquity = Number((account.equity + delta).toFixed(2));
+  const newStartingDay = Number((account.starting_day_equity + delta).toFixed(2));
+  const now = Date.now();
+  db.prepare(`
+    UPDATE accounts SET
+      current_balance = ?,
+      equity = ?,
+      starting_day_equity = ?,
+      updated_at = ?
+    WHERE id = ?
+  `).run(targetBalance, newEquity, newStartingDay, now, params.accountId);
+  if (account.tier === "personal" || account.account_category === "personal_live" || String(params.accountId).includes("PERS")) {
+    try {
+      db.prepare(`UPDATE users SET self_balance = ? WHERE id = ?`).run(targetBalance, account.user_id);
+    } catch {
+    }
+  } else if (account.tier === "demo" || account.account_category === "demo" || String(params.accountId).includes("DEMO")) {
+    try {
+      db.prepare(`UPDATE users SET demo_balance = ? WHERE id = ?`).run(targetBalance, account.user_id);
+    } catch {
+    }
+  } else if (account.phase === "funded") {
+    try {
+      db.prepare(`UPDATE users SET funded_balance = ? WHERE id = ?`).run(targetBalance, account.user_id);
+    } catch {
+    }
+  }
+  recordAdminAuditLog(params.adminUserId, "MODIFY_BALANCE", params.accountId, "account", { oldBalance, newBalance: targetBalance, delta, reason: params.reason });
+  return getAccountById(params.accountId);
+}
+__name(adminUpdateAccountBalance, "adminUpdateAccountBalance");
+function adminSetUserRole(userId, newRole, adminUserId) {
+  const user = getUserById(userId);
+  if (!user) throw new Error("User not found.");
+  db.prepare("UPDATE users SET role = ?, updated_at = ? WHERE id = ?").run(newRole, Date.now(), userId);
+  recordAdminAuditLog(adminUserId, "CHANGE_ROLE", userId, "user", { oldRole: user.role, newRole });
+  return getUserById(userId);
+}
+__name(adminSetUserRole, "adminSetUserRole");
+var depositAlterColumns = [`ALTER TABLE deposits ADD COLUMN wallet_address TEXT DEFAULT 'TWr3rLWrWGBcfwix5osJwAwMXmpcu4PNSp';`, `ALTER TABLE deposits ADD COLUMN package_name TEXT;`, `ALTER TABLE deposits ADD COLUMN sku TEXT;`, `ALTER TABLE deposits ADD COLUMN package_sku TEXT;`, `ALTER TABLE deposits ADD COLUMN account_type TEXT DEFAULT 'self_funded';`, `ALTER TABLE deposits ADD COLUMN is_fulfilled INTEGER DEFAULT 0;`, `ALTER TABLE deposits ADD COLUMN expires_at INTEGER;`, `ALTER TABLE crypto_deposits ADD COLUMN package_sku TEXT;`, `ALTER TABLE crypto_deposits ADD COLUMN is_fulfilled INTEGER DEFAULT 0;`, `ALTER TABLE crypto_deposits ADD COLUMN processed_at INTEGER;`, `ALTER TABLE crypto_deposits ADD COLUMN expires_at INTEGER;`, `CREATE TABLE IF NOT EXISTS user_purchases (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    account_id TEXT,
+    package_id TEXT NOT NULL,
+    package_name TEXT NOT NULL,
+    package_sku TEXT NOT NULL,
+    amount REAL NOT NULL,
+    package_amount REAL NOT NULL,
+    account_type TEXT NOT NULL DEFAULT 'challenge',
+    status TEXT NOT NULL DEFAULT 'pending',
+    tx_hash TEXT,
+    created_at INTEGER NOT NULL,
+    processed_at INTEGER,
+    expires_at INTEGER
+  );`, `ALTER TABLE user_purchases ADD COLUMN processed_at INTEGER;`, `ALTER TABLE user_purchases ADD COLUMN expires_at INTEGER;`, `CREATE TABLE IF NOT EXISTS transactions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    account_id TEXT,
+    wallet_address TEXT DEFAULT 'TWr3rLWrWGBcfwix5osJwAwMXmpcu4PNSp',
+    amount REAL NOT NULL,
+    package_name TEXT NOT NULL,
+    package_sku TEXT NOT NULL,
+    account_type TEXT NOT NULL DEFAULT 'challenge',
+    currency TEXT NOT NULL DEFAULT 'USDT',
+    network TEXT NOT NULL DEFAULT 'TRC-20',
+    tx_hash TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at INTEGER NOT NULL,
+    processed_at INTEGER,
+    expires_at INTEGER
+  );`];
+for (const stmt of depositAlterColumns) {
+  try {
+    db.exec(stmt);
+  } catch {
+  }
+}
+function expireStalePendingDepositsInDb(nowMs = Date.now(), expiryWindowMs = DEPOSIT_EXPIRY_MS) {
+  const cutoffMs = nowMs - expiryWindowMs;
+  let expiredRows = [];
+  try {
+    expiredRows = db.prepare(`SELECT id FROM crypto_deposits WHERE status = 'pending' AND created_at <= ?`).all(cutoffMs);
+  } catch {
+    expiredRows = [];
+  }
+  const expiredIds = expiredRows.map((r) => String(r.id));
+  try {
+    db.prepare(`UPDATE crypto_deposits
+       SET status = 'failed',
+           is_fulfilled = 0,
+           account_id = NULL,
+           processed_at = ?
+       WHERE status = 'pending' AND created_at <= ?`).run(nowMs, cutoffMs);
+  } catch {
+  }
+  try {
+    db.prepare(`UPDATE deposits
+       SET status = 'failed',
+           is_fulfilled = 0,
+           account_id = NULL,
+           decline_reason = 'Expired after 1 hour (60 minutes) without blockchain confirmation',
+           processed_at = ?
+       WHERE status = 'pending' AND created_at <= ?`).run(nowMs, cutoffMs);
+  } catch {
+  }
+  try {
+    db.prepare(`UPDATE transactions
+       SET status = 'failed',
+           account_id = NULL,
+           processed_at = ?
+       WHERE status = 'pending' AND created_at <= ?`).run(nowMs, cutoffMs);
+  } catch {
+  }
+  try {
+    db.prepare(`UPDATE user_purchases
+       SET status = 'failed',
+           account_id = NULL,
+           processed_at = ?
+       WHERE status = 'pending' AND created_at <= ?`).run(nowMs, cutoffMs);
+  } catch {
+  }
+  return { expiredCount: expiredIds.length, expiredIds, cutoffMs };
+}
+__name(expireStalePendingDepositsInDb, "expireStalePendingDepositsInDb");
+function createUserPurchaseRecord(params) {
+  const now = params.createdAtMs ?? Date.now();
+  const expiresAt = now + DEPOSIT_EXPIRY_MS;
+  const id = params.id || `PUR-${now.toString(36).toUpperCase()}-${Math.floor(1e3 + Math.random() * 9e3)}`;
+  const cleanAmount = Number(Math.max(0.01, Number(params.amount || 0)).toFixed(2));
+  const cleanPkgAmount = Number(Math.max(0.01, Number(params.packageAmount ?? params.amount ?? 0)).toFixed(2));
+  const accountType = params.accountType === "self_funded" ? "self_funded" : "challenge";
+  const sku = String(params.packageSku || params.packageId || "BFT-2S-10K").trim().toUpperCase();
+  const packageId = String(params.packageId || sku).trim();
+  const packageName = String(params.packageName || "Challenge Package").trim();
+  const status = normalizeCryptoDepositStatus(params.status, "pending");
+  db.prepare(`
+    INSERT OR REPLACE INTO user_purchases (
+      id, user_id, account_id, package_id, package_name, package_sku,
+      amount, package_amount, account_type, status, tx_hash, created_at, expires_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, params.userId, params.accountId || null, packageId, packageName, sku, cleanAmount, cleanPkgAmount, accountType, status, params.txHash || null, now, expiresAt);
+  return db.prepare("SELECT * FROM user_purchases WHERE id = ?").get(id);
+}
+__name(createUserPurchaseRecord, "createUserPurchaseRecord");
+function getUserPurchases(params) {
+  expireStalePendingDepositsInDb();
+  if (params?.userId) {
+    return db.prepare("SELECT * FROM user_purchases WHERE user_id = ? ORDER BY created_at DESC LIMIT 100").all(params.userId);
+  }
+  return db.prepare("SELECT * FROM user_purchases ORDER BY created_at DESC LIMIT 100").all();
+}
+__name(getUserPurchases, "getUserPurchases");
+function getTransactions(params) {
+  expireStalePendingDepositsInDb();
+  if (params?.userId) {
+    return db.prepare("SELECT * FROM transactions WHERE user_id = ? ORDER BY created_at DESC LIMIT 100").all(params.userId);
+  }
+  return db.prepare("SELECT * FROM transactions ORDER BY created_at DESC LIMIT 100").all();
+}
+__name(getTransactions, "getTransactions");
+function createDepositRequest(params) {
+  const now = params.createdAtMs ?? Date.now();
+  const expiresAt = now + DEPOSIT_EXPIRY_MS;
+  const id = `DEP-${now.toString(36).toUpperCase()}-${Math.floor(1e3 + Math.random() * 9e3)}`;
+  const cleanAmount = Number(params.amount.toFixed(2));
+  if (cleanAmount <= 0) throw new Error("Deposit amount must be greater than $0.");
+  const walletAddress = params.walletAddress || "TWr3rLWrWGBcfwix5osJwAwMXmpcu4PNSp";
+  const accountType = params.accountType === "challenge" ? "challenge" : "self_funded";
+  const packageName = params.packageName || (accountType === "challenge" ? "Funded Challenge Evaluation" : `Self-Funded Personal Live Deposit ($${cleanAmount.toFixed(2)} USDT)`);
+  const sku = params.sku || (accountType === "challenge" ? `BFT-CHALLENGE-${Math.round(cleanAmount)}` : `BFT-SELF-${Math.round(cleanAmount)}`);
+  ensureUserInDb({ id: params.userId, email: `${String(params.userId).toLowerCase().replace(/[^a-z0-9]/g, "")}@client-bft.com`, fullName: `Trader ${String(params.userId).slice(-4)}` });
+  db.prepare(`
+    INSERT INTO deposits (
+      id, user_id, account_id, amount, payment_method, currency, network,
+      wallet_address, package_name, sku, package_sku, account_type,
+      tx_hash, deposit_slip_url, status, created_at, expires_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+  `).run(id, params.userId, params.accountId || null, cleanAmount, params.paymentMethod, params.currency || "USDT", params.network || "TRC-20", walletAddress, packageName, sku, sku, accountType, params.txHash || null, params.depositSlipUrl || null, now, expiresAt);
+  db.prepare(`
+    INSERT OR REPLACE INTO crypto_deposits (
+      id, user_id, account_id, wallet_address, amount, package_name, sku, package_sku,
+      account_type, currency, network, tx_hash, status, created_at, expires_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+  `).run(id, params.userId, params.accountId || null, walletAddress, cleanAmount, packageName, sku, sku, accountType, params.currency || "USDT", params.network || "TRC-20", params.txHash || null, now, expiresAt);
+  try {
+    db.prepare(`
+      INSERT OR REPLACE INTO transactions (
+        id, user_id, account_id, wallet_address, amount, package_name, package_sku,
+        account_type, currency, network, tx_hash, status, created_at, expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+    `).run(id, params.userId, params.accountId || null, walletAddress, cleanAmount, packageName, sku, accountType, params.currency || "USDT", params.network || "TRC-20", params.txHash || null, now, expiresAt);
+  } catch {
+  }
+  try {
+    createUserPurchaseRecord({ id, userId: params.userId, accountId: params.accountId || null, packageId: sku, packageName, packageSku: sku, amount: cleanAmount, packageAmount: cleanAmount, accountType, status: "pending", txHash: params.txHash || null, createdAtMs: now });
+  } catch {
+  }
+  return db.prepare("SELECT * FROM crypto_deposits WHERE id = ?").get(id);
+}
+__name(createDepositRequest, "createDepositRequest");
+function createCryptoDepositRecord(params) {
+  return createDepositRequest({ userId: params.userId, accountId: params.accountId, amount: params.amount, paymentMethod: "USDT (TRC-20)", walletAddress: params.walletAddress || "TWr3rLWrWGBcfwix5osJwAwMXmpcu4PNSp", packageName: params.packageName, sku: params.sku, accountType: params.accountType, currency: "USDT", network: "TRC-20", txHash: params.txHash, createdAtMs: params.createdAtMs ?? params.createdAt });
+}
+__name(createCryptoDepositRecord, "createCryptoDepositRecord");
+function getCryptoDeposits(params) {
+  expireStalePendingDepositsInDb();
+  if (params?.userId) {
+    return db.prepare("SELECT * FROM crypto_deposits WHERE user_id = ? ORDER BY created_at DESC LIMIT 50").all(params.userId);
+  }
+  if (params?.accountId) {
+    return db.prepare("SELECT * FROM crypto_deposits WHERE account_id = ? ORDER BY created_at DESC LIMIT 50").all(params.accountId);
+  }
+  return db.prepare("SELECT * FROM crypto_deposits ORDER BY created_at DESC LIMIT 50").all();
+}
+__name(getCryptoDeposits, "getCryptoDeposits");
+function getPendingCryptoDeposits(userId) {
+  expireStalePendingDepositsInDb();
+  if (userId) {
+    return db.prepare(`SELECT * FROM crypto_deposits WHERE status = 'pending' AND user_id = ? ORDER BY created_at ASC`).all(userId);
+  }
+  return db.prepare(`SELECT * FROM crypto_deposits WHERE status = 'pending' ORDER BY created_at ASC`).all();
+}
+__name(getPendingCryptoDeposits, "getPendingCryptoDeposits");
+function getCompletedCryptoDepositTxHashes() {
+  const rows = db.prepare(`SELECT tx_hash FROM crypto_deposits WHERE status IN ('completed', 'active', 'approved') AND tx_hash IS NOT NULL`).all();
+  const claimed = /* @__PURE__ */ new Set();
+  for (const row of rows) {
+    const hash = String(row?.tx_hash || "").trim();
+    if (hash && !hash.toLowerCase().startsWith("trc20_")) {
+      claimed.add(hash);
+    }
+  }
+  return claimed;
+}
+__name(getCompletedCryptoDepositTxHashes, "getCompletedCryptoDepositTxHashes");
+function failCryptoDepositInDb(depositId, reason = "Payment failed or expired after 60 minutes without confirmation.") {
+  const now = Date.now();
+  db.prepare(`UPDATE crypto_deposits
+     SET status = 'failed',
+         is_fulfilled = 0,
+         account_id = NULL,
+         processed_at = ?
+     WHERE id = ? AND status = 'pending'`).run(now, depositId);
+  try {
+    db.prepare(`UPDATE deposits
+       SET status = 'failed',
+           is_fulfilled = 0,
+           account_id = NULL,
+           decline_reason = ?,
+           processed_at = ?
+       WHERE id = ? AND status = 'pending'`).run(reason, now, depositId);
+  } catch {
+  }
+  try {
+    db.prepare(`UPDATE transactions
+       SET status = 'failed',
+           account_id = NULL,
+           processed_at = ?
+       WHERE id = ? AND status = 'pending'`).run(now, depositId);
+  } catch {
+  }
+  try {
+    db.prepare(`UPDATE user_purchases
+       SET status = 'failed',
+           account_id = NULL,
+           processed_at = ?
+       WHERE id = ? AND status = 'pending'`).run(now, depositId);
+  } catch {
+  }
+  return db.prepare("SELECT * FROM crypto_deposits WHERE id = ?").get(depositId);
+}
+__name(failCryptoDepositInDb, "failCryptoDepositInDb");
+function completeCryptoDepositInDb(depositId, matchedTxHash, options) {
+  const now = options?.nowMs ?? Date.now();
+  expireStalePendingDepositsInDb(now);
+  let deposit = db.prepare("SELECT * FROM crypto_deposits WHERE id = ?").get(depositId);
+  if (!deposit) {
+    deposit = db.prepare("SELECT * FROM deposits WHERE id = ?").get(depositId);
+  }
+  if (!deposit) {
+    throw new Error(`Crypto deposit record ${depositId} not found.`);
+  }
+  if (deposit.status === "failed" || deposit.status === "declined" || isCryptoDepositExpired(deposit, now)) {
+    failCryptoDepositInDb(depositId, "Order expired after 1 hour without blockchain confirmation and cannot be claimed.");
+    throw new Error(`Crypto deposit ${depositId} has expired (over 60 minutes) or failed and cannot be claimed.`);
+  }
+  const cleanTxHash = String(matchedTxHash || deposit.tx_hash || "").trim();
+  const wasAlreadyFulfilled = Number(deposit.is_fulfilled) === 1 || deposit.status === "completed" || deposit.status === "active" || deposit.status === "approved";
+  const accountType = String(deposit.account_type || "").toLowerCase() === "challenge" ? "challenge" : "self_funded";
+  const amount = Number(deposit.amount || 0);
+  const userId = String(deposit.user_id || "usr_bft_001");
+  ensureUserInDb({ id: userId, email: `${userId.toLowerCase().replace(/[^a-z0-9]/g, "")}@client-bft.com`, fullName: `Trader ${userId.slice(-4)}` });
+  let targetAccount = null;
+  if (accountType === "challenge") {
+    const existingAcc = deposit.account_id ? getAccountById(deposit.account_id) : null;
+    if (existingAcc) {
+      db.prepare(`
+        UPDATE accounts SET
+          status = 'active',
+          updated_at = ?
+        WHERE id = ?
+      `).run(now, existingAcc.id);
+      targetAccount = getAccountById(existingAcc.id);
+    } else {
+      const parsedPkg = parseChallengePackageFromDeposit({ sku: deposit.sku, package_sku: deposit.package_sku, package_name: deposit.package_name, amount });
+      targetAccount = createAccount({ userId, tier: parsedPkg.tier, tierName: parsedPkg.tierName, size: parsedPkg.size, dailyWithdrawalsUnlocked: false });
+    }
+  } else {
+    if (!wasAlreadyFulfilled && !options?.skipBalanceCreditIfAlreadyCredited) {
+      ensurePersonalLiveAccountForUser(userId);
+      targetAccount = creditPersonalAccountDepositInDb({ userId, accountId: deposit.account_id || void 0, amountUsdt: amount });
+    } else {
+      targetAccount = (deposit.account_id ? getAccountById(deposit.account_id) : null) || ensurePersonalLiveAccountForUser(userId);
+    }
+  }
+  const linkedAccountId = targetAccount?.id || deposit.account_id || null;
+  db.prepare(`
+    UPDATE crypto_deposits SET
+      status = 'completed',
+      account_id = COALESCE(?, account_id),
+      tx_hash = COALESCE(?, tx_hash),
+      is_fulfilled = 1,
+      processed_at = ?
+    WHERE id = ?
+  `).run(linkedAccountId, cleanTxHash || null, now, depositId);
+  try {
+    db.prepare(`
+      UPDATE deposits SET
+        status = 'completed',
+        account_id = COALESCE(?, account_id),
+        tx_hash = COALESCE(?, tx_hash),
+        is_fulfilled = 1,
+        processed_at = ?
+      WHERE id = ?
+    `).run(linkedAccountId, cleanTxHash || null, now, depositId);
+  } catch {
+  }
+  try {
+    db.prepare(`
+      UPDATE transactions SET
+        status = ?,
+        account_id = COALESCE(?, account_id),
+        tx_hash = COALESCE(?, tx_hash),
+        processed_at = ?
+      WHERE id = ?
+    `).run(accountType === "challenge" ? "active" : "completed", linkedAccountId, cleanTxHash || null, now, depositId);
+  } catch {
+  }
+  try {
+    db.prepare(`
+      UPDATE user_purchases SET
+        status = ?,
+        account_id = COALESCE(?, account_id),
+        tx_hash = COALESCE(?, tx_hash),
+        processed_at = ?
+      WHERE id = ?
+    `).run(accountType === "challenge" ? "active" : "completed", linkedAccountId, cleanTxHash || null, now, depositId);
+  } catch {
+  }
+  let commissionsDistributed = [];
+  if (!wasAlreadyFulfilled && amount > 0) {
+    try {
+      commissionsDistributed = distribute3TierCommissions(userId, amount, accountType === "challenge" ? "purchase" : "deposit", `Verified USDT (TRC-20) ${accountType} payment of $${amount.toFixed(2)} USDT (${deposit.package_name || deposit.sku || deposit.package_sku || "BFT"})`);
+    } catch {
+    }
+  }
+  const updatedDeposit = db.prepare("SELECT * FROM crypto_deposits WHERE id = ?").get(depositId);
+  return { ok: true, deposit: updatedDeposit, account: targetAccount, accountType, amount, txHash: cleanTxHash, commissionsDistributed };
+}
+__name(completeCryptoDepositInDb, "completeCryptoDepositInDb");
+function verifyAndCompletePendingCryptoDepositsInDb(transactions, options) {
+  const nowMs = options?.nowMs ?? Date.now();
+  const expiredSweep = expireStalePendingDepositsInDb(nowMs);
+  const pendingDeposits = getPendingCryptoDeposits(options?.userId);
+  const claimedTxIds = getCompletedCryptoDepositTxHashes();
+  const completedResults = [];
+  for (const pending of pendingDeposits) {
+    const matchedTx = matchPendingDepositToTronGridTx(pending, transactions, claimedTxIds, nowMs);
+    if (matchedTx) {
+      claimedTxIds.add(matchedTx.transaction_id);
+      const completed = completeCryptoDepositInDb(pending.id, matchedTx.transaction_id, { nowMs });
+      completedResults.push(completed);
+    }
+  }
+  return { checkedCount: pendingDeposits.length, matchedCount: completedResults.length, expiredCount: expiredSweep.expiredCount, expiredIds: expiredSweep.expiredIds, completedDeposits: completedResults, remainingPendingCount: Math.max(0, pendingDeposits.length - completedResults.length) };
+}
+__name(verifyAndCompletePendingCryptoDepositsInDb, "verifyAndCompletePendingCryptoDepositsInDb");
+function getAdminDeposits(statusFilter) {
+  let query = `
+    SELECT d.*, u.full_name as user_name, u.email as user_email, a.tier_name as account_tier
+    FROM deposits d
+    JOIN users u ON d.user_id = u.id
+    LEFT JOIN accounts a ON d.account_id = a.id
+  `;
+  const params = [];
+  if (statusFilter && statusFilter !== "all") {
+    query += " WHERE d.status = ?";
+    params.push(statusFilter);
+  }
+  query += " ORDER BY d.created_at DESC";
+  return db.prepare(query).all(...params);
+}
+__name(getAdminDeposits, "getAdminDeposits");
+function adminApproveDeposit(depositId, adminUserId) {
+  const deposit = db.prepare("SELECT * FROM deposits WHERE id = ?").get(depositId);
+  if (!deposit) throw new Error("Deposit record not found.");
+  if (deposit.status === "approved") throw new Error("Deposit is already approved.");
+  const now = Date.now();
+  db.prepare(`
+    UPDATE deposits SET
+      status = 'approved',
+      processed_at = ?
+    WHERE id = ?
+  `).run(now, depositId);
+  try {
+    db.prepare(`
+      UPDATE crypto_deposits SET
+        status = 'approved',
+        processed_at = ?
+      WHERE id = ?
+    `).run(now, depositId);
+  } catch {
+  }
+  let targetAccount = deposit.account_id ? getAccountById(deposit.account_id) : null;
+  if (!targetAccount) {
+    targetAccount = ensurePersonalLiveAccountForUser(deposit.user_id);
+  }
+  let updatedAccount = null;
+  if (targetAccount) {
+    updatedAccount = creditPersonalAccountDepositInDb({ userId: deposit.user_id, accountId: targetAccount.id, amountUsdt: deposit.amount });
+  }
+  const commissionsDistributed = distribute3TierCommissions(deposit.user_id, deposit.amount, "deposit", `Deposit of $${deposit.amount.toFixed(2)} USDT by ${deposit.user_name || "Trader"}`);
+  recordAdminAuditLog(adminUserId, "APPROVE_DEPOSIT", depositId, "deposit", { amount: deposit.amount, userId: deposit.user_id, creditedAccountId: targetAccount?.id, commissionsDistributed });
+  return { ok: true, deposit: db.prepare("SELECT * FROM deposits WHERE id = ?").get(depositId), updatedAccount, commissionsDistributed };
+}
+__name(adminApproveDeposit, "adminApproveDeposit");
+function adminDeclineDeposit(depositId, reason, adminUserId) {
+  const deposit = db.prepare("SELECT * FROM deposits WHERE id = ?").get(depositId);
+  if (!deposit) throw new Error("Deposit record not found.");
+  if (deposit.status !== "pending") throw new Error(`Deposit cannot be declined from status: ${deposit.status}`);
+  const now = Date.now();
+  db.prepare(`
+    UPDATE deposits SET
+      status = 'declined',
+      decline_reason = ?,
+      processed_at = ?
+    WHERE id = ?
+  `).run(reason || "Declined by administrator", now, depositId);
+  try {
+    db.prepare(`
+      UPDATE crypto_deposits SET
+        status = 'declined',
+        processed_at = ?
+      WHERE id = ?
+    `).run(now, depositId);
+  } catch {
+  }
+  recordAdminAuditLog(adminUserId, "DECLINE_DEPOSIT", depositId, "deposit", { reason });
+  return { ok: true, deposit: db.prepare("SELECT * FROM deposits WHERE id = ?").get(depositId) };
+}
+__name(adminDeclineDeposit, "adminDeclineDeposit");
+function getAdminWithdrawals(statusFilter) {
+  let query = `
+    SELECT w.*, u.full_name as user_name, u.email as user_email, a.tier_name as account_tier, a.current_balance as account_balance
+    FROM withdrawals w
+    JOIN users u ON w.user_id = u.id
+    LEFT JOIN accounts a ON w.account_id = a.id
+  `;
+  const params = [];
+  if (statusFilter && statusFilter !== "all") {
+    query += " WHERE w.status = ?";
+    params.push(statusFilter);
+  }
+  query += " ORDER BY w.requested_at DESC";
+  return db.prepare(query).all(...params);
+}
+__name(getAdminWithdrawals, "getAdminWithdrawals");
+function adminApproveWithdrawal(withdrawalId, adminUserId) {
+  const withdrawal = db.prepare("SELECT * FROM withdrawals WHERE id = ?").get(withdrawalId);
+  if (!withdrawal) throw new Error("Withdrawal record not found.");
+  if (withdrawal.status === "completed" || withdrawal.status === "success") throw new Error("Withdrawal is already approved/completed.");
+  const now = Date.now();
+  const txHash = withdrawal.tx_hash || `tron_tx_${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`;
+  db.prepare(`
+    UPDATE withdrawals SET
+      status = 'success',
+      tx_hash = ?,
+      processed_at = ?
+    WHERE id = ?
+  `).run(txHash, now, withdrawalId);
+  const account = getAccountById(withdrawal.account_id);
+  let updatedAccount = null;
+  if (account) {
+    const newBalance = Math.max(0, Number((account.currentBalance - withdrawal.gross_amount).toFixed(2)));
+    const newEquity = Math.max(0, Number((account.equity - withdrawal.gross_amount).toFixed(2)));
+    db.prepare(`
+      UPDATE accounts SET
+        current_balance = ?,
+        equity = ?,
+        first_withdrawal_completed = 1,
+        updated_at = ?
+      WHERE id = ?
+    `).run(newBalance, newEquity, now, account.id);
+    updatedAccount = getAccountById(account.id);
+  }
+  const user = getUserById(withdrawal.user_id);
+  if (user?.referred_by) {
+    const existingBonus = db.prepare(`
+      SELECT * FROM commissions WHERE source_type = 'withdrawal' AND referred_user_id = ? AND base_amount = ?
+    `).get(withdrawal.user_id, withdrawal.gross_amount);
+    if (!existingBonus) {
+      const bonusAmount = Number((withdrawal.gross_amount * 0.08).toFixed(2));
+      const commId = `COMM-WD-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+      db.prepare(`
+        INSERT INTO commissions (
+          id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, status, created_at
+        ) VALUES (?, ?, ?, 'withdrawal', 1, ?, ?, 0.08, ?, 'paid', ?)
+      `).run(commId, user.referred_by, user.id, `Direct Referral Payout Bonus (8% of $${withdrawal.gross_amount.toFixed(2)} Withdrawal by ${user.full_name})`, withdrawal.gross_amount, bonusAmount, now);
+    }
+  }
+  recordAdminAuditLog(adminUserId, "APPROVE_WITHDRAWAL", withdrawalId, "withdrawal", { grossAmount: withdrawal.gross_amount, netPayout: withdrawal.net_payout, txHash });
+  return { ok: true, withdrawal: db.prepare("SELECT * FROM withdrawals WHERE id = ?").get(withdrawalId), updatedAccount };
+}
+__name(adminApproveWithdrawal, "adminApproveWithdrawal");
+function adminDeclineWithdrawal(withdrawalId, reason, adminUserId) {
+  const withdrawal = db.prepare("SELECT * FROM withdrawals WHERE id = ?").get(withdrawalId);
+  if (!withdrawal) throw new Error("Withdrawal record not found.");
+  if (withdrawal.status !== "pending") throw new Error(`Withdrawal cannot be declined from status: ${withdrawal.status}`);
+  const now = Date.now();
+  try {
+    db.exec("BEGIN TRANSACTION");
+    db.prepare(`
+      UPDATE withdrawals SET
+        status = 'rejected',
+        rejection_reason = ?,
+        processed_at = ?
+      WHERE id = ? AND status = 'pending'
+    `).run(reason || "Declined by administrator", now, withdrawalId);
+    const account = getAccountById(withdrawal.account_id);
+    if (account) {
+      const newBalance = Number((account.currentBalance + withdrawal.gross_amount).toFixed(2));
+      const newEquity = Number((account.equity + withdrawal.gross_amount).toFixed(2));
+      db.prepare(`
+        UPDATE accounts SET
+          current_balance = ?,
+          equity = ?,
+          updated_at = ?
+        WHERE id = ?
+      `).run(newBalance, newEquity, now, account.id);
+      if (account.tier === "personal" || account.accountCategory === "personal_live" || String(withdrawal.account_id).includes("PERS")) {
+        db.prepare(`UPDATE users SET self_balance = ? WHERE id = ?`).run(newBalance, withdrawal.user_id);
+      } else if (account.phase === "funded") {
+        db.prepare(`UPDATE users SET funded_balance = ? WHERE id = ?`).run(newBalance, withdrawal.user_id);
+      }
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  recordAdminAuditLog(adminUserId, "DECLINE_WITHDRAWAL", withdrawalId, "withdrawal", { reason, refundedAmount: withdrawal.gross_amount });
+  return { ok: true, withdrawal: db.prepare("SELECT * FROM withdrawals WHERE id = ?").get(withdrawalId), updatedAccount: getAccountById(withdrawal.account_id) };
+}
+__name(adminDeclineWithdrawal, "adminDeclineWithdrawal");
+function getAdminKycSubmissions(statusFilter) {
+  let query = `
+    SELECT k.*, u.email as user_email, u.full_name as user_name, u.country as user_country, u.created_at as user_created_at
+    FROM kyc_submissions k
+    JOIN users u ON k.user_id = u.id
+  `;
+  const params = [];
+  if (statusFilter && statusFilter !== "all") {
+    if (statusFilter === "pending") {
+      query += " WHERE k.status IN ('pending', 'Pending Verification')";
+    } else {
+      query += " WHERE k.status = ?";
+      params.push(statusFilter);
+    }
+  }
+  query += " ORDER BY k.updated_at DESC";
+  return db.prepare(query).all(...params);
+}
+__name(getAdminKycSubmissions, "getAdminKycSubmissions");
+function adminApproveKyc(userId, adminUserId) {
+  const user = getUserById(userId);
+  if (!user) throw new Error("User not found.");
+  const now = Date.now();
+  db.prepare(`
+    UPDATE users SET
+      kyc_status = 'verified',
+      kyc_verified_at = ?,
+      profile_locked = 1,
+      updated_at = ?
+    WHERE id = ?
+  `).run(now, now, userId);
+  db.prepare(`
+    UPDATE kyc_submissions SET
+      status = 'verified',
+      profile_locked = 1,
+      updated_at = ?
+    WHERE user_id = ?
+  `).run(now, userId);
+  recordAdminAuditLog(adminUserId, "APPROVE_KYC", userId, "user", { previousStatus: user.kyc_status });
+  return getUserById(userId);
+}
+__name(adminApproveKyc, "adminApproveKyc");
+function adminRejectKyc(userId, reason, adminUserId) {
+  const user = getUserById(userId);
+  if (!user) throw new Error("User not found.");
+  const now = Date.now();
+  db.prepare(`
+    UPDATE users SET
+      kyc_status = 'rejected',
+      updated_at = ?
+    WHERE id = ?
+  `).run(now, userId);
+  db.prepare(`
+    UPDATE kyc_submissions SET
+      status = 'rejected',
+      updated_at = ?
+    WHERE user_id = ?
+  `).run(now, userId);
+  recordAdminAuditLog(adminUserId, "REJECT_KYC", userId, "user", { reason });
+  return getUserById(userId);
+}
+__name(adminRejectKyc, "adminRejectKyc");
+function distribute3TierCommissions(buyerUserId, baseAmount, sourceType = "deposit", details) {
+  const buyer = getUserById(buyerUserId);
+  if (!buyer?.referred_by) return [];
+  const now = Date.now();
+  const commissions = [];
+  const l1SponsorId = buyer.referred_by;
+  const l1Amount = Number((baseAmount * 0.1).toFixed(2));
+  const l1Id = `COMM-L1-${now.toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
+  db.prepare(`
+    INSERT INTO commissions (
+      id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, status, created_at
+    ) VALUES (?, ?, ?, ?, 1, ?, ?, 0.10, ?, 'paid', ?)
+  `).run(l1Id, l1SponsorId, buyer.id, sourceType, details || `Level 1 Commission: 10% of $${baseAmount.toFixed(2)} ${sourceType}`, baseAmount, l1Amount, now);
+  commissions.push({ id: l1Id, level: 1, sponsorId: l1SponsorId, amount: l1Amount });
+  const l1User = getUserById(l1SponsorId);
+  if (l1User?.referred_by) {
+    const l2SponsorId = l1User.referred_by;
+    const l2Amount = Number((baseAmount * 0.05).toFixed(2));
+    const l2Id = `COMM-L2-${now.toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
+    db.prepare(`
+      INSERT INTO commissions (
+        id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, status, created_at
+      ) VALUES (?, ?, ?, ?, 2, ?, ?, 0.05, ?, 'paid', ?)
+    `).run(l2Id, l2SponsorId, buyer.id, sourceType, details || `Level 2 Commission: 5% of $${baseAmount.toFixed(2)} ${sourceType}`, baseAmount, l2Amount, now);
+    commissions.push({ id: l2Id, level: 2, sponsorId: l2SponsorId, amount: l2Amount });
+    const l2User = getUserById(l2SponsorId);
+    if (l2User?.referred_by) {
+      const l3SponsorId = l2User.referred_by;
+      const l3Amount = Number((baseAmount * 0.02).toFixed(2));
+      const l3Id = `COMM-L3-${now.toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
+      db.prepare(`
+        INSERT INTO commissions (
+          id, sponsor_id, referred_user_id, source_type, tier_level, package_name, base_amount, rate, commission_amount, status, created_at
+        ) VALUES (?, ?, ?, ?, 3, ?, ?, 0.02, ?, 'paid', ?)
+      `).run(l3Id, l3SponsorId, buyer.id, sourceType, details || `Level 3 Commission: 2% of $${baseAmount.toFixed(2)} ${sourceType}`, baseAmount, l3Amount, now);
+      commissions.push({ id: l3Id, level: 3, sponsorId: l3SponsorId, amount: l3Amount });
+    }
+  }
+  return commissions;
+}
+__name(distribute3TierCommissions, "distribute3TierCommissions");
+function getAdminReferralTree() {
+  const sponsors = db.prepare(`
+    SELECT DISTINCT u.id, u.full_name, u.email, u.referral_code,
+           (SELECT COUNT(*) FROM referrals r WHERE r.sponsor_id = u.id AND r.tier_level = 1) as l1_count,
+           (SELECT COUNT(*) FROM referrals r WHERE r.sponsor_id = u.id AND r.tier_level = 2) as l2_count,
+           (SELECT COUNT(*) FROM referrals r WHERE r.sponsor_id = u.id AND r.tier_level = 3) as l3_count,
+           (SELECT SUM(commission_amount) FROM commissions c WHERE c.sponsor_id = u.id AND c.status = 'paid') as total_earned
+    FROM users u
+    WHERE EXISTS (SELECT 1 FROM referrals r WHERE r.sponsor_id = u.id)
+       OR EXISTS (SELECT 1 FROM commissions c WHERE c.sponsor_id = u.id)
+    ORDER BY total_earned DESC
+  `).all();
+  return sponsors.map((s) => {
+    const l1Referrals = db.prepare(`
+      SELECT r.referred_user_id, u.full_name, u.email, u.created_at,
+             (SELECT SUM(current_balance) FROM accounts a WHERE a.user_id = u.id) as balance
+      FROM referrals r
+      JOIN users u ON r.referred_user_id = u.id
+      WHERE r.sponsor_id = ? AND r.tier_level = 1
+    `).all(s.id);
+    return { sponsorId: s.id, sponsorName: s.full_name, sponsorEmail: s.email, referralCode: s.referral_code, level1Count: s.l1_count || 0, level2Count: s.l2_count || 0, level3Count: s.l3_count || 0, totalDownlineCount: (s.l1_count || 0) + (s.l2_count || 0) + (s.l3_count || 0), totalEarned: Number((s.total_earned || 0).toFixed(2)), level1Members: l1Referrals.map((m) => ({ id: m.referred_user_id, name: m.full_name, email: m.email, balance: Number((m.balance || 0).toFixed(2)), joinedAt: m.created_at })) };
+  });
+}
+__name(getAdminReferralTree, "getAdminReferralTree");
+function getAdminCommissionsLedger(limit = 100) {
+  return db.prepare(`
+    SELECT c.*,
+           s.full_name as sponsor_name, s.email as sponsor_email,
+           b.full_name as buyer_name, b.email as buyer_email
+    FROM commissions c
+    JOIN users s ON c.sponsor_id = s.id
+    JOIN users b ON c.referred_user_id = b.id
+    ORDER BY c.created_at DESC
+    LIMIT ?
+  `).all(limit);
+}
+__name(getAdminCommissionsLedger, "getAdminCommissionsLedger");
+function getAdminAuditLogs(limit = 50) {
+  return db.prepare(`
+    SELECT a.*, u.full_name as admin_name, u.email as admin_email
+    FROM admin_audit_logs a
+    LEFT JOIN users u ON a.admin_user_id = u.id
+    ORDER BY a.created_at DESC
+    LIMIT ?
+  `).all(limit);
+}
+__name(getAdminAuditLogs, "getAdminAuditLogs");
+function updateUser2faSecret(userId, secret) {
+  db.prepare(`UPDATE users SET totp_secret = ? WHERE id = ?`).run(secret, userId);
+}
+__name(updateUser2faSecret, "updateUser2faSecret");
+function enableUser2fa(userId) {
+  db.prepare(`UPDATE users SET is_2fa_enabled = 1 WHERE id = ?`).run(userId);
+}
+__name(enableUser2fa, "enableUser2fa");
+function disableUser2fa(userId) {
+  db.prepare(`UPDATE users SET is_2fa_enabled = 0, totp_secret = NULL WHERE id = ?`).run(userId);
+}
+__name(disableUser2fa, "disableUser2fa");
+function ensureAdminSeedData() {
+  const now = Date.now();
+  const shankavee = getUserByEmail("shankavee44@gmail.com");
+  if (shankavee) {
+    db.prepare("UPDATE users SET role = 'admin' WHERE id = ?").run(shankavee.id);
+  } else {
+    ensureUserInDb({ id: "usr_admin_shankavee", email: "shankavee44@gmail.com", fullName: "Shankavee (Admin)" });
+    db.prepare("UPDATE users SET role = 'admin' WHERE email = 'shankavee44@gmail.com'").run();
+  }
+  const bftAdmin = getUserByEmail("admin@bft.io");
+  if (bftAdmin) {
+    db.prepare("UPDATE users SET role = 'admin' WHERE id = ?").run(bftAdmin.id);
+  } else {
+    ensureUserInDb({ id: "usr_admin_master", email: "admin@bft.io", fullName: "BFT Super Administrator" });
+    db.prepare("UPDATE users SET role = 'admin' WHERE email = 'admin@bft.io'").run();
+  }
+  db.prepare("UPDATE users SET role = 'admin' WHERE id = 'USR-MASTER-88'").run();
+  const depositCount = Number(db.prepare("SELECT COUNT(*) as c FROM deposits").get()?.c || 0);
+  if (depositCount === 0) {
+    const seedDeposits = [{ id: "DEP-REQ-981", userId: "USR-SUB-101", accId: null, amount: 750, method: "USDT (TRC-20)", status: "pending", tx: "0x8f7d6a5e4c3b2a10", ts: now - 36e5 * 2 }, { id: "DEP-REQ-982", userId: "USR-SUB-102", accId: null, amount: 1500, method: "USDT (TRC-20)", status: "pending", tx: "0x1a2b3c4d5e6f7a8b", ts: now - 36e5 * 5 }, { id: "DEP-REQ-980", userId: "usr_bft_001", accId: "BFT-91823", amount: 500, method: "USDT (TRC-20)", status: "approved", tx: "0x99aa88bb77cc66dd", ts: now - 864e5 * 3 }];
+    for (const d of seedDeposits) {
+      db.prepare(`
+        INSERT INTO deposits (id, user_id, account_id, amount, payment_method, status, tx_hash, created_at, processed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(d.id, d.userId, d.accId, d.amount, d.method, d.status, d.tx, d.ts, d.status === "approved" ? d.ts + 6e4 : null);
+    }
+  }
+  const pendingWdCount = Number(db.prepare("SELECT COUNT(*) as c FROM withdrawals WHERE status = 'pending'").get()?.c || 0);
+  if (pendingWdCount === 0) {
+    db.prepare(`
+      INSERT INTO withdrawals (
+        id, user_id, account_id, gross_amount, net_profit, max_allowed_profit, profit_share_rate, fee_amount, net_payout,
+        wallet_address, network, payment_method, status, reference_number, tx_hash, requested_at, processed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 0.80, ?, ?, ?, 'TRON (TRC-20)', 'crypto_trc20', 'pending', ?, NULL, ?, NULL)
+    `).run("WD-REQ-77401", "USR-SUB-101", "BFT-91823", 420, 600, 480, 42, 378, "TQn9Y2khEsLJW1ChVWFMSMeRDow5KcbLSE", "REF-77401", now - 36e5 * 4);
+  }
+  const pendingKycCount = Number(db.prepare("SELECT COUNT(*) as c FROM kyc_submissions WHERE status IN ('pending', 'Pending Verification')").get()?.c || 0);
+  if (pendingKycCount === 0) {
+    db.prepare(`
+      INSERT OR REPLACE INTO kyc_submissions (
+        id, user_id, full_name, address, date_of_birth, country, profile_locked, doc_type, document_number,
+        front_document_url, back_document_url, front_file_name, back_file_name, status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+    `).run("KYC-SUB-USR-SUB-101", "USR-SUB-101", "Marco Rossi", "Via Montenapoleone 8, 20121 Milan", "1992-03-14", "Italy", "ID Card", "ITA-8910482", "https://images.unsplash.com/photo-1544717305-2782549b5136?w=600", "https://images.unsplash.com/photo-1544717305-2782549b5136?w=600", "marco_id_front.jpg", "marco_id_back.jpg", now - 864e5 * 2, now - 864e5 * 2);
+    db.prepare("UPDATE users SET kyc_status = 'pending' WHERE id = 'USR-SUB-101'").run();
+  }
+  const seedPurchases = [{ id: "PUR-SEED-101", userId: "USR-SUB-101", pkgId: "BFT-2S-100K", pkgName: "$100K 2-Step Challenge", sku: "BFT-2S-100K", amt: 469, ts: now - 864e5 * 12 }, { id: "PUR-SEED-102", userId: "USR-SUB-102", pkgId: "BFT-IF-25K", pkgName: "$25K Instant Funded", sku: "BFT-IF-25K", amt: 499, ts: now - 864e5 * 9 }, { id: "PUR-SEED-201", userId: "USR-GRAND-201", pkgId: "BFT-2S-50K", pkgName: "$50K 2-Step Challenge", sku: "BFT-2S-50K", amt: 279, ts: now - 864e5 * 7 }, { id: "PUR-SEED-202", userId: "USR-GRAND-202", pkgId: "BFT-IF-10K", pkgName: "$10K Instant Funded", sku: "BFT-IF-10K", amt: 249, ts: now - 864e5 * 5 }, { id: "PUR-SEED-301", userId: "USR-LEAF-301", pkgId: "BFT-IF-50K", pkgName: "$50K Instant Funded", sku: "BFT-IF-50K", amt: 899, ts: now - 864e5 * 4 }, { id: "PUR-SEED-302", userId: "USR-LEAF-302", pkgId: "BFT-1S-100K", pkgName: "$100K 1-Step Challenge", sku: "BFT-1S-100K", amt: 549, ts: now - 864e5 * 3 }];
+  for (const sp of seedPurchases) {
+    try {
+      const existingPur = db.prepare("SELECT id FROM user_purchases WHERE user_id = ? LIMIT 1").get(sp.userId);
+      if (!existingPur) {
+        db.prepare(`
+          INSERT OR IGNORE INTO user_purchases (
+            id, user_id, account_id, package_id, package_name, package_sku,
+            amount, package_amount, account_type, status, tx_hash, created_at
+          ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, 'challenge', 'completed', NULL, ?)
+        `).run(sp.id, sp.userId, sp.pkgId, sp.pkgName, sp.sku, sp.amt, sp.amt, sp.ts);
+      }
+    } catch {
+    }
+  }
+}
+__name(ensureAdminSeedData, "ensureAdminSeedData");
+ensureAdminSeedData();
+function recordTradeInDb(userId, trade) {
+  const account = getAccountById(trade.accountId);
+  if (!account) throw new Error("Account not found.");
+  if (["breached", "hard-breached", "soft-breached"].includes(account.status)) {
+    throw new Error("Trading blocked: Account is breached.");
+  }
+  const ownerId = account.user_id || account.userId;
+  if (ownerId && ownerId !== userId) throw new Error("Unauthorized account trade.");
+  const cleanInvestment = Number(trade.investment);
+  if (cleanInvestment <= 0) throw new Error("Invalid trade investment amount.");
+  if (account.currentBalance < cleanInvestment) {
+    throw new Error("Insufficient account balance for trade placement.");
+  }
+  const now = Date.now();
+  const tradeId = trade.id || `TRD-${now.toString().slice(-6)}-${Math.floor(100 + Math.random() * 899)}`;
+  const startTime = trade.startTime || now;
+  const durationSec = Number(trade.durationSeconds) || 30;
+  const endTime = trade.endTime || startTime + durationSec * 1e3;
+  const payoutPct = Number(trade.payoutPercentage) || 92;
+  const potentialPayout = Number((cleanInvestment + cleanInvestment * payoutPct / 100).toFixed(2));
+  const nextBalance = Number((account.currentBalance - cleanInvestment).toFixed(2));
+  db.prepare(`
+    INSERT INTO trades (
+      id, user_id, account_id, asset, direction, strike_price, close_price,
+      investment, payout_percentage, potential_payout, pnl, credited_amount,
+      start_time, end_time, duration_seconds, status, account_tier, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(tradeId, userId, trade.accountId, trade.asset, trade.direction, Number(trade.strikePrice), Number(trade.strikePrice), cleanInvestment, payoutPct, potentialPayout, 0, 0, startTime, endTime, durationSec, "active", trade.accountTier || account.tier, now);
+  db.prepare(`
+    UPDATE accounts SET
+      current_balance = ?,
+      equity = ?,
+      updated_at = ?
+    WHERE id = ?
+  `).run(nextBalance, nextBalance, now, trade.accountId);
+  if (account.tier === "personal" || account.accountCategory === "personal_live" || String(trade.accountId).includes("PERS")) {
+    try {
+      db.prepare(`UPDATE users SET self_balance = ? WHERE id = ?`).run(nextBalance, userId);
+    } catch (e) {
+      console.warn("SQLite self_balance recordTrade sync error:", e);
+    }
+  } else if (account.tier === "demo" || account.accountCategory === "demo" || String(trade.accountId).includes("DEMO")) {
+    try {
+      db.prepare(`UPDATE users SET demo_balance = ? WHERE id = ?`).run(nextBalance, userId);
+    } catch (e) {
+      console.warn("SQLite demo_balance recordTrade sync error:", e);
+    }
+  } else if (account.phase === "funded" || account.status === "active") {
+    try {
+      db.prepare(`UPDATE users SET funded_balance = ? WHERE id = ?`).run(nextBalance, userId);
+    } catch (e) {
+      console.warn("SQLite funded_balance recordTrade sync error:", e);
+    }
+  }
+  const savedTrade = db.prepare("SELECT * FROM trades WHERE id = ?").get(tradeId);
+  const updatedAccount = getAccountById(trade.accountId);
+  return { trade: mapTradeRow(savedTrade), account: updatedAccount };
+}
+__name(recordTradeInDb, "recordTradeInDb");
+function settleTradeInDb(userId, tradeId, closePrice, manualStatus) {
+  const tradeRow = db.prepare("SELECT * FROM trades WHERE id = ? AND user_id = ?").get(tradeId, userId);
+  if (!tradeRow) throw new Error("Trade not found or unauthorized.");
+  if (tradeRow.status !== "active") {
+    const acc = getAccountById(tradeRow.account_id);
+    return { trade: mapTradeRow(tradeRow), account: acc, alreadySettled: true };
+  }
+  const nowCheck = Date.now();
+  if (nowCheck + 1e3 < Number(tradeRow.end_time)) {
+    const secsLeft = Math.ceil((Number(tradeRow.end_time) - nowCheck) / 1e3);
+    throw new Error(`Trade is locked until expiration (${secsLeft}s remaining) and cannot be closed or cancelled early.`);
+  }
+  const finalPrice = Number(closePrice);
+  const strike = Number(tradeRow.strike_price);
+  const investment = Number(tradeRow.investment);
+  const payoutPct = Number(tradeRow.payout_percentage);
+  let status = "lost";
+  let pnl = -investment;
+  let creditedAmount = 0;
+  const diff = finalPrice - strike;
+  const isTie = manualStatus === "tie" || Math.abs(diff) < 1e-7;
+  if (isTie) {
+    status = "tie";
+    pnl = 0;
+    creditedAmount = investment;
+  } else {
+    const isWin = manualStatus === "won" || tradeRow.direction === "CALL" && diff > 0 || tradeRow.direction === "PUT" && diff < 0;
+    if (isWin) {
+      status = "won";
+      pnl = Number((investment * payoutPct / 100).toFixed(2));
+      creditedAmount = Number((investment + pnl).toFixed(2));
+    }
+  }
+  const now = Date.now();
+  db.prepare(`
+    UPDATE trades SET
+      close_price = ?,
+      pnl = ?,
+      credited_amount = ?,
+      status = ?,
+      settled_at = ?
+    WHERE id = ?
+  `).run(finalPrice, pnl, creditedAmount, status, now, tradeId);
+  const account = getAccountById(tradeRow.account_id);
+  const nextBalance = Number(((account?.currentBalance || 0) + creditedAmount).toFixed(2));
+  const nextTradesCount = (account?.tradesCount || 0) + 1;
+  const resolvedTrades = db.prepare("SELECT status FROM trades WHERE account_id = ? AND status IN ('won', 'lost', 'tie')").all(tradeRow.account_id);
+  const wonCount = resolvedTrades.filter((s) => s.status === "won").length;
+  const totalCount = resolvedTrades.length;
+  const nextWinRate = totalCount > 0 ? Number((wonCount / totalCount * 100).toFixed(1)) : 0;
+  db.prepare(`
+    UPDATE accounts SET
+      current_balance = ?,
+      equity = ?,
+      trades_count = ?,
+      win_rate = ?,
+      updated_at = ?
+    WHERE id = ?
+  `).run(nextBalance, nextBalance, nextTradesCount, nextWinRate, now, tradeRow.account_id);
+  const updatedTrade = db.prepare("SELECT * FROM trades WHERE id = ?").get(tradeId);
+  const updatedAccount = getAccountById(tradeRow.account_id);
+  if (updatedAccount) {
+    if (updatedAccount.tier === "personal" || updatedAccount.accountCategory === "personal_live" || updatedAccount.phase === "personal_live") {
+      try {
+        db.prepare(`UPDATE users SET self_balance = ? WHERE id = ?`).run(nextBalance, userId);
+      } catch {
+      }
+    } else if (updatedAccount.tier === "demo" || updatedAccount.accountCategory === "demo" || updatedAccount.phase === "demo") {
+      try {
+        db.prepare(`UPDATE users SET demo_balance = ? WHERE id = ?`).run(nextBalance, userId);
+      } catch {
+      }
+    } else if (updatedAccount.phase === "funded") {
+      try {
+        db.prepare(`UPDATE users SET funded_balance = ? WHERE id = ?`).run(nextBalance, userId);
+      } catch {
+      }
+    }
+  }
+  return { trade: mapTradeRow(updatedTrade), account: updatedAccount, settlement: { status, pnl, creditedAmount, closePrice: finalPrice } };
+}
+__name(settleTradeInDb, "settleTradeInDb");
+function getUserTradesFromDb(userId, accountId) {
+  const query = accountId ? "SELECT * FROM trades WHERE user_id = ? AND account_id = ? ORDER BY created_at DESC LIMIT 200" : "SELECT * FROM trades WHERE user_id = ? ORDER BY created_at DESC LIMIT 200";
+  const rows = accountId ? db.prepare(query).all(userId, accountId) : db.prepare(query).all(userId);
+  return rows.map(mapTradeRow);
+}
+__name(getUserTradesFromDb, "getUserTradesFromDb");
+function mapTradeRow(row) {
+  if (!row) return null;
+  return { id: row.id, accountId: row.account_id, userId: row.user_id, asset: row.asset, direction: row.direction, strikePrice: Number(row.strike_price), currentPrice: Number(row.close_price || row.strike_price), closePrice: row.close_price ? Number(row.close_price) : void 0, investment: Number(row.investment), payoutPercentage: Number(row.payout_percentage), potentialPayout: Number(row.potential_payout), pnl: Number(row.pnl || 0), creditedAmount: Number(row.credited_amount || 0), startTime: Number(row.start_time), endTime: Number(row.end_time), durationSeconds: Number(row.duration_seconds), status: row.status, accountTier: row.account_tier, createdAt: Number(row.created_at), settledAt: row.settled_at ? Number(row.settled_at) : void 0 };
+}
+__name(mapTradeRow, "mapTradeRow");
+function cancelWithdrawalRequest(userId, withdrawalId) {
+  const withdrawal = db.prepare("SELECT * FROM withdrawals WHERE id = ? AND user_id = ?").get(withdrawalId, userId);
+  if (!withdrawal) throw new Error("Withdrawal record not found.");
+  if (withdrawal.status !== "pending") throw new Error(`Withdrawal cannot be cancelled from status: ${withdrawal.status}`);
+  const now = Date.now();
+  try {
+    db.exec("BEGIN TRANSACTION");
+    const info = db.prepare(`
+      UPDATE withdrawals SET
+        status = 'cancelled',
+        processed_at = ?
+      WHERE id = ? AND status = 'pending'
+    `).run(now, withdrawalId);
+    if (info.changes === 0) {
+      throw new Error("Withdrawal request is no longer pending or already processed.");
+    }
+    const account = getAccountById(withdrawal.account_id);
+    if (account) {
+      const newBalance = Number((account.currentBalance + withdrawal.gross_amount).toFixed(2));
+      const newEquity = Number((account.equity + withdrawal.gross_amount).toFixed(2));
+      db.prepare(`
+        UPDATE accounts SET
+          current_balance = ?,
+          equity = ?,
+          updated_at = ?
+        WHERE id = ?
+      `).run(newBalance, newEquity, now, account.id);
+      if (account.tier === "personal" || account.account_category === "personal_live" || String(withdrawal.account_id).includes("PERS")) {
+        db.prepare(`UPDATE users SET self_balance = ? WHERE id = ?`).run(newBalance, userId);
+      } else if (account.phase === "funded") {
+        db.prepare(`UPDATE users SET funded_balance = ? WHERE id = ?`).run(newBalance, userId);
+      }
+    }
+    db.exec("COMMIT");
+    return { ok: true, withdrawal: db.prepare("SELECT * FROM withdrawals WHERE id = ?").get(withdrawalId) };
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+__name(cancelWithdrawalRequest, "cancelWithdrawalRequest");
+function declineWithdrawalRequest(adminUserId, userId, withdrawalId, reason) {
+  const withdrawal = db.prepare("SELECT * FROM withdrawals WHERE id = ? AND user_id = ?").get(withdrawalId, userId);
+  if (!withdrawal) throw new Error("Withdrawal record not found.");
+  if (withdrawal.status !== "pending") throw new Error(`Withdrawal cannot be declined from status: ${withdrawal.status}`);
+  const now = Date.now();
+  try {
+    db.exec("BEGIN TRANSACTION");
+    const info = db.prepare(`
+      UPDATE withdrawals SET
+        status = 'rejected',
+        rejection_reason = ?,
+        processed_at = ?
+      WHERE id = ? AND status = 'pending'
+    `).run(reason, now, withdrawalId);
+    if (info.changes === 0) {
+      throw new Error("Withdrawal request is no longer pending or already processed.");
+    }
+    const account = getAccountById(withdrawal.account_id);
+    if (account) {
+      const newBalance = Number((account.currentBalance + withdrawal.gross_amount).toFixed(2));
+      const newEquity = Number((account.equity + withdrawal.gross_amount).toFixed(2));
+      db.prepare(`
+        UPDATE accounts SET
+          current_balance = ?,
+          equity = ?,
+          updated_at = ?
+        WHERE id = ?
+      `).run(newBalance, newEquity, now, account.id);
+      if (account.tier === "personal" || account.account_category === "personal_live" || String(withdrawal.account_id).includes("PERS")) {
+        db.prepare(`UPDATE users SET self_balance = ? WHERE id = ?`).run(newBalance, userId);
+      } else if (account.phase === "funded") {
+        db.prepare(`UPDATE users SET funded_balance = ? WHERE id = ?`).run(newBalance, userId);
+      }
+    }
+    db.exec("COMMIT");
+    return { ok: true, withdrawal: db.prepare("SELECT * FROM withdrawals WHERE id = ?").get(withdrawalId) };
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+__name(declineWithdrawalRequest, "declineWithdrawalRequest");
+function parseJsonStringArray(raw) {
+  if (Array.isArray(raw)) return raw.map((s) => String(s || "").trim()).filter(Boolean);
+  if (typeof raw === "string" && raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed.map((s) => String(s || "").trim()).filter(Boolean);
+    } catch {
+    }
+    return raw.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+  }
+  return [];
+}
+function mapSocialSubmissionRow(row) {
+  if (!row) return null;
+  return {
+    id: String(row.id),
+    userId: String(row.user_id),
+    userName: row.user_name || row.full_name || "",
+    userEmail: row.user_email || row.email || "",
+    platformType: String(row.platform_type || row.affiliate_social_platform || ""),
+    socialLinks: parseJsonStringArray(row.social_links_json ?? row.affiliate_social_links),
+    affiliateProfileLocked: Boolean(row.affiliate_profile_locked ?? 1),
+    submittedAt: String(row.submitted_at || row.affiliate_social_submitted_at || new Date(Number(row.created_at || Date.now())).toISOString())
+  };
+}
+function getAffiliateSocialSubmissionInDb(userId, userEmail) {
+  if (!userId && !userEmail) return null;
+  if (userId) {
+    const sub = db.prepare("SELECT * FROM affiliate_social_submissions WHERE user_id = ? LIMIT 1").get(userId);
+    if (sub) return mapSocialSubmissionRow(sub);
+  }
+  if (userEmail) {
+    const subByEmail = db.prepare("SELECT * FROM affiliate_social_submissions WHERE LOWER(user_email) = LOWER(?) LIMIT 1").get(userEmail);
+    if (subByEmail) return mapSocialSubmissionRow(subByEmail);
+  }
+  const user = (userId ? getUserById(userId) : null) || (userEmail ? getUserByEmail(userEmail) : null);
+  if (user && (user.affiliate_profile_locked === 1 || user.affiliate_social_platform)) {
+    return {
+      id: `SOC-${user.id}`,
+      userId: String(user.id),
+      userName: user.full_name || "",
+      userEmail: user.email || "",
+      platformType: String(user.affiliate_social_platform || ""),
+      socialLinks: parseJsonStringArray(user.affiliate_social_links),
+      affiliateProfileLocked: Boolean(user.affiliate_profile_locked),
+      submittedAt: String(user.affiliate_social_submitted_at || (/* @__PURE__ */ new Date()).toISOString())
+    };
+  }
+  return null;
+}
+function submitAffiliateSocialProfileInDb(params) {
+  const existing = getAffiliateSocialSubmissionInDb(params.userId);
+  if (existing && existing.affiliateProfileLocked) {
+    throw new Error("Affiliate marketing links are already Verified & Locked and cannot be edited.");
+  }
+  const now = Date.now();
+  const submittedAt = new Date(now).toISOString();
+  const linksJson = JSON.stringify(params.socialLinks || []);
+  const id = `SOC-${now.toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+  ensureUserInDb({
+    id: params.userId,
+    email: params.userEmail || `${params.userId}@bft.io`,
+    fullName: params.userName || "BFT Affiliate"
+  });
+  db.prepare(`
+    INSERT INTO affiliate_social_submissions (
+      id, user_id, user_name, user_email, platform_type, social_links_json, affiliate_profile_locked, submitted_at, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET
+      platform_type = excluded.platform_type,
+      social_links_json = excluded.social_links_json,
+      affiliate_profile_locked = 1,
+      submitted_at = excluded.submitted_at
+  `).run(
+    id,
+    params.userId,
+    params.userName || null,
+    params.userEmail || null,
+    params.platformType,
+    linksJson,
+    submittedAt,
+    now
+  );
+  try {
+    db.prepare(`
+      UPDATE users SET
+        affiliate_profile_locked = 1,
+        affiliate_social_platform = ?,
+        affiliate_social_links = ?,
+        affiliate_social_submitted_at = ?,
+        updated_at = ?
+      WHERE id = ?
+    `).run(params.platformType, linksJson, submittedAt, now, params.userId);
+  } catch {
+  }
+  return getAffiliateSocialSubmissionInDb(params.userId);
+}
+function getAdminAffiliateSocialSubmissionsInDb() {
+  const rows = db.prepare(`
+    SELECT s.*, COALESCE(s.user_name, u.full_name) as full_name, COALESCE(s.user_email, u.email) as email
+    FROM affiliate_social_submissions s
+    LEFT JOIN users u ON s.user_id = u.id
+    ORDER BY s.created_at DESC
+  `).all();
+  return rows.map(mapSocialSubmissionRow);
+}
+function mapCountryManagerRow(row) {
+  if (!row) return null;
+  return {
+    id: String(row.id),
+    userId: String(row.user_id),
+    userEmail: row.user_email || "",
+    fullName: String(row.full_name || ""),
+    targetCountry: String(row.target_country || ""),
+    telegramHandle: String(row.telegram_handle || ""),
+    estimatedAudienceSize: String(row.estimated_audience_size || ""),
+    marketingStrategy: String(row.marketing_strategy || ""),
+    socialLinks: parseJsonStringArray(row.social_links_json),
+    totalReferralsCount: Number(row.total_referrals_count || 0),
+    status: String(row.status || "pending"),
+    adminNotes: row.admin_notes || "",
+    reviewedAt: row.reviewed_at || void 0,
+    createdAt: row.created_at ? new Date(Number(row.created_at)).toISOString() : (/* @__PURE__ */ new Date()).toISOString()
+  };
+}
+function submitCountryManagerApplicationInDb(params) {
+  const now = Date.now();
+  const id = `CMA-${now.toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+  const linksJson = JSON.stringify(params.socialLinks || []);
+  ensureUserInDb({
+    id: params.userId,
+    email: params.userEmail || `${params.userId}@bft.io`,
+    fullName: params.fullName
+  });
+  db.prepare(`
+    INSERT INTO country_manager_applications (
+      id, user_id, user_email, full_name, target_country, telegram_handle,
+      estimated_audience_size, marketing_strategy, social_links_json, total_referrals_count,
+      status, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+  `).run(
+    id,
+    params.userId,
+    params.userEmail || null,
+    params.fullName,
+    params.targetCountry,
+    params.telegramHandle,
+    String(params.estimatedAudienceSize),
+    params.marketingStrategy,
+    linksJson,
+    Number(params.totalReferralsCount || 0),
+    now
+  );
+  return mapCountryManagerRow(db.prepare("SELECT * FROM country_manager_applications WHERE id = ?").get(id));
+}
+function getCountryManagerApplicationsForUserInDb(userId, userEmail) {
+  if (!userId && !userEmail) return [];
+  const rows = userEmail ? db.prepare("SELECT * FROM country_manager_applications WHERE user_id = ? OR LOWER(user_email) = LOWER(?) ORDER BY created_at DESC").all(userId || "", userEmail) : db.prepare("SELECT * FROM country_manager_applications WHERE user_id = ? ORDER BY created_at DESC").all(userId);
+  return rows.map(mapCountryManagerRow);
+}
+function getAdminCountryManagerApplicationsInDb(statusFilter) {
+  let query = "SELECT * FROM country_manager_applications";
+  const params = [];
+  if (statusFilter && statusFilter !== "all") {
+    query += " WHERE status = ?";
+    params.push(statusFilter);
+  }
+  query += " ORDER BY created_at DESC";
+  return db.prepare(query).all(...params).map(mapCountryManagerRow);
+}
+function adminUpdateCountryManagerApplicationStatusInDb(appId, status, adminNotes, adminUserId) {
+  const existing = db.prepare("SELECT * FROM country_manager_applications WHERE id = ?").get(appId);
+  if (!existing) throw new Error("Country Manager application not found.");
+  const reviewedAt = (/* @__PURE__ */ new Date()).toISOString();
+  db.prepare(`
+    UPDATE country_manager_applications SET
+      status = ?,
+      admin_notes = ?,
+      reviewed_at = ?
+    WHERE id = ?
+  `).run(status, adminNotes || null, reviewedAt, appId);
+  recordAdminAuditLog(
+    adminUserId,
+    status === "approved" ? "APPROVE_COUNTRY_MANAGER" : "REJECT_COUNTRY_MANAGER",
+    appId,
+    "country_manager_application",
+    {
+      applicantName: existing.full_name,
+      targetCountry: existing.target_country,
+      adminNotes
+    }
+  );
+  return mapCountryManagerRow(db.prepare("SELECT * FROM country_manager_applications WHERE id = ?").get(appId));
+}
+
+// src/utils/otcAssetsCatalog.ts
+var OTC_ASSETS_CATALOG = [
+  // ============================================================================
+  // DERIV SYNTHETIC ASSETS (Live Deriv WebSocket Feed)
+  // ============================================================================
+  { symbol: "R_100", name: "Volatility 100 Index", payout: 95, category: "Deriv Synthetics", basePrice: 1e3, volatility: 2.5, pipDecimals: 2, flag: "\u{1F4C8}" },
+  { symbol: "R_75", name: "Volatility 75 Index", payout: 95, category: "Deriv Synthetics", basePrice: 850, volatility: 2.2, pipDecimals: 2, flag: "\u{1F4C8}" },
+  { symbol: "R_50", name: "Volatility 50 Index", payout: 94, category: "Deriv Synthetics", basePrice: 500, volatility: 1.8, pipDecimals: 2, flag: "\u{1F4C8}" },
+  { symbol: "R_25", name: "Volatility 25 Index", payout: 93, category: "Deriv Synthetics", basePrice: 250, volatility: 1.2, pipDecimals: 2, flag: "\u{1F4C8}" },
+  { symbol: "R_10", name: "Volatility 10 Index", payout: 92, category: "Deriv Synthetics", basePrice: 100, volatility: 0.8, pipDecimals: 2, flag: "\u{1F4C8}" },
+  // ============================================================================
+  // 1. FOREX PAIRS (Majors, Crosses, Scandi, Asian & Emerging Markets)
+  // ============================================================================
+  { symbol: "EUR/USD", name: "Euro / US Dollar", payout: 92, category: "Forex", basePrice: 1.0845, volatility: 8e-5, pipDecimals: 5, flag: "\u{1F1EA}\u{1F1FA}" },
+  { symbol: "GBP/JPY", name: "British Pound / Japanese Yen", payout: 91, category: "Forex", basePrice: 199.32, volatility: 0.016, pipDecimals: 3, flag: "\u{1F1EC}\u{1F1E7}" },
+  { symbol: "GBP/USD", name: "British Pound / US Dollar", payout: 90, category: "Forex", basePrice: 1.2921, volatility: 1e-4, pipDecimals: 5, flag: "\u{1F1EC}\u{1F1E7}" },
+  { symbol: "USD/JPY", name: "US Dollar / Japanese Yen", payout: 91, category: "Forex", basePrice: 154.25, volatility: 0.012, pipDecimals: 3, flag: "\u{1F1EF}\u{1F1F5}" },
+  { symbol: "USD/CHF", name: "US Dollar / Swiss Franc", payout: 89, category: "Forex", basePrice: 0.8872, volatility: 8e-5, pipDecimals: 5, flag: "\u{1F1E8}\u{1F1ED}" },
+  { symbol: "AUD/USD", name: "Australian Dollar / US Dollar", payout: 89, category: "Forex", basePrice: 0.6542, volatility: 8e-5, pipDecimals: 5, flag: "\u{1F1E6}\u{1F1FA}" },
+  { symbol: "USD/CAD", name: "US Dollar / Canadian Dollar", payout: 88, category: "Forex", basePrice: 1.3912, volatility: 9e-5, pipDecimals: 5, flag: "\u{1F1E8}\u{1F1E6}" },
+  { symbol: "NZD/USD", name: "New Zealand Dollar / US Dollar", payout: 88, category: "Forex", basePrice: 0.5984, volatility: 9e-5, pipDecimals: 5, flag: "\u{1F1F3}\u{1F1FF}" },
+  { symbol: "EUR/JPY", name: "Euro / Japanese Yen", payout: 90, category: "Forex", basePrice: 167.28, volatility: 0.014, pipDecimals: 3, flag: "\u{1F1EA}\u{1F1FA}" },
+  { symbol: "EUR/GBP", name: "Euro / British Pound", payout: 89, category: "Forex", basePrice: 0.8394, volatility: 7e-5, pipDecimals: 5, flag: "\u{1F1EA}\u{1F1FA}" },
+  { symbol: "AUD/JPY", name: "Australian Dollar / Japanese Yen", payout: 89, category: "Forex", basePrice: 100.91, volatility: 0.013, pipDecimals: 3, flag: "\u{1F1E6}\u{1F1FA}" },
+  { symbol: "GBP/AUD", name: "British Pound / Australian Dollar", payout: 88, category: "Forex", basePrice: 1.9751, volatility: 14e-5, pipDecimals: 5, flag: "\u{1F1EC}\u{1F1E7}" },
+  { symbol: "EUR/AUD", name: "Euro / Australian Dollar", payout: 88, category: "Forex", basePrice: 1.6578, volatility: 12e-5, pipDecimals: 5, flag: "\u{1F1EA}\u{1F1FA}" },
+  { symbol: "CHF/JPY", name: "Swiss Franc / Japanese Yen", payout: 89, category: "Forex", basePrice: 173.86, volatility: 0.015, pipDecimals: 3, flag: "\u{1F1E8}\u{1F1ED}" },
+  { symbol: "GBP/CAD", name: "British Pound / Canadian Dollar", payout: 88, category: "Forex", basePrice: 1.7976, volatility: 12e-5, pipDecimals: 5, flag: "\u{1F1EC}\u{1F1E7}" },
+  { symbol: "EUR/CAD", name: "Euro / Canadian Dollar", payout: 87, category: "Forex", basePrice: 1.5088, volatility: 11e-5, pipDecimals: 5, flag: "\u{1F1EA}\u{1F1FA}" },
+  { symbol: "AUD/CAD", name: "Australian Dollar / Canadian Dollar", payout: 87, category: "Forex", basePrice: 0.9101, volatility: 8e-5, pipDecimals: 5, flag: "\u{1F1E6}\u{1F1FA}" },
+  { symbol: "NZD/JPY", name: "New Zealand Dollar / Japanese Yen", payout: 87, category: "Forex", basePrice: 92.3, volatility: 0.012, pipDecimals: 3, flag: "\u{1F1F3}\u{1F1FF}" },
+  { symbol: "GBP/CHF", name: "British Pound / Swiss Franc", payout: 88, category: "Forex", basePrice: 1.1463, volatility: 1e-4, pipDecimals: 5, flag: "\u{1F1EC}\u{1F1E7}" },
+  { symbol: "EUR/CHF", name: "Euro / Swiss Franc", payout: 88, category: "Forex", basePrice: 0.9622, volatility: 7e-5, pipDecimals: 5, flag: "\u{1F1EA}\u{1F1FA}" },
+  { symbol: "AUD/CHF", name: "Australian Dollar / Swiss Franc", payout: 86, category: "Forex", basePrice: 0.5804, volatility: 8e-5, pipDecimals: 5, flag: "\u{1F1E6}\u{1F1FA}" },
+  { symbol: "CAD/JPY", name: "Canadian Dollar / Japanese Yen", payout: 88, category: "Forex", basePrice: 110.87, volatility: 0.012, pipDecimals: 3, flag: "\u{1F1E8}\u{1F1E6}" },
+  { symbol: "CAD/CHF", name: "Canadian Dollar / Swiss Franc", payout: 86, category: "Forex", basePrice: 0.6377, volatility: 7e-5, pipDecimals: 5, flag: "\u{1F1E8}\u{1F1E6}" },
+  { symbol: "NZD/CAD", name: "New Zealand Dollar / Canadian Dollar", payout: 86, category: "Forex", basePrice: 0.8325, volatility: 8e-5, pipDecimals: 5, flag: "\u{1F1F3}\u{1F1FF}" },
+  { symbol: "NZD/CHF", name: "New Zealand Dollar / Swiss Franc", payout: 85, category: "Forex", basePrice: 0.5309, volatility: 8e-5, pipDecimals: 5, flag: "\u{1F1F3}\u{1F1FF}" },
+  { symbol: "AUD/NZD", name: "Australian Dollar / New Zealand Dollar", payout: 87, category: "Forex", basePrice: 1.0932, volatility: 8e-5, pipDecimals: 5, flag: "\u{1F1E6}\u{1F1FA}" },
+  { symbol: "GBP/NZD", name: "British Pound / New Zealand Dollar", payout: 88, category: "Forex", basePrice: 2.1592, volatility: 15e-5, pipDecimals: 5, flag: "\u{1F1EC}\u{1F1E7}" },
+  { symbol: "EUR/NZD", name: "Euro / New Zealand Dollar", payout: 87, category: "Forex", basePrice: 1.8123, volatility: 13e-5, pipDecimals: 5, flag: "\u{1F1EA}\u{1F1FA}" },
+  { symbol: "USD/SGD", name: "US Dollar / Singapore Dollar", payout: 87, category: "Forex", basePrice: 1.3215, volatility: 8e-5, pipDecimals: 5, flag: "\u{1F1F8}\u{1F1EC}" },
+  { symbol: "USD/HKD", name: "US Dollar / Hong Kong Dollar", payout: 85, category: "Forex", basePrice: 7.7725, volatility: 2e-4, pipDecimals: 5, flag: "\u{1F1ED}\u{1F1F0}" },
+  { symbol: "USD/MXN", name: "US Dollar / Mexican Peso", payout: 89, category: "Forex", basePrice: 19.984, volatility: 35e-4, pipDecimals: 4, flag: "\u{1F1F2}\u{1F1FD}" },
+  { symbol: "USD/ZAR", name: "US Dollar / South African Rand", payout: 88, category: "Forex", basePrice: 17.642, volatility: 32e-4, pipDecimals: 4, flag: "\u{1F1FF}\u{1F1E6}" },
+  { symbol: "USD/TRY", name: "US Dollar / Turkish Lira", payout: 88, category: "Forex", basePrice: 34.285, volatility: 45e-4, pipDecimals: 4, flag: "\u{1F1F9}\u{1F1F7}" },
+  { symbol: "USD/NOK", name: "US Dollar / Norwegian Krone", payout: 86, category: "Forex", basePrice: 10.942, volatility: 18e-4, pipDecimals: 4, flag: "\u{1F1F3}\u{1F1F4}" },
+  { symbol: "USD/SEK", name: "US Dollar / Swedish Krona", payout: 86, category: "Forex", basePrice: 10.618, volatility: 18e-4, pipDecimals: 4, flag: "\u{1F1F8}\u{1F1EA}" },
+  { symbol: "USD/PLN", name: "US Dollar / Polish Zloty", payout: 86, category: "Forex", basePrice: 4.0125, volatility: 9e-4, pipDecimals: 4, flag: "\u{1F1F5}\u{1F1F1}" },
+  { symbol: "USD/INR", name: "US Dollar / Indian Rupee", payout: 90, category: "Forex", basePrice: 84.075, volatility: 8e-3, pipDecimals: 3, flag: "\u{1F1EE}\u{1F1F3}" },
+  { symbol: "USD/BRL", name: "US Dollar / Brazilian Real", payout: 91, category: "Forex", basePrice: 5.7045, volatility: 15e-4, pipDecimals: 4, flag: "\u{1F1E7}\u{1F1F7}" },
+  { symbol: "USD/CNH", name: "US Dollar / Offshore Chinese Yuan", payout: 88, category: "Forex", basePrice: 7.1265, volatility: 9e-4, pipDecimals: 4, flag: "\u{1F1E8}\u{1F1F3}" },
+  { symbol: "USD/KRW", name: "US Dollar / South Korean Won", payout: 87, category: "Forex", basePrice: 1382.4, volatility: 0.25, pipDecimals: 2, flag: "\u{1F1F0}\u{1F1F7}" },
+  { symbol: "USD/THB", name: "US Dollar / Thai Baht", payout: 86, category: "Forex", basePrice: 33.68, volatility: 8e-3, pipDecimals: 3, flag: "\u{1F1F9}\u{1F1ED}" },
+  { symbol: "USD/IDR", name: "US Dollar / Indonesian Rupiah", payout: 87, category: "Forex", basePrice: 15640, volatility: 3.5, pipDecimals: 1, flag: "\u{1F1EE}\u{1F1E9}" },
+  { symbol: "USD/PHP", name: "US Dollar / Philippine Peso", payout: 86, category: "Forex", basePrice: 58.12, volatility: 0.012, pipDecimals: 3, flag: "\u{1F1F5}\u{1F1ED}" },
+  { symbol: "USD/TWD", name: "US Dollar / Taiwan Dollar", payout: 85, category: "Forex", basePrice: 32.085, volatility: 6e-3, pipDecimals: 3, flag: "\u{1F1F9}\u{1F1FC}" },
+  { symbol: "USD/CLP", name: "US Dollar / Chilean Peso", payout: 86, category: "Forex", basePrice: 948.5, volatility: 0.22, pipDecimals: 2, flag: "\u{1F1E8}\u{1F1F1}" },
+  { symbol: "USD/COP", name: "US Dollar / Colombian Peso", payout: 87, category: "Forex", basePrice: 4315, volatility: 1.1, pipDecimals: 1, flag: "\u{1F1E8}\u{1F1F4}" },
+  { symbol: "USD/ARS", name: "US Dollar / Argentine Peso", payout: 89, category: "Forex", basePrice: 988.5, volatility: 0.3, pipDecimals: 2, flag: "\u{1F1E6}\u{1F1F7}" },
+  { symbol: "USD/PKR", name: "US Dollar / Pakistani Rupee", payout: 90, category: "Forex", basePrice: 277.85, volatility: 0.05, pipDecimals: 2, flag: "\u{1F1F5}\u{1F1F0}" },
+  { symbol: "USD/BDT", name: "US Dollar / Bangladeshi Taka", payout: 89, category: "Forex", basePrice: 119.5, volatility: 0.03, pipDecimals: 2, flag: "\u{1F1E7}\u{1F1E9}" },
+  { symbol: "USD/EGP", name: "US Dollar / Egyptian Pound", payout: 89, category: "Forex", basePrice: 48.72, volatility: 0.015, pipDecimals: 3, flag: "\u{1F1EA}\u{1F1EC}" },
+  { symbol: "USD/NGN", name: "US Dollar / Nigerian Naira", payout: 88, category: "Forex", basePrice: 1645, volatility: 0.65, pipDecimals: 1, flag: "\u{1F1F3}\u{1F1EC}" },
+  { symbol: "USD/AED", name: "US Dollar / UAE Dirham", payout: 85, category: "Forex", basePrice: 3.6725, volatility: 6e-5, pipDecimals: 5, flag: "\u{1F1E6}\u{1F1EA}" },
+  { symbol: "USD/SAR", name: "US Dollar / Saudi Riyal", payout: 85, category: "Forex", basePrice: 3.7542, volatility: 6e-5, pipDecimals: 5, flag: "\u{1F1F8}\u{1F1E6}" },
+  { symbol: "USD/ILS", name: "US Dollar / Israeli Shekel", payout: 86, category: "Forex", basePrice: 3.742, volatility: 8e-4, pipDecimals: 4, flag: "\u{1F1EE}\u{1F1F1}" },
+  { symbol: "USD/HUF", name: "US Dollar / Hungarian Forint", payout: 86, category: "Forex", basePrice: 372.45, volatility: 0.08, pipDecimals: 2, flag: "\u{1F1ED}\u{1F1FA}" },
+  { symbol: "USD/CZK", name: "US Dollar / Czech Koruna", payout: 86, category: "Forex", basePrice: 23.385, volatility: 5e-3, pipDecimals: 3, flag: "\u{1F1E8}\u{1F1FF}" },
+  { symbol: "USD/RON", name: "US Dollar / Romanian Leu", payout: 85, category: "Forex", basePrice: 4.584, volatility: 9e-4, pipDecimals: 4, flag: "\u{1F1F7}\u{1F1F4}" },
+  { symbol: "USD/DKK", name: "US Dollar / Danish Krone", payout: 85, category: "Forex", basePrice: 6.878, volatility: 1e-3, pipDecimals: 4, flag: "\u{1F1E9}\u{1F1F0}" },
+  { symbol: "EUR/TRY", name: "Euro / Turkish Lira", payout: 88, category: "Forex", basePrice: 37.182, volatility: 5e-3, pipDecimals: 4, flag: "\u{1F1EA}\u{1F1FA}" },
+  { symbol: "EUR/ZAR", name: "Euro / South African Rand", payout: 87, category: "Forex", basePrice: 19.132, volatility: 38e-4, pipDecimals: 4, flag: "\u{1F1EA}\u{1F1FA}" },
+  { symbol: "EUR/PLN", name: "Euro / Polish Zloty", payout: 86, category: "Forex", basePrice: 4.3515, volatility: 8e-4, pipDecimals: 4, flag: "\u{1F1EA}\u{1F1FA}" },
+  { symbol: "EUR/SEK", name: "Euro / Swedish Krona", payout: 86, category: "Forex", basePrice: 11.515, volatility: 16e-4, pipDecimals: 4, flag: "\u{1F1EA}\u{1F1FA}" },
+  { symbol: "EUR/NOK", name: "Euro / Norwegian Krone", payout: 86, category: "Forex", basePrice: 11.866, volatility: 18e-4, pipDecimals: 4, flag: "\u{1F1EA}\u{1F1FA}" },
+  { symbol: "EUR/DKK", name: "Euro / Danish Krone", payout: 85, category: "Forex", basePrice: 7.459, volatility: 6e-4, pipDecimals: 4, flag: "\u{1F1EA}\u{1F1FA}" },
+  { symbol: "EUR/HUF", name: "Euro / Hungarian Forint", payout: 86, category: "Forex", basePrice: 403.9, volatility: 0.09, pipDecimals: 2, flag: "\u{1F1EA}\u{1F1FA}" },
+  { symbol: "EUR/CZK", name: "Euro / Czech Koruna", payout: 85, category: "Forex", basePrice: 25.36, volatility: 5e-3, pipDecimals: 3, flag: "\u{1F1EA}\u{1F1FA}" },
+  { symbol: "EUR/SGD", name: "Euro / Singapore Dollar", payout: 87, category: "Forex", basePrice: 1.4331, volatility: 9e-5, pipDecimals: 5, flag: "\u{1F1EA}\u{1F1FA}" },
+  { symbol: "EUR/MXN", name: "Euro / Mexican Peso", payout: 88, category: "Forex", basePrice: 21.672, volatility: 4e-3, pipDecimals: 4, flag: "\u{1F1EA}\u{1F1FA}" },
+  { symbol: "EUR/BRL", name: "Euro / Brazilian Real", payout: 89, category: "Forex", basePrice: 6.1865, volatility: 18e-4, pipDecimals: 4, flag: "\u{1F1EA}\u{1F1FA}" },
+  { symbol: "GBP/SGD", name: "British Pound / Singapore Dollar", payout: 87, category: "Forex", basePrice: 1.7075, volatility: 11e-5, pipDecimals: 5, flag: "\u{1F1EC}\u{1F1E7}" },
+  { symbol: "GBP/ZAR", name: "British Pound / South African Rand", payout: 88, category: "Forex", basePrice: 22.795, volatility: 45e-4, pipDecimals: 4, flag: "\u{1F1EC}\u{1F1E7}" },
+  { symbol: "GBP/TRY", name: "British Pound / Turkish Lira", payout: 88, category: "Forex", basePrice: 44.299, volatility: 6e-3, pipDecimals: 4, flag: "\u{1F1EC}\u{1F1E7}" },
+  { symbol: "GBP/PLN", name: "British Pound / Polish Zloty", payout: 86, category: "Forex", basePrice: 5.1845, volatility: 1e-3, pipDecimals: 4, flag: "\u{1F1EC}\u{1F1E7}" },
+  { symbol: "GBP/SEK", name: "British Pound / Swedish Krona", payout: 86, category: "Forex", basePrice: 13.719, volatility: 22e-4, pipDecimals: 4, flag: "\u{1F1EC}\u{1F1E7}" },
+  { symbol: "GBP/NOK", name: "British Pound / Norwegian Krone", payout: 86, category: "Forex", basePrice: 14.138, volatility: 24e-4, pipDecimals: 4, flag: "\u{1F1EC}\u{1F1E7}" },
+  { symbol: "GBP/MXN", name: "British Pound / Mexican Peso", payout: 88, category: "Forex", basePrice: 25.821, volatility: 48e-4, pipDecimals: 4, flag: "\u{1F1EC}\u{1F1E7}" },
+  { symbol: "AUD/SGD", name: "Australian Dollar / Singapore Dollar", payout: 86, category: "Forex", basePrice: 0.8645, volatility: 8e-5, pipDecimals: 5, flag: "\u{1F1E6}\u{1F1FA}" },
+  { symbol: "SGD/JPY", name: "Singapore Dollar / Japanese Yen", payout: 87, category: "Forex", basePrice: 116.72, volatility: 0.013, pipDecimals: 3, flag: "\u{1F1F8}\u{1F1EC}" },
+  { symbol: "TRY/JPY", name: "Turkish Lira / Japanese Yen", payout: 86, category: "Forex", basePrice: 4.499, volatility: 12e-4, pipDecimals: 4, flag: "\u{1F1F9}\u{1F1F7}" },
+  { symbol: "ZAR/JPY", name: "South African Rand / Japanese Yen", payout: 86, category: "Forex", basePrice: 8.743, volatility: 18e-4, pipDecimals: 4, flag: "\u{1F1FF}\u{1F1E6}" },
+  { symbol: "MXN/JPY", name: "Mexican Peso / Japanese Yen", payout: 86, category: "Forex", basePrice: 7.7185, volatility: 16e-4, pipDecimals: 4, flag: "\u{1F1F2}\u{1F1FD}" },
+  { symbol: "NOK/JPY", name: "Norwegian Krone / Japanese Yen", payout: 85, category: "Forex", basePrice: 14.097, volatility: 25e-4, pipDecimals: 4, flag: "\u{1F1F3}\u{1F1F4}" },
+  { symbol: "SEK/JPY", name: "Swedish Krona / Japanese Yen", payout: 85, category: "Forex", basePrice: 14.527, volatility: 25e-4, pipDecimals: 4, flag: "\u{1F1F8}\u{1F1EA}" },
+  { symbol: "HKD/JPY", name: "Hong Kong Dollar / Japanese Yen", payout: 85, category: "Forex", basePrice: 19.845, volatility: 3e-3, pipDecimals: 4, flag: "\u{1F1ED}\u{1F1F0}" },
+  // More Forex pairs (65 total added to reach 260+)
+  { symbol: "USD/GHS", name: "US Dollar / Ghanaian Cedi", payout: 86, category: "Forex", basePrice: 15.5, volatility: 0.04, pipDecimals: 2, flag: "\u{1F1EC}\u{1F1ED}" },
+  { symbol: "USD/KES", name: "US Dollar / Kenyan Shilling", payout: 86, category: "Forex", basePrice: 129.2, volatility: 0.15, pipDecimals: 2, flag: "\u{1F1F0}\u{1F1EA}" },
+  { symbol: "USD/UGX", name: "US Dollar / Ugandan Shilling", payout: 85, category: "Forex", basePrice: 3720, volatility: 2.5, pipDecimals: 1, flag: "\u{1F1FA}\u{1F1EC}" },
+  { symbol: "USD/TZS", name: "US Dollar / Tanzanian Shilling", payout: 85, category: "Forex", basePrice: 2650, volatility: 1.8, pipDecimals: 1, flag: "\u{1F1F9}\u{1F1FF}" },
+  { symbol: "USD/MAD", name: "US Dollar / Moroccan Dirham", payout: 86, category: "Forex", basePrice: 9.95, volatility: 0.015, pipDecimals: 3, flag: "\u{1F1F2}\u{1F1E6}" },
+  { symbol: "USD/DZD", name: "US Dollar / Algerian Dinar", payout: 85, category: "Forex", basePrice: 134.5, volatility: 0.2, pipDecimals: 2, flag: "\u{1F1E9}\u{1F1FF}" },
+  { symbol: "USD/TND", name: "US Dollar / Tunisian Dinar", payout: 86, category: "Forex", basePrice: 3.12, volatility: 8e-3, pipDecimals: 4, flag: "\u{1F1F9}\u{1F1F3}" },
+  { symbol: "USD/JOD", name: "US Dollar / Jordanian Dinar", payout: 85, category: "Forex", basePrice: 0.709, volatility: 1e-3, pipDecimals: 4, flag: "\u{1F1EF}\u{1F1F4}" },
+  { symbol: "USD/OMR", name: "US Dollar / Omani Rial", payout: 85, category: "Forex", basePrice: 0.384, volatility: 1e-3, pipDecimals: 4, flag: "\u{1F1F4}\u{1F1F2}" },
+  { symbol: "USD/QAR", name: "US Dollar / Qatari Riyal", payout: 85, category: "Forex", basePrice: 3.64, volatility: 5e-3, pipDecimals: 3, flag: "\u{1F1F6}\u{1F1E6}" },
+  { symbol: "USD/KWD", name: "US Dollar / Kuwaiti Dinar", payout: 85, category: "Forex", basePrice: 0.307, volatility: 5e-4, pipDecimals: 4, flag: "\u{1F1F0}\u{1F1FC}" },
+  { symbol: "USD/BHD", name: "US Dollar / Bahraini Dinar", payout: 85, category: "Forex", basePrice: 0.377, volatility: 8e-4, pipDecimals: 4, flag: "\u{1F1E7}\u{1F1ED}" },
+  { symbol: "USD/LBP", name: "US Dollar / Lebanese Pound", payout: 85, category: "Forex", basePrice: 89500, volatility: 25, pipDecimals: 1, flag: "\u{1F1F1}\u{1F1E7}" },
+  { symbol: "USD/JMD", name: "US Dollar / Jamaican Dollar", payout: 85, category: "Forex", basePrice: 156.5, volatility: 0.25, pipDecimals: 2, flag: "\u{1F1EF}\u{1F1F2}" },
+  { symbol: "USD/DOP", name: "US Dollar / Dominican Peso", payout: 86, category: "Forex", basePrice: 60.1, volatility: 0.08, pipDecimals: 2, flag: "\u{1F1E9}\u{1F1F4}" },
+  { symbol: "USD/CRC", name: "US Dollar / Costa Rican Col\xF3n", payout: 86, category: "Forex", basePrice: 515, volatility: 0.85, pipDecimals: 2, flag: "\u{1F1E8}\u{1F1F7}" },
+  { symbol: "USD/GTQ", name: "US Dollar / Guatemalan Quetzal", payout: 86, category: "Forex", basePrice: 7.75, volatility: 0.012, pipDecimals: 3, flag: "\u{1F1EC}\u{1F1F9}" },
+  { symbol: "USD/HNL", name: "US Dollar / Honduran Lempira", payout: 85, category: "Forex", basePrice: 24.7, volatility: 0.04, pipDecimals: 2, flag: "\u{1F1ED}\u{1F1F3}" },
+  { symbol: "USD/PYG", name: "US Dollar / Paraguayan Guaran\xED", payout: 86, category: "Forex", basePrice: 7850, volatility: 12, pipDecimals: 1, flag: "\u{1F1F5}\u{1F1FE}" },
+  { symbol: "USD/UYU", name: "US Dollar / Uruguayan Peso", payout: 86, category: "Forex", basePrice: 42.5, volatility: 0.09, pipDecimals: 2, flag: "\u{1F1FA}\u{1F1FE}" },
+  { symbol: "USD/BOB", name: "US Dollar / Bolivian Boliviano", payout: 85, category: "Forex", basePrice: 6.91, volatility: 0.01, pipDecimals: 3, flag: "\u{1F1E7}\u{1F1F4}" },
+  { symbol: "EUR/GHS", name: "Euro / Ghanaian Cedi", payout: 85, category: "Forex", basePrice: 16.8, volatility: 0.05, pipDecimals: 2, flag: "\u{1F1EA}\u{1F1FA}" },
+  { symbol: "EUR/KES", name: "Euro / Kenyan Shilling", payout: 85, category: "Forex", basePrice: 140, volatility: 0.18, pipDecimals: 2, flag: "\u{1F1EA}\u{1F1FA}" },
+  { symbol: "EUR/MAD", name: "Euro / Moroccan Dirham", payout: 85, category: "Forex", basePrice: 10.8, volatility: 0.02, pipDecimals: 3, flag: "\u{1F1EA}\u{1F1FA}" },
+  { symbol: "GBP/GHS", name: "British Pound / Ghanaian Cedi", payout: 85, category: "Forex", basePrice: 20.1, volatility: 0.06, pipDecimals: 2, flag: "\u{1F1EC}\u{1F1E7}" },
+  { symbol: "GBP/KES", name: "British Pound / Kenyan Shilling", payout: 85, category: "Forex", basePrice: 167, volatility: 0.22, pipDecimals: 2, flag: "\u{1F1EC}\u{1F1E7}" },
+  { symbol: "AUD/GHS", name: "Australian Dollar / Ghanaian Cedi", payout: 85, category: "Forex", basePrice: 10.2, volatility: 0.03, pipDecimals: 2, flag: "\u{1F1E6}\u{1F1FA}" },
+  { symbol: "CAD/GHS", name: "Canadian Dollar / Ghanaian Cedi", payout: 85, category: "Forex", basePrice: 11.2, volatility: 0.035, pipDecimals: 2, flag: "\u{1F1E8}\u{1F1E6}" },
+  { symbol: "JPY/GHS", name: "Japanese Yen / Ghanaian Cedi", payout: 85, category: "Forex", basePrice: 0.098, volatility: 5e-4, pipDecimals: 4, flag: "\u{1F1EF}\u{1F1F5}" },
+  { symbol: "CHF/GHS", name: "Swiss Franc / Ghanaian Cedi", payout: 85, category: "Forex", basePrice: 17.5, volatility: 0.045, pipDecimals: 2, flag: "\u{1F1E8}\u{1F1ED}" },
+  { symbol: "NZD/GHS", name: "New Zealand Dollar / Ghanaian Cedi", payout: 85, category: "Forex", basePrice: 9.3, volatility: 0.025, pipDecimals: 2, flag: "\u{1F1F3}\u{1F1FF}" },
+  { symbol: "ZAR/GHS", name: "South African Rand / Ghanaian Cedi", payout: 85, category: "Forex", basePrice: 0.88, volatility: 3e-3, pipDecimals: 3, flag: "\u{1F1FF}\u{1F1E6}" },
+  { symbol: "INR/GHS", name: "Indian Rupee / Ghanaian Cedi", payout: 85, category: "Forex", basePrice: 0.182, volatility: 8e-4, pipDecimals: 4, flag: "\u{1F1EE}\u{1F1F3}" },
+  { symbol: "BRL/GHS", name: "Brazilian Real / Ghanaian Cedi", payout: 85, category: "Forex", basePrice: 2.72, volatility: 0.01, pipDecimals: 2, flag: "\u{1F1E7}\u{1F1F7}" },
+  { symbol: "MXN/GHS", name: "Mexican Peso / Ghanaian Cedi", payout: 85, category: "Forex", basePrice: 0.77, volatility: 3e-3, pipDecimals: 3, flag: "\u{1F1F2}\u{1F1FD}" },
+  { symbol: "SGD/GHS", name: "Singapore Dollar / Ghanaian Cedi", payout: 85, category: "Forex", basePrice: 11.7, volatility: 0.035, pipDecimals: 2, flag: "\u{1F1F8}\u{1F1EC}" },
+  { symbol: "HKD/GHS", name: "Hong Kong Dollar / Ghanaian Cedi", payout: 85, category: "Forex", basePrice: 1.99, volatility: 5e-3, pipDecimals: 3, flag: "\u{1F1ED}\u{1F1F0}" },
+  { symbol: "NOK/GHS", name: "Norwegian Krone / Ghanaian Cedi", payout: 85, category: "Forex", basePrice: 1.41, volatility: 4e-3, pipDecimals: 3, flag: "\u{1F1F3}\u{1F1F4}" },
+  { symbol: "SEK/GHS", name: "Swedish Krona / Ghanaian Cedi", payout: 85, category: "Forex", basePrice: 1.45, volatility: 4e-3, pipDecimals: 3, flag: "\u{1F1F8}\u{1F1EA}" },
+  { symbol: "DKK/GHS", name: "Danish Krone / Ghanaian Cedi", payout: 85, category: "Forex", basePrice: 2.24, volatility: 6e-3, pipDecimals: 3, flag: "\u{1F1E9}\u{1F1F0}" },
+  { symbol: "AUD/DKK", name: "Australian Dollar / Danish Krone", payout: 85, category: "Forex", basePrice: 4.52, volatility: 0.01, pipDecimals: 3, flag: "\u{1F1E6}\u{1F1FA}" },
+  { symbol: "AUD/NOK", name: "Australian Dollar / Norwegian Krone", payout: 85, category: "Forex", basePrice: 7.18, volatility: 0.015, pipDecimals: 3, flag: "\u{1F1E6}\u{1F1FA}" },
+  { symbol: "AUD/SEK", name: "Australian Dollar / Swedish Krona", payout: 85, category: "Forex", basePrice: 6.98, volatility: 0.015, pipDecimals: 3, flag: "\u{1F1E6}\u{1F1FA}" },
+  { symbol: "NZD/DKK", name: "New Zealand Dollar / Danish Krone", payout: 85, category: "Forex", basePrice: 4.14, volatility: 0.01, pipDecimals: 3, flag: "\u{1F1F3}\u{1F1FF}" },
+  { symbol: "NZD/NOK", name: "New Zealand Dollar / Norwegian Krone", payout: 85, category: "Forex", basePrice: 6.58, volatility: 0.014, pipDecimals: 3, flag: "\u{1F1F3}\u{1F1FF}" },
+  { symbol: "NZD/SEK", name: "New Zealand Dollar / Swedish Krona", payout: 85, category: "Forex", basePrice: 6.4, volatility: 0.014, pipDecimals: 3, flag: "\u{1F1F3}\u{1F1FF}" },
+  { symbol: "CAD/DKK", name: "Canadian Dollar / Danish Krone", payout: 85, category: "Forex", basePrice: 5.02, volatility: 0.012, pipDecimals: 3, flag: "\u{1F1E8}\u{1F1E6}" },
+  { symbol: "CAD/NOK", name: "Canadian Dollar / Norwegian Krone", payout: 85, category: "Forex", basePrice: 7.98, volatility: 0.018, pipDecimals: 3, flag: "\u{1F1E8}\u{1F1E6}" },
+  { symbol: "CAD/SEK", name: "Canadian Dollar / Swedish Krona", payout: 85, category: "Forex", basePrice: 7.75, volatility: 0.018, pipDecimals: 3, flag: "\u{1F1E8}\u{1F1E6}" },
+  { symbol: "CHF/DKK", name: "Swiss Franc / Danish Krone", payout: 85, category: "Forex", basePrice: 7.85, volatility: 0.01, pipDecimals: 3, flag: "\u{1F1E8}\u{1F1ED}" },
+  // ============================================================================
+  // 2. CRYPTOCURRENCY ASSETS (40+ Crypto Pairs)
+  // ============================================================================
+  { symbol: "BTC/USD", name: "Bitcoin / USD", payout: 95, category: "Crypto", basePrice: 96450, volatility: 4.5, pipDecimals: 2, flag: "\u20BF" },
+  { symbol: "BTC/USDT", name: "Bitcoin / Tether USDT", payout: 95, category: "Crypto", basePrice: 96450, volatility: 4.5, pipDecimals: 2, flag: "\u20BF" },
+  { symbol: "ETH/USD", name: "Ethereum / USD", payout: 93, category: "Crypto", basePrice: 2840, volatility: 0.35, pipDecimals: 2, flag: "\u039E" },
+  { symbol: "ETH/USDT", name: "Ethereum / Tether USDT", payout: 93, category: "Crypto", basePrice: 2840, volatility: 0.35, pipDecimals: 2, flag: "\u039E" },
+  { symbol: "SOL/USD", name: "Solana / USD", payout: 92, category: "Crypto", basePrice: 185.5, volatility: 0.06, pipDecimals: 2, flag: "\u25CE" },
+  { symbol: "SOL/USDT", name: "Solana / Tether USDT", payout: 92, category: "Crypto", basePrice: 185.5, volatility: 0.06, pipDecimals: 2, flag: "\u25CE" },
+  { symbol: "XRP/USD", name: "Ripple XRP / USD", payout: 90, category: "Crypto", basePrice: 1.95, volatility: 8e-4, pipDecimals: 4, flag: "\u2715" },
+  { symbol: "XRP/USDT", name: "Ripple XRP / Tether USDT", payout: 90, category: "Crypto", basePrice: 1.95, volatility: 8e-4, pipDecimals: 4, flag: "\u2715" },
+  { symbol: "BNB/USD", name: "BNB Chain / USD", payout: 90, category: "Crypto", basePrice: 650, volatility: 0.12, pipDecimals: 2, flag: "\u{1F7E1}" },
+  { symbol: "BNB/USDT", name: "BNB Chain / Tether USDT", payout: 90, category: "Crypto", basePrice: 650, volatility: 0.12, pipDecimals: 2, flag: "\u{1F7E1}" },
+  { symbol: "DOGE/USD", name: "Dogecoin / USD", payout: 89, category: "Crypto", basePrice: 0.245, volatility: 2e-4, pipDecimals: 4, flag: "\u{1F415}" },
+  { symbol: "DOGE/USDT", name: "Dogecoin / Tether USDT", payout: 89, category: "Crypto", basePrice: 0.245, volatility: 2e-4, pipDecimals: 4, flag: "\u{1F415}" },
+  { symbol: "ADA/USD", name: "Cardano / USD", payout: 89, category: "Crypto", basePrice: 0.785, volatility: 3e-4, pipDecimals: 4, flag: "\u{1F535}" },
+  { symbol: "ADA/USDT", name: "Cardano / Tether USDT", payout: 89, category: "Crypto", basePrice: 0.785, volatility: 3e-4, pipDecimals: 4, flag: "\u{1F535}" },
+  { symbol: "AVAX/USD", name: "Avalanche / USD", payout: 89, category: "Crypto", basePrice: 26.4, volatility: 0.02, pipDecimals: 2, flag: "\u{1F53A}" },
+  { symbol: "AVAX/USDT", name: "Avalanche / Tether USDT", payout: 89, category: "Crypto", basePrice: 26.4, volatility: 0.02, pipDecimals: 2, flag: "\u{1F53A}" },
+  { symbol: "LINK/USD", name: "Chainlink / USD", payout: 88, category: "Crypto", basePrice: 18.2, volatility: 0.015, pipDecimals: 2, flag: "\u{1F517}" },
+  { symbol: "LINK/USDT", name: "Chainlink / Tether USDT", payout: 88, category: "Crypto", basePrice: 18.2, volatility: 0.015, pipDecimals: 2, flag: "\u{1F517}" },
+  { symbol: "DOT/USD", name: "Polkadot / USD", payout: 88, category: "Crypto", basePrice: 5.4, volatility: 4e-3, pipDecimals: 3, flag: "\u26AA" },
+  { symbol: "DOT/USDT", name: "Polkadot / Tether USDT", payout: 88, category: "Crypto", basePrice: 5.4, volatility: 4e-3, pipDecimals: 3, flag: "\u26AA" },
+  { symbol: "LTC/USD", name: "Litecoin / USD", payout: 89, category: "Crypto", basePrice: 104.5, volatility: 0.04, pipDecimals: 2, flag: "\u0141" },
+  { symbol: "LTC/USDT", name: "Litecoin / Tether USDT", payout: 89, category: "Crypto", basePrice: 104.5, volatility: 0.04, pipDecimals: 2, flag: "\u0141" },
+  { symbol: "NEAR/USD", name: "NEAR Protocol / USD", payout: 88, category: "Crypto", basePrice: 3.65, volatility: 3e-3, pipDecimals: 3, flag: "\u{1F310}" },
+  { symbol: "NEAR/USDT", name: "NEAR Protocol / Tether USDT", payout: 88, category: "Crypto", basePrice: 3.65, volatility: 3e-3, pipDecimals: 3, flag: "\u{1F310}" },
+  { symbol: "TRX/USD", name: "TRON / USD", payout: 88, category: "Crypto", basePrice: 0.238, volatility: 1e-4, pipDecimals: 4, flag: "\u2666\uFE0F" },
+  { symbol: "TRX/USDT", name: "TRON / Tether USDT", payout: 88, category: "Crypto", basePrice: 0.238, volatility: 1e-4, pipDecimals: 4, flag: "\u2666\uFE0F" },
+  { symbol: "POL/USD", name: "Polygon Ecosystem / USD", payout: 87, category: "Crypto", basePrice: 0.315, volatility: 2e-4, pipDecimals: 4, flag: "\u{1F7E3}" },
+  { symbol: "SUI/USD", name: "Sui Network / USD", payout: 90, category: "Crypto", basePrice: 3.12, volatility: 3e-3, pipDecimals: 3, flag: "\u{1F4A7}" },
+  { symbol: "SUI/USDT", name: "Sui Network / Tether USDT", payout: 90, category: "Crypto", basePrice: 3.12, volatility: 3e-3, pipDecimals: 3, flag: "\u{1F4A7}" },
+  { symbol: "SHIB/USD", name: "Shiba Inu (1000x) / USD", payout: 88, category: "Crypto", basePrice: 0.0245, volatility: 3e-5, pipDecimals: 5, flag: "\u{1F98A}" },
+  { symbol: "PEPE/USD", name: "Pepe (1000x) / USD", payout: 89, category: "Crypto", basePrice: 0.0184, volatility: 3e-5, pipDecimals: 5, flag: "\u{1F438}" },
+  { symbol: "UNI/USD", name: "Uniswap / USD", payout: 88, category: "Crypto", basePrice: 9.85, volatility: 8e-3, pipDecimals: 3, flag: "\u{1F984}" },
+  { symbol: "ATOM/USD", name: "Cosmos Hub / USD", payout: 87, category: "Crypto", basePrice: 4.92, volatility: 4e-3, pipDecimals: 3, flag: "\u269B\uFE0F" },
+  { symbol: "APT/USD", name: "Aptos / USD", payout: 89, category: "Crypto", basePrice: 9.45, volatility: 9e-3, pipDecimals: 3, flag: "\u{1F300}" },
+  { symbol: "ARB/USD", name: "Arbitrum / USD", payout: 88, category: "Crypto", basePrice: 0.642, volatility: 5e-4, pipDecimals: 4, flag: "\u{1F537}" },
+  { symbol: "OP/USD", name: "Optimism / USD", payout: 88, category: "Crypto", basePrice: 1.485, volatility: 15e-4, pipDecimals: 3, flag: "\u{1F534}" },
+  { symbol: "INJ/USD", name: "Injective / USD", payout: 89, category: "Crypto", basePrice: 21.8, volatility: 0.025, pipDecimals: 2, flag: "\u26A1" },
+  { symbol: "TON/USD", name: "Toncoin / USD", payout: 89, category: "Crypto", basePrice: 5.28, volatility: 4e-3, pipDecimals: 3, flag: "\u{1F48E}" },
+  { symbol: "ICP/USD", name: "Internet Computer / USD", payout: 88, category: "Crypto", basePrice: 8.64, volatility: 8e-3, pipDecimals: 3, flag: "\u267E\uFE0F" },
+  { symbol: "FIL/USD", name: "Filecoin / USD", payout: 87, category: "Crypto", basePrice: 4.18, volatility: 4e-3, pipDecimals: 3, flag: "\u{1F4BE}" },
+  // ============================================================================
+  // 3. COMMODITIES & METALS (35+ Commodities)
+  // ============================================================================
+  { symbol: "XAU/USD", name: "Gold / US Dollar", payout: 94, category: "Commodities", basePrice: 2745.5, volatility: 1.2, pipDecimals: 2, flag: "\u{1F947}" },
+  { symbol: "XAG/USD", name: "Silver / US Dollar", payout: 91, category: "Commodities", basePrice: 32.4, volatility: 0.08, pipDecimals: 2, flag: "\u{1F948}" },
+  { symbol: "WTI/USD", name: "Crude Oil WTI", payout: 90, category: "Commodities", basePrice: 72.5, volatility: 0.15, pipDecimals: 2, flag: "\u{1F6E2}\uFE0F" },
+  { symbol: "BRENT/USD", name: "Brent Oil", payout: 90, category: "Commodities", basePrice: 76.2, volatility: 0.16, pipDecimals: 2, flag: "\u{1F6E2}\uFE0F" },
+  { symbol: "NGAS/USD", name: "Natural Gas", payout: 88, category: "Commodities", basePrice: 2.85, volatility: 0.012, pipDecimals: 3, flag: "\u{1F525}" },
+  { symbol: "COPPER/USD", name: "Copper Futures", payout: 89, category: "Commodities", basePrice: 4.25, volatility: 0.015, pipDecimals: 3, flag: "\u{1FA99}" },
+  { symbol: "PLATINUM/USD", name: "Platinum", payout: 88, category: "Commodities", basePrice: 985, volatility: 2.5, pipDecimals: 2, flag: "\u26B1\uFE0F" },
+  { symbol: "PALLADIUM/USD", name: "Palladium", payout: 87, category: "Commodities", basePrice: 1040, volatility: 3.1, pipDecimals: 2, flag: "\u{1F9EA}" },
+  { symbol: "CORN/USD", name: "Corn Futures", payout: 86, category: "Commodities", basePrice: 445.2, volatility: 1.1, pipDecimals: 2, flag: "\u{1F33D}" },
+  { symbol: "WHEAT/USD", name: "Wheat Futures", payout: 86, category: "Commodities", basePrice: 565.4, volatility: 1.4, pipDecimals: 2, flag: "\u{1F33E}" },
+  { symbol: "SOYBEAN/USD", name: "Soybean Futures", payout: 86, category: "Commodities", basePrice: 1120, volatility: 2.2, pipDecimals: 2, flag: "\u{1FAD8}" },
+  { symbol: "SUGAR/USD", name: "Sugar No. 11", payout: 86, category: "Commodities", basePrice: 21.4, volatility: 0.08, pipDecimals: 2, flag: "\u{1F36C}" },
+  { symbol: "COFFEE/USD", name: "Coffee Arabica", payout: 87, category: "Commodities", basePrice: 245.5, volatility: 0.85, pipDecimals: 2, flag: "\u2615" },
+  { symbol: "COCOA/USD", name: "Cocoa Futures", payout: 88, category: "Commodities", basePrice: 7450, volatility: 25, pipDecimals: 2, flag: "\u{1F36B}" },
+  { symbol: "COTTON/USD", name: "Cotton No. 2", payout: 85, category: "Commodities", basePrice: 72.8, volatility: 0.25, pipDecimals: 2, flag: "\u{1F9F5}" },
+  { symbol: "ALUMINUM/USD", name: "Aluminum", payout: 86, category: "Commodities", basePrice: 2450, volatility: 6.5, pipDecimals: 2, flag: "\u{1F3D7}\uFE0F" },
+  { symbol: "ZINC/USD", name: "Zinc", payout: 86, category: "Commodities", basePrice: 2850, volatility: 7.2, pipDecimals: 2, flag: "\u2699\uFE0F" },
+  { symbol: "NICKEL/USD", name: "Nickel", payout: 87, category: "Commodities", basePrice: 16500, volatility: 35, pipDecimals: 2, flag: "\u{1F529}" },
+  { symbol: "LEAD/USD", name: "Lead", payout: 85, category: "Commodities", basePrice: 2080, volatility: 5.1, pipDecimals: 2, flag: "\u{1F50B}" },
+  { symbol: "URANIUM/USD", name: "Uranium Futures", payout: 89, category: "Commodities", basePrice: 85.5, volatility: 0.35, pipDecimals: 2, flag: "\u269B\uFE0F" },
+  { symbol: "ETHANOL/USD", name: "Ethanol Futures", payout: 85, category: "Commodities", basePrice: 2.15, volatility: 8e-3, pipDecimals: 3, flag: "\u26FD" },
+  { symbol: "METHANOL/USD", name: "Methanol", payout: 85, category: "Commodities", basePrice: 2550, volatility: 8, pipDecimals: 2, flag: "\u{1F9EA}" },
+  { symbol: "STEEL/USD", name: "Hot-Rolled Coil Steel", payout: 86, category: "Commodities", basePrice: 740, volatility: 2.1, pipDecimals: 2, flag: "\u{1F6E0}\uFE0F" },
+  { symbol: "IRON/USD", name: "Iron Ore 62% Fe", payout: 87, category: "Commodities", basePrice: 105.5, volatility: 0.4, pipDecimals: 2, flag: "\u{1F9F1}" },
+  { symbol: "LUMBER/USD", name: "Random Length Lumber", payout: 85, category: "Commodities", basePrice: 485, volatility: 1.8, pipDecimals: 2, flag: "\u{1FAB5}" },
+  { symbol: "RICE/USD", name: "Rough Rice", payout: 85, category: "Commodities", basePrice: 15.8, volatility: 0.05, pipDecimals: 2, flag: "\u{1F35A}" },
+  { symbol: "OATS/USD", name: "Oats Futures", payout: 85, category: "Commodities", basePrice: 345, volatility: 1.2, pipDecimals: 2, flag: "\u{1F33E}" },
+  { symbol: "ORANGE/USD", name: "Orange Juice", payout: 86, category: "Commodities", basePrice: 385, volatility: 1.5, pipDecimals: 2, flag: "\u{1F34A}" },
+  { symbol: "BUTTER/USD", name: "Butter Futures", payout: 85, category: "Commodities", basePrice: 285, volatility: 0.95, pipDecimals: 2, flag: "\u{1F9C8}" },
+  { symbol: "MILK/USD", name: "Class III Milk", payout: 85, category: "Commodities", basePrice: 18.2, volatility: 0.06, pipDecimals: 2, flag: "\u{1F95B}" },
+  // ============================================================================
+  // 4. STOCKS & INDICES (40+ Stocks & Global Indices)
+  // ============================================================================
+  { symbol: "NAS100", name: "Nasdaq 100 Index", payout: 93, category: "Stocks & Indices", basePrice: 20450, volatility: 12, pipDecimals: 2, flag: "\u{1F1FA}\u{1F1F8}" },
+  { symbol: "SPX500", name: "S&P 500 Index", payout: 92, category: "Stocks & Indices", basePrice: 5850, volatility: 4.5, pipDecimals: 2, flag: "\u{1F1FA}\u{1F1F8}" },
+  { symbol: "US30", name: "Wall Street 30", payout: 91, category: "Stocks & Indices", basePrice: 43200, volatility: 18, pipDecimals: 2, flag: "\u{1F1FA}\u{1F1F8}" },
+  { symbol: "AAPL", name: "Apple Inc.", payout: 90, category: "Stocks & Indices", basePrice: 228.5, volatility: 0.45, pipDecimals: 2, flag: "\u{1F34F}" },
+  { symbol: "MSFT", name: "Microsoft Corp.", payout: 90, category: "Stocks & Indices", basePrice: 425, volatility: 0.85, pipDecimals: 2, flag: "\u{1F4BB}" },
+  { symbol: "NVDA", name: "NVIDIA Corp.", payout: 92, category: "Stocks & Indices", basePrice: 138.5, volatility: 0.65, pipDecimals: 2, flag: "\u{1F7E2}" },
+  { symbol: "AMZN", name: "Amazon.com Inc.", payout: 90, category: "Stocks & Indices", basePrice: 195.2, volatility: 0.4, pipDecimals: 2, flag: "\u{1F4E6}" },
+  { symbol: "GOOGL", name: "Alphabet Inc. (Google)", payout: 90, category: "Stocks & Indices", basePrice: 178.4, volatility: 0.38, pipDecimals: 2, flag: "\u{1F50D}" },
+  { symbol: "META", name: "Meta Platforms", payout: 91, category: "Stocks & Indices", basePrice: 575, volatility: 1.2, pipDecimals: 2, flag: "\u267E\uFE0F" },
+  { symbol: "TSLA", name: "Tesla Inc.", payout: 93, category: "Stocks & Indices", basePrice: 220, volatility: 0.95, pipDecimals: 2, flag: "\u26A1" },
+  { symbol: "NFLX", name: "Netflix Inc.", payout: 90, category: "Stocks & Indices", basePrice: 710, volatility: 1.5, pipDecimals: 2, flag: "\u{1F37F}" },
+  { symbol: "AMD", name: "Advanced Micro Devices", payout: 89, category: "Stocks & Indices", basePrice: 155, volatility: 0.5, pipDecimals: 2, flag: "\u{1F534}" },
+  { symbol: "INTC", name: "Intel Corp.", payout: 88, category: "Stocks & Indices", basePrice: 22.5, volatility: 0.12, pipDecimals: 2, flag: "\u{1F7E6}" },
+  { symbol: "TSM", name: "Taiwan Semiconductor", payout: 89, category: "Stocks & Indices", basePrice: 192, volatility: 0.55, pipDecimals: 2, flag: "\u{1F1F9}\u{1F1FC}" },
+  { symbol: "COIN", name: "Coinbase Global", payout: 91, category: "Stocks & Indices", basePrice: 215, volatility: 0.8, pipDecimals: 2, flag: "\u{1FA99}" },
+  { symbol: "MSTR", name: "MicroStrategy Inc.", payout: 93, category: "Stocks & Indices", basePrice: 245, volatility: 1.4, pipDecimals: 2, flag: "\u{1F4CA}" },
+  { symbol: "JPM", name: "JPMorgan Chase & Co.", payout: 89, category: "Stocks & Indices", basePrice: 225, volatility: 0.4, pipDecimals: 2, flag: "\u{1F3E6}" },
+  { symbol: "V", name: "Visa Inc.", payout: 89, category: "Stocks & Indices", basePrice: 282, volatility: 0.45, pipDecimals: 2, flag: "\u{1F4B3}" },
+  { symbol: "MA", name: "Mastercard Inc.", payout: 89, category: "Stocks & Indices", basePrice: 495, volatility: 0.85, pipDecimals: 2, flag: "\u{1F4B3}" },
+  { symbol: "DIS", name: "The Walt Disney Co.", payout: 88, category: "Stocks & Indices", basePrice: 96.5, volatility: 0.22, pipDecimals: 2, flag: "\u{1F3F0}" },
+  { symbol: "BA", name: "Boeing Co.", payout: 88, category: "Stocks & Indices", basePrice: 155, volatility: 0.48, pipDecimals: 2, flag: "\u2708\uFE0F" },
+  { symbol: "JNJ", name: "Johnson & Johnson", payout: 88, category: "Stocks & Indices", basePrice: 162, volatility: 0.25, pipDecimals: 2, flag: "\u{1F48A}" },
+  { symbol: "WMT", name: "Walmart Inc.", payout: 88, category: "Stocks & Indices", basePrice: 82.5, volatility: 0.18, pipDecimals: 2, flag: "\u{1F6D2}" },
+  { symbol: "XOM", name: "Exxon Mobil Corp.", payout: 88, category: "Stocks & Indices", basePrice: 118, volatility: 0.3, pipDecimals: 2, flag: "\u26FD" },
+  { symbol: "SHEL", name: "Shell plc", payout: 88, category: "Stocks & Indices", basePrice: 65.5, volatility: 0.16, pipDecimals: 2, flag: "\u{1F41A}" },
+  { symbol: "BABA", name: "Alibaba Group Holding", payout: 89, category: "Stocks & Indices", basePrice: 98.5, volatility: 0.42, pipDecimals: 2, flag: "\u{1F1E8}\u{1F1F3}" },
+  { symbol: "NKE", name: "NIKE Inc.", payout: 88, category: "Stocks & Indices", basePrice: 84, volatility: 0.22, pipDecimals: 2, flag: "\u{1F45F}" },
+  { symbol: "PYPL", name: "PayPal Holdings", payout: 88, category: "Stocks & Indices", basePrice: 78.5, volatility: 0.28, pipDecimals: 2, flag: "\u{1F17F}\uFE0F" },
+  { symbol: "UBER", name: "Uber Technologies", payout: 89, category: "Stocks & Indices", basePrice: 76, volatility: 0.32, pipDecimals: 2, flag: "\u{1F697}" },
+  { symbol: "SHOP", name: "Shopify Inc.", payout: 89, category: "Stocks & Indices", basePrice: 112, volatility: 0.48, pipDecimals: 2, flag: "\u{1F6CD}\uFE0F" },
+  { symbol: "FTSE100", name: "FTSE 100 Index", payout: 90, category: "Stocks & Indices", basePrice: 8250, volatility: 6.5, pipDecimals: 2, flag: "\u{1F1EC}\u{1F1E7}" },
+  { symbol: "DAX40", name: "Germany 40 Index", payout: 91, category: "Stocks & Indices", basePrice: 19400, volatility: 10, pipDecimals: 2, flag: "\u{1F1E9}\u{1F1EA}" },
+  { symbol: "NIKKEI225", name: "Japan 225 Index", payout: 91, category: "Stocks & Indices", basePrice: 38900, volatility: 15, pipDecimals: 2, flag: "\u{1F1EF}\u{1F1F5}" },
+  { symbol: "CAC40", name: "France 40 Index", payout: 90, category: "Stocks & Indices", basePrice: 7550, volatility: 6, pipDecimals: 2, flag: "\u{1F1EB}\u{1F1F7}" },
+  { symbol: "IBEX35", name: "Spain 35 Index", payout: 89, category: "Stocks & Indices", basePrice: 11800, volatility: 8.5, pipDecimals: 2, flag: "\u{1F1EA}\u{1F1F8}" },
+  { symbol: "ASX200", name: "Australia 200 Index", payout: 90, category: "Stocks & Indices", basePrice: 8200, volatility: 6.2, pipDecimals: 2, flag: "\u{1F1E6}\u{1F1FA}" },
+  { symbol: "HSI", name: "Hang Seng Index", payout: 90, category: "Stocks & Indices", basePrice: 20600, volatility: 14, pipDecimals: 2, flag: "\u{1F1ED}\u{1F1F0}" },
+  { symbol: "NIFTY50", name: "Nifty 50 India", payout: 91, category: "Stocks & Indices", basePrice: 24300, volatility: 12.5, pipDecimals: 2, flag: "\u{1F1EE}\u{1F1F3}" },
+  { symbol: "BOVESPA", name: "Brazil 50 Index", payout: 89, category: "Stocks & Indices", basePrice: 130500, volatility: 45, pipDecimals: 1, flag: "\u{1F1E7}\u{1F1F7}" },
+  { symbol: "IPC", name: "Mexico 35 Index", payout: 89, category: "Stocks & Indices", basePrice: 52500, volatility: 22, pipDecimals: 1, flag: "\u{1F1F2}\u{1F1FD}" },
+  // Additional Stocks to exceed 250 total
+  { symbol: "ADBE", name: "Adobe Inc.", payout: 89, category: "Stocks & Indices", basePrice: 510, volatility: 1.1, pipDecimals: 2, flag: "\u{1F3A8}" },
+  { symbol: "CRM", name: "Salesforce Inc.", payout: 89, category: "Stocks & Indices", basePrice: 285, volatility: 0.75, pipDecimals: 2, flag: "\u2601\uFE0F" },
+  { symbol: "ORCL", name: "Oracle Corp.", payout: 88, category: "Stocks & Indices", basePrice: 172, volatility: 0.45, pipDecimals: 2, flag: "\u{1F534}" },
+  { symbol: "IBM", name: "International Business Machines", payout: 88, category: "Stocks & Indices", basePrice: 220, volatility: 0.5, pipDecimals: 2, flag: "\u{1F4BC}" },
+  { symbol: "QCOM", name: "QUALCOMM Inc.", payout: 88, category: "Stocks & Indices", basePrice: 168, volatility: 0.55, pipDecimals: 2, flag: "\u{1F4E1}" },
+  { symbol: "TXN", name: "Texas Instruments", payout: 88, category: "Stocks & Indices", basePrice: 195, volatility: 0.48, pipDecimals: 2, flag: "\u{1F532}" },
+  { symbol: "AVGO", name: "Broadcom Inc.", payout: 90, category: "Stocks & Indices", basePrice: 175, volatility: 0.6, pipDecimals: 2, flag: "\u{1F310}" },
+  { symbol: "CSCO", name: "Cisco Systems", payout: 87, category: "Stocks & Indices", basePrice: 55, volatility: 0.15, pipDecimals: 2, flag: "\u{1F310}" },
+  { symbol: "ACN", name: "Accenture plc", payout: 88, category: "Stocks & Indices", basePrice: 350, volatility: 0.8, pipDecimals: 2, flag: "\u{1F4A1}" },
+  { symbol: "LLY", name: "Eli Lilly and Co.", payout: 91, category: "Stocks & Indices", basePrice: 910, volatility: 2.1, pipDecimals: 2, flag: "\u{1F489}" },
+  { symbol: "UNH", name: "UnitedHealth Group", payout: 89, category: "Stocks & Indices", basePrice: 585, volatility: 1.2, pipDecimals: 2, flag: "\u{1F3E5}" },
+  { symbol: "MRK", name: "Merck & Co.", payout: 88, category: "Stocks & Indices", basePrice: 105, volatility: 0.28, pipDecimals: 2, flag: "\u{1F52C}" },
+  { symbol: "PFE", name: "Pfizer Inc.", payout: 87, category: "Stocks & Indices", basePrice: 28.5, volatility: 0.1, pipDecimals: 2, flag: "\u{1F9EC}" },
+  { symbol: "ABBV", name: "AbbVie Inc.", payout: 88, category: "Stocks & Indices", basePrice: 198, volatility: 0.45, pipDecimals: 2, flag: "\u{1F9EA}" },
+  { symbol: "ABT", name: "Abbott Laboratories", payout: 88, category: "Stocks & Indices", basePrice: 115, volatility: 0.3, pipDecimals: 2, flag: "\u{1FA7A}" }
+];
+
+// src/utils/storage.ts
+var DEFAULT_ASSETS = OTC_ASSETS_CATALOG;
+var BUILTIN_AVATARS = [
+  `data:image/svg+xml;utf8,${encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120"><defs><linearGradient id="g1" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#ff8800"/><stop offset="100%" stop-color="#ffaa00"/></linearGradient></defs><rect width="120" height="120" rx="28" fill="#141414"/><circle cx="60" cy="44" r="22" fill="url(#g1)"/><path d="M24 104c4-22 22-34 36-34s32 12 36 34" fill="url(#g1)"/></svg>`
+  )}`,
+  `data:image/svg+xml;utf8,${encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120"><defs><linearGradient id="g2" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#10b981"/><stop offset="100%" stop-color="#059669"/></linearGradient></defs><rect width="120" height="120" rx="28" fill="#121816"/><circle cx="60" cy="44" r="22" fill="url(#g2)"/><path d="M24 104c4-22 22-34 36-34s32 12 36 34" fill="url(#g2)"/></svg>`
+  )}`,
+  `data:image/svg+xml;utf8,${encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120"><defs><linearGradient id="g3" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#06b6d4"/><stop offset="100%" stop-color="#3b82f6"/></linearGradient></defs><rect width="120" height="120" rx="28" fill="#101720"/><circle cx="60" cy="44" r="22" fill="url(#g3)"/><path d="M24 104c4-22 22-34 36-34s32 12 36 34" fill="url(#g3)"/></svg>`
+  )}`,
+  `data:image/svg+xml;utf8,${encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120"><defs><linearGradient id="g4" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#a855f7"/><stop offset="100%" stop-color="#ec4899"/></linearGradient></defs><rect width="120" height="120" rx="28" fill="#18121e"/><circle cx="60" cy="44" r="22" fill="url(#g4)"/><path d="M24 104c4-22 22-34 36-34s32 12 36 34" fill="url(#g4)"/></svg>`
+  )}`
+];
+var SYMBOL_ALIASES = {
+  "gold": "XAU/USD",
+  "xau/usd": "XAU/USD",
+  "silver": "XAG/USD",
+  "xag/usd": "XAG/USD",
+  "oil": "WTI/USD",
+  "crude": "CRUDE OIL",
+  "crude oil": "CRUDE OIL",
+  "us oil": "WTI/USD",
+  "brent": "BRENT/USD",
+  "brent oil": "BRENT/USD",
+  "gas": "NGAS/USD",
+  "natural gas": "NGAS/USD",
+  "nasdaq": "NAS100",
+  "ndx": "NAS100",
+  "spx": "SPX500",
+  "sp500": "SPX500",
+  "s&p500": "SPX500",
+  "dow": "US30",
+  "dji": "US30",
+  "btc": "BTC/USD",
+  "btc/usdt": "BTC/USDT",
+  "eth": "ETH/USD",
+  "eth/usdt": "ETH/USDT",
+  "sol": "SOL/USD",
+  "sol/usdt": "SOL/USDT",
+  "eurusd": "EUR/USD",
+  "gbpjpy": "GBP/JPY",
+  "gbpusd": "GBP/USD",
+  "usdjpy": "USD/JPY"
+};
+function normalizeAssetSymbol(symbol) {
+  const fallback = "EUR/USD (OTC)";
+  if (!symbol || typeof symbol !== "string") return fallback;
+  const allAssets = dynamicAssetsRegistry.length > 0 ? dynamicAssetsRegistry : DEFAULT_ASSETS;
+  const exact = allAssets.find((a) => a.symbol.toLowerCase() === symbol.toLowerCase());
+  if (exact) return exact.symbol;
+  const cleaned = symbol.replace(/\s*\(otc\)/gi, "").trim();
+  const lower = cleaned.toLowerCase();
+  if (SYMBOL_ALIASES[lower]) {
+    return SYMBOL_ALIASES[lower];
+  }
+  const cleanMatch = allAssets.find((a) => a.symbol.replace(/\s*\(otc\)/gi, "").trim().toLowerCase() === lower);
+  if (cleanMatch) return cleanMatch.symbol;
+  const caseMatch = allAssets.find((a) => a.symbol.toLowerCase() === lower || a.name.toLowerCase() === lower);
+  if (caseMatch) return caseMatch.symbol;
+  return symbol.toUpperCase();
+}
+var dynamicAssetsRegistry = [...OTC_ASSETS_CATALOG];
+function getDynamicAssets() {
+  return dynamicAssetsRegistry.length > 0 ? dynamicAssetsRegistry : OTC_ASSETS_CATALOG;
+}
+function findAssetBySymbol(symbol) {
+  const allAssets = getDynamicAssets();
+  if (!symbol) {
+    return allAssets.find((a) => a.symbol === "EUR/USD") || allAssets[0];
+  }
+  const canonicalSymbol = normalizeAssetSymbol(symbol);
+  const foundDynamic = allAssets.find((a) => a.symbol === canonicalSymbol);
+  if (foundDynamic) return foundDynamic;
+  const lower = symbol.trim().toLowerCase();
+  const byName = allAssets.find(
+    (a) => a.name.toLowerCase().includes(lower)
+  );
+  if (byName) return byName;
+  return {
+    symbol: canonicalSymbol,
+    name: canonicalSymbol,
+    payout: 92,
+    category: canonicalSymbol.includes("/") ? "Forex (OTC)" : "Stocks (OTC)",
+    basePrice: 100,
+    volatility: 0.05,
+    pipDecimals: canonicalSymbol.includes("JPY") ? 3 : canonicalSymbol.includes("/") ? 5 : 2,
+    flag: "\u{1F4C8}"
+  };
+}
+
+// src/utils/priceFeedEngine.ts
+var serverTimeOffsetMs = 0;
+var lastServerTimeSyncMs = 0;
+function setServerTimeOffset(serverTimestampMs, clientReferenceMs = Date.now()) {
+  if (typeof serverTimestampMs !== "number" || !Number.isFinite(serverTimestampMs) || serverTimestampMs <= 0) {
+    return;
+  }
+  const offset = serverTimestampMs - clientReferenceMs;
+  if (Math.abs(offset) < 86400 * 1e3) {
+    serverTimeOffsetMs = offset;
+    lastServerTimeSyncMs = clientReferenceMs;
+  }
+}
+function getSynchronizedNowMs() {
+  return Date.now() + serverTimeOffsetMs;
+}
+var masterStores = /* @__PURE__ */ new Map();
+var GLOBAL_EPOCH = 17040672e5;
+var INITIAL_CANDLE_HISTORY_COUNT = 2500;
+var MAX_CANDLE_HISTORY_CAPACITY = 1e4;
+var GLOBAL_OCTAVE_PERIODS_SEC = [5, 15, 30, 60, 180, 300, 900, 1800, 3600];
+function hashSymbol(str) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+function getCategoryParameters(category, symbol = "") {
+  const cat = (category || "").toLowerCase();
+  const sym = (symbol || "").toLowerCase();
+  const isVolatileFx = sym.includes("jpy") || sym.includes("gbp") || sym.includes("mxn") || sym.includes("brl") || sym.includes("try") || sym.includes("zar");
+  if (cat.includes("crypto")) {
+    return {
+      volMultiplier: 2.85,
+      trendLengthMin: 20,
+      trendLengthMax: 65,
+      breakoutChance: 0.32,
+      jumpChance: 0.08,
+      wickMultiplier: 1.45,
+      maxRunCandles: 7
+    };
+  }
+  if (cat.includes("commodit")) {
+    return {
+      volMultiplier: sym.includes("xau") || sym.includes("wti") || sym.includes("cocoa") ? 2.1 : 1.65,
+      trendLengthMin: 30,
+      trendLengthMax: 85,
+      breakoutChance: 0.24,
+      jumpChance: 0.06,
+      wickMultiplier: 1.3,
+      maxRunCandles: 6
+    };
+  }
+  if (cat.includes("stock")) {
+    return {
+      volMultiplier: sym.includes("tsla") || sym.includes("nvda") || sym.includes("mstr") || sym.includes("coin") ? 2.2 : 1.55,
+      trendLengthMin: 25,
+      trendLengthMax: 75,
+      breakoutChance: 0.22,
+      jumpChance: 0.05,
+      wickMultiplier: 1.25,
+      maxRunCandles: 5
+    };
+  }
+  return {
+    volMultiplier: isVolatileFx ? 1.35 : 1,
+    trendLengthMin: 30,
+    trendLengthMax: 85,
+    breakoutChance: 0.16,
+    jumpChance: 0.03,
+    wickMultiplier: 1.1,
+    maxRunCandles: 5
+  };
+}
+function getAssetTimeOffsetMs(symbol, timeframeSeconds) {
+  const canonical = normalizeAssetSymbol(symbol);
+  const hash = hashSymbol(canonical);
+  const tfSeconds = Math.max(5, timeframeSeconds);
+  const subSteps = Math.max(1, Math.floor(tfSeconds / 5));
+  const stepIndex = (hash >>> 3) % subSteps;
+  return stepIndex * 5e3;
+}
+function evalGlobalPriceAtTime(asset, tMs) {
+  const canonical = normalizeAssetSymbol(asset.symbol);
+  const catParams = getCategoryParameters(asset.category, canonical);
+  const unitVol = asset.volatility * catParams.volMultiplier;
+  const minPip = Math.pow(10, -asset.pipDecimals);
+  const symSeed = hashSymbol(canonical);
+  const tSec = (tMs - GLOBAL_EPOCH) / 1e3;
+  let totalOffset = 0;
+  for (let k = 0; k < GLOBAL_OCTAVE_PERIODS_SEC.length; k++) {
+    const periodSec = GLOBAL_OCTAVE_PERIODS_SEC[k];
+    const phaseShiftSec = (symSeed >>> k * 3 % 24) % periodSec;
+    const gridCoord = (tSec + phaseShiftSec) / periodSec;
+    const idx0 = Math.floor(gridCoord);
+    const frac = gridCoord - idx0;
+    const h0 = hashSymbol(`${canonical}:oct:${periodSec}:${idx0}`);
+    const h1 = hashSymbol(`${canonical}:oct:${periodSec}:${idx0 + 1}`);
+    const v0 = (h0 % 20001 - 1e4) / 1e4;
+    const v1 = (h1 % 20001 - 1e4) / 1e4;
+    const interp = v0 + (v1 - v0) * frac;
+    const octaveScale = Math.pow(periodSec / 5, 0.34);
+    totalOffset += interp * unitVol * octaveScale * 0.62;
+  }
+  const maxSafeExcursion = Math.max(minPip * 50, asset.basePrice * 0.075);
+  const boundedOffset = Math.tanh(totalOffset / maxSafeExcursion) * maxSafeExcursion;
+  const rawPrice = asset.basePrice + boundedOffset;
+  return Number(Math.max(minPip * 10, rawPrice).toFixed(asset.pipDecimals));
+}
+function computeSynchronizedTickAtTime(asset, nowMs = getSynchronizedNowMs()) {
+  const canonical = normalizeAssetSymbol(asset.symbol);
+  const tf = 5;
+  const tfMs = tf * 1e3;
+  const offsetMs = getAssetTimeOffsetMs(canonical, tf);
+  const currentBucketTime = Math.floor((nowMs + offsetMs) / tfMs) * tfMs - offsetMs;
+  const catParams = getCategoryParameters(asset.category, canonical);
+  const unitVol = asset.volatility * catParams.volMultiplier;
+  const minPip = Math.pow(10, -asset.pipDecimals);
+  const open = evalGlobalPriceAtTime(asset, currentBucketTime);
+  const targetClose = evalGlobalPriceAtTime(asset, currentBucketTime + tfMs);
+  const elapsedMs = ((nowMs + offsetMs) % tfMs + tfMs) % tfMs;
+  const progress = Math.max(0, Math.min(1, elapsedMs / tfMs));
+  const subStep = Math.floor(nowMs / 250);
+  const pulseHash = hashSymbol(`${canonical}:subtick:${subStep}`);
+  const pulseNorm = (pulseHash % 2e3 - 1e3) / 1e3;
+  const envelope = Math.sin(progress * Math.PI);
+  const intraWave = pulseNorm * unitVol * 0.32 * envelope;
+  const rawLivePrice = open + (targetClose - open) * progress + intraWave;
+  const livePrice = Number(Math.max(minPip * 10, rawLivePrice).toFixed(asset.pipDecimals));
+  const wickHash = hashSymbol(`${canonical}:wick:${tf}:${currentBucketTime}`);
+  const uUpper = wickHash % 1e3 / 1e3;
+  const uLower = (wickHash >>> 10) % 1e3 / 1e3;
+  const wickProgress = Math.max(0.2, progress);
+  const upperWick = Math.max(minPip * 2.5, catParams.wickMultiplier * unitVol * (0.22 + uUpper * 0.55) * wickProgress);
+  const lowerWick = Math.max(minPip * 2.5, catParams.wickMultiplier * unitVol * (0.22 + uLower * 0.55) * wickProgress);
+  const bodyMax = Math.max(open, livePrice);
+  const bodyMin = Math.min(open, livePrice);
+  return {
+    price: livePrice,
+    open,
+    high: Number((bodyMax + upperWick).toFixed(asset.pipDecimals)),
+    low: Number(Math.max(minPip * 5, bodyMin - lowerWick).toFixed(asset.pipDecimals)),
+    close: livePrice,
+    bucketTime: currentBucketTime
+  };
+}
+function computeDeterministicCandleForBucket(asset, timeframeSeconds, candleTime, isCurrentActiveBucket, livePrice, nowMs = getSynchronizedNowMs()) {
+  const canonical = normalizeAssetSymbol(asset.symbol);
+  const tf = Math.max(5, timeframeSeconds);
+  const tfMs = tf * 1e3;
+  const catParams = getCategoryParameters(asset.category, canonical);
+  const tfMultiplier = Math.pow(Math.max(1, tf / 5), 0.34);
+  const unitVol = asset.volatility * tfMultiplier * catParams.volMultiplier;
+  const minPip = Math.pow(10, -asset.pipDecimals);
+  const open = evalGlobalPriceAtTime(asset, candleTime);
+  const close = isCurrentActiveBucket && typeof livePrice === "number" && livePrice > 0 ? Number(livePrice.toFixed(asset.pipDecimals)) : evalGlobalPriceAtTime(asset, candleTime + tfMs);
+  const bodyMax = Math.max(open, close);
+  const bodyMin = Math.min(open, close);
+  const wickHash = hashSymbol(`${canonical}:wick:${tf}:${candleTime}`);
+  const uUpper = wickHash % 1e3 / 1e3;
+  const uLower = (wickHash >>> 10) % 1e3 / 1e3;
+  const progress = isCurrentActiveBucket ? Math.max(0.25, Math.min(1, (nowMs - candleTime) / tfMs)) : 1;
+  const upperWick = Math.max(
+    minPip * 2.5,
+    catParams.wickMultiplier * unitVol * (0.22 + uUpper * 0.55) * progress
+  );
+  const lowerWick = Math.max(
+    minPip * 2.5,
+    catParams.wickMultiplier * unitVol * (0.22 + uLower * 0.55) * progress
+  );
+  return {
+    time: candleTime,
+    open,
+    high: Number((bodyMax + upperWick).toFixed(asset.pipDecimals)),
+    low: Number(Math.max(minPip * 5, bodyMin - lowerWick).toFixed(asset.pipDecimals)),
+    close,
+    volume: isCurrentActiveBucket ? Math.max(1, Math.floor((45 + wickHash % 115) * progress)) : Math.floor(45 + wickHash % 115)
+  };
+}
+function generateDeterministicTimeframeCandles(asset, timeframeSeconds, count = INITIAL_CANDLE_HISTORY_COUNT, anchorEndPrice, referenceNowMs = getSynchronizedNowMs()) {
+  const canonical = normalizeAssetSymbol(asset.symbol);
+  const tf = Math.max(5, timeframeSeconds);
+  const tfMs = tf * 1e3;
+  const offsetMs = getAssetTimeOffsetMs(canonical, tf);
+  const currentBucketTime = Math.floor((referenceNowMs + offsetMs) / tfMs) * tfMs - offsetMs;
+  const startBucketTime = currentBucketTime - (count - 1) * tfMs;
+  const liveEndPrice = typeof anchorEndPrice === "number" && anchorEndPrice > 0 ? anchorEndPrice : computeSynchronizedTickAtTime(asset, referenceNowMs).price;
+  const result = new Array(count);
+  for (let i = 0; i < count; i++) {
+    const candleTime = startBucketTime + i * tfMs;
+    const isLast = i === count - 1;
+    result[i] = computeDeterministicCandleForBucket(
+      asset,
+      tf,
+      candleTime,
+      isLast,
+      isLast ? liveEndPrice : void 0,
+      referenceNowMs
+    );
+  }
+  return result;
+}
+var lastSteppedTimeBySymbol = /* @__PURE__ */ new Map();
+function getOrCreateMasterHistory(asset) {
+  const symbolKey = normalizeAssetSymbol(asset.symbol);
+  if (!masterStores.has(symbolKey)) {
+    const seed = hashSymbol(symbolKey);
+    const catParams = getCategoryParameters(asset.category, symbolKey);
+    const initialRegimes = [
+      "bullish_trend",
+      "bearish_trend",
+      "consolidation",
+      "volatile_breakout",
+      "mean_reverting"
+    ];
+    const initialRegime = initialRegimes[seed % initialRegimes.length];
+    const initialTicks = catParams.trendLengthMin + (seed >> 5) % (catParams.trendLengthMax - catParams.trendLengthMin);
+    const primaryFrequency = 0.16 + seed % 100 / 100 * 0.44;
+    const secondaryFrequency = 0.04 + (seed >> 4) % 100 / 100 * 0.14;
+    const phaseOffset = (seed >> 8) % 1e3 / 1e3 * Math.PI * 2;
+    const initNow = getSynchronizedNowMs();
+    const liveSnap = computeSynchronizedTickAtTime(asset, initNow);
+    const baseCandles = generateDeterministicTimeframeCandles(asset, 5, INITIAL_CANDLE_HISTORY_COUNT, liveSnap.price, initNow);
+    lastSteppedTimeBySymbol.set(symbolKey, initNow);
+    const lastPrice = liveSnap.price;
+    const timeframeMap = /* @__PURE__ */ new Map();
+    timeframeMap.set(5, baseCandles);
+    const newState = {
+      symbol: symbolKey,
+      category: asset.category,
+      baseTicks: baseCandles,
+      timeframeSeries: timeframeMap,
+      lastPrice,
+      prevPrice: liveSnap.open,
+      momentum: 0,
+      volatilityRegime: 1,
+      tickCounter: Math.floor((initNow - GLOBAL_EPOCH) / 5e3),
+      regime: initialRegime,
+      regimeTicksRemaining: initialTicks,
+      regimeIntensity: 0.7 + seed % 50 / 50 * 0.8,
+      phaseOffset,
+      primaryFrequency,
+      secondaryFrequency,
+      dynamicSupport: lastPrice - asset.volatility * 40,
+      dynamicResistance: lastPrice + asset.volatility * 40,
+      seed
+    };
+    masterStores.set(symbolKey, newState);
+    if (asset.symbol !== symbolKey) {
+      masterStores.set(asset.symbol, newState);
+    }
+  }
+  const existingStore = masterStores.get(symbolKey);
+  if (!isValidPriceForAsset(asset, existingStore.lastPrice)) {
+    const snap = computeSynchronizedTickAtTime(asset, getSynchronizedNowMs());
+    existingStore.lastPrice = snap.price;
+    existingStore.prevPrice = snap.open;
+    existingStore.timeframeSeries.clear();
+  }
+  return existingStore;
+}
+function syncAssetStoreWithServerTime(asset, timeframeSeconds, serverTimestampMs, authoritativePrice) {
+  if (typeof serverTimestampMs === "number" && serverTimestampMs > 0) {
+    setServerTimeOffset(serverTimestampMs);
+  }
+  const nowMs = getSynchronizedNowMs();
+  const symbolKey = normalizeAssetSymbol(asset.symbol);
+  const store = getOrCreateMasterHistory(asset);
+  const liveSnap = computeSynchronizedTickAtTime(asset, nowMs);
+  const resolvedPrice = typeof authoritativePrice === "number" && isValidPriceForAsset(asset, authoritativePrice) ? authoritativePrice : liveSnap.price;
+  store.prevPrice = liveSnap.open;
+  store.lastPrice = resolvedPrice;
+  lastSteppedTimeBySymbol.set(symbolKey, nowMs);
+  const tf = Math.max(5, timeframeSeconds);
+  const existingSeries = store.timeframeSeries.get(tf);
+  const preservedCount = Math.min(
+    MAX_CANDLE_HISTORY_CAPACITY,
+    Math.max(INITIAL_CANDLE_HISTORY_COUNT, existingSeries?.length || 0)
+  );
+  const freshSeries = generateDeterministicTimeframeCandles(asset, tf, preservedCount, resolvedPrice, nowMs);
+  store.timeframeSeries.set(tf, freshSeries);
+  return [...freshSeries];
+}
+function isValidPriceForAsset(asset, price) {
+  if (!asset || typeof price !== "number" || !Number.isFinite(price) || price <= 0) return false;
+  const base = Number(asset.basePrice) || 0;
+  if (base <= 0) return price > 0;
+  return price >= base * 0.88 && price <= base * 1.12;
+}
+
+// src/server/marketEngine.ts
+var BackendMarketEngine = class {
+  constructor() {
+    this.assets = [...OTC_ASSETS_CATALOG];
+    this.tickInterval = null;
+    this.currentPrices = /* @__PURE__ */ new Map();
+    this.prevPrices = /* @__PURE__ */ new Map();
+    this.listeners = /* @__PURE__ */ new Set();
+    this.feedSource = "synchronized_global_realtime_engine";
+    this.forexRates = {
+      EUR: 1.0845,
+      GBP: 1.2921,
+      JPY: 154.25,
+      CHF: 0.8872,
+      CAD: 1.3912,
+      AUD: 0.6542,
+      NZD: 0.5984,
+      XAU: 2742.5,
+      XAG: 31.85,
+      WTI: 71.4
+    };
+    this.broadcastBatch();
+  }
+  setSymbolPriceVariants(symbol, price, prevPrice) {
+    this.currentPrices.set(symbol, price);
+    this.prevPrices.set(symbol, prevPrice);
+    const clean = symbol.replace(/\s*\(OTC\)/i, "").trim();
+    this.currentPrices.set(clean, price);
+    this.prevPrices.set(clean, prevPrice);
+    if (clean.endsWith("/USD")) {
+      this.currentPrices.set(`${clean}T`, price);
+      this.prevPrices.set(`${clean}T`, prevPrice);
+    }
+  }
+  async start() {
+    this.broadcastBatch();
+    if (this.tickInterval) clearInterval(this.tickInterval);
+    this.tickInterval = setInterval(() => this.broadcastBatch(), 250);
+  }
+  subscribe(listener) {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+  getPrice(symbol) {
+    const now = Date.now();
+    const matched = findAssetBySymbol(symbol);
+    if (matched) {
+      const snap = computeSynchronizedTickAtTime(matched, now);
+      this.setSymbolPriceVariants(matched.symbol, snap.price, snap.open);
+      return snap.price;
+    }
+    if (this.currentPrices.has(symbol)) return this.currentPrices.get(symbol);
+    return void 0;
+  }
+  getMarketSnapshot(symbol, timeframeSeconds = 60, count = 250) {
+    const now = Date.now();
+    const canonical = normalizeAssetSymbol(symbol);
+    const asset = findAssetBySymbol(canonical);
+    const tf = Math.max(5, Number(timeframeSeconds) || 60);
+    const tfMs = tf * 1e3;
+    const safeCount = Math.max(10, Math.min(1500, Number(count) || 250));
+    const snap5s = computeSynchronizedTickAtTime(asset, now);
+    this.setSymbolPriceVariants(asset.symbol, snap5s.price, snap5s.open);
+    const offsetMs = getAssetTimeOffsetMs(canonical, tf);
+    const currentBucketTime = Math.floor((now + offsetMs) / tfMs) * tfMs - offsetMs;
+    const startBucketTime = currentBucketTime - (safeCount - 1) * tfMs;
+    const candles = new Array(safeCount);
+    for (let i = 0; i < safeCount; i++) {
+      const bTime = startBucketTime + i * tfMs;
+      const isLast = i === safeCount - 1;
+      candles[i] = computeDeterministicCandleForBucket(
+        asset,
+        tf,
+        bTime,
+        isLast,
+        isLast ? snap5s.price : void 0,
+        now
+      );
+    }
+    const activeCandle = candles[candles.length - 1];
+    return {
+      ok: true,
+      serverTime: now,
+      symbol: asset.symbol,
+      timeframeSeconds: tf,
+      price: snap5s.price,
+      prevPrice: activeCandle.open,
+      activeCandle,
+      candles,
+      source: this.feedSource
+    };
+  }
+  getAllPrices() {
+    this.broadcastBatch();
+    const res = {};
+    for (const [k, v] of this.currentPrices.entries()) {
+      res[k] = v;
+    }
+    return res;
+  }
+  getForexRates() {
+    return { ...this.forexRates };
+  }
+  getFeedSource() {
+    return this.feedSource;
+  }
+  /**
+   * Synchronizes all 268+ assets simultaneously using the authoritative server UTC clock.
+   */
+  broadcastBatch() {
+    const now = Date.now();
+    for (const asset of this.assets) {
+      const snap = computeSynchronizedTickAtTime(asset, now);
+      this.setSymbolPriceVariants(asset.symbol, snap.price, snap.open);
+    }
+    if (this.listeners.size > 0) {
+      const snapshotPrices = {};
+      for (const [k, v] of this.currentPrices.entries()) {
+        snapshotPrices[k] = v;
+      }
+      for (const listener of this.listeners) {
+        try {
+          listener({ serverTime: now, prices: snapshotPrices });
+        } catch {
+        }
+      }
+    }
+  }
+  stop() {
+    if (this.tickInterval) clearInterval(this.tickInterval);
+    this.listeners.clear();
+  }
+};
+
+// src/utils/copyTradingRules.ts
+var MAX_COPIERS_PER_TRADER = 200;
+var MIN_PROVIDER_WIN_RATE_3M = 60;
+var ROTATION_INTERVAL_MINUTES = 45;
+var ROTATION_INTERVAL_MS = ROTATION_INTERVAL_MINUTES * 60 * 1e3;
+var LEADERBOARD_TOP_LIMIT = 10;
+var TOTAL_TRADER_POOL_SIZE = 200;
+var ELIGIBLE_INSTANT_FUNDED_SIZES = [25e3, 5e4, 1e5];
+var FOLLOWER_PROFIT_SHARE_PERCENT = 100;
+var MASTER_COMMISSION_PERCENT = 0;
+function evaluateProviderEligibility(params) {
+  const now = params.nowMs ?? Date.now();
+  const ninetyDaysAgo = now - 90 * 24 * 60 * 60 * 1e3;
+  let computedWinRate = 0;
+  let tradesCount90d = 0;
+  if (typeof params.explicitWinRate90d === "number" && Number.isFinite(params.explicitWinRate90d)) {
+    computedWinRate = Number(params.explicitWinRate90d.toFixed(2));
+    tradesCount90d = 10;
+  } else {
+    const recentClosedTrades = (params.trades || []).filter((t) => {
+      if (t.status !== "won" && t.status !== "lost") return false;
+      if (t.accountTier === "demo" || String(t.accountId || "").startsWith("BFT-DEMO")) return false;
+      const tradeTime = t.endTime || t.startTime || now;
+      return tradeTime >= ninetyDaysAgo;
+    });
+    if (recentClosedTrades.length > 0) {
+      tradesCount90d = recentClosedTrades.length;
+      const wins = recentClosedTrades.filter((t) => t.status === "won").length;
+      computedWinRate = Number((wins / tradesCount90d * 100).toFixed(2));
+    } else if (Array.isArray(params.accounts) && params.accounts.length > 0) {
+      const realAccounts = params.accounts.filter(
+        (a) => a.tier !== "demo" && a.phase !== "demo" && !String(a.id || "").startsWith("BFT-DEMO") && typeof a.winRate === "number" && a.winRate > 0
+      );
+      if (realAccounts.length > 0) {
+        const bestAcc = realAccounts.reduce(
+          (best, curr) => (curr.winRate || 0) > (best.winRate || 0) ? curr : best
+        );
+        computedWinRate = Number((bestAcc.winRate || 0).toFixed(2));
+        tradesCount90d = Math.max(1, bestAcc.tradesCount || 0);
+      }
+    }
+  }
+  if (computedWinRate < MIN_PROVIDER_WIN_RATE_3M) {
+    return {
+      eligible: false,
+      winRate90d: computedWinRate,
+      requiredWinRate: MIN_PROVIDER_WIN_RATE_3M,
+      tradesEvaluated90d: tradesCount90d,
+      code: "WIN_RATE_BELOW_60",
+      message: `Registration Blocked: Only traders with a proven minimum ${MIN_PROVIDER_WIN_RATE_3M}% Win Rate over the last 3 months (90 days) can join as a Copy Master / Provider. Your verified 90-day Win Rate is ${computedWinRate.toFixed(1)}%.`
+    };
+  }
+  return {
+    eligible: true,
+    winRate90d: computedWinRate,
+    requiredWinRate: MIN_PROVIDER_WIN_RATE_3M,
+    tradesEvaluated90d: tradesCount90d,
+    code: "ELIGIBLE",
+    message: `Verified ${computedWinRate.toFixed(1)}% 90-Day Win Rate meets the \u2265${MIN_PROVIDER_WIN_RATE_3M}% Master Trader threshold.`
+  };
+}
+function deterministicHash(input) {
+  let h = 2166136261;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return Math.abs(h >>> 0);
+}
+var REGIONAL_PROFILES = [
+  {
+    country: "India",
+    code: "IN",
+    flag: "\u{1F1EE}\u{1F1F3}",
+    firstNames: [
+      "Aarav",
+      "Rajesh",
+      "Vikramaditya",
+      "Arjun",
+      "Rohan",
+      "Aditya",
+      "Siddharth",
+      "Karan",
+      "Pranav",
+      "Nikhil",
+      "Ananya",
+      "Priya",
+      "Harsh",
+      "Devansh",
+      "Yash",
+      "Varun"
+    ],
+    lastNames: [
+      "Sharma",
+      "Singhania",
+      "Deshmukh",
+      "Verma",
+      "Patel",
+      "Malhotra",
+      "Mehta",
+      "Kapoor",
+      "Reddy",
+      "Nair",
+      "Chatterjee",
+      "Mukherjee",
+      "Iyer",
+      "Chauhan",
+      "Joshi",
+      "Kulkarni"
+    ]
+  },
+  {
+    country: "Bangladesh",
+    code: "BD",
+    flag: "\u{1F1E7}\u{1F1E9}",
+    firstNames: [
+      "Tanvir",
+      "Mahmudul",
+      "Rakibul",
+      "Shakil",
+      "Nusrat",
+      "Farhan",
+      "Sabbir",
+      "Tamim",
+      "Mushfiq",
+      "Mehedi",
+      "Ashraful",
+      "Nayeem",
+      "Tawhid",
+      "Riyad",
+      "Fahim",
+      "Tahmid"
+    ],
+    lastNames: [
+      "Ahmed",
+      "Chowdhury",
+      "Hasan",
+      "Mahmud",
+      "Jahan",
+      "Rahman",
+      "Hossain",
+      "Islam",
+      "Talukder",
+      "Sikder",
+      "Bhuiyan",
+      "Uddin",
+      "Miah",
+      "Kazi",
+      "Akter",
+      "Sarkar"
+    ]
+  },
+  {
+    country: "Pakistan",
+    code: "PK",
+    flag: "\u{1F1F5}\u{1F1F0}",
+    firstNames: [
+      "Tariq",
+      "Kamran",
+      "Muhammad",
+      "Zain",
+      "Bilal",
+      "Usman",
+      "Hamza",
+      "Faisal",
+      "Imran",
+      "Zubair",
+      "Shahid",
+      "Mustafa",
+      "Hassan",
+      "Saad",
+      "Fahad",
+      "Salman"
+    ],
+    lastNames: [
+      "Qureshi",
+      "Malik",
+      "Khan",
+      "Ali",
+      "Tariq",
+      "Siddiqui",
+      "Raza",
+      "Abbasi",
+      "Bukhari",
+      "Mirza",
+      "Farooqi",
+      "Chaudhry",
+      "Sheikh",
+      "Hashmi",
+      "Javed",
+      "Niazi"
+    ]
+  },
+  {
+    country: "Dubai, UAE",
+    code: "AE",
+    flag: "\u{1F1E6}\u{1F1EA}",
+    firstNames: [
+      "Rashid",
+      "Zayed",
+      "Hamdan",
+      "Saeed",
+      "Khalid",
+      "Mansoor",
+      "Majid",
+      "Omar",
+      "Sultan",
+      "Nasser",
+      "Tariq",
+      "Faisal",
+      "Yousef",
+      "Abdullah",
+      "Marwan",
+      "Kareem"
+    ],
+    lastNames: [
+      "Al-Maktoum",
+      "Al-Nuaimi",
+      "Al-Mansoori",
+      "Al-Hashemi",
+      "Al-Suwaidi",
+      "Al-Mazrouei",
+      "Al-Qasimi",
+      "Al-Falasi",
+      "Al-Shamsi",
+      "Al-Zaabi",
+      "Al-Ketbi",
+      "Al-Muhairi"
+    ]
+  },
+  {
+    country: "Ukraine",
+    code: "UA",
+    flag: "\u{1F1FA}\u{1F1E6}",
+    firstNames: [
+      "Oleksandr",
+      "Dmytro",
+      "Artem",
+      "Maksym",
+      "Bohdan",
+      "Vladyslav",
+      "Andriy",
+      "Mykola",
+      "Taras",
+      "Yaroslav",
+      "Kyrylo",
+      "Denys",
+      "Illia",
+      "Roman",
+      "Pavlo",
+      "Ruslan"
+    ],
+    lastNames: [
+      "Kovalenko",
+      "Bondarenko",
+      "Shevchenko",
+      "Tkachenko",
+      "Kravchenko",
+      "Oliynyk",
+      "Melnyk",
+      "Boiko",
+      "Savchenko",
+      "Rudenko",
+      "Moroz",
+      "Lysenko",
+      "Marchenko",
+      "Petrenko"
+    ]
+  }
+];
+var STRATEGY_DESCRIPTORS = [
+  "Mumbai Institutional Nifty & FX",
+  "Lahore Liquidity Pulse",
+  "Dhaka Momentum Alpha",
+  "Dubai DIFC Institutional Flow",
+  "Kyiv Quantitative Volatility Engine",
+  "Karachi OTC Flow Engine",
+  "Chittagong Price Action",
+  "Delhi Smart Money Breakout",
+  "Islamabad Trend Sniper",
+  "Lviv High-Frequency Scalper",
+  "Abu Dhabi Orderblock Pro",
+  "Bengaluru Algorithmic Momentum"
+];
+function generate200TraderPool(nowMs = Date.now()) {
+  const rotationSlot = Math.floor(nowMs / ROTATION_INTERVAL_MS);
+  const startOfUtcDay = new Date(nowMs);
+  startOfUtcDay.setUTCHours(0, 0, 0, 0);
+  const elapsedMsToday = Math.max(0, nowMs - startOfUtcDay.getTime());
+  const dayProgress = Math.min(1, elapsedMsToday / (24 * 60 * 60 * 1e3));
+  const intradayMultiplier = 0.35 + 0.65 * dayProgress;
+  const pool = [];
+  const featuredOverrides = {
+    // Instant Funded Top Traders
+    0: {
+      name: "Rajesh Sharma",
+      country: "India",
+      countryCode: "IN",
+      flag: "\u{1F1EE}\u{1F1F3}",
+      category: "instant_funded",
+      startingBalance: 1e5,
+      strategy: "Mumbai Institutional Nifty & FX $100K",
+      winRate3m: 81.6,
+      baseDailyProfit: 26200,
+      copiers: 192,
+      totalTrades: 1480,
+      profitFactor: 2.68,
+      maxDrawdown: 2.6,
+      sharpeRatio: 2.88,
+      avgHoldingTime: "1m 15s"
+    },
+    1: {
+      name: "Rashid Al-Maktoum",
+      country: "Dubai, UAE",
+      countryCode: "AE",
+      flag: "\u{1F1E6}\u{1F1EA}",
+      category: "instant_funded",
+      startingBalance: 1e5,
+      strategy: "Dubai DIFC Liquidity Pulse $100K",
+      winRate3m: 79.8,
+      baseDailyProfit: 24800,
+      copiers: 184,
+      totalTrades: 1360,
+      profitFactor: 2.52,
+      maxDrawdown: 2.9,
+      sharpeRatio: 2.72,
+      avgHoldingTime: "1m 20s"
+    },
+    2: {
+      name: "Tanvir Ahmed",
+      country: "Bangladesh",
+      countryCode: "BD",
+      flag: "\u{1F1E7}\u{1F1E9}",
+      category: "instant_funded",
+      startingBalance: 1e5,
+      strategy: "Dhaka Momentum Alpha $100K",
+      winRate3m: 78.4,
+      baseDailyProfit: 23500,
+      copiers: 178,
+      totalTrades: 1290,
+      profitFactor: 2.45,
+      maxDrawdown: 3.1,
+      sharpeRatio: 2.62,
+      avgHoldingTime: "1m 25s"
+    },
+    3: {
+      name: "Oleksandr Kovalenko",
+      country: "Ukraine",
+      countryCode: "UA",
+      flag: "\u{1F1FA}\u{1F1E6}",
+      category: "instant_funded",
+      startingBalance: 1e5,
+      strategy: "Kyiv Quantitative Scalper $100K",
+      winRate3m: 77.2,
+      baseDailyProfit: 22400,
+      copiers: 170,
+      totalTrades: 1220,
+      profitFactor: 2.38,
+      maxDrawdown: 3.3,
+      sharpeRatio: 2.51,
+      avgHoldingTime: "1m 30s"
+    },
+    4: {
+      name: "Tariq Mahmood Qureshi",
+      country: "Pakistan",
+      countryCode: "PK",
+      flag: "\u{1F1F5}\u{1F1F0}",
+      category: "instant_funded",
+      startingBalance: 5e4,
+      strategy: "Karachi OTC Flow Engine $50K",
+      winRate3m: 76.1,
+      baseDailyProfit: 21200,
+      copiers: 162,
+      totalTrades: 1150,
+      profitFactor: 2.3,
+      maxDrawdown: 3.5,
+      sharpeRatio: 2.42,
+      avgHoldingTime: "1m 35s"
+    },
+    5: {
+      name: "Rakibul Hasan",
+      country: "Bangladesh",
+      countryCode: "BD",
+      flag: "\u{1F1E7}\u{1F1E9}",
+      category: "instant_funded",
+      startingBalance: 5e4,
+      strategy: "Chittagong Price Action $50K",
+      winRate3m: 75.3,
+      baseDailyProfit: 20100,
+      copiers: 156,
+      totalTrades: 1080,
+      profitFactor: 2.25,
+      maxDrawdown: 3.7,
+      sharpeRatio: 2.34,
+      avgHoldingTime: "1m 40s"
+    },
+    6: {
+      name: "Vikramaditya Singhania",
+      country: "India",
+      countryCode: "IN",
+      flag: "\u{1F1EE}\u{1F1F3}",
+      category: "instant_funded",
+      startingBalance: 5e4,
+      strategy: "Delhi Smart Money Breakout $50K",
+      winRate3m: 74.5,
+      baseDailyProfit: 19200,
+      copiers: 148,
+      totalTrades: 1020,
+      profitFactor: 2.2,
+      maxDrawdown: 3.8,
+      sharpeRatio: 2.28,
+      avgHoldingTime: "1m 45s"
+    },
+    7: {
+      name: "Dmytro Bondarenko",
+      country: "Ukraine",
+      countryCode: "UA",
+      flag: "\u{1F1FA}\u{1F1E6}",
+      category: "instant_funded",
+      startingBalance: 5e4,
+      strategy: "Lviv Volatility Sniper $50K",
+      winRate3m: 73.8,
+      baseDailyProfit: 18400,
+      copiers: 142,
+      totalTrades: 960,
+      profitFactor: 2.16,
+      maxDrawdown: 4,
+      sharpeRatio: 2.2,
+      avgHoldingTime: "1m 50s"
+    },
+    8: {
+      name: "Zayed Al-Nuaimi",
+      country: "Dubai, UAE",
+      countryCode: "AE",
+      flag: "\u{1F1E6}\u{1F1EA}",
+      category: "instant_funded",
+      startingBalance: 25e3,
+      strategy: "Dubai Gold & FX Precision $25K",
+      winRate3m: 73,
+      baseDailyProfit: 17600,
+      copiers: 136,
+      totalTrades: 910,
+      profitFactor: 2.12,
+      maxDrawdown: 4.1,
+      sharpeRatio: 2.15,
+      avgHoldingTime: "1m 52s"
+    },
+    9: {
+      name: "Kamran Shahzad Malik",
+      country: "Pakistan",
+      countryCode: "PK",
+      flag: "\u{1F1F5}\u{1F1F0}",
+      category: "instant_funded",
+      startingBalance: 25e3,
+      strategy: "Lahore Volatility Surge $25K",
+      winRate3m: 72.4,
+      baseDailyProfit: 16800,
+      copiers: 130,
+      totalTrades: 870,
+      profitFactor: 2.08,
+      maxDrawdown: 4.2,
+      sharpeRatio: 2.1,
+      avgHoldingTime: "1m 55s"
+    },
+    10: {
+      name: "Artem Shevchenko",
+      country: "Ukraine",
+      countryCode: "UA",
+      flag: "\u{1F1FA}\u{1F1E6}",
+      category: "instant_funded",
+      startingBalance: 25e3,
+      strategy: "Odessa Orderblock Pro $25K",
+      winRate3m: 71.8,
+      baseDailyProfit: 16100,
+      copiers: 125,
+      totalTrades: 820,
+      profitFactor: 2.05,
+      maxDrawdown: 4.3,
+      sharpeRatio: 2.06,
+      avgHoldingTime: "1m 58s"
+    },
+    11: {
+      name: "Mahmudul Hasan Chowdhury",
+      country: "Bangladesh",
+      countryCode: "BD",
+      flag: "\u{1F1E7}\u{1F1E9}",
+      category: "instant_funded",
+      startingBalance: 25e3,
+      strategy: "Sylhet Currency Flow $25K",
+      winRate3m: 71.2,
+      baseDailyProfit: 15400,
+      copiers: 120,
+      totalTrades: 790,
+      profitFactor: 2.02,
+      maxDrawdown: 4.4,
+      sharpeRatio: 2.02,
+      avgHoldingTime: "2m 00s"
+    },
+    // Self Capital Top Traders
+    100: {
+      name: "Aarav Deshmukh",
+      country: "India",
+      countryCode: "IN",
+      flag: "\u{1F1EE}\u{1F1F3}",
+      category: "self_capital",
+      startingBalance: 25e3,
+      strategy: "Mumbai Micro Scalper Live",
+      winRate3m: 80.5,
+      baseDailyProfit: 9500,
+      copiers: 188,
+      totalTrades: 960,
+      profitFactor: 2.62,
+      maxDrawdown: 2.8,
+      sharpeRatio: 2.8,
+      avgHoldingTime: "1m 15s"
+    },
+    101: {
+      name: "Hamdan Al-Mansoori",
+      country: "Dubai, UAE",
+      countryCode: "AE",
+      flag: "\u{1F1E6}\u{1F1EA}",
+      category: "self_capital",
+      startingBalance: 25e3,
+      strategy: "Dubai Marina OTC Momentum Live",
+      winRate3m: 79.2,
+      baseDailyProfit: 9100,
+      copiers: 180,
+      totalTrades: 910,
+      profitFactor: 2.48,
+      maxDrawdown: 3,
+      sharpeRatio: 2.68,
+      avgHoldingTime: "1m 20s"
+    },
+    102: {
+      name: "Tanvir Ahmed",
+      country: "Bangladesh",
+      countryCode: "BD",
+      flag: "\u{1F1E7}\u{1F1E9}",
+      category: "self_capital",
+      startingBalance: 2e4,
+      strategy: "Dhaka Price Action Live",
+      winRate3m: 77.9,
+      baseDailyProfit: 8700,
+      copiers: 174,
+      totalTrades: 860,
+      profitFactor: 2.4,
+      maxDrawdown: 3.2,
+      sharpeRatio: 2.58,
+      avgHoldingTime: "1m 25s"
+    },
+    103: {
+      name: "Maksym Tkachenko",
+      country: "Ukraine",
+      countryCode: "UA",
+      flag: "\u{1F1FA}\u{1F1E6}",
+      category: "self_capital",
+      startingBalance: 2e4,
+      strategy: "Kyiv Trend Follower Live",
+      winRate3m: 76.5,
+      baseDailyProfit: 8400,
+      copiers: 166,
+      totalTrades: 820,
+      profitFactor: 2.34,
+      maxDrawdown: 3.4,
+      sharpeRatio: 2.48,
+      avgHoldingTime: "1m 30s"
+    },
+    104: {
+      name: "Bilal Ahmed Siddiqui",
+      country: "Pakistan",
+      countryCode: "PK",
+      flag: "\u{1F1F5}\u{1F1F0}",
+      category: "self_capital",
+      startingBalance: 15e3,
+      strategy: "Karachi Volatility Sniper Live",
+      winRate3m: 75.4,
+      baseDailyProfit: 8100,
+      copiers: 158,
+      totalTrades: 770,
+      profitFactor: 2.26,
+      maxDrawdown: 3.6,
+      sharpeRatio: 2.38,
+      avgHoldingTime: "1m 35s"
+    },
+    105: {
+      name: "Sabbir Hossain",
+      country: "Bangladesh",
+      countryCode: "BD",
+      flag: "\u{1F1E7}\u{1F1E9}",
+      category: "self_capital",
+      startingBalance: 15e3,
+      strategy: "Chittagong Breakout Live",
+      winRate3m: 74.6,
+      baseDailyProfit: 7800,
+      copiers: 152,
+      totalTrades: 730,
+      profitFactor: 2.22,
+      maxDrawdown: 3.8,
+      sharpeRatio: 2.3,
+      avgHoldingTime: "1m 40s"
+    },
+    106: {
+      name: "Siddharth Malhotra",
+      country: "India",
+      countryCode: "IN",
+      flag: "\u{1F1EE}\u{1F1F3}",
+      category: "self_capital",
+      startingBalance: 1e4,
+      strategy: "Delhi FX Pulse Live",
+      winRate3m: 73.9,
+      baseDailyProfit: 7500,
+      copiers: 144,
+      totalTrades: 690,
+      profitFactor: 2.18,
+      maxDrawdown: 3.9,
+      sharpeRatio: 2.24,
+      avgHoldingTime: "1m 45s"
+    },
+    107: {
+      name: "Bohdan Kravchenko",
+      country: "Ukraine",
+      countryCode: "UA",
+      flag: "\u{1F1FA}\u{1F1E6}",
+      category: "self_capital",
+      startingBalance: 1e4,
+      strategy: "Kharkiv Alpha Live",
+      winRate3m: 73.1,
+      baseDailyProfit: 7200,
+      copiers: 138,
+      totalTrades: 650,
+      profitFactor: 2.14,
+      maxDrawdown: 4.1,
+      sharpeRatio: 2.18,
+      avgHoldingTime: "1m 50s"
+    },
+    108: {
+      name: "Saeed Al-Hashemi",
+      country: "Dubai, UAE",
+      countryCode: "AE",
+      flag: "\u{1F1E6}\u{1F1EA}",
+      category: "self_capital",
+      startingBalance: 1e4,
+      strategy: "Dubai Creek Orderblock Live",
+      winRate3m: 72.5,
+      baseDailyProfit: 6900,
+      copiers: 132,
+      totalTrades: 610,
+      profitFactor: 2.1,
+      maxDrawdown: 4.2,
+      sharpeRatio: 2.12,
+      avgHoldingTime: "1m 52s"
+    },
+    109: {
+      name: "Rohan Kapoor",
+      country: "India",
+      countryCode: "IN",
+      flag: "\u{1F1EE}\u{1F1F3}",
+      category: "self_capital",
+      startingBalance: 5e3,
+      strategy: "Mumbai Mean Reversion Live",
+      winRate3m: 71.9,
+      baseDailyProfit: 6600,
+      copiers: 126,
+      totalTrades: 570,
+      profitFactor: 2.06,
+      maxDrawdown: 4.3,
+      sharpeRatio: 2.08,
+      avgHoldingTime: "1m 55s"
+    },
+    110: {
+      name: "Usman Tariq",
+      country: "Pakistan",
+      countryCode: "PK",
+      flag: "\u{1F1F5}\u{1F1F0}",
+      category: "self_capital",
+      startingBalance: 5e3,
+      strategy: "Rawalpindi Scalp Live",
+      winRate3m: 71.2,
+      baseDailyProfit: 6300,
+      copiers: 122,
+      totalTrades: 540,
+      profitFactor: 2.03,
+      maxDrawdown: 4.4,
+      sharpeRatio: 2.04,
+      avgHoldingTime: "1m 58s"
+    },
+    111: {
+      name: "Shakil Mahmud",
+      country: "Bangladesh",
+      countryCode: "BD",
+      flag: "\u{1F1E7}\u{1F1E9}",
+      category: "self_capital",
+      startingBalance: 5e3,
+      strategy: "Padma Momentum Live",
+      winRate3m: 70.6,
+      baseDailyProfit: 6e3,
+      copiers: 118,
+      totalTrades: 510,
+      profitFactor: 2,
+      maxDrawdown: 4.5,
+      sharpeRatio: 2,
+      avgHoldingTime: "2m 00s"
+    }
+  };
+  for (let i = 0; i < TOTAL_TRADER_POOL_SIZE; i++) {
+    const isInstant = i < 100;
+    const category = isInstant ? "instant_funded" : "self_capital";
+    const numericId = String(100101 + i);
+    const id = isInstant ? `trd_if_${numericId}` : `trd_sc_${numericId}`;
+    const seed = deterministicHash(`${id}_base`);
+    const slotSeed = deterministicHash(`${id}_slot_${rotationSlot}`);
+    const override = featuredOverrides[i];
+    const regionProfile = REGIONAL_PROFILES[(i + seed % REGIONAL_PROFILES.length) % REGIONAL_PROFILES.length];
+    const firstName = regionProfile.firstNames[(i * 5 + seed % 11) % regionProfile.firstNames.length];
+    const lastName = regionProfile.lastNames[(i * 7 + seed % 13) % regionProfile.lastNames.length];
+    const providerName = override ? override.name : `${firstName} ${lastName}`;
+    const countryObj = override ? { name: override.country, code: override.countryCode, flag: override.flag } : { name: regionProfile.country, code: regionProfile.code, flag: regionProfile.flag };
+    const startingBalance = override ? override.startingBalance : isInstant ? ELIGIBLE_INSTANT_FUNDED_SIZES[i % ELIGIBLE_INSTANT_FUNDED_SIZES.length] : [1e3, 2500, 5e3, 8e3, 1e4, 15e3, 25e3][i % 7];
+    const strategyTitle = override ? override.strategy : `${STRATEGY_DESCRIPTORS[i % STRATEGY_DESCRIPTORS.length]} #${i % 50 + 1}`;
+    const surgeWave = slotSeed % 1e3 / 1e3;
+    const isSurgingInThis45mSlot = slotSeed % 8 === 0;
+    let dailyProfit;
+    let dailyProfitPct;
+    if (override) {
+      const slotVariance = 0.86 + slotSeed % 280 / 1e3;
+      dailyProfit = Number((override.baseDailyProfit * intradayMultiplier * slotVariance).toFixed(2));
+      dailyProfitPct = Number((dailyProfit / startingBalance * 100).toFixed(2));
+    } else {
+      const dailyRoiBasePct = isInstant ? (1.4 + seed % 35 / 10) * (isSurgingInThis45mSlot ? 1.85 + surgeWave * 0.65 : 0.45 + surgeWave * 0.55) : (1.4 + seed % 35 / 10) * (isSurgingInThis45mSlot ? 1.55 + surgeWave * 0.55 : 0.4 + surgeWave * 0.45);
+      dailyProfitPct = Number((dailyRoiBasePct * intradayMultiplier).toFixed(2));
+      dailyProfit = Number((dailyProfitPct / 100 * startingBalance).toFixed(2));
+    }
+    const weeklyProfitPct = override ? Number((dailyProfitPct * 2.8).toFixed(2)) : Number((dailyProfitPct * (3.2 + seed % 25 / 10)).toFixed(2));
+    const weeklyProfit = Number((weeklyProfitPct / 100 * startingBalance).toFixed(2));
+    const monthlyProfitPct = override ? Number((weeklyProfitPct * 2.5).toFixed(2)) : Number((weeklyProfitPct * (2.6 + seed % 18 / 10)).toFixed(2));
+    const monthlyProfit = Number((monthlyProfitPct / 100 * startingBalance).toFixed(2));
+    const threeMonthProfitPct = override ? Number((monthlyProfitPct * 2.3).toFixed(2)) : Number((monthlyProfitPct * (2.4 + seed % 16 / 10)).toFixed(2));
+    const threeMonthProfit = Number((threeMonthProfitPct / 100 * startingBalance).toFixed(2));
+    const retainedGain = Number((monthlyProfit * 0.35 + dailyProfit).toFixed(2));
+    const currentBalance = Number((startingBalance + retainedGain).toFixed(2));
+    const allTimeWithdrawals = Number((threeMonthProfit * 0.78).toFixed(2));
+    const rawWinRate = override ? override.winRate3m : Number((61.5 + seed % 235 / 10).toFixed(1));
+    const winRate3m = Math.max(60, rawWinRate);
+    const profitFactor = override ? override.profitFactor : Number((1.75 + seed % 160 / 100).toFixed(2));
+    const maxDrawdown = override ? override.maxDrawdown : Number((1.8 + seed % 55 / 10).toFixed(1));
+    const sharpeRatio = override ? override.sharpeRatio : Number((1.55 + seed % 140 / 100).toFixed(2));
+    const avgHoldingTime = override ? override.avgHoldingTime : `${1 + seed % 6}m ${15 + seed % 40}s`;
+    const totalTrades = override ? override.totalTrades : 240 + seed % 1650;
+    const baseCopiers = 38 + seed % 148 + (isSurgingInThis45mSlot ? 12 : 0);
+    const currentCopiers = override ? override.copiers : Math.min(MAX_COPIERS_PER_TRADER, baseCopiers);
+    const accountTypeLabel = isInstant ? `Instant Funded ($${(startingBalance / 1e3).toFixed(0)}K)` : "Self-Capital Live";
+    const tierName = isInstant ? `$${(startingBalance / 1e3).toFixed(0)}K Instant Funded` : "Self-Capital Account";
+    const avatarVariants = [
+      "gold_ring_silhouette",
+      "blue_ring_silhouette",
+      "vip_octagon_silhouette",
+      "purple_ring_photo_1",
+      "vip_octagon_flag_uz",
+      "purple_ring_photo_2",
+      "blue_ring_flag_tj",
+      "vip_octagon_flag_ru",
+      "vip_octagon_flag_tm"
+    ];
+    const avatarVariant = avatarVariants[i % avatarVariants.length];
+    const isVipBadge = avatarVariant.startsWith("vip_octagon");
+    const trades24h = 28 + (seed + slotSeed % 19) % 220;
+    const profitablePct = Math.max(60, Math.round(winRate3m));
+    const turnover = Number((dailyProfit * 4.44).toFixed(2));
+    const maxTrade = Number((dailyProfit * 0.188).toFixed(2));
+    const minTrade = Number((maxTrade * 0.1).toFixed(2));
+    const maxProfit = Number((maxTrade * 0.92).toFixed(2));
+    pool.push({
+      id,
+      numeric_id: numericId,
+      user_id: `usr_provider_${numericId}`,
+      provider_name: providerName,
+      country_code: countryObj.code,
+      country: countryObj.name,
+      flag: countryObj.flag,
+      avatar_url: countryObj.flag,
+      account_category: category,
+      account_type_label: accountTypeLabel,
+      strategy_title: strategyTitle,
+      tier_name: tierName,
+      vip_level: startingBalance >= 1e5 ? "VIP Elite" : startingBalance >= 5e4 ? "VIP Pro" : "Master Trader",
+      starting_balance: startingBalance,
+      current_balance: currentBalance,
+      all_time_withdrawals: allTimeWithdrawals,
+      lifetime_earnings: allTimeWithdrawals,
+      daily_profit: dailyProfit,
+      daily_profit_pct: dailyProfitPct,
+      weekly_profit: weeklyProfit,
+      weekly_profit_pct: weeklyProfitPct,
+      monthly_profit: monthlyProfit,
+      monthly_profit_pct: monthlyProfitPct,
+      three_month_profit: threeMonthProfit,
+      three_month_profit_pct: threeMonthProfitPct,
+      win_rate_3m: winRate3m,
+      profit_factor: profitFactor,
+      max_drawdown: maxDrawdown,
+      sharpe_ratio: sharpeRatio,
+      avg_holding_time: avgHoldingTime,
+      total_trades: totalTrades,
+      current_copiers: currentCopiers,
+      max_copiers: MAX_COPIERS_PER_TRADER,
+      commission_pct: MASTER_COMMISSION_PERCENT,
+      follower_profit_keep_pct: FOLLOWER_PROFIT_SHARE_PERCENT,
+      social_profile_id: numericId,
+      display_handle: providerName,
+      full_legal_name: providerName,
+      profile_level: "Guru",
+      account_level: 6,
+      status_text: "last seen recently",
+      followers_count: 45 + seed % 120,
+      watchers_count: 95 + seed % 180,
+      avatar_variant: avatarVariant,
+      is_vip_badge: isVipBadge,
+      trades_24h: trades24h,
+      trades_today_profile: Math.max(1, trades24h - 1),
+      profitable_trades_pct: profitablePct,
+      trading_turnover: turnover,
+      trading_profit: dailyProfit,
+      max_trade: maxTrade,
+      min_trade: minTrade,
+      max_profit: maxProfit
+    });
+  }
+  return pool;
+}
+var SOCIAL_TRADING_TOP_24H_TRADERS = [
+  {
+    id: "trd_social_11101163",
+    numeric_id: "11101163",
+    social_profile_id: "11101163",
+    user_id: "usr_provider_11101163",
+    display_handle: "Rashid Al-Maktoum",
+    provider_name: "Rashid Al-Maktoum",
+    full_legal_name: "Rashid Al-Maktoum",
+    country_code: "AE",
+    country: "Dubai, UAE",
+    flag: "\u{1F1E6}\u{1F1EA}",
+    avatar_url: "\u{1F1E6}\u{1F1EA}",
+    account_category: "instant_funded",
+    account_type_label: "Instant Funded ($100K)",
+    strategy_title: "Institutional OTC & FX Flow",
+    tier_name: "$100K Instant Funded",
+    vip_level: "Guru",
+    profile_level: "Guru",
+    account_level: 6,
+    status_text: "last seen recently",
+    followers_count: 75,
+    watchers_count: 155,
+    avatar_variant: "gold_ring_silhouette",
+    is_vip_badge: false,
+    starting_balance: 5e4,
+    current_balance: 64495.8,
+    all_time_withdrawals: 42850,
+    lifetime_earnings: 57345.8,
+    daily_profit: 14495.8,
+    daily_profit_pct: 28.99,
+    weekly_profit: 38420.5,
+    weekly_profit_pct: 76.84,
+    monthly_profit: 94210,
+    monthly_profit_pct: 188.42,
+    three_month_profit: 186400,
+    three_month_profit_pct: 372.8,
+    win_rate_3m: 74.5,
+    profit_factor: 2.64,
+    max_drawdown: 2.8,
+    sharpe_ratio: 2.75,
+    avg_holding_time: "1m 20s",
+    total_trades: 80,
+    trades_24h: 80,
+    trades_today_profile: 79,
+    profitable_trades_pct: 74,
+    trading_turnover: 64306.41,
+    trading_profit: 14245.3,
+    max_trade: 2722.94,
+    min_trade: 272.26,
+    max_profit: 2505.11,
+    current_copiers: 75,
+    max_copiers: MAX_COPIERS_PER_TRADER,
+    commission_pct: MASTER_COMMISSION_PERCENT,
+    follower_profit_keep_pct: FOLLOWER_PROFIT_SHARE_PERCENT,
+    rank: 1
+  },
+  {
+    id: "trd_social_139597257",
+    numeric_id: "139597257",
+    social_profile_id: "139597257",
+    user_id: "usr_provider_139597257",
+    display_handle: "Tariq Mahmood Qureshi",
+    provider_name: "Tariq Mahmood Qureshi",
+    full_legal_name: "Tariq Mahmood Qureshi",
+    country_code: "PK",
+    country: "Pakistan",
+    flag: "\u{1F1F5}\u{1F1F0}",
+    avatar_url: "\u{1F1F5}\u{1F1F0}",
+    account_category: "instant_funded",
+    account_type_label: "Instant Funded ($100K)",
+    strategy_title: "High-Frequency Momentum Scalp",
+    tier_name: "$100K Instant Funded",
+    vip_level: "Guru",
+    profile_level: "Guru",
+    account_level: 6,
+    status_text: "last seen recently",
+    followers_count: 68,
+    watchers_count: 142,
+    avatar_variant: "blue_ring_silhouette",
+    is_vip_badge: false,
+    starting_balance: 5e4,
+    current_balance: 64140.8,
+    all_time_withdrawals: 39100,
+    lifetime_earnings: 53240.8,
+    daily_profit: 14140.8,
+    daily_profit_pct: 28.28,
+    weekly_profit: 36200,
+    weekly_profit_pct: 72.4,
+    monthly_profit: 88500,
+    monthly_profit_pct: 177,
+    three_month_profit: 172e3,
+    three_month_profit_pct: 344,
+    win_rate_3m: 71.2,
+    profit_factor: 2.51,
+    max_drawdown: 3.1,
+    sharpe_ratio: 2.62,
+    avg_holding_time: "1m 15s",
+    total_trades: 172,
+    trades_24h: 172,
+    trades_today_profile: 172,
+    profitable_trades_pct: 71,
+    trading_turnover: 61840.25,
+    trading_profit: 14140.8,
+    max_trade: 2450,
+    min_trade: 210.5,
+    max_profit: 2254,
+    current_copiers: 68,
+    max_copiers: MAX_COPIERS_PER_TRADER,
+    commission_pct: MASTER_COMMISSION_PERCENT,
+    follower_profit_keep_pct: FOLLOWER_PROFIT_SHARE_PERCENT,
+    rank: 2
+  },
+  {
+    id: "trd_social_127298296",
+    numeric_id: "127298296",
+    social_profile_id: "127298296",
+    user_id: "usr_provider_127298296",
+    display_handle: "Vikramaditya Singhania",
+    provider_name: "Vikramaditya Singhania",
+    full_legal_name: "Vikramaditya Singhania",
+    country_code: "IN",
+    country: "India",
+    flag: "\u{1F1EE}\u{1F1F3}",
+    avatar_url: "\u{1F1EE}\u{1F1F3}",
+    account_category: "instant_funded",
+    account_type_label: "Instant Funded ($50K)",
+    strategy_title: "VIP Institutional Orderblock",
+    tier_name: "$50K Instant Funded",
+    vip_level: "VIP",
+    profile_level: "Guru",
+    account_level: 6,
+    status_text: "last seen recently",
+    followers_count: 54,
+    watchers_count: 118,
+    avatar_variant: "vip_octagon_silhouette",
+    is_vip_badge: true,
+    starting_balance: 25e3,
+    current_balance: 30432.77,
+    all_time_withdrawals: 21400,
+    lifetime_earnings: 26832.77,
+    daily_profit: 5432.77,
+    daily_profit_pct: 21.73,
+    weekly_profit: 16290,
+    weekly_profit_pct: 65.16,
+    monthly_profit: 41200,
+    monthly_profit_pct: 164.8,
+    three_month_profit: 89400,
+    three_month_profit_pct: 357.6,
+    win_rate_3m: 68.5,
+    profit_factor: 2.32,
+    max_drawdown: 3.4,
+    sharpe_ratio: 2.41,
+    avg_holding_time: "1m 30s",
+    total_trades: 64,
+    trades_24h: 64,
+    trades_today_profile: 64,
+    profitable_trades_pct: 69,
+    trading_turnover: 28940.12,
+    trading_profit: 5432.77,
+    max_trade: 1850,
+    min_trade: 150,
+    max_profit: 1702,
+    current_copiers: 54,
+    max_copiers: MAX_COPIERS_PER_TRADER,
+    commission_pct: MASTER_COMMISSION_PERCENT,
+    follower_profit_keep_pct: FOLLOWER_PROFIT_SHARE_PERCENT,
+    rank: 3
+  },
+  {
+    id: "trd_social_85396639",
+    numeric_id: "85396639",
+    social_profile_id: "85396639",
+    user_id: "usr_provider_85396639",
+    display_handle: "Oleksandr Kovalenko",
+    provider_name: "Oleksandr Kovalenko",
+    full_legal_name: "Oleksandr Kovalenko",
+    country_code: "UA",
+    country: "Ukraine",
+    flag: "\u{1F1FA}\u{1F1E6}",
+    avatar_url: "\u{1F1FA}\u{1F1E6}",
+    account_category: "instant_funded",
+    account_type_label: "Instant Funded ($50K)",
+    strategy_title: "Gold & FX Precision Breakout",
+    tier_name: "$50K Instant Funded",
+    vip_level: "Guru",
+    profile_level: "Guru",
+    account_level: 6,
+    status_text: "last seen recently",
+    followers_count: 61,
+    watchers_count: 129,
+    avatar_variant: "gold_ring_silhouette",
+    is_vip_badge: false,
+    starting_balance: 25e3,
+    current_balance: 29352.01,
+    all_time_withdrawals: 19800,
+    lifetime_earnings: 24152.01,
+    daily_profit: 4352.01,
+    daily_profit_pct: 17.41,
+    weekly_profit: 13800,
+    weekly_profit_pct: 55.2,
+    monthly_profit: 36400,
+    monthly_profit_pct: 145.6,
+    three_month_profit: 78200,
+    three_month_profit_pct: 312.8,
+    win_rate_3m: 67,
+    profit_factor: 2.24,
+    max_drawdown: 3.5,
+    sharpe_ratio: 2.35,
+    avg_holding_time: "1m 40s",
+    total_trades: 113,
+    trades_24h: 113,
+    trades_today_profile: 113,
+    profitable_trades_pct: 67,
+    trading_turnover: 24180.55,
+    trading_profit: 4352.01,
+    max_trade: 1420,
+    min_trade: 120,
+    max_profit: 1306.4,
+    current_copiers: 61,
+    max_copiers: MAX_COPIERS_PER_TRADER,
+    commission_pct: MASTER_COMMISSION_PERCENT,
+    follower_profit_keep_pct: FOLLOWER_PROFIT_SHARE_PERCENT,
+    rank: 4
+  },
+  {
+    id: "trd_social_143581606",
+    numeric_id: "143581606",
+    social_profile_id: "143581606",
+    user_id: "usr_provider_143581606",
+    display_handle: "Arjun Deshmukh",
+    provider_name: "Arjun Deshmukh",
+    full_legal_name: "Arjun Deshmukh",
+    country_code: "IN",
+    country: "India",
+    flag: "\u{1F1EE}\u{1F1F3}",
+    avatar_url: "\u{1F1EE}\u{1F1F3}",
+    account_category: "self_capital",
+    account_type_label: "Self-Capital Live",
+    strategy_title: "Algorithmic Volatility Pulse",
+    tier_name: "Self-Capital Account",
+    vip_level: "Guru",
+    profile_level: "Guru",
+    account_level: 5,
+    status_text: "last seen recently",
+    followers_count: 49,
+    watchers_count: 104,
+    avatar_variant: "purple_ring_photo_1",
+    is_vip_badge: false,
+    starting_balance: 2e4,
+    current_balance: 23621.25,
+    all_time_withdrawals: 16500,
+    lifetime_earnings: 20121.25,
+    daily_profit: 3621.25,
+    daily_profit_pct: 18.11,
+    weekly_profit: 11200,
+    weekly_profit_pct: 56,
+    monthly_profit: 29800,
+    monthly_profit_pct: 149,
+    three_month_profit: 64500,
+    three_month_profit_pct: 322.5,
+    win_rate_3m: 65,
+    profit_factor: 2.18,
+    max_drawdown: 3.6,
+    sharpe_ratio: 2.28,
+    avg_holding_time: "1m 25s",
+    total_trades: 290,
+    trades_24h: 290,
+    trades_today_profile: 290,
+    profitable_trades_pct: 65,
+    trading_turnover: 21450.8,
+    trading_profit: 3621.25,
+    max_trade: 980,
+    min_trade: 85,
+    max_profit: 901.6,
+    current_copiers: 49,
+    max_copiers: MAX_COPIERS_PER_TRADER,
+    commission_pct: MASTER_COMMISSION_PERCENT,
+    follower_profit_keep_pct: FOLLOWER_PROFIT_SHARE_PERCENT,
+    rank: 5
+  },
+  {
+    id: "trd_social_119680988",
+    numeric_id: "119680988",
+    social_profile_id: "119680988",
+    user_id: "usr_provider_119680988",
+    display_handle: "Tanvir Ahmed Chowdhury",
+    provider_name: "Tanvir Ahmed Chowdhury",
+    full_legal_name: "Tanvir Ahmed Chowdhury",
+    country_code: "BD",
+    country: "Bangladesh",
+    flag: "\u{1F1E7}\u{1F1E9}",
+    avatar_url: "\u{1F1E7}\u{1F1E9}",
+    account_category: "instant_funded",
+    account_type_label: "Instant Funded ($25K)",
+    strategy_title: "Dhaka VIP Liquidity Sniper",
+    tier_name: "$25K Instant Funded",
+    vip_level: "VIP",
+    profile_level: "Guru",
+    account_level: 6,
+    status_text: "last seen recently",
+    followers_count: 44,
+    watchers_count: 98,
+    avatar_variant: "vip_octagon_flag_uz",
+    is_vip_badge: true,
+    starting_balance: 25e3,
+    current_balance: 28501.52,
+    all_time_withdrawals: 15200,
+    lifetime_earnings: 18701.52,
+    daily_profit: 3501.52,
+    daily_profit_pct: 14.01,
+    weekly_profit: 10850,
+    weekly_profit_pct: 43.4,
+    monthly_profit: 27400,
+    monthly_profit_pct: 109.6,
+    three_month_profit: 59800,
+    three_month_profit_pct: 239.2,
+    win_rate_3m: 66.8,
+    profit_factor: 2.15,
+    max_drawdown: 3.8,
+    sharpe_ratio: 2.22,
+    avg_holding_time: "1m 45s",
+    total_trades: 65,
+    trades_24h: 65,
+    trades_today_profile: 65,
+    profitable_trades_pct: 67,
+    trading_turnover: 19820.4,
+    trading_profit: 3501.52,
+    max_trade: 1120,
+    min_trade: 95,
+    max_profit: 1030.4,
+    current_copiers: 44,
+    max_copiers: MAX_COPIERS_PER_TRADER,
+    commission_pct: MASTER_COMMISSION_PERCENT,
+    follower_profit_keep_pct: FOLLOWER_PROFIT_SHARE_PERCENT,
+    rank: 6
+  },
+  {
+    id: "trd_social_108442910",
+    numeric_id: "108442910",
+    social_profile_id: "108442910",
+    user_id: "usr_provider_108442910",
+    display_handle: "Dmytro Bondarenko",
+    provider_name: "Dmytro Bondarenko",
+    full_legal_name: "Dmytro Bondarenko",
+    country_code: "UA",
+    country: "Ukraine",
+    flag: "\u{1F1FA}\u{1F1E6}",
+    avatar_url: "\u{1F1FA}\u{1F1E6}",
+    account_category: "self_capital",
+    account_type_label: "Self-Capital Live",
+    strategy_title: "High Win-Rate OTC Scalper",
+    tier_name: "Self-Capital Account",
+    vip_level: "Guru",
+    profile_level: "Guru",
+    account_level: 6,
+    status_text: "last seen recently",
+    followers_count: 82,
+    watchers_count: 164,
+    avatar_variant: "purple_ring_photo_2",
+    is_vip_badge: false,
+    starting_balance: 2e4,
+    current_balance: 23406.65,
+    all_time_withdrawals: 18400,
+    lifetime_earnings: 21806.65,
+    daily_profit: 3406.65,
+    daily_profit_pct: 17.03,
+    weekly_profit: 10400,
+    weekly_profit_pct: 52,
+    monthly_profit: 26900,
+    monthly_profit_pct: 134.5,
+    three_month_profit: 58400,
+    three_month_profit_pct: 292,
+    win_rate_3m: 72,
+    profit_factor: 2.58,
+    max_drawdown: 2.9,
+    sharpe_ratio: 2.68,
+    avg_holding_time: "1m 10s",
+    total_trades: 72,
+    trades_24h: 72,
+    trades_today_profile: 72,
+    profitable_trades_pct: 72,
+    trading_turnover: 18950,
+    trading_profit: 3406.65,
+    max_trade: 940,
+    min_trade: 100,
+    max_profit: 864.8,
+    current_copiers: 82,
+    max_copiers: MAX_COPIERS_PER_TRADER,
+    commission_pct: MASTER_COMMISSION_PERCENT,
+    follower_profit_keep_pct: FOLLOWER_PROFIT_SHARE_PERCENT,
+    rank: 7
+  },
+  {
+    id: "trd_social_140257047",
+    numeric_id: "140257047",
+    social_profile_id: "140257047",
+    user_id: "usr_provider_140257047",
+    display_handle: "Zayed bin Rashid Al-Nuaimi",
+    provider_name: "Zayed bin Rashid Al-Nuaimi",
+    full_legal_name: "Zayed bin Rashid Al-Nuaimi",
+    country_code: "AE",
+    country: "Dubai, UAE",
+    flag: "\u{1F1E6}\u{1F1EA}",
+    avatar_url: "\u{1F1E6}\u{1F1EA}",
+    account_category: "self_capital",
+    account_type_label: "Self-Capital Live",
+    strategy_title: "Dubai DIFC Rapid Execution",
+    tier_name: "Self-Capital Account",
+    vip_level: "Guru",
+    profile_level: "Guru",
+    account_level: 5,
+    status_text: "last seen recently",
+    followers_count: 39,
+    watchers_count: 87,
+    avatar_variant: "blue_ring_flag_tj",
+    is_vip_badge: false,
+    starting_balance: 15e3,
+    current_balance: 18390.69,
+    all_time_withdrawals: 14100,
+    lifetime_earnings: 17490.69,
+    daily_profit: 3390.69,
+    daily_profit_pct: 22.6,
+    weekly_profit: 9980,
+    weekly_profit_pct: 66.53,
+    monthly_profit: 25100,
+    monthly_profit_pct: 167.33,
+    three_month_profit: 54200,
+    three_month_profit_pct: 361.33,
+    win_rate_3m: 64.5,
+    profit_factor: 2.12,
+    max_drawdown: 3.9,
+    sharpe_ratio: 2.18,
+    avg_holding_time: "1m 05s",
+    total_trades: 358,
+    trades_24h: 358,
+    trades_today_profile: 358,
+    profitable_trades_pct: 65,
+    trading_turnover: 22840.75,
+    trading_profit: 3390.69,
+    max_trade: 890,
+    min_trade: 75,
+    max_profit: 818.8,
+    current_copiers: 39,
+    max_copiers: MAX_COPIERS_PER_TRADER,
+    commission_pct: MASTER_COMMISSION_PERCENT,
+    follower_profit_keep_pct: FOLLOWER_PROFIT_SHARE_PERCENT,
+    rank: 8
+  },
+  {
+    id: "trd_social_128871612",
+    numeric_id: "128871612",
+    social_profile_id: "128871612",
+    user_id: "usr_provider_128871612",
+    display_handle: "Artem Shevchenko",
+    provider_name: "Artem Shevchenko",
+    full_legal_name: "Artem Shevchenko",
+    country_code: "UA",
+    country: "Ukraine",
+    flag: "\u{1F1FA}\u{1F1E6}",
+    avatar_url: "\u{1F1FA}\u{1F1E6}",
+    account_category: "instant_funded",
+    account_type_label: "Instant Funded ($25K)",
+    strategy_title: "VIP Precision Swing & OTC",
+    tier_name: "$25K Instant Funded",
+    vip_level: "VIP",
+    profile_level: "Guru",
+    account_level: 6,
+    status_text: "last seen recently",
+    followers_count: 52,
+    watchers_count: 112,
+    avatar_variant: "vip_octagon_flag_ru",
+    is_vip_badge: true,
+    starting_balance: 25e3,
+    current_balance: 28340.9,
+    all_time_withdrawals: 16200,
+    lifetime_earnings: 19540.9,
+    daily_profit: 3340.9,
+    daily_profit_pct: 13.36,
+    weekly_profit: 9750,
+    weekly_profit_pct: 39,
+    monthly_profit: 24600,
+    monthly_profit_pct: 98.4,
+    three_month_profit: 53100,
+    three_month_profit_pct: 212.4,
+    win_rate_3m: 64,
+    profit_factor: 2.1,
+    max_drawdown: 3.7,
+    sharpe_ratio: 2.15,
+    avg_holding_time: "1m 50s",
+    total_trades: 62,
+    trades_24h: 62,
+    trades_today_profile: 62,
+    profitable_trades_pct: 64,
+    trading_turnover: 17420.3,
+    trading_profit: 3340.9,
+    max_trade: 1250,
+    min_trade: 140,
+    max_profit: 1150,
+    current_copiers: 52,
+    max_copiers: MAX_COPIERS_PER_TRADER,
+    commission_pct: MASTER_COMMISSION_PERCENT,
+    follower_profit_keep_pct: FOLLOWER_PROFIT_SHARE_PERCENT,
+    rank: 9
+  },
+  {
+    id: "trd_social_110028311",
+    numeric_id: "110028311",
+    social_profile_id: "110028311",
+    user_id: "usr_provider_110028311",
+    display_handle: "Kamran Shahzad Malik",
+    provider_name: "Kamran Shahzad Malik",
+    full_legal_name: "Kamran Shahzad Malik",
+    country_code: "PK",
+    country: "Pakistan",
+    flag: "\u{1F1F5}\u{1F1F0}",
+    avatar_url: "\u{1F1F5}\u{1F1F0}",
+    account_category: "instant_funded",
+    account_type_label: "Instant Funded ($25K)",
+    strategy_title: "VIP Smart Money Execution",
+    tier_name: "$25K Instant Funded",
+    vip_level: "VIP",
+    profile_level: "Guru",
+    account_level: 6,
+    status_text: "last seen recently",
+    followers_count: 47,
+    watchers_count: 94,
+    avatar_variant: "vip_octagon_silhouette",
+    is_vip_badge: true,
+    starting_balance: 25e3,
+    current_balance: 28139.84,
+    all_time_withdrawals: 14900,
+    lifetime_earnings: 18039.84,
+    daily_profit: 3139.84,
+    daily_profit_pct: 12.56,
+    weekly_profit: 9320,
+    weekly_profit_pct: 37.28,
+    monthly_profit: 23400,
+    monthly_profit_pct: 93.6,
+    three_month_profit: 51200,
+    three_month_profit_pct: 204.8,
+    win_rate_3m: 63.2,
+    profit_factor: 2.08,
+    max_drawdown: 4,
+    sharpe_ratio: 2.12,
+    avg_holding_time: "1m 35s",
+    total_trades: 61,
+    trades_24h: 61,
+    trades_today_profile: 61,
+    profitable_trades_pct: 63,
+    trading_turnover: 16890.45,
+    trading_profit: 3139.84,
+    max_trade: 960,
+    min_trade: 110,
+    max_profit: 883.2,
+    current_copiers: 47,
+    max_copiers: MAX_COPIERS_PER_TRADER,
+    commission_pct: MASTER_COMMISSION_PERCENT,
+    follower_profit_keep_pct: FOLLOWER_PROFIT_SHARE_PERCENT,
+    rank: 10
+  },
+  {
+    id: "trd_social_134435450",
+    numeric_id: "134435450",
+    social_profile_id: "134435450",
+    user_id: "usr_provider_134435450",
+    display_handle: "Mahmudul Hasan Rahman",
+    provider_name: "Mahmudul Hasan Rahman",
+    full_legal_name: "Mahmudul Hasan Rahman",
+    country_code: "BD",
+    country: "Bangladesh",
+    flag: "\u{1F1E7}\u{1F1E9}",
+    avatar_url: "\u{1F1E7}\u{1F1E9}",
+    account_category: "self_capital",
+    account_type_label: "Self-Capital Live",
+    strategy_title: "VIP Currency & Index Alpha",
+    tier_name: "Self-Capital Account",
+    vip_level: "VIP",
+    profile_level: "Guru",
+    account_level: 6,
+    status_text: "last seen recently",
+    followers_count: 58,
+    watchers_count: 121,
+    avatar_variant: "vip_octagon_silhouette",
+    is_vip_badge: true,
+    starting_balance: 15e3,
+    current_balance: 18126.7,
+    all_time_withdrawals: 14500,
+    lifetime_earnings: 17626.7,
+    daily_profit: 3126.7,
+    daily_profit_pct: 20.84,
+    weekly_profit: 9150,
+    weekly_profit_pct: 61,
+    monthly_profit: 22900,
+    monthly_profit_pct: 152.67,
+    three_month_profit: 49800,
+    three_month_profit_pct: 332,
+    win_rate_3m: 62,
+    profit_factor: 2.06,
+    max_drawdown: 4.1,
+    sharpe_ratio: 2.1,
+    avg_holding_time: "1m 42s",
+    total_trades: 95,
+    trades_24h: 95,
+    trades_today_profile: 95,
+    profitable_trades_pct: 62,
+    trading_turnover: 16420.18,
+    trading_profit: 3126.7,
+    max_trade: 910,
+    min_trade: 95,
+    max_profit: 837.2,
+    current_copiers: 58,
+    max_copiers: MAX_COPIERS_PER_TRADER,
+    commission_pct: MASTER_COMMISSION_PERCENT,
+    follower_profit_keep_pct: FOLLOWER_PROFIT_SHARE_PERCENT,
+    rank: 11
+  },
+  {
+    id: "trd_social_109384721",
+    numeric_id: "109384721",
+    social_profile_id: "109384721",
+    user_id: "usr_provider_109384721",
+    display_handle: "Rajeshwar Sharma",
+    provider_name: "Rajeshwar Sharma",
+    full_legal_name: "Rajeshwar Sharma",
+    country_code: "IN",
+    country: "India",
+    flag: "\u{1F1EE}\u{1F1F3}",
+    avatar_url: "\u{1F1EE}\u{1F1F3}",
+    account_category: "self_capital",
+    account_type_label: "Self-Capital Live",
+    strategy_title: "Mumbai VIP Price Action",
+    tier_name: "Self-Capital Account",
+    vip_level: "VIP",
+    profile_level: "Guru",
+    account_level: 6,
+    status_text: "last seen recently",
+    followers_count: 42,
+    watchers_count: 89,
+    avatar_variant: "vip_octagon_flag_tm",
+    is_vip_badge: true,
+    starting_balance: 15e3,
+    current_balance: 17867.04,
+    all_time_withdrawals: 13800,
+    lifetime_earnings: 16667.04,
+    daily_profit: 2867.04,
+    daily_profit_pct: 19.11,
+    weekly_profit: 8640,
+    weekly_profit_pct: 57.6,
+    monthly_profit: 21500,
+    monthly_profit_pct: 143.33,
+    three_month_profit: 46900,
+    three_month_profit_pct: 312.67,
+    win_rate_3m: 61.5,
+    profit_factor: 2.04,
+    max_drawdown: 4.2,
+    sharpe_ratio: 2.05,
+    avg_holding_time: "1m 55s",
+    total_trades: 66,
+    trades_24h: 66,
+    trades_today_profile: 66,
+    profitable_trades_pct: 61,
+    trading_turnover: 15280.9,
+    trading_profit: 2867.04,
+    max_trade: 840,
+    min_trade: 90,
+    max_profit: 772.8,
+    current_copiers: 42,
+    max_copiers: MAX_COPIERS_PER_TRADER,
+    commission_pct: MASTER_COMMISSION_PERCENT,
+    follower_profit_keep_pct: FOLLOWER_PROFIT_SHARE_PERCENT,
+    rank: 12
+  }
+];
+function getRotationWindowInfo(nowMs = Date.now()) {
+  const rotationSlot = Math.floor(nowMs / ROTATION_INTERVAL_MS);
+  const nextRotationMs = (rotationSlot + 1) * ROTATION_INTERVAL_MS;
+  const msUntilNextRotation = Math.max(0, nextRotationMs - nowMs);
+  const secondsUntilNextRotation = Math.ceil(msUntilNextRotation / 1e3);
+  const mins = Math.floor(secondsUntilNextRotation / 60);
+  const secs = secondsUntilNextRotation % 60;
+  return {
+    rotationSlot,
+    intervalMinutes: ROTATION_INTERVAL_MINUTES,
+    msUntilNextRotation,
+    secondsUntilNextRotation,
+    formattedCountdown: `${String(mins).padStart(2, "0")}m ${String(secs).padStart(2, "0")}s`
+  };
+}
+function queryCopyTradersPool(params) {
+  const { pool, category = "instant_funded", searchQuery = "", limit = LEADERBOARD_TOP_LIMIT } = params;
+  const cleanQuery = String(searchQuery || "").trim();
+  const numericOnlyQuery = cleanQuery.replace(/^#|^user/i, "").trim();
+  const combinedForSearch = [
+    ...SOCIAL_TRADING_TOP_24H_TRADERS,
+    ...pool.filter(
+      (p) => !SOCIAL_TRADING_TOP_24H_TRADERS.some((s) => s.numeric_id === p.numeric_id || s.id === p.id)
+    )
+  ];
+  if (cleanQuery.length > 0) {
+    const matched = combinedForSearch.filter((t) => {
+      const matchesCategory = category === "all" ? true : t.account_category === category;
+      const matchesNumeric = String(t.numeric_id || "").includes(numericOnlyQuery) || String(t.social_profile_id || "").includes(numericOnlyQuery);
+      const matchesId = String(t.id || "").toLowerCase().includes(cleanQuery.toLowerCase());
+      const matchesHandle = String(t.display_handle || "").toLowerCase().includes(cleanQuery.toLowerCase());
+      const matchesName = String(t.provider_name || "").toLowerCase().includes(cleanQuery.toLowerCase()) || String(t.full_legal_name || "").toLowerCase().includes(cleanQuery.toLowerCase());
+      if (/^\d+$/.test(numericOnlyQuery)) {
+        return matchesNumeric;
+      }
+      return matchesCategory && (matchesNumeric || matchesId || matchesHandle || matchesName);
+    }).sort((a, b) => {
+      const aExact = String(a.numeric_id) === numericOnlyQuery || String(a.social_profile_id) === numericOnlyQuery ? 1 : 0;
+      const bExact = String(b.numeric_id) === numericOnlyQuery || String(b.social_profile_id) === numericOnlyQuery ? 1 : 0;
+      if (aExact !== bExact) return bExact - aExact;
+      return (b.daily_profit || 0) - (a.daily_profit || 0);
+    }).map((t, idx) => ({ ...t, rank: idx + 1 }));
+    return {
+      traders: matched.slice(0, Math.max(limit, 20)),
+      totalPoolCount: pool.length,
+      isSearchActive: true
+    };
+  }
+  const categoryFiltered = category === "all" ? pool : pool.filter((t) => t.account_category === category);
+  const ranked = [...categoryFiltered].sort((a, b) => (b.daily_profit || 0) - (a.daily_profit || 0)).slice(0, limit).map((t, idx) => ({
+    ...t,
+    rank: idx + 1
+  }));
+  return {
+    traders: ranked,
+    totalPoolCount: pool.length,
+    isSearchActive: false
+  };
+}
+
+// src/utils/masterTraderBotScheduler.ts
+var BOT_MIN_COOLDOWN_SECONDS = 30;
+var BOT_MAX_COOLDOWN_SECONDS = 180;
+var BOT_MIN_COOLDOWN_MS = BOT_MIN_COOLDOWN_SECONDS * 1e3;
+var BOT_MAX_COOLDOWN_MS = BOT_MAX_COOLDOWN_SECONDS * 1e3;
+var BOT_MIN_TRADES_PER_HOUR = 3;
+var BOT_MAX_TRADES_PER_HOUR = 5;
+var BOT_CONSECUTIVE_LOSS_LIMIT = 2;
+var BOT_LOSS_COOLOFF_MIN_MS = 1 * 60 * 60 * 1e3;
+var BOT_LOSS_COOLOFF_MAX_MS = 2 * 60 * 60 * 1e3;
+var BOT_CONSECUTIVE_WIN_LIMIT = 3;
+var BOT_WIN_TAKE_PROFIT_MIN_MS = 2 * 60 * 60 * 1e3;
+var BOT_WIN_TAKE_PROFIT_MAX_MS = 3 * 60 * 60 * 1e3;
+var BOT_OVERNIGHT_START_HOUR = 0;
+var BOT_OVERNIGHT_END_HOUR = 6;
+var BOT_STATE_STORAGE_KEY = "bft_master_trader_bot_states_v1";
+var inMemoryBotStates = /* @__PURE__ */ new Map();
+function randomIntInclusive(min, max, rng = Math.random) {
+  const lo = Math.ceil(Math.min(min, max));
+  const hi = Math.floor(Math.max(min, max));
+  const r = Math.max(0, Math.min(0.999999999, rng()));
+  return Math.floor(r * (hi - lo + 1)) + lo;
+}
+function generateDynamicTradeCooldownMs(rng = Math.random) {
+  return randomIntInclusive(BOT_MIN_COOLDOWN_MS, BOT_MAX_COOLDOWN_MS, rng);
+}
+function generateHourlyTradeLimit(providerId, hourWindowStartMs, rng) {
+  if (rng) {
+    return randomIntInclusive(BOT_MIN_TRADES_PER_HOUR, BOT_MAX_TRADES_PER_HOUR, rng);
+  }
+  if (providerId && typeof hourWindowStartMs === "number") {
+    const seed = `${providerId}:${Math.floor(hourWindowStartMs / 36e5)}`;
+    let hash = 0;
+    for (let i = 0; i < seed.length; i++) {
+      hash = hash * 31 + seed.charCodeAt(i) | 0;
+    }
+    return BOT_MIN_TRADES_PER_HOUR + Math.abs(hash) % (BOT_MAX_TRADES_PER_HOUR - BOT_MIN_TRADES_PER_HOUR + 1);
+  }
+  return randomIntInclusive(BOT_MIN_TRADES_PER_HOUR, BOT_MAX_TRADES_PER_HOUR);
+}
+function generateConsecutiveLossCoolOffMs(rng = Math.random) {
+  return randomIntInclusive(BOT_LOSS_COOLOFF_MIN_MS, BOT_LOSS_COOLOFF_MAX_MS, rng);
+}
+function generateConsecutiveWinTakeProfitPauseMs(rng = Math.random) {
+  return randomIntInclusive(BOT_WIN_TAKE_PROFIT_MIN_MS, BOT_WIN_TAKE_PROFIT_MAX_MS, rng);
+}
+function getHourWindowStartMs(nowMs = Date.now()) {
+  return Math.floor(nowMs / 36e5) * 36e5;
+}
+function getNextHourStartMs(nowMs = Date.now()) {
+  return (Math.floor(nowMs / 36e5) + 1) * 36e5;
+}
+function evaluateActiveTradingWindow(nowMs = Date.now(), localHourOverride) {
+  const date = new Date(nowMs);
+  const localHour = typeof localHourOverride === "number" && Number.isFinite(localHourOverride) ? (Math.floor(localHourOverride) % 24 + 24) % 24 : date.getHours();
+  if (localHour >= BOT_OVERNIGHT_START_HOUR && localHour < BOT_OVERNIGHT_END_HOUR) {
+    const nextOpenDate = new Date(nowMs);
+    nextOpenDate.setHours(BOT_OVERNIGHT_END_HOUR, 0, 0, 0);
+    if (nextOpenDate.getTime() <= nowMs) {
+      nextOpenDate.setTime(nowMs + (BOT_OVERNIGHT_END_HOUR - localHour) * 36e5);
+    }
+    return {
+      allowed: false,
+      localHour,
+      sessionName: "Overnight Off-Hours (12:00 AM - 06:00 AM)",
+      nextSessionOpensAtMs: nextOpenDate.getTime(),
+      reason: "OVERNIGHT_OFF_HOURS"
+    };
+  }
+  let sessionName = "High-Liquidity Active Session";
+  if (localHour >= 6 && localHour < 8) {
+    sessionName = "Tokyo / London Pre-Market Session";
+  } else if (localHour >= 8 && localHour < 13) {
+    sessionName = "London High-Liquidity Session";
+  } else if (localHour >= 13 && localHour < 17) {
+    sessionName = "London / New York Overlap Session";
+  } else if (localHour >= 17 && localHour < 21) {
+    sessionName = "New York Session";
+  } else {
+    sessionName = "Late US / Sydney-Tokyo Session";
+  }
+  return {
+    allowed: true,
+    localHour,
+    sessionName,
+    nextSessionOpensAtMs: nowMs
+  };
+}
+function createInitialMasterBotState(providerId, nowMs = Date.now(), rng) {
+  const hourStart = getHourWindowStartMs(nowMs);
+  return {
+    providerId,
+    status: "active",
+    pauseReason: "NONE",
+    lastTradeExecutedAt: 0,
+    lastCooldownDurationMs: 0,
+    nextEligibleTradeAt: 0,
+    pausedUntilMs: 0,
+    hourWindowStartMs: hourStart,
+    maxTradesThisHour: generateHourlyTradeLimit(providerId, hourStart, rng),
+    tradesExecutedThisHour: 0,
+    consecutiveWins: 0,
+    consecutiveLosses: 0,
+    totalSignalsGenerated: 0,
+    updatedAt: nowMs
+  };
+}
+function persistBotStates() {
+  if (typeof window === "undefined" || typeof localStorage === "undefined") return;
+  try {
+    const serialized = {};
+    for (const [k, v] of inMemoryBotStates.entries()) {
+      serialized[k] = v;
+    }
+    localStorage.setItem(BOT_STATE_STORAGE_KEY, JSON.stringify(serialized));
+  } catch {
+  }
+}
+function saveMasterTraderBotState(state) {
+  inMemoryBotStates.set(state.providerId, { ...state });
+  persistBotStates();
+}
+function syncMasterBotHourWindow(state, nowMs = Date.now(), rng) {
+  const currentHourStart = getHourWindowStartMs(nowMs);
+  let updated = { ...state };
+  if (updated.hourWindowStartMs !== currentHourStart) {
+    updated.hourWindowStartMs = currentHourStart;
+    updated.tradesExecutedThisHour = 0;
+    updated.maxTradesThisHour = generateHourlyTradeLimit(updated.providerId, currentHourStart, rng);
+    if (updated.status === "paused_hourly_limit" && nowMs >= updated.pausedUntilMs) {
+      updated.status = "active";
+      updated.pauseReason = "NONE";
+      updated.pausedUntilMs = 0;
+    }
+  }
+  if (updated.pausedUntilMs > 0 && nowMs >= updated.pausedUntilMs) {
+    updated.pausedUntilMs = 0;
+    updated.status = "active";
+    updated.pauseReason = "NONE";
+  }
+  if (updated.status === "cooldown" && updated.nextEligibleTradeAt > 0 && nowMs >= updated.nextEligibleTradeAt) {
+    updated.status = "active";
+    updated.pauseReason = "NONE";
+  }
+  return updated;
+}
+function evaluateMasterSignalEligibility(params) {
+  const nowMs = params.nowMs ?? Date.now();
+  const syncedState = syncMasterBotHourWindow(params.state, nowMs, params.rng);
+  const windowCheck = evaluateActiveTradingWindow(nowMs, params.localHourOverride);
+  if (!params.bypassOvernightCheck && !windowCheck.allowed) {
+    const overnightState = {
+      ...syncedState,
+      status: "paused_overnight",
+      pauseReason: "OVERNIGHT_OFF_HOURS",
+      updatedAt: nowMs
+    };
+    return {
+      canExecute: false,
+      status: "paused_overnight",
+      reason: "OVERNIGHT_OFF_HOURS",
+      remainingWaitMs: Math.max(0, windowCheck.nextSessionOpensAtMs - nowMs),
+      state: overnightState,
+      windowCheck
+    };
+  }
+  if (syncedState.pausedUntilMs > nowMs) {
+    const isLossPause = syncedState.status === "paused_consecutive_losses";
+    const isWinPause = syncedState.status === "paused_session_take_profit";
+    const isHourlyPause = syncedState.status === "paused_hourly_limit";
+    const status = isLossPause ? "paused_consecutive_losses" : isWinPause ? "paused_session_take_profit" : isHourlyPause ? "paused_hourly_limit" : "paused_hourly_limit";
+    const reason = isLossPause ? "CONSECUTIVE_LOSS_COOL_OFF" : isWinPause ? "CONSECUTIVE_WIN_TAKE_PROFIT" : "HOURLY_TRADE_LIMIT";
+    return {
+      canExecute: false,
+      status,
+      reason,
+      remainingWaitMs: syncedState.pausedUntilMs - nowMs,
+      state: syncedState,
+      windowCheck
+    };
+  }
+  if (syncedState.tradesExecutedThisHour >= syncedState.maxTradesThisHour) {
+    const nextHourMs = getNextHourStartMs(nowMs);
+    const pausedHourlyState = {
+      ...syncedState,
+      status: "paused_hourly_limit",
+      pauseReason: "HOURLY_TRADE_LIMIT",
+      pausedUntilMs: nextHourMs,
+      updatedAt: nowMs
+    };
+    return {
+      canExecute: false,
+      status: "paused_hourly_limit",
+      reason: "HOURLY_TRADE_LIMIT",
+      remainingWaitMs: Math.max(0, nextHourMs - nowMs),
+      state: pausedHourlyState,
+      windowCheck
+    };
+  }
+  if (params.hasOpenBatchTrade) {
+    return {
+      canExecute: false,
+      status: syncedState.status,
+      reason: "OPEN_BATCH_IN_PROGRESS",
+      remainingWaitMs: 15e3,
+      state: syncedState,
+      windowCheck
+    };
+  }
+  if (syncedState.nextEligibleTradeAt > nowMs) {
+    const cooldownState = {
+      ...syncedState,
+      status: "cooldown",
+      pauseReason: "COOLDOWN_DELAY",
+      updatedAt: nowMs
+    };
+    return {
+      canExecute: false,
+      status: "cooldown",
+      reason: "COOLDOWN_DELAY",
+      remainingWaitMs: syncedState.nextEligibleTradeAt - nowMs,
+      state: cooldownState,
+      windowCheck
+    };
+  }
+  const readyState = {
+    ...syncedState,
+    status: "active",
+    pauseReason: "NONE",
+    updatedAt: nowMs
+  };
+  return {
+    canExecute: true,
+    status: "active",
+    reason: "NONE",
+    remainingWaitMs: 0,
+    state: readyState,
+    windowCheck
+  };
+}
+function recordMasterSignalExecution(params) {
+  const nowMs = params.nowMs ?? Date.now();
+  const synced = syncMasterBotHourWindow(params.state, nowMs, params.rng);
+  const cooldownMs = typeof params.cooldownOverrideMs === "number" && params.cooldownOverrideMs >= BOT_MIN_COOLDOWN_MS ? Math.min(BOT_MAX_COOLDOWN_MS, Math.max(BOT_MIN_COOLDOWN_MS, params.cooldownOverrideMs)) : generateDynamicTradeCooldownMs(params.rng);
+  const nextTradesThisHour = synced.tradesExecutedThisHour + 1;
+  const reachedHourlyCap = nextTradesThisHour >= synced.maxTradesThisHour;
+  const nextHourMs = getNextHourStartMs(nowMs);
+  const updated = {
+    ...synced,
+    lastTradeExecutedAt: nowMs,
+    lastCooldownDurationMs: cooldownMs,
+    nextEligibleTradeAt: nowMs + cooldownMs,
+    tradesExecutedThisHour: nextTradesThisHour,
+    totalSignalsGenerated: synced.totalSignalsGenerated + 1,
+    lastSignalId: params.signalId || `sig-${synced.providerId}-${nowMs}`,
+    status: reachedHourlyCap ? "paused_hourly_limit" : "cooldown",
+    pauseReason: reachedHourlyCap ? "HOURLY_TRADE_LIMIT" : "COOLDOWN_DELAY",
+    pausedUntilMs: reachedHourlyCap ? Math.max(synced.pausedUntilMs, nextHourMs) : synced.pausedUntilMs,
+    updatedAt: nowMs
+  };
+  saveMasterTraderBotState(updated);
+  return updated;
+}
+function recordMasterSignalOutcome(params) {
+  const nowMs = params.nowMs ?? Date.now();
+  const synced = syncMasterBotHourWindow(params.state, nowMs, params.rng);
+  if (params.outcome === "TIE") {
+    saveMasterTraderBotState(synced);
+    return {
+      updatedState: synced,
+      triggeredPause: false,
+      pauseReason: synced.pauseReason,
+      pauseDurationMs: 0
+    };
+  }
+  let consecutiveWins = params.outcome === "WIN" ? synced.consecutiveWins + 1 : 0;
+  let consecutiveLosses = params.outcome === "LOSS" ? synced.consecutiveLosses + 1 : 0;
+  let status = synced.status;
+  let pauseReason = synced.pauseReason;
+  let pausedUntilMs = synced.pausedUntilMs;
+  let triggeredPause = false;
+  let pauseDurationMs = 0;
+  if (consecutiveLosses >= BOT_CONSECUTIVE_LOSS_LIMIT) {
+    pauseDurationMs = generateConsecutiveLossCoolOffMs(params.rng);
+    pausedUntilMs = nowMs + pauseDurationMs;
+    status = "paused_consecutive_losses";
+    pauseReason = "CONSECUTIVE_LOSS_COOL_OFF";
+    consecutiveLosses = 0;
+    consecutiveWins = 0;
+    triggeredPause = true;
+  } else if (consecutiveWins >= BOT_CONSECUTIVE_WIN_LIMIT) {
+    pauseDurationMs = generateConsecutiveWinTakeProfitPauseMs(params.rng);
+    pausedUntilMs = nowMs + pauseDurationMs;
+    status = "paused_session_take_profit";
+    pauseReason = "CONSECUTIVE_WIN_TAKE_PROFIT";
+    consecutiveWins = 0;
+    consecutiveLosses = 0;
+    triggeredPause = true;
+  }
+  const updatedState = {
+    ...synced,
+    consecutiveWins,
+    consecutiveLosses,
+    status,
+    pauseReason,
+    pausedUntilMs,
+    updatedAt: nowMs
+  };
+  saveMasterTraderBotState(updatedState);
+  return {
+    updatedState,
+    triggeredPause,
+    pauseReason,
+    pauseDurationMs
+  };
+}
+function groupActiveSubscriptionsByProvider(subscriptions) {
+  const byProvider = /* @__PURE__ */ new Map();
+  for (const sub of subscriptions) {
+    if (!sub || !sub.provider_id) continue;
+    if (sub.status && sub.status !== "active") continue;
+    const providerKey = String(sub.provider_id).trim();
+    const list = byProvider.get(providerKey) || [];
+    list.push(sub);
+    byProvider.set(providerKey, list);
+  }
+  return byProvider;
+}
+
+// src/server/copyTradingEngine.ts
+var __defProp3 = Object.defineProperty;
+var __name2 = (target, value) => __defProp3(target, "name", { value, configurable: true });
+var CopyTradingEngine = class _CopyTradingEngine {
+  constructor() {
+    this.updateInterval = null;
+    this.customProviders = /* @__PURE__ */ new Map();
+  }
+  static {
+    __name2(this, "CopyTradingEngine");
+  }
+  static getInstance() {
+    if (!_CopyTradingEngine.instance) {
+      _CopyTradingEngine.instance = new _CopyTradingEngine();
+    }
+    return _CopyTradingEngine.instance;
+  }
+  async start() {
+    this.seedInitialTraders();
+    this.refreshLeaderboardData();
+    this.updateInterval = setInterval(() => this.refreshLeaderboardData(), 5e3);
+  }
+  stop() {
+    if (this.updateInterval) clearInterval(this.updateInterval);
+  }
+  seedInitialTraders() {
+    try {
+      const count = Number(db.prepare("SELECT COUNT(*) as c FROM copy_trading_profiles").get().c);
+      if (count >= 200) return;
+      const now = Date.now();
+      const pool = generate200TraderPool(now);
+      const insert = db.prepare(`
+        INSERT OR REPLACE INTO copy_trading_profiles (
+          id, user_id, name, country, flag, avatar, category, strategy_name, vip_level,
+          starting_capital, current_balance, lifetime_earnings, daily_profit_dollars,
+          weekly_profit_pct, monthly_profit_pct, win_rate, total_trades, trading_turnover,
+          total_copiers, max_copiers, win_rate_3m, profit_factor, max_drawdown, sharpe_ratio, avg_holding_time, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      if (typeof db.transaction === "function") {
+        const tx = db.transaction((items) => {
+          for (const t of items) {
+            insert.run(t.id, t.user_id || `usr_${t.numeric_id}`, t.provider_name, t.country, t.flag, t.avatar_url, t.account_category, t.strategy_title, t.vip_level, t.starting_balance, t.current_balance, t.all_time_withdrawals, t.daily_profit, t.weekly_profit_pct, t.monthly_profit_pct, t.win_rate_3m, t.total_trades, t.starting_balance * 18, t.current_copiers, MAX_COPIERS_PER_TRADER, t.win_rate_3m, t.profit_factor, t.max_drawdown, t.sharpe_ratio, t.avg_holding_time, now);
+          }
+        });
+        tx(pool);
+      } else {
+        db.exec("BEGIN TRANSACTION;");
+        try {
+          for (const t of pool) {
+            insert.run(t.id, t.user_id || `usr_${t.numeric_id}`, t.provider_name, t.country, t.flag, t.avatar_url, t.account_category, t.strategy_title, t.vip_level, t.starting_balance, t.current_balance, t.all_time_withdrawals, t.daily_profit, t.weekly_profit_pct, t.monthly_profit_pct, t.win_rate_3m, t.total_trades, t.starting_balance * 18, t.current_copiers, MAX_COPIERS_PER_TRADER, t.win_rate_3m, t.profit_factor, t.max_drawdown, t.sharpe_ratio, t.avg_holding_time, now);
+          }
+          db.exec("COMMIT;");
+        } catch (e) {
+          db.exec("ROLLBACK;");
+          throw e;
+        }
+      }
+    } catch (err) {
+      console.warn("CopyTradingEngine seedInitialTraders warning:", err);
+    }
+  }
+  static {
+    this.HOUSE_PAYOUT_MULTIPLIER = 0.78;
+  }
+  static {
+    this.HOUSE_SPREAD_RETAINED_MULTIPLIER = 0.22;
+  }
+  static {
+    this.FOLLOWER_WIN_PROBABILITY = 0.46;
+  }
+  loadBackendMasterBotState(providerId, now) {
+    try {
+      const row = db.prepare(`SELECT * FROM master_trader_bot_state WHERE provider_id = ?`).get(providerId);
+      if (row) {
+        const mapped = { providerId: String(row.provider_id), status: row.status || "active", pauseReason: row.pause_reason || "NONE", lastTradeExecutedAt: Number(row.last_trade_executed_at || 0), lastCooldownDurationMs: Number(row.last_cooldown_duration_ms || 0), nextEligibleTradeAt: Number(row.next_eligible_trade_at || 0), pausedUntilMs: Number(row.paused_until_ms || 0), hourWindowStartMs: Number(row.hour_window_start_ms || 0), maxTradesThisHour: Number(row.max_trades_this_hour || 4), tradesExecutedThisHour: Number(row.trades_executed_this_hour || 0), consecutiveWins: Number(row.consecutive_wins || 0), consecutiveLosses: Number(row.consecutive_losses || 0), totalSignalsGenerated: Number(row.total_signals_generated || 0), lastSignalId: row.last_signal_id ? String(row.last_signal_id) : void 0, updatedAt: Number(row.updated_at || now) };
+        return syncMasterBotHourWindow(mapped, now);
+      }
+    } catch {
+    }
+    const fresh = createInitialMasterBotState(providerId, now);
+    this.persistBackendMasterBotState(fresh);
+    return fresh;
+  }
+  persistBackendMasterBotState(state) {
+    try {
+      db.prepare(`
+        INSERT OR REPLACE INTO master_trader_bot_state (
+          provider_id, status, pause_reason, last_trade_executed_at, last_cooldown_duration_ms,
+          next_eligible_trade_at, paused_until_ms, hour_window_start_ms, max_trades_this_hour,
+          trades_executed_this_hour, consecutive_wins, consecutive_losses, total_signals_generated,
+          last_signal_id, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(state.providerId, state.status, state.pauseReason, state.lastTradeExecutedAt, state.lastCooldownDurationMs, state.nextEligibleTradeAt, state.pausedUntilMs, state.hourWindowStartMs, state.maxTradesThisHour, state.tradesExecutedThisHour, state.consecutiveWins, state.consecutiveLosses, state.totalSignalsGenerated, state.lastSignalId || null, state.updatedAt);
+    } catch {
+    }
+  }
+  recordBackendPlatformRevenue(params) {
+    try {
+      const amt = Math.max(0, Number(params.investmentAmount || 0));
+      const winPayout = Number((amt * _CopyTradingEngine.HOUSE_PAYOUT_MULTIPLIER).toFixed(2));
+      const spreadRetained = params.outcome === "WIN" ? Number((amt * _CopyTradingEngine.HOUSE_SPREAD_RETAINED_MULTIPLIER).toFixed(2)) : 0;
+      const platformCredit = params.outcome === "LOSS" ? amt : -winPayout;
+      const followerDelta = params.outcome === "LOSS" ? -amt : winPayout;
+      const isCutoff = params.settlementReason === "STOP_LOSS_CUTOFF" || params.settlementReason === "MAX_DRAWDOWN_CUTOFF";
+      db.prepare(`
+        UPDATE platform_revenue_pool
+        SET
+          pool_balance = ROUND(COALESCE(pool_balance, 2500000.0) + ?, 2),
+          total_lost_stakes_captured = ROUND(COALESCE(total_lost_stakes_captured, 0.0) + ?, 2),
+          total_win_payouts_disbursed = ROUND(COALESCE(total_win_payouts_disbursed, 0.0) + ?, 2),
+          total_spread_retained = ROUND(COALESCE(total_spread_retained, 0.0) + ?, 2),
+          total_cutoff_liquidations = ROUND(COALESCE(total_cutoff_liquidations, 0.0) + ?, 2),
+          trades_settled_count = COALESCE(trades_settled_count, 0) + 1,
+          updated_at = ?
+        WHERE id = 'HOUSE_POOL_MAIN'
+      `).run(platformCredit, params.outcome === "LOSS" ? amt : 0, params.outcome === "WIN" ? winPayout : 0, spreadRetained, params.outcome === "LOSS" && isCutoff ? amt : 0, params.now);
+      db.prepare(`
+        INSERT OR REPLACE INTO platform_revenue_ledger (
+          id, trade_id, subscription_id, copier_user_id, copier_account_id,
+          investment_amount, platform_credit, house_spread_retained, settlement_reason, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(`PRL-${params.tradeId}`, params.tradeId, params.subscriptionId, params.copierUserId, params.copierAccountId, amt, platformCredit, spreadRetained, params.settlementReason, params.now);
+      if (params.copierAccountId) {
+        db.prepare(`
+          UPDATE trading_accounts
+          SET
+            current_balance = MAX(0, ROUND(COALESCE(current_balance, 0) + ?, 2)),
+            equity = MAX(0, ROUND(COALESCE(equity, 0) + ?, 2))
+          WHERE id = ?
+        `).run(followerDelta, followerDelta, params.copierAccountId);
+      }
+    } catch {
+    }
+  }
+  refreshLeaderboardData() {
+    try {
+      const now = Date.now();
+      const pool = this.getFullPool(now);
+      this.settleAndExecuteBackendMirroredTrades(now, pool);
+      this.checkCopyTradeLimits();
+    } catch {
+    }
+  }
+  checkCopyTradeLimits() {
+    try {
+      const now = Date.now();
+      const activeSubs = db.prepare(`SELECT * FROM copy_trading_subscriptions WHERE status = 'active'`).all();
+      for (const sub of activeSubs) {
+        const subId = String(sub.id);
+        const stopLoss = Number(sub.stop_loss ?? sub.max_loss_limit ?? 0);
+        const takeProfit = Number(sub.take_profit ?? sub.take_profit_limit ?? 0);
+        const maxDrawdownPct = Number(sub.max_drawdown ?? 5);
+        const currentRealizedPnl = Number(sub.current_pnl ?? 0);
+        const openTrades = db.prepare(`SELECT * FROM copy_executed_trades WHERE subscription_id = ? AND status = 'OPEN'`).all(subId);
+        const openExposure = openTrades.reduce((sum, tr) => sum + Math.max(0, Number(tr.amount || sub.trade_amount || 100)), 0);
+        const worstCasePnl = Number((currentRealizedPnl - openExposure).toFixed(2));
+        let startingBal = 5e4;
+        if (sub.copier_account_id) {
+          const accRow = db.prepare(`SELECT initial_balance, current_balance FROM trading_accounts WHERE id = ?`).get(String(sub.copier_account_id));
+          if (accRow && Number(accRow.initial_balance || accRow.current_balance || 0) > 0) {
+            startingBal = Number(accRow.initial_balance || accRow.current_balance || 5e4);
+          }
+        }
+        const drawdownPct = worstCasePnl < 0 ? Number((Math.abs(worstCasePnl) / startingBal * 100).toFixed(2)) : 0;
+        const hitStopLoss = stopLoss > 0 && worstCasePnl <= -stopLoss;
+        const hitMaxDrawdown = maxDrawdownPct > 0 && drawdownPct >= maxDrawdownPct;
+        const hitTakeProfit = takeProfit > 0 && currentRealizedPnl >= takeProfit;
+        if (hitStopLoss || hitMaxDrawdown) {
+          const cutoffReason = hitStopLoss ? "STOP_LOSS_CUTOFF" : "MAX_DRAWDOWN_CUTOFF";
+          for (const openTr of openTrades) {
+            const amt = Math.max(0, Number(openTr.amount || sub.trade_amount || 100));
+            const entry = Number(openTr.entry_price || 1.085);
+            const isCall = String(openTr.trade_type || "CALL").toUpperCase() !== "PUT";
+            const adverseExitPrice = Number((entry * (isCall ? 0.9991 : 1.0009)).toFixed(5));
+            const lossPnl = -amt;
+            db.prepare(`UPDATE copy_executed_trades SET exit_price = ?, status = 'LOSS', pnl = ? WHERE id = ?`).run(adverseExitPrice, lossPnl, openTr.id);
+            db.prepare(`UPDATE copy_trading_subscriptions SET current_pnl = ROUND(COALESCE(current_pnl, 0) + ?, 2) WHERE id = ?`).run(lossPnl, subId);
+            this.recordBackendPlatformRevenue({ tradeId: String(openTr.id), subscriptionId: subId, copierUserId: String(openTr.copier_user_id || sub.copier_user_id || sub.user_id || "usr_bft_001"), copierAccountId: String(openTr.copier_account_id || sub.copier_account_id || "BFT-LIVE"), investmentAmount: amt, outcome: "LOSS", settlementReason: cutoffReason, now });
+          }
+          db.prepare(`UPDATE copy_trading_subscriptions SET status = 'cancelled' WHERE id = ?`).run(subId);
+        } else if (hitTakeProfit) {
+          db.prepare(`UPDATE copy_trading_subscriptions SET status = 'cancelled' WHERE id = ?`).run(subId);
+        }
+      }
+    } catch {
+    }
+  }
+  settleAndExecuteBackendMirroredTrades(now, _pool) {
+    try {
+      const openRows = db.prepare(`SELECT * FROM copy_executed_trades WHERE status = 'OPEN'`).all();
+      const maturedByProvider = /* @__PURE__ */ new Map();
+      const stillOpenProviders = /* @__PURE__ */ new Set();
+      for (const row of openRows) {
+        const providerKey = String(row.provider_id || "default_provider");
+        const createdMs = Number(row.created_at || now);
+        if (now - createdMs >= 6e4) {
+          const list = maturedByProvider.get(providerKey) || [];
+          list.push(row);
+          maturedByProvider.set(providerKey, list);
+        } else {
+          stillOpenProviders.add(providerKey);
+        }
+      }
+      for (const [providerId, batchRows] of maturedByProvider.entries()) {
+        if (batchRows.length === 0) continue;
+        const isWin = Math.random() < _CopyTradingEngine.FOLLOWER_WIN_PROBABILITY;
+        const finalStatus = isWin ? "WIN" : "LOSS";
+        for (const row of batchRows) {
+          const entry = Number(row.entry_price || 1.085);
+          const isCall = String(row.trade_type || "CALL").toUpperCase() !== "PUT";
+          const delta = entry * 45e-5 * (isWin ? 1 : -1);
+          const exitPrice = Number((entry + (isCall ? delta : -delta)).toFixed(5));
+          const amt = Number(row.amount || 100);
+          const pnl = isWin ? Number((amt * _CopyTradingEngine.HOUSE_PAYOUT_MULTIPLIER).toFixed(2)) : -amt;
+          db.prepare(`UPDATE copy_executed_trades SET exit_price = ?, status = ?, pnl = ? WHERE id = ?`).run(exitPrice, finalStatus, pnl, row.id);
+          db.prepare(`UPDATE copy_trading_subscriptions SET current_pnl = ROUND(COALESCE(current_pnl, 0) + ?, 2) WHERE id = ?`).run(pnl, row.subscription_id);
+          this.recordBackendPlatformRevenue({ tradeId: String(row.id), subscriptionId: String(row.subscription_id), copierUserId: String(row.copier_user_id || "usr_bft_001"), copierAccountId: String(row.copier_account_id || "BFT-LIVE"), investmentAmount: amt, outcome: finalStatus, settlementReason: isWin ? "EXPIRATION_WIN" : "EXPIRATION_LOSS", now });
+        }
+        const currentBotState = this.loadBackendMasterBotState(providerId, now);
+        const outcomeResult = recordMasterSignalOutcome({ state: currentBotState, outcome: finalStatus, nowMs: now });
+        this.persistBackendMasterBotState(outcomeResult.updatedState);
+      }
+      const windowCheck = evaluateActiveTradingWindow(now);
+      if (!windowCheck.allowed) {
+        return;
+      }
+      const activeSubs = db.prepare(`SELECT * FROM copy_trading_subscriptions WHERE status = 'active'`).all();
+      const subsByProvider = groupActiveSubscriptionsByProvider(activeSubs);
+      if (subsByProvider.size === 0) return;
+      const assets = ["EUR/USD", "GBP/USD", "USD/JPY", "BTC/USDT", "ETH/USDT", "XAU/USD"];
+      const basePrices = { "EUR/USD": 1.08542, "GBP/USD": 1.26815, "USD/JPY": 154.62, "BTC/USDT": 89420.5, "ETH/USDT": 3125.4, "XAU/USD": 2685.3 };
+      const insertStmt = db.prepare(`
+        INSERT INTO copy_executed_trades (
+          id, subscription_id, copier_user_id, copier_account_id, provider_id,
+          asset_symbol, trade_type, amount, entry_price, status, pnl, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', 0, ?)
+      `);
+      for (const [providerId, providerSubs] of subsByProvider.entries()) {
+        if (providerSubs.length === 0) continue;
+        const botState = this.loadBackendMasterBotState(providerId, now);
+        const eligibility = evaluateMasterSignalEligibility({ state: botState, nowMs: now, hasOpenBatchTrade: stillOpenProviders.has(providerId) });
+        this.persistBackendMasterBotState(eligibility.state);
+        if (!eligibility.canExecute) {
+          continue;
+        }
+        const assetSymbol = assets[Math.floor(Math.random() * assets.length)];
+        const tradeType = Math.random() >= 0.45 ? "CALL" : "PUT";
+        const entryPrice = basePrices[assetSymbol] || 1.08542;
+        const signalId = `SIG-${providerId.slice(0, 8)}-${now.toString(36)}`;
+        for (const sub of providerSubs) {
+          const subId = String(sub.id);
+          const tradeAmount = Math.max(1, Number(sub.trade_amount ?? sub.allocated_capital ?? 100));
+          const execId = `CET-${subId.slice(0, 8)}-${now.toString(36)}`;
+          insertStmt.run(execId, subId, String(sub.copier_user_id || sub.user_id || "usr_bft_001"), String(sub.copier_account_id || "BFT-LIVE"), String(providerId), assetSymbol, tradeType, tradeAmount, entryPrice, now);
+        }
+        const postExecState = recordMasterSignalExecution({ state: eligibility.state, signalId, nowMs: now });
+        this.persistBackendMasterBotState(postExecState);
+      }
+    } catch {
+    }
+  }
+  getFullPool(nowMs = Date.now()) {
+    const basePool = generate200TraderPool(nowMs);
+    const customList = Array.from(this.customProviders.values());
+    if (customList.length === 0) return basePool;
+    return [...customList, ...basePool];
+  }
+  getLeaderboard(category = "instant_funded", searchQuery = "", limit = LEADERBOARD_TOP_LIMIT) {
+    const now = Date.now();
+    const pool = this.getFullPool(now);
+    const result = queryCopyTradersPool({ pool, category, searchQuery, limit });
+    const rotation = getRotationWindowInfo(now);
+    return { traders: result.traders, totalPoolCount: result.totalPoolCount, isSearchActive: result.isSearchActive, rotation };
+  }
+  registerCustomProvider(params) {
+    const eligibility = evaluateProviderEligibility({ explicitWinRate90d: params.winRate3m });
+    if (!eligibility.eligible) {
+      return { ok: false, error: eligibility.message };
+    }
+    const numericId = String(100301 + this.customProviders.size);
+    const id = params.category === "instant_funded" ? `trd_if_${numericId}` : `trd_sc_${numericId}`;
+    const startBal = params.startingBalance || (params.category === "instant_funded" ? 5e4 : 5e3);
+    const dailyProfit = Number((startBal * 0.065).toFixed(2));
+    const weeklyProfit = Number((startBal * 0.21).toFixed(2));
+    const monthlyProfit = Number((startBal * 0.58).toFixed(2));
+    const threeMonthProfit = Number((startBal * 1.45).toFixed(2));
+    const newProvider = { id, numeric_id: numericId, user_id: params.userId, provider_name: params.providerName, country_code: params.countryCode || "US", country: params.country || "United States", flag: params.flag || "\u{1F1FA}\u{1F1F8}", avatar_url: params.flag || "\u{1F1FA}\u{1F1F8}", account_category: params.category, account_type_label: params.category === "instant_funded" ? `Instant Funded ($${(startBal / 1e3).toFixed(0)}K)` : "Self-Capital Live", strategy_title: params.strategyTitle || "Verified Master Strategy", tier_name: params.category === "instant_funded" ? `$${(startBal / 1e3).toFixed(0)}K Instant Funded` : "Self-Capital Account", vip_level: "Master Trader", starting_balance: startBal, current_balance: Number((startBal + dailyProfit).toFixed(2)), all_time_withdrawals: Number((threeMonthProfit * 0.75).toFixed(2)), lifetime_earnings: Number((threeMonthProfit * 0.75).toFixed(2)), daily_profit: dailyProfit, daily_profit_pct: 6.5, weekly_profit: weeklyProfit, weekly_profit_pct: 21, monthly_profit: monthlyProfit, monthly_profit_pct: 58, three_month_profit: threeMonthProfit, three_month_profit_pct: 145, win_rate_3m: Number(params.winRate3m.toFixed(1)), profit_factor: 2.4, max_drawdown: 3.1, sharpe_ratio: 2.05, avg_holding_time: "2m 30s", total_trades: 310, current_copiers: 1, max_copiers: MAX_COPIERS_PER_TRADER, commission_pct: MASTER_COMMISSION_PERCENT, follower_profit_keep_pct: FOLLOWER_PROFIT_SHARE_PERCENT, is_custom_provider: true };
+    this.customProviders.set(id, newProvider);
+    return { ok: true, provider: newProvider };
+  }
+};
+
+// src/server/aiChatService.ts
+import { GoogleGenAI } from "@google/genai";
+var __defProp4 = Object.defineProperty;
+var __name3 = (target, value) => __defProp4(target, "name", { value, configurable: true });
+var BFT_SUPPORT_SYSTEM_INSTRUCTION = `
+You are the official 24/7 AI Trader Concierge & Institutional Risk Specialist for Binary Funded Trader (BFT Prime Prop Capital).
+Your duty is to assist binary options prop traders with instant, accurate, highly professional, and encouraging support.
+
+INSTITUTIONAL RULES & KNOWLEDGE BASE:
+1. Challenge Models:
+   - 01-Step Challenge: Profit Target: 30%, Daily Drawdown: 10%, Max Overall Drawdown: 15%, Max Risk per Trade: 5%, Minimum 5 Profitable Days (0.5% profit/day).
+   - 02-Step Challenge: Phase 1 Profit Target: 25%, Phase 2 Profit Target: 15%, Daily Drawdown: 8%, Max Overall Drawdown: 20%, Max Risk per Trade: 5%, Minimum 5 Profitable Days.
+   - Instant Funded Account: No profit target required! Daily Drawdown: 6%, Max Overall Drawdown: 12%, Max Risk per Trade: 5%, No minimum days. Immediate profit share eligible after 14-day hold.
+   - Self-Funded (Personal Live) Accounts: Unrestricted trading of your own deposited capital. All challenge rules, daily drawdown, and overall drawdown limits are NONE / Disabled.
+
+2. Trading Regulations:
+   - Minimum Trade Duration: 30 seconds minimum contract expiration (30s, 60s, 3m, 5m). Prevents micro-latency arbitrage.
+   - Red News Policy: 2-minute freeze before and after high-impact economic news releases (CPI, NFP, FOMC).
+   - Position Sizing: No trade may exceed 5x your historical average position size.
+   - Prohibited Strategies: Martingale (exponential doubling upon loss) and simultaneous opposite hedging are strictly prohibited.
+
+3. Payouts & Crypto Rail:
+   - Currency & Rail: Exclusively USDT via TRON network (TRC-20) for lightning-fast sub-3-minute settlement and near-zero fees.
+   - Payout SLA: Guaranteed 3-Minute Instant Payout SLA. First withdrawal requires a 14-day seasoned lock. Minimum withdrawal is $250 with a standard 10% processing fee.
+   - Profit Splits: Standard 80% split (Months 1-3), upgrading to 90% plus capital scaling upon consistent performance.
+
+4. Promo Codes:
+   - "SPOOKY40": Flat 40% OFF for new trader challenges.
+   - "SPOOKY20": Flat 20% OFF for existing funded traders.
+
+5. Tone & Personality:
+   - Professional, concise, authoritative yet welcoming.
+   - Keep answers clear and formatted with bullet points where appropriate.
+   - Never give direct financial advice to buy/sell a specific market, but explain risk mechanics clearly.
+`;
+function generateLocalFallbackReply(userMessage) {
+  const lower = userMessage.toLowerCase();
+  if (lower.includes("1-step") || lower.includes("one step") || lower.includes("01-step") || lower.includes("1 step")) {
+    return `**01-Step Challenge Specifications:**
+\u2022 **Profit Target:** 30%
+\u2022 **Daily Drawdown Limit:** 10%
+\u2022 **Max Overall Drawdown:** 15%
+\u2022 **Max Risk Per Trade:** 5%
+\u2022 **Min Profitable Days:** 5 days (min +0.5% gain/day)
+\u2022 **Profit Split:** 80% to 90% paid via instant TRC-20 USDT.`;
+  }
+  if (lower.includes("2-step") || lower.includes("two step") || lower.includes("02-step") || lower.includes("2 step")) {
+    return `**02-Step Challenge Specifications:**
+\u2022 **Phase 1 Target:** 25%
+\u2022 **Phase 2 Target:** 15%
+\u2022 **Daily Drawdown:** 8%
+\u2022 **Max Overall Drawdown:** 20%
+\u2022 **Max Risk Per Trade:** 5%
+\u2022 **Min Profitable Days:** 5 days
+\u2022 Best value entry for disciplined traders looking for maximum buffer.`;
+  }
+  if (lower.includes("instant") || lower.includes("funded account")) {
+    return `**Instant Funded Account (No Evaluation):**
+\u2022 **Profit Target:** None!
+\u2022 **Daily Drawdown:** 6%
+\u2022 **Max Overall Drawdown:** 12%
+\u2022 **Max Risk Per Trade:** 5%
+\u2022 Skip the evaluation and start trading live institutional capital right away. First payout eligible after 14-day hold.`;
+  }
+  if (lower.includes("drawdown") || lower.includes("breach") || lower.includes("rule")) {
+    return `**Drawdown & Risk Management:**
+\u2022 Calculated in real-time based on high-water equity.
+\u2022 Exceeding daily or max drawdown results in automatic position liquidation and soft/hard breach protection.
+\u2022 Self-funded accounts have zero drawdown restrictions (NONE).`;
+  }
+  if (lower.includes("payout") || lower.includes("withdraw") || lower.includes("usdt") || lower.includes("trc20")) {
+    return `**Instant TRC-20 Payout Details:**
+\u2022 **Speed:** Sub-3-minute automated blockchain dispatch.
+\u2022 **Minimum:** $250.00 USDT (TRC-20).
+\u2022 **Processing Fee:** 10% standard liquidity fee.
+\u2022 **Initial Lock:** 14-day seasoned waiting period on first withdrawal.`;
+  }
+  if (lower.includes("promo") || lower.includes("code") || lower.includes("discount") || lower.includes("spooky")) {
+    return `**Active Official Promos:**
+\u2022 **SPOOKY40**: Flat 40% OFF all challenge packages for new traders.
+\u2022 **SPOOKY20**: Flat 20% OFF for existing accounts.
+Enter these promo codes at checkout for instant price discounts.`;
+  }
+  if (lower.includes("demo") || lower.includes("balance") || lower.includes("reset")) {
+    return `**Custom Demo Balance:**
+You can customize your Demo Account simulator balance to any amount between **$1.00** and **$10,000.00** using the Account Switcher dropdown pencil icon or inside your Trader Hub Profile tab!`;
+  }
+  return `Welcome to BFT Prime Prop Capital support! I can help you with prop trading rules (1-Step, 2-Step, Instant Funded), drawdown limits, our 3-minute TRC-20 payout SLA, active discount codes (SPOOKY40 / SPOOKY20), and account setup. How can I assist your trading today?`;
+}
+__name3(generateLocalFallbackReply, "generateLocalFallbackReply");
+async function generateSupportChatReply(input, optionalHistory = []) {
+  const userMessage = typeof input === "string" ? input : input.message;
+  const chatHistory = typeof input === "string" ? optionalHistory || [] : input.history || [];
+  const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
+  if (!apiKey) {
+    return generateLocalFallbackReply(userMessage);
+  }
+  try {
+    const ai = new GoogleGenAI({ apiKey });
+    const contents = [];
+    for (const msg of chatHistory.slice(-6)) {
+      contents.push({ role: msg.role === "model" ? "model" : "user", parts: [{ text: msg.text }] });
+    }
+    contents.push({ role: "user", parts: [{ text: userMessage }] });
+    const response = await ai.models.generateContent({ model: "gemini-3.8-flash", contents, config: { systemInstruction: BFT_SUPPORT_SYSTEM_INSTRUCTION, temperature: 0.6, maxOutputTokens: 600 } });
+    const reply = response.text?.trim();
+    if (reply && reply.length > 0) {
+      return reply;
+    }
+    return generateLocalFallbackReply(userMessage);
+  } catch (err) {
+    console.warn("[AIChatService] Gemini API call fallback triggered:", err);
+    return generateLocalFallbackReply(userMessage);
+  }
+}
+__name3(generateSupportChatReply, "generateSupportChatReply");
+
+// src/utils/nowpaymentsGateway.ts
+var NOWPAYMENTS_CONFIG = {
+  apiKey: typeof process !== "undefined" && process.env?.NOWPAYMENTS_API_KEY || "ZYWP93K-6EE4JYP-JEE41KB-DJFRCWJ",
+  publicKey: typeof process !== "undefined" && process.env?.NOWPAYMENTS_PUBLIC_KEY || "81e45fae-76b9-43bf-be98-c20d359a124c",
+  ipnSecretKey: typeof process !== "undefined" && process.env?.NOWPAYMENTS_IPN_SECRET_KEY || "MRtdlK6QOFZbS5SglqliuVgYFoduLFNR",
+  apiBaseUrl: "https://api.nowpayments.io/v1",
+  defaultCurrency: "usdttrc20"
+};
+var BASE58_CHARS = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+var HEX_CHARS = "0123456789abcdef";
+var _cachedNodeCrypto = null;
+function getNodeCrypto() {
+  if (_cachedNodeCrypto) return _cachedNodeCrypto;
+  try {
+    if (typeof process !== "undefined") {
+      if (typeof process.getBuiltinModule === "function") {
+        _cachedNodeCrypto = process.getBuiltinModule("node:crypto");
+        if (_cachedNodeCrypto) return _cachedNodeCrypto;
+      }
+      const req = new Function("m", "try { return require(m); } catch { return null; }");
+      _cachedNodeCrypto = req("crypto") || req("node:crypto");
+      if (_cachedNodeCrypto) return _cachedNodeCrypto;
+    }
+  } catch {
+  }
+  return null;
+}
+function sortObjectKeysAlphabetically(obj) {
+  if (typeof obj !== "object" || obj === null) {
+    return obj;
+  }
+  if (Array.isArray(obj)) {
+    return obj.map(sortObjectKeysAlphabetically);
+  }
+  return Object.keys(obj).sort().reduce((result, key) => {
+    result[key] = sortObjectKeysAlphabetically(obj[key]);
+    return result;
+  }, {});
+}
+function verifyNowPaymentsIpnSignature(payload, signature, secretKey = NOWPAYMENTS_CONFIG.ipnSecretKey) {
+  if (!signature || !secretKey || !payload || typeof payload !== "object") {
+    return false;
+  }
+  try {
+    const sorted = sortObjectKeysAlphabetically(payload);
+    const jsonString = JSON.stringify(sorted);
+    const nc = getNodeCrypto();
+    if (nc && nc.createHmac) {
+      const hmac = nc.createHmac("sha512", secretKey.trim());
+      hmac.update(jsonString);
+      const calculatedSignature = hmac.digest("hex");
+      const cleanSignature = signature.trim().toLowerCase();
+      const cleanCalculated = calculatedSignature.toLowerCase();
+      if (nc.timingSafeEqual && cleanSignature.length === cleanCalculated.length) {
+        return nc.timingSafeEqual(
+          Buffer.from(cleanSignature, "utf-8"),
+          Buffer.from(cleanCalculated, "utf-8")
+        );
+      }
+      return cleanSignature === cleanCalculated;
+    }
+  } catch (err) {
+    console.warn("NOWPayments IPN signature verification error:", err);
+  }
+  return false;
+}
+function parseNowPaymentsIpnPayload(payload, signature, secretKey = NOWPAYMENTS_CONFIG.ipnSecretKey) {
+  if (!payload || typeof payload !== "object") {
+    return {
+      valid: false,
+      status: "unknown",
+      orderId: "",
+      paymentId: "",
+      paidAmountUsd: 0,
+      payCurrency: "",
+      payAddress: "",
+      isFinished: false,
+      reason: "Empty or invalid IPN payload."
+    };
+  }
+  if (signature !== void 0 && signature !== null) {
+    const isSigValid = verifyNowPaymentsIpnSignature(payload, signature, secretKey);
+    if (!isSigValid) {
+      return {
+        valid: false,
+        status: "unknown",
+        orderId: String(payload.order_id || ""),
+        paymentId: String(payload.payment_id || ""),
+        paidAmountUsd: Number(payload.price_amount || 0),
+        payCurrency: String(payload.pay_currency || ""),
+        payAddress: String(payload.pay_address || ""),
+        isFinished: false,
+        reason: "Invalid NOWPayments IPN signature (x-nowpayments-sig mismatch)."
+      };
+    }
+  }
+  const rawStatus = String(payload.payment_status || "").trim().toLowerCase();
+  let normalizedStatus = "waiting";
+  if (rawStatus === "finished") {
+    normalizedStatus = "finished";
+  } else if (rawStatus === "confirming") {
+    normalizedStatus = "confirming";
+  } else if (rawStatus === "confirmed") {
+    normalizedStatus = "confirmed";
+  } else if (rawStatus === "sending") {
+    normalizedStatus = "sending";
+  } else if (rawStatus === "partially_paid") {
+    normalizedStatus = "partially_paid";
+  } else if (["failed", "expired", "refunded"].includes(rawStatus)) {
+    normalizedStatus = rawStatus === "expired" ? "expired" : "failed";
+  }
+  return {
+    valid: true,
+    status: normalizedStatus,
+    orderId: String(payload.order_id || ""),
+    paymentId: String(payload.payment_id || ""),
+    paidAmountUsd: Number(payload.actually_paid || payload.price_amount || 0),
+    payCurrency: String(payload.pay_currency || "").toLowerCase(),
+    payAddress: String(payload.pay_address || ""),
+    isFinished: normalizedStatus === "finished",
+    reason: `Payment status is ${rawStatus}`
+  };
+}
+function generateDynamicNowPaymentsAddress(orderId, currencyCode = "usdttrc20", seed = "bft_nowpayments") {
+  const combined = `${orderId}:${currencyCode}:${seed}:nowpayments`;
+  let hashA = 2166136261;
+  let hashB = 16777619;
+  for (let i = 0; i < combined.length; i++) {
+    const ch = combined.charCodeAt(i);
+    hashA ^= ch;
+    hashA = Math.imul(hashA, 16777619) >>> 0;
+    hashB ^= ch + i * 19 & 255;
+    hashB = Math.imul(hashB, 2246822507) >>> 0;
+  }
+  const cur = currencyCode.toLowerCase();
+  if (cur.includes("trc") || cur === "trx") {
+    let out2 = "T";
+    let state2 = hashA ^ 2779096485;
+    for (let i = 0; i < 33; i++) {
+      state2 = Math.imul(state2 ^ i + 1, 1664525) + 1013904223 + (hashB >>> i % 16) >>> 0;
+      const idx = state2 % BASE58_CHARS.length;
+      out2 += BASE58_CHARS[idx];
+    }
+    return out2;
+  }
+  if (cur.includes("btc")) {
+    let out2 = "bc1q";
+    let state2 = hashA ^ 1010580540;
+    for (let i = 0; i < 38; i++) {
+      state2 = Math.imul(state2 ^ i + 3, 1103515245) + 12345 + (hashB >>> i % 16) >>> 0;
+      const idx = state2 % HEX_CHARS.length;
+      out2 += HEX_CHARS[idx];
+    }
+    return out2;
+  }
+  let out = "0x";
+  let state = hashA ^ 1515870810;
+  for (let i = 0; i < 40; i++) {
+    state = Math.imul(state ^ i + 7, 22695477) + 1 + (hashB >>> i % 16) >>> 0;
+    const idx = state % HEX_CHARS.length;
+    out += HEX_CHARS[idx];
+  }
+  return out;
+}
+async function createNowPaymentsPayment(params) {
+  const apiKey = params.apiKey || NOWPAYMENTS_CONFIG.apiKey;
+  const payCurrency = (params.payCurrency || NOWPAYMENTS_CONFIG.defaultCurrency).toLowerCase();
+  const orderId = params.orderId || `NOW-ORD-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+  const orderDescription = params.orderDescription || `BFT Trading Account Deposit - $${params.amountUsd.toFixed(2)}`;
+  const requestBody = {
+    price_amount: Number(params.amountUsd.toFixed(2)),
+    price_currency: "usd",
+    pay_currency: payCurrency,
+    ipn_callback_url: params.ipnCallbackUrl,
+    order_id: orderId,
+    order_description: orderDescription,
+    is_fee_paid_by_user: false
+  };
+  try {
+    const res = await fetch(`${NOWPAYMENTS_CONFIG.apiBaseUrl}/payment`, {
+      method: "POST",
+      headers: {
+        "x-api-key": apiKey,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(requestBody)
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.pay_address && data.payment_id) {
+        return {
+          payment_id: String(data.payment_id),
+          payment_status: data.payment_status || "waiting",
+          pay_address: String(data.pay_address),
+          price_amount: Number(data.price_amount || params.amountUsd),
+          price_currency: String(data.price_currency || "usd"),
+          pay_amount: Number(data.pay_amount || params.amountUsd),
+          amount_received: Number(data.amount_received || 0),
+          pay_currency: String(data.pay_currency || payCurrency),
+          order_id: String(data.order_id || orderId),
+          order_description: String(data.order_description || orderDescription),
+          ipn_callback_url: String(data.ipn_callback_url || params.ipnCallbackUrl || ""),
+          created_at: data.created_at || (/* @__PURE__ */ new Date()).toISOString(),
+          updated_at: data.updated_at || (/* @__PURE__ */ new Date()).toISOString(),
+          purchase_id: data.purchase_id ? String(data.purchase_id) : void 0,
+          network: data.network
+        };
+      }
+    }
+    const errText = await res.text().catch(() => "");
+    let errJson = null;
+    try {
+      errJson = JSON.parse(errText);
+    } catch {
+    }
+    if (errJson?.code === "AMOUNT_MINIMAL_ERROR" || errText.includes("AMOUNT_MINIMAL_ERROR") || errText.includes("less than minimal")) {
+      const minMsg = errJson?.message || "Crypto deposit amount is less than the minimum required by NOWPayments.";
+      throw new Error(
+        `NOWPayments Error: ${minMsg} Please enter a higher deposit amount (e.g. $15.00+ USD) and try again.`
+      );
+    }
+    if (res.status >= 400 && res.status < 500 && errJson?.message) {
+      throw new Error(`NOWPayments Error: ${errJson.message}`);
+    }
+    console.warn(`NOWPayments API live call returned status ${res.status}:`, errText);
+  } catch (err) {
+    if (err?.message && err.message.startsWith("NOWPayments")) {
+      throw err;
+    }
+    console.warn("NOWPayments API fetch network error:", err);
+  }
+  const dynamicAddress = generateDynamicNowPaymentsAddress(
+    orderId,
+    payCurrency,
+    params.customerEmail || "bft"
+  );
+  return {
+    payment_id: `now_pay_${Date.now()}`,
+    payment_status: "waiting",
+    pay_address: dynamicAddress,
+    price_amount: Number(params.amountUsd.toFixed(2)),
+    price_currency: "usd",
+    pay_amount: Number(params.amountUsd.toFixed(2)),
+    amount_received: 0,
+    pay_currency: payCurrency,
+    order_id: orderId,
+    order_description: orderDescription,
+    ipn_callback_url: params.ipnCallbackUrl,
+    created_at: (/* @__PURE__ */ new Date()).toISOString(),
+    updated_at: (/* @__PURE__ */ new Date()).toISOString()
+  };
+}
+async function getNowPaymentsPaymentStatus(paymentId, apiKey = NOWPAYMENTS_CONFIG.apiKey) {
+  const cleanId = String(paymentId).trim();
+  if (!cleanId) {
+    return {
+      ok: false,
+      paymentId: "",
+      paymentStatus: "unknown",
+      isFinished: false
+    };
+  }
+  try {
+    const res = await fetch(`${NOWPAYMENTS_CONFIG.apiBaseUrl}/payment/${cleanId}`, {
+      method: "GET",
+      headers: {
+        "x-api-key": apiKey
+      }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const status = String(data.payment_status || "waiting").toLowerCase();
+      return {
+        ok: true,
+        paymentId: cleanId,
+        paymentStatus: status,
+        actuallyPaid: Number(data.actually_paid || data.pay_amount || 0),
+        payAddress: data.pay_address,
+        payAmount: Number(data.pay_amount || 0),
+        payCurrency: data.pay_currency,
+        orderId: data.order_id,
+        isFinished: status === "finished"
+      };
+    }
+  } catch (err) {
+    console.warn(`Error querying NOWPayments status for ${paymentId}:`, err);
+  }
+  return {
+    ok: false,
+    paymentId: cleanId,
+    paymentStatus: "waiting",
+    isFinished: false
+  };
+}
+
 // src/utils/kycVerification.ts
 var KYC_VERIFICATION_DURATION_SECONDS = 120;
 var KYC_VERIFICATION_DURATION_MS = KYC_VERIFICATION_DURATION_SECONDS * 1e3;
@@ -57890,13 +58051,23 @@ data: ${JSON.stringify({ serverTime: Date.now(), symbol: snap.symbol, price: sna
                 package_name: dep.package_name,
                 amount: Number(dep.amount || 0)
               });
-              createAccount({
+              const createdAcc = createAccount({
                 userId: dep.user_id,
                 tier: parsedPkg.tier,
                 tierName: parsedPkg.tierName,
                 size: parsedPkg.size,
                 dailyWithdrawalsUnlocked: false
               });
+              if (createdAcc && supabaseUrl && supabaseAnonKey) {
+                const targetUuid = isValidUuid2(dep.user_id) ? dep.user_id : toValidUuid(dep.user_id);
+                const walletRow = buildSupabaseWalletPayload(buildInitialFundedWalletFromAccount(createdAcc, targetUuid));
+                fetch(`${supabaseUrl}/rest/v1/purchased_funded_wallets`, {
+                  method: "POST",
+                  headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+                  body: JSON.stringify(walletRow)
+                }).catch(() => {
+                });
+              }
               creditPurchaseCommissions(dep.user_id, dep.package_name || "Challenge Package", Number(dep.amount || 0));
             } else {
               ensurePersonalLiveAccountForUser(dep.user_id);
@@ -57945,13 +58116,23 @@ data: ${JSON.stringify({ serverTime: Date.now(), symbol: snap.symbol, price: sna
               package_name: depRow?.package_name,
               amount: paidAmountUsd
             });
-            createAccount({
+            const ipnAcc = createAccount({
               userId,
               tier: parsedPkg.tier,
               tierName: parsedPkg.tierName,
               size: parsedPkg.size,
               dailyWithdrawalsUnlocked: false
             });
+            if (ipnAcc && supabaseUrl && supabaseAnonKey) {
+              const targetUuid = isValidUuid2(userId) ? userId : toValidUuid(userId);
+              const walletRow = buildSupabaseWalletPayload(buildInitialFundedWalletFromAccount(ipnAcc, targetUuid));
+              fetch(`${supabaseUrl}/rest/v1/purchased_funded_wallets`, {
+                method: "POST",
+                headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+                body: JSON.stringify(walletRow)
+              }).catch(() => {
+              });
+            }
             creditPurchaseCommissions(userId, depRow?.package_name || "Challenge Package", paidAmountUsd);
           } else {
             ensurePersonalLiveAccountForUser(userId);
