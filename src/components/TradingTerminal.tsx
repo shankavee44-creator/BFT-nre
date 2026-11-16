@@ -116,6 +116,15 @@ import {
   updateSupabaseTradingAccountState,
 } from '../utils/supabaseRealtimeSync';
 import {
+  clearExpiredSoftBreachInFundedWallet,
+  DEFAULT_SOFT_BREACH_COOLDOWN_MS,
+  findWalletForAccount,
+  readLocalFundedWallets,
+  resolveFundedWalletBreachState,
+  syncFundedWalletBreachState,
+  syncFundedWalletOnTradeClose,
+} from '../utils/fundedWalletAnalytics';
+import {
   extractProfileBonusState,
   calculateTradePlacementWithBonusPriority,
   calculateTradeSettlementWithBonusAndTurnover,
@@ -1117,15 +1126,27 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
   // Dual-Breach System vs No Active Account State
   const hasNoAccount = !effectiveAccount;
-  const isSoftBreached = isAccountSoftBreached(account);
-  const isHardBreached = isAccountHardBreached(account);
+  const activeFundedWallet =
+    effectiveAccount && !isPersonalLiveAccount(effectiveAccount) && !isDemoAccount(effectiveAccount)
+      ? findWalletForAccount(readLocalFundedWallets(), effectiveAccount)
+      : null;
+  const fundedWalletBreachState = activeFundedWallet
+    ? resolveFundedWalletBreachState(activeFundedWallet, account || effectiveAccount, Date.now())
+    : null;
+  const isSoftBreached =
+    isAccountSoftBreached(account) || Boolean(fundedWalletBreachState?.isSoftBreach);
+  const isHardBreached =
+    isAccountHardBreached(account) || Boolean(fundedWalletBreachState?.isHardBreach);
   const isBreached = isSoftBreached || isHardBreached;
   const otherActiveAccounts = accounts.filter((a) => a.id !== account?.id && a.status === 'active');
 
   // Live countdown timer for soft breach daily reset
   const [softResetSecondsRemaining, setSoftResetSecondsRemaining] = useState<number>(() => {
-    if (!account?.softBreachResetTime) return 0;
-    return Math.max(0, Math.floor((account.softBreachResetTime - Date.now()) / 1000));
+    const softUntilMs = fundedWalletBreachState?.softBreachUntilIso
+      ? Date.parse(fundedWalletBreachState.softBreachUntilIso)
+      : account?.softBreachResetTime || 0;
+    if (!softUntilMs || Number.isNaN(softUntilMs)) return 0;
+    return Math.max(0, Math.floor((softUntilMs - Date.now()) / 1000));
   });
 
   const handleResetSoftBreach = () => {
@@ -1145,13 +1166,28 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       status: 'active',
       phase: unbreached.phase,
     }).catch(() => {});
+    const wallet = findWalletForAccount(readLocalFundedWallets(), unbreached);
+    if (wallet) {
+      clearExpiredSoftBreachInFundedWallet(wallet).catch(() => {});
+    } else {
+      syncFundedWalletBreachState({
+        account: unbreached,
+        status: 'ACTIVE',
+        userId: userProfile?.id || unbreached.ownerId,
+      }).catch(() => {});
+    }
     soundEngine.playTradeWin();
   };
 
   useEffect(() => {
     if (!isSoftBreached) return;
     const interval = setInterval(() => {
-      const target = account?.softBreachResetTime || Date.now() + 5 * 3600 * 1000;
+      const wallet = account ? findWalletForAccount(readLocalFundedWallets(), account) : null;
+      const walletUntil = wallet?.soft_breach_until ? Date.parse(wallet.soft_breach_until) : 0;
+      const target =
+        (walletUntil && Number.isFinite(walletUntil) ? walletUntil : 0) ||
+        account?.softBreachResetTime ||
+        Date.now() + 5 * 3600 * 1000;
       const left = Math.max(0, Math.floor((target - Date.now()) / 1000));
       setSoftResetSecondsRemaining(left);
       if (left === 0 && account) {
@@ -1235,6 +1271,19 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         winRate: engineResult.updatedAccount.winRate,
       }).catch(() => {});
 
+      syncFundedWalletBreachState({
+        account: engineResult.updatedAccount,
+        status: 'HARD_BREACH',
+        breachReason:
+          engineResult.reason ||
+          engineResult.updatedAccount.breachReason ||
+          (engineResult.action === 'hard_breach'
+            ? 'Max Drawdown Limit Exceeded.'
+            : 'Daily Drawdown Limit Exceeded.'),
+        userId: userProfile?.id || engineResult.updatedAccount.ownerId,
+        nowMs,
+      }).catch(() => {});
+
       setIsBreachModalOpen(true);
     } else if (engineResult.action === 'target_reached') {
       // Automatically update status to 'passed' (or 'passed_phase_1') and transition phase without page refresh
@@ -1253,6 +1302,13 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         phase: engineResult.updatedAccount.phase,
         tradesCount: engineResult.updatedAccount.tradesCount,
         winRate: engineResult.updatedAccount.winRate,
+      }).catch(() => {});
+
+      syncFundedWalletBreachState({
+        account: engineResult.updatedAccount,
+        status: 'PASSED',
+        userId: userProfile?.id || engineResult.updatedAccount.ownerId,
+        nowMs,
       }).catch(() => {});
 
       onPassChallengePhase?.(engineResult.updatedAccount);
@@ -1924,6 +1980,47 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               tradesCount: updatedAccount.tradesCount,
               winRate: updatedAccount.winRate,
             }).catch(() => {});
+
+            // Update purchased_funded_wallets analytics, profitable day check (>= 0.5%), & auto-breach check
+            syncFundedWalletOnTradeClose({
+              account: updatedAccount,
+              tradePnl: settlement.pnl,
+              userId: userProfile?.id || updatedAccount.ownerId,
+              nowMs: now,
+            })
+              .then((walletSync) => {
+                if (!walletSync.wallet) return;
+                if (walletSync.incrementedProfitableDay) {
+                  const syncedAcc: TradingAccount = {
+                    ...updatedAccount,
+                    tradingDaysCompleted: walletSync.wallet.completed_profitable_days,
+                  };
+                  runningAccount = syncedAcc;
+                  accountRef.current = syncedAcc;
+                  onUpdateAccount(syncedAcc);
+                }
+                if (walletSync.triggeredBreach === 'HARD_BREACH') {
+                  const breachedAcc: TradingAccount = {
+                    ...updatedAccount,
+                    status: 'hard_breached',
+                    breachType: 'hard',
+                    breachReason: walletSync.wallet.breach_reason || 'Drawdown Limit Exceeded.',
+                    breachedAt: now,
+                  };
+                  runningAccount = breachedAcc;
+                  accountRef.current = breachedAcc;
+                  onUpdateAccount(breachedAcc);
+                  updateSupabaseTradingAccountState({
+                    accountId: breachedAcc.id,
+                    supabaseAccountId: breachedAcc.supabaseAccountId,
+                    userId: userProfile?.id || breachedAcc.ownerId,
+                    userEmail: userProfile?.email || breachedAcc.ownerEmail,
+                    status: 'hard_breached',
+                  }).catch(() => {});
+                  setIsBreachModalOpen(true);
+                }
+              })
+              .catch(() => {});
           }
 
           // Check if a One-Step or Two-Step Challenge account just hit its profit target!
@@ -2011,12 +2108,17 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       return;
     }
     const activeAcc = effectiveAccount;
-    if (isAccountHardBreached(activeAcc) || isAccountSoftBreached(activeAcc)) {
+    const localWalletForAcc =
+      !isPersonalLiveAccount(activeAcc) && !isDemoAccount(activeAcc)
+        ? findWalletForAccount(readLocalFundedWallets(), activeAcc)
+        : null;
+    const walletLockState = resolveFundedWalletBreachState(localWalletForAcc, activeAcc, Date.now());
+    if (isAccountHardBreached(activeAcc) || isAccountSoftBreached(activeAcc) || walletLockState.isLaunchBlocked) {
       soundEngine.playTradeLoss();
       setTradeError(
-        isAccountSoftBreached(activeAcc)
-          ? 'Soft Breach Active: Daily drawdown limit reached. Trading is locked for the rest of the day.'
-          : 'Account is permanently locked due to a Hard Breach. Trading is disabled.'
+        walletLockState.isSoftBreach || isAccountSoftBreached(activeAcc)
+          ? `Soft Breach Cooldown Active (Resumes in ${walletLockState.countdownFormatted}): ${walletLockState.breachReason || 'Account temporarily locked.'}`
+          : `Account permanently locked (Hard Breach): ${walletLockState.breachReason || 'Trading is disabled.'}`
       );
       setIsBreachModalOpen(true);
       return;
@@ -2074,29 +2176,62 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
     // Additional Prop Guardrails apply ONLY to Prop Trading Accounts (Challenge & Instant Funded)
     if (!isUnrestrictedPersonalOrDemo) {
+      const triggerMinorSoftBreach = (reasonText: string) => {
+        const untilIso = new Date(Date.now() + DEFAULT_SOFT_BREACH_COOLDOWN_MS).toISOString();
+        const softLockedAcc: TradingAccount = {
+          ...activeAcc,
+          status: 'soft_breached',
+          breachType: 'soft',
+          breachReason: reasonText,
+          softBreachResetTime: Date.parse(untilIso),
+        };
+        onUpdateAccount(softLockedAcc);
+        syncFundedWalletBreachState({
+          account: softLockedAcc,
+          status: 'SOFT_BREACH',
+          breachReason: reasonText,
+          softBreachUntilIso: untilIso,
+          userId: userProfile?.id || activeAcc.ownerId,
+        }).catch(() => {});
+      };
+
       const hedgingCheck = isHedgingViolation(direction, assetToTrade.symbol, activeTrades);
       if (hedgingCheck.detected) {
         soundEngine.playTradeLoss();
-        setTradeError(hedgingCheck.reason || `Hedging Prohibited: You already have an active opposing trade on ${assetToTrade.symbol}.`);
+        const reasonText =
+          hedgingCheck.reason ||
+          `Hedging Prohibited: Simultaneous opposing position on ${assetToTrade.symbol}.`;
+        triggerMinorSoftBreach(reasonText);
+        setTradeError(reasonText);
         return;
       }
 
       const martingaleCheck = isMartingalePattern(stakeToUse, trades);
       if (martingaleCheck.detected) {
         soundEngine.playTradeLoss();
-        setTradeError(martingaleCheck.reason || 'Martingale Strategy Violation: Explosive stake doubling (≥1.8x) following a loss is strictly prohibited.');
+        const reasonText =
+          martingaleCheck.reason ||
+          'Martingale Strategy Violation: Explosive stake doubling (≥1.8x) following a loss is strictly prohibited.';
+        triggerMinorSoftBreach(reasonText);
+        setTradeError(reasonText);
         return;
       }
 
       if (isDuringRestrictedNewsWindow(Date.now()).restricted) {
         soundEngine.playTradeLoss();
-        setTradeError('Economic News Window: Trading within 2 minutes of High-Impact Macro Releases is restricted.');
+        const reasonText =
+          'Economic News Window: Trading within 2 minutes of High-Impact Macro Releases is restricted.';
+        triggerMinorSoftBreach(reasonText);
+        setTradeError(reasonText);
         return;
       }
 
       if (isPositionSizeSpike(stakeToUse, trades.map((t) => t.investment))) {
         soundEngine.playTradeLoss();
-        setTradeError('Volume Spike Violation: Stake exceeds 5x your recent average trading volume.');
+        const reasonText =
+          'Volume Spike Violation: Stake exceeds 5x your recent average trading volume.';
+        triggerMinorSoftBreach(reasonText);
+        setTradeError(reasonText);
         return;
       }
     }

@@ -108,6 +108,10 @@ import {
   updateSupabaseTradingAccountState,
 } from './utils/supabaseRealtimeSync';
 import {
+  insertPurchasedFundedWallet,
+  syncFundedWalletBreachState,
+} from './utils/fundedWalletAnalytics';
+import {
   PACKAGES,
   advanceChallengeAccountPhase,
   createDefaultPersonalLiveAccount,
@@ -1512,6 +1516,12 @@ export default function App() {
           userId: userProfile.id,
           userEmail: userProfile.email,
         }).catch(() => {});
+        syncFundedWalletBreachState({
+          account: locked,
+          status: 'PASSED',
+          userId: userProfile.id,
+        }).catch(() => {});
+        insertPurchasedFundedWallet(deployed, userProfile.id).catch(() => {});
 
         setCertificateModalState({
           isOpen: true,
@@ -1567,6 +1577,12 @@ export default function App() {
       userId: userProfile.id,
       userEmail: userProfile.email,
     }).catch(() => {});
+    syncFundedWalletBreachState({
+      account: lockedPrev,
+      status: 'PASSED',
+      userId: userProfile.id,
+    }).catch(() => {});
+    insertPurchasedFundedWallet(deployedNext, userProfile.id).catch(() => {});
 
     setCertificateModalState({
       isOpen: true,
@@ -1592,6 +1608,9 @@ export default function App() {
       ownerId: userProfile.id,
       ownerEmail: userProfile.email,
     };
+    if (!isPersonalLiveAccount(ownedAccount) && !isDemoAccount(ownedAccount)) {
+      insertPurchasedFundedWallet(ownedAccount, userProfile.id).catch(() => {});
+    }
     const updated = [ownedAccount, ...accounts];
     setAccounts(updated);
     saveAccounts(updated);

@@ -48,6 +48,7 @@ import {
   fetchUserTrades,
   ensureTradeUuid,
 } from './supabaseTradeSync';
+import { insertPurchasedFundedWallet } from './fundedWalletAnalytics';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const RAW_API_BASE = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_BASE_URL) || '';
@@ -796,6 +797,8 @@ export async function apiPurchaseAccount(params: {
       createdDate: today,
       lastActiveDate: today,
     });
+
+    await insertPurchasedFundedWallet(fullTradingAccount, targetUuid).catch(() => {});
 
     return {
       ok: true,

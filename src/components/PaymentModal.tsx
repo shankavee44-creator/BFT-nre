@@ -49,6 +49,7 @@ import { submitCryptoDepositToSupabaseTable } from '../utils/depositBonus';
 import {
   insertSupabaseTradingAccount,
 } from '../utils/supabaseRealtimeSync';
+import { insertPurchasedFundedWallet } from '../utils/fundedWalletAnalytics';
 import {
   NowPaymentsCurrencyCode,
   NowPaymentsPaymentResponse,
@@ -302,6 +303,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   const handleNowPaymentsPackageFinished = (statusRes: any) => {
     const isFinished = statusRes?.status === 'finished' || statusRes?.status === 'confirmed';
     if (isFinished && statusRes?.account) {
+      insertPurchasedFundedWallet(statusRes.account, userProfile?.id).catch(() => {});
       setGeneratedAccount(statusRes.account);
       setSavedDepositRecord(statusRes.deposit || { id: statusRes.paymentId, status: 'completed' });
       setStep('completed');
@@ -421,12 +423,15 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
           res.account
       );
 
-      if (isVerifiedPaid && res.account && !res.account.supabaseAccountId) {
-        insertSupabaseTradingAccount({
-          account: res.account,
-          userId: userProfile?.id,
-          userEmail: userProfile?.email,
-        }).catch(() => {});
+      if (isVerifiedPaid && res.account) {
+        if (!res.account.supabaseAccountId) {
+          insertSupabaseTradingAccount({
+            account: res.account,
+            userId: userProfile?.id,
+            userEmail: userProfile?.email,
+          }).catch(() => {});
+        }
+        insertPurchasedFundedWallet(res.account, userProfile?.id).catch(() => {});
       }
 
       const createdAtIso = new Date().toISOString();

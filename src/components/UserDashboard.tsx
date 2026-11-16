@@ -31,6 +31,7 @@ import {
   Sparkles,
   ChevronDown,
   Info,
+  BarChart3,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import {
@@ -134,6 +135,15 @@ import {
   type P2PTransferRecord,
 } from '../utils/p2pTransfer';
 import { mapPurchaseOrdersToAccounts } from '../utils/accountLoader';
+import { FundedWalletAnalyticsModal } from './FundedWalletAnalyticsModal';
+import {
+  clearExpiredSoftBreachInFundedWallet,
+  ensureFundedWalletsForAccounts,
+  findWalletForAccount,
+  resolveFundedWalletBreachState,
+  subscribePurchasedFundedWalletsRealtime,
+  type PurchasedFundedWallet,
+} from '../utils/fundedWalletAnalytics';
 
 interface UserDashboardProps {
   userProfile: UserProfile;
@@ -301,6 +311,8 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   const cancellingWdRef = useRef<Set<string>>(new Set());
   const [isP2PModalOpen, setIsP2PModalOpen] = useState(false);
   const [copiedNumericId, setCopiedNumericId] = useState(false);
+  const [fundedWallets, setFundedWallets] = useState<PurchasedFundedWallet[]>([]);
+  const [analyticsModalAccount, setAnalyticsModalAccount] = useState<TradingAccount | null>(null);
   const [p2pDashboardToast, setP2pDashboardToast] = useState<{
     type: 'success' | 'error';
     title: string;
@@ -560,6 +572,52 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     const t = setInterval(() => setNowTick(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
+
+  // Subscribe in real time to `purchased_funded_wallets` and ensure initial records for funded accounts
+  useEffect(() => {
+    ensureFundedWalletsForAccounts(accounts, userProfile?.id).then((seeded) => {
+      if (seeded.length > 0) setFundedWallets(seeded);
+    });
+
+    const unsubWallets = subscribePurchasedFundedWalletsRealtime({
+      userId: userProfile?.id,
+      onWalletsChanged: (wallets) => {
+        setFundedWallets(wallets);
+      },
+    });
+    return () => unsubWallets();
+  }, [userProfile?.id, accounts]);
+
+  // Automatically re-enable SOFT_BREACH funded accounts once `soft_breach_until` expires
+  const autoUnlockingRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    for (const acc of accounts) {
+      if (!acc || isPersonalLiveAccount(acc) || isDemoAccount(acc)) continue;
+      const wallet = findWalletForAccount(fundedWallets, acc);
+      const breachState = resolveFundedWalletBreachState(wallet, acc, nowTick);
+      if (breachState.shouldAutoUnlock && wallet && !autoUnlockingRef.current.has(wallet.account_id)) {
+        autoUnlockingRef.current.add(wallet.account_id);
+        clearExpiredSoftBreachInFundedWallet(wallet, nowTick)
+          .then((unlocked) => {
+            setFundedWallets((prev) =>
+              prev.map((w) => (w.account_id === unlocked.account_id ? unlocked : w))
+            );
+            if (onUpdateAccount && isAccountSoftBreached(acc)) {
+              onUpdateAccount({
+                ...acc,
+                status: 'active',
+                breachType: 'none',
+                breachReason: undefined,
+                softBreachResetTime: undefined,
+              });
+            }
+          })
+          .finally(() => {
+            autoUnlockingRef.current.delete(wallet.account_id);
+          });
+      }
+    }
+  }, [accounts, fundedWallets, nowTick, onUpdateAccount]);
 
   const formatCountdownRemaining = (countdownEndsAt?: string | number): string => {
     let endsAtMs = 0;
@@ -2425,14 +2483,29 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                 const profit = Number((acc.currentBalance - acc.initialBalance).toFixed(2));
                 const isPersonal = isPersonalLiveAccount(acc);
                 const isDemo = isDemoAccount(acc);
+                const isFundedCard = !isPersonal && !isDemo;
                 const isLive = isLiveFundedAccount(acc);
                 const challengeTarget = getChallengeProfitTarget(acc);
                 const progressPct = challengeTarget.isChallenge
                   ? Math.min(100, Math.max(0, (Math.max(0, profit) / Math.max(1, challengeTarget.targetAmount)) * 100))
                   : 100;
 
-                const isHardBreached = isAccountHardBreached(acc);
-                const isSoftBreached = isAccountSoftBreached(acc);
+                const matchedWallet = isFundedCard ? findWalletForAccount(fundedWallets, acc) : null;
+                const breachState = isFundedCard
+                  ? resolveFundedWalletBreachState(matchedWallet, acc, nowTick)
+                  : null;
+
+                const isHardBreached = isFundedCard
+                  ? Boolean(breachState?.isHardBreach)
+                  : isAccountHardBreached(acc);
+                const isSoftBreached = isFundedCard
+                  ? Boolean(breachState?.isSoftBreach)
+                  : isAccountSoftBreached(acc);
+                const statusBadgeText = isHardBreached
+                  ? 'HARD BREACH'
+                  : isSoftBreached
+                  ? 'SOFT BREACH'
+                  : (matchedWallet?.account_status === 'PASSED' ? 'PASSED' : acc.status.toUpperCase());
 
                 return (
                   <div
@@ -2440,18 +2513,18 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                     data-testid={`account-card-${acc.id}`}
                     className={`p-5 rounded-2xl bg-[#0a0a0a] border transition-colors ${
                       isHardBreached
-                        ? 'border-rose-500/50'
+                        ? 'border-rose-500/60'
                         : isSoftBreached
-                        ? 'border-amber-500/50'
+                        ? 'border-amber-500/60'
                         : isPersonal
                         ? 'border-[#ff8800] hover:border-[#ffaa00]'
-                        : acc.status === 'passed' || acc.status === 'passed_phase_1'
+                        : acc.status === 'passed' || acc.status === 'passed_phase_1' || matchedWallet?.account_status === 'PASSED'
                         ? 'border-emerald-500/50'
                         : 'border-white/15 hover:border-[#ff8800]'
                     }`}
                   >
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-2">
+                    <div className="flex items-center justify-between mb-3 gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-base font-black text-white font-mono">
                           {isPersonal
                             ? `Personal Live (${acc.id})`
@@ -2480,19 +2553,59 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                         </span>
                       </div>
                       <span
-                        className={`text-xs font-semibold px-2.5 py-0.5 rounded-full font-mono ${
+                        data-testid={
                           isHardBreached
-                            ? 'bg-rose-950/80 text-rose-300 border border-rose-500/50'
+                            ? `hard-breach-badge-${acc.id}`
                             : isSoftBreached
-                            ? 'bg-amber-950/80 text-amber-300 border border-amber-500/50'
-                            : acc.status === 'passed' || acc.status === 'passed_phase_1'
+                            ? `soft-breach-badge-${acc.id}`
+                            : `account-status-badge-${acc.id}`
+                        }
+                        className={`text-xs font-semibold px-2.5 py-0.5 rounded-full font-mono whitespace-nowrap shrink-0 ${
+                          isHardBreached
+                            ? 'bg-rose-950/90 text-rose-300 border border-rose-500/70 font-black'
+                            : isSoftBreached
+                            ? 'bg-amber-950/90 text-amber-300 border border-amber-500/70 font-black'
+                            : acc.status === 'passed' || acc.status === 'passed_phase_1' || matchedWallet?.account_status === 'PASSED'
                             ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-500/50'
                             : 'bg-emerald-950/60 text-emerald-400 border border-emerald-500/30'
                         }`}
                       >
-                        {acc.status.toUpperCase()}
+                        {statusBadgeText}
                       </span>
                     </div>
+
+                    {isFundedCard && (isHardBreached || isSoftBreached) && breachState?.breachReason && (
+                      <div
+                        data-testid={`breach-reason-${acc.id}`}
+                        className={`mb-3 p-3 rounded-xl border text-xs font-mono ${
+                          isHardBreached
+                            ? 'bg-rose-950/40 border-rose-500/45 text-rose-200'
+                            : 'bg-amber-950/40 border-amber-500/45 text-amber-200'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <span className="font-black uppercase tracking-wider flex items-center gap-1.5">
+                            {isHardBreached ? (
+                              <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
+                            ) : (
+                              <Clock className="w-3.5 h-3.5 text-amber-400" />
+                            )}
+                            {isHardBreached ? 'HARD BREACH' : 'SOFT BREACH COOLDOWN'}
+                          </span>
+                          {isSoftBreached && (
+                            <span
+                              data-testid={`soft-breach-countdown-${acc.id}`}
+                              className="font-bold text-amber-300 tabular-nums"
+                            >
+                              Locked - Resumes in {breachState.countdownFormatted}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] opacity-90 leading-relaxed">
+                          {breachState.breachReason}
+                        </p>
+                      </div>
+                    )}
 
                     {acc.certificateId && (
                       <div className="mb-3 p-2.5 rounded-xl bg-emerald-950/40 border border-emerald-500/30 flex items-center justify-between text-xs font-mono">
@@ -2504,7 +2617,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                     )}
 
                     {/* Challenge Profit Target Progress Bar for One-Step & Two-Step Challenge Accounts */}
-                    {!isLive && !isPersonal && !isDemo && acc.status === 'active' && (
+                    {!isLive && !isPersonal && !isDemo && acc.status === 'active' && !isHardBreached && !isSoftBreached && (
                       <div className="mb-3 p-3 rounded-xl bg-[#111115] border border-[#ff8800]/30 font-mono text-xs">
                         <div className="flex items-center justify-between mb-1.5">
                           <span className="text-[10px] uppercase font-bold text-[#ff8800]">
@@ -2539,13 +2652,13 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                     <div className="grid grid-cols-4 gap-2 p-3 rounded-xl bg-[#111115] border border-white/10 mb-4 font-mono text-xs">
                       <div>
                         <span className="text-[10px] text-slate-400 block uppercase">Balance / Equity</span>
-                        <span className="font-bold text-white">${acc.currentBalance.toLocaleString()} / ${acc.equity.toLocaleString()}</span>
+                        <span className="font-bold text-white tabular-nums">${acc.currentBalance.toLocaleString()} / ${acc.equity.toLocaleString()}</span>
                       </div>
                       <div>
                         <span className="text-[10px] text-slate-400 block uppercase">
                           {isPersonal ? 'Deposited' : 'Net Profit'}
                         </span>
-                        <span className={`font-bold ${profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        <span className={`font-bold tabular-nums ${profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                           {isPersonal
                             ? `$${(acc.depositedCapital ?? acc.initialBalance).toLocaleString()}`
                             : `${profit >= 0 ? '+' : ''}$${profit.toFixed(2)}`}
@@ -2553,7 +2666,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                       </div>
                       <div>
                         <span className="text-[10px] text-slate-400 block uppercase">Limits (DD/Max)</span>
-                        <span className="font-bold text-[#ff8800]">
+                        <span className="font-bold text-[#ff8800] tabular-nums">
                           {isPersonal || isDemo
                             ? 'NONE'
                             : `${acc.dailyLossLimitPercent}% / ${acc.maxOverallLossPercent}%`}
@@ -2561,7 +2674,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                       </div>
                       <div>
                         <span className="text-[10px] text-slate-400 block uppercase">Profit Target</span>
-                        <span className="font-bold text-emerald-400">
+                        <span className="font-bold text-emerald-400 tabular-nums">
                           {isPersonal || isDemo || acc.tier === 'instant' || acc.accountType === 'instant' || acc.phase === 'funded'
                             ? 'NONE'
                             : `${acc.profitTargetPercent ?? 0}%`}
@@ -2586,50 +2699,72 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                       </button>
                     </div>
 
-                    <div className="flex flex-wrap gap-2">
-                      {acc.status === 'hard-breached' || acc.status === 'breached' ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      {isFundedCard ? (
                         <>
+                          {isHardBreached ? (
+                            <button
+                              type="button"
+                              disabled
+                              data-testid={`launch-account-terminal-btn-${acc.id}`}
+                              className="flex-1 min-w-[160px] py-2.5 px-3.5 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 font-mono bg-rose-950/60 text-rose-300/70 border border-rose-500/40 cursor-not-allowed opacity-75 whitespace-nowrap"
+                            >
+                              <Lock className="w-3.5 h-3.5 shrink-0" />
+                              <span>Launch Terminal Locked</span>
+                            </button>
+                          ) : isSoftBreached ? (
+                            <button
+                              type="button"
+                              disabled
+                              data-testid={`launch-account-terminal-btn-${acc.id}`}
+                              className="flex-1 min-w-[190px] py-2.5 px-3.5 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 font-mono bg-amber-950/60 text-amber-300 border border-amber-500/45 cursor-not-allowed tabular-nums whitespace-nowrap"
+                            >
+                              <Clock className="w-3.5 h-3.5 shrink-0" />
+                              <span>Locked - Resumes in {breachState?.countdownFormatted || '00:00:00'}</span>
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              data-testid={`launch-account-terminal-btn-${acc.id}`}
+                              onClick={() => {
+                                onSelectAccount(acc.id);
+                                onOpenTerminal(acc.id);
+                              }}
+                              className="flex-1 min-w-[150px] py-2.5 px-3.5 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 cursor-pointer font-mono bg-[#ff8800] hover:bg-[#ff9900] text-slate-950 whitespace-nowrap"
+                            >
+                              <span>Launch Terminal</span>
+                              <ArrowRight className="w-3.5 h-3.5 stroke-[2.5] shrink-0" />
+                            </button>
+                          )}
+
                           <button
                             type="button"
+                            data-testid={`analytics-account-btn-${acc.id}`}
                             onClick={() => {
-                              onSelectAccount(acc.id);
-                              onOpenTerminal(acc.id);
+                              soundEngine.playUiClick();
+                              setAnalyticsModalAccount(acc);
                             }}
-                            className="flex-1 py-2.5 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 cursor-pointer font-mono bg-rose-950/80 text-rose-300 border border-rose-500/40"
+                            className="px-3.5 py-2.5 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 cursor-pointer font-mono bg-[#0B111A] hover:bg-[#082F49]/80 text-[#38BDF8] hover:text-[#00E5FF] border border-[#38BDF8]/40 hover:border-[#00E5FF] shadow-[0_0_14px_rgba(56,189,248,0.12)] transition-all whitespace-nowrap shrink-0"
                           >
-                            <Lock className="w-3.5 h-3.5" />
-                            <span>Inspect Breach</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={onOpenChallengeModal}
-                            className="flex-1 py-2.5 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 cursor-pointer font-mono bg-[#ff8800] text-slate-950"
-                          >
-                            <ShoppingBag className="w-3.5 h-3.5" />
-                            <span>10% Reset Courtesy</span>
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          <button
-                            type="button"
-                            data-testid={`launch-account-terminal-btn-${acc.id}`}
-                            onClick={() => {
-                              onSelectAccount(acc.id);
-                              onOpenTerminal(acc.id);
-                            }}
-                            className="flex-1 py-2.5 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 cursor-pointer font-mono bg-[#ff8800] hover:bg-[#ff9900] text-slate-950"
-                          >
-                            <span>Launch Terminal</span>
-                            <ArrowRight className="w-3.5 h-3.5 stroke-[2.5]" />
+                            <BarChart3 className="w-3.5 h-3.5 text-[#00E5FF] shrink-0" />
+                            <span>Analytics</span>
                           </button>
 
-                          {isLive ? (
+                          {isHardBreached ? (
+                            <button
+                              type="button"
+                              onClick={onOpenChallengeModal}
+                              className="px-3.5 py-2.5 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 cursor-pointer font-mono bg-[#ff8800] text-slate-950 whitespace-nowrap shrink-0"
+                            >
+                              <ShoppingBag className="w-3.5 h-3.5 shrink-0" />
+                              <span>10% Reset Courtesy</span>
+                            </button>
+                          ) : isLive ? (
                             <button
                               type="button"
                               data-testid={`withdraw-account-btn-${acc.id}`}
                               onClick={() => handleAttemptWithdrawal(acc.id)}
-                              className={`px-3.5 py-2.5 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 cursor-pointer font-mono border ${
+                              className={`px-3.5 py-2.5 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 cursor-pointer font-mono border whitespace-nowrap shrink-0 ${
                                 kycWithdrawalCheck.allowed
                                   ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400 hover:bg-emerald-500/30'
                                   : 'bg-[#141418] border-white/15 text-slate-400 hover:text-white'
@@ -2646,7 +2781,51 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                             <div
                               data-testid={`withdraw-locked-challenge-${acc.id}`}
                               title="Challenge accounts cannot withdraw funds until the profit target is reached and the Live Funded Account is provisioned."
-                              className="px-3 py-2.5 rounded-xl bg-[#141418] border border-white/10 text-slate-400 font-mono text-[11px] font-bold flex items-center gap-1.5 select-none"
+                              className="px-3 py-2.5 rounded-xl bg-[#141418] border border-white/10 text-slate-400 font-mono text-[11px] font-bold flex items-center gap-1.5 select-none whitespace-nowrap shrink-0"
+                            >
+                              <Lock className="w-3.5 h-3.5 text-[#ff8800]" />
+                              <span>Challenge Phase (No Withdrawals)</span>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            data-testid={`launch-account-terminal-btn-${acc.id}`}
+                            onClick={() => {
+                              onSelectAccount(acc.id);
+                              onOpenTerminal(acc.id);
+                            }}
+                            className="flex-1 py-2.5 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 cursor-pointer font-mono bg-[#ff8800] hover:bg-[#ff9900] text-slate-950 whitespace-nowrap"
+                          >
+                            <span>Launch Terminal</span>
+                            <ArrowRight className="w-3.5 h-3.5 stroke-[2.5]" />
+                          </button>
+
+                          {isLive ? (
+                            <button
+                              type="button"
+                              data-testid={`withdraw-account-btn-${acc.id}`}
+                              onClick={() => handleAttemptWithdrawal(acc.id)}
+                              className={`px-3.5 py-2.5 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 cursor-pointer font-mono border whitespace-nowrap shrink-0 ${
+                                kycWithdrawalCheck.allowed
+                                  ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400 hover:bg-emerald-500/30'
+                                  : 'bg-[#141418] border-white/15 text-slate-400 hover:text-white'
+                              }`}
+                            >
+                              {kycWithdrawalCheck.allowed ? (
+                                <Zap className="w-3.5 h-3.5" />
+                              ) : (
+                                <Lock className="w-3.5 h-3.5 text-[#ff8800]" />
+                              )}
+                              <span>Withdraw</span>
+                            </button>
+                          ) : (
+                            <div
+                              data-testid={`withdraw-locked-challenge-${acc.id}`}
+                              title="Challenge accounts cannot withdraw funds until the profit target is reached and the Live Funded Account is provisioned."
+                              className="px-3 py-2.5 rounded-xl bg-[#141418] border border-white/10 text-slate-400 font-mono text-[11px] font-bold flex items-center gap-1.5 select-none whitespace-nowrap shrink-0"
                             >
                               <Lock className="w-3.5 h-3.5 text-[#ff8800]" />
                               <span>Challenge Phase (No Withdrawals)</span>
@@ -4615,6 +4794,29 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         onRefreshBalance={handleRefreshBalanceAfterP2P}
         onNotifyToast={(toast) => {
           setP2pDashboardToast(toast);
+        }}
+      />
+
+      {/* Funded Wallet Real-Time Analytics Modal */}
+      <FundedWalletAnalyticsModal
+        isOpen={Boolean(analyticsModalAccount)}
+        account={analyticsModalAccount}
+        initialWallet={
+          analyticsModalAccount
+            ? findWalletForAccount(fundedWallets, analyticsModalAccount)
+            : null
+        }
+        userId={userProfile?.id}
+        onClose={() => setAnalyticsModalAccount(null)}
+        onWalletUpdated={(updatedWallet) => {
+          setFundedWallets((prev) => {
+            const exists = prev.some((w) => w.account_id === updatedWallet.account_id);
+            return exists
+              ? prev.map((w) =>
+                  w.account_id === updatedWallet.account_id ? updatedWallet : w
+                )
+              : [updatedWallet, ...prev];
+          });
         }}
       />
     </div>
