@@ -33,6 +33,7 @@ interface QuotexMobileDockProps {
   onOpenAssetModal: () => void;
   onTogglePendingTrade: () => void;
   onChangeDuration: (duration: number) => void;
+  onOpenTimeSelector?: () => void;
   onChangeInvestment: (investment: number) => void;
   onToggleInvestmentMode: () => void;
   onTriggerTrade: (direction: 'CALL' | 'PUT') => void;
@@ -41,9 +42,10 @@ interface QuotexMobileDockProps {
 }
 
 export function formatSecondsToTimer(sec: number): string {
-  const m = Math.floor(sec / 60);
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
   const s = sec % 60;
-  return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}:00`;
+  return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
 }
 
 export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = React.memo(({
@@ -64,6 +66,7 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = React.memo(({
   onOpenAssetModal,
   onTogglePendingTrade,
   onChangeDuration,
+  onOpenTimeSelector,
   onChangeInvestment,
   onToggleInvestmentMode,
   onTriggerTrade,
@@ -136,7 +139,7 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = React.memo(({
           <div className="flex items-center justify-between text-[8.5px] text-slate-400 leading-tight mb-0.5">
             <span>Duration</span>
             <div className="flex gap-0.5">
-              {[30, 60, 300].map((s) => (
+              {[5, 30, 60, 300].map((s) => (
                 <button
                   key={s}
                   type="button"
@@ -158,23 +161,29 @@ export const QuotexMobileDock: React.FC<QuotexMobileDockProps> = React.memo(({
               type="button"
               onClick={() => {
                 soundEngine.playUiClick();
-                onChangeDuration(Math.max(15, duration - (duration <= 60 ? 15 : 60)));
+                onChangeDuration(Math.max(5, duration - (duration <= 60 ? 5 : 60)));
               }}
               className="w-4 h-4 rounded bg-[#1e222d] text-white font-black flex items-center justify-center text-[11px] cursor-pointer active:bg-slate-700"
             >
               -
             </button>
-            <span
+            <button
+              type="button"
               data-testid="mobile-dock-time-value"
-              className="font-black text-white text-[10.5px] tracking-wider tabular-nums"
+              onClick={() => {
+                soundEngine.playUiClick();
+                onOpenTimeSelector?.();
+              }}
+              className="font-black text-white hover:text-[#3b82f6] text-[10.5px] tracking-wider tabular-nums cursor-pointer px-1 rounded"
+              title="Open Custom Time & Timer Selector"
             >
               {formatSecondsToTimer(duration)}
-            </span>
+            </button>
             <button
               type="button"
               onClick={() => {
                 soundEngine.playUiClick();
-                onChangeDuration(duration + (duration < 60 ? 15 : 60));
+                onChangeDuration(Math.min(14400, duration + (duration < 60 ? 5 : 60)));
               }}
               className="w-4 h-4 rounded bg-[#1e222d] text-white font-black flex items-center justify-center text-[11px] cursor-pointer active:bg-slate-700"
             >

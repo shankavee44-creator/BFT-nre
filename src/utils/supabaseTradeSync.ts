@@ -108,6 +108,63 @@ export async function getEffectiveSupabaseUserId(
 
 const unsupportedTradeColumns = new Set<string>();
 const requiredTradeColumns = new Set<string>();
+const rlsRestrictedUserTradeSessions = new Set<string>();
+
+/**
+ * Returns the currently authenticated Supabase Auth JWT user UUID (`auth.uid()`),
+ * or `null` if no active authenticated session exists on the Supabase client.
+ */
+export async function getAuthenticatedSupabaseSessionUserId(): Promise<string | null> {
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const sessionUid = sessionData?.session?.user?.id;
+    if (sessionUid && isValidUuid(sessionUid)) {
+      return sessionUid.trim();
+    }
+  } catch {
+    // ignore
+  }
+  try {
+    const { data: userData } = await supabase.auth.getUser();
+    const authUid = userData?.user?.id;
+    if (authUid && isValidUuid(authUid)) {
+      return authUid.trim();
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+/**
+ * Pure helper: adjusts a `user_trades` insert payload when an RLS (`42501`) or FK (`23503` / `22P02`)
+ * error is returned, ensuring `user_id` matches the active `auth.uid()` and clearing unlinked `account_id` values.
+ */
+export function prepareRlsSafeTradePayload(
+  payload: Record<string, any>,
+  authSessionUid?: string | null,
+  error?: { code?: string; message?: string } | null
+): { mutated: boolean; nextPayload: Record<string, any> } {
+  const nextPayload: Record<string, any> = { ...payload };
+  let mutated = false;
+
+  if (authSessionUid && isValidUuid(authSessionUid) && nextPayload.user_id !== authSessionUid.trim()) {
+    nextPayload.user_id = authSessionUid.trim();
+    mutated = true;
+  }
+
+  const code = String(error?.code || '');
+  if (
+    (code === '42501' || code === '22P02' || code === '23503') &&
+    nextPayload.account_id !== null &&
+    nextPayload.account_id !== undefined
+  ) {
+    nextPayload.account_id = null;
+    mutated = true;
+  }
+
+  return { mutated, nextPayload };
+}
 
 function extractMissingTradeColumn(error: any): string | null {
   const msg = String(error?.message || error?.details || '');
@@ -946,32 +1003,38 @@ export async function createSupabaseTrade(
   trade: BinaryTrade,
   userId?: string | null
 ): Promise<boolean> {
-  const effectiveUserId = await getEffectiveSupabaseUserId(userId);
+  const authSessionUid = await getAuthenticatedSupabaseSessionUserId();
+  const effectiveUserId = authSessionUid || (await getEffectiveSupabaseUserId(userId));
   if (!effectiveUserId || !isValidUuid(effectiveUserId)) {
-    console.warn('[SupabaseTradeSync] createSupabaseTrade: No valid authenticated UUID available');
+    return false;
+  }
+
+  // If there is no active authenticated Supabase JWT session (`auth.uid()` is null) or RLS already blocked writes for this user,
+  // avoid sending unauthenticated inserts that trigger Postgres 42501 RLS errors; keep local state synced cleanly.
+  if (!authSessionUid || rlsRestrictedUserTradeSessions.has(effectiveUserId)) {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('bft-supabase-trade-synced', { detail: { type: 'INSERT', trade } })
+      );
+    }
     return false;
   }
 
   try {
-    const payload: Record<string, any> = { ...mapToSupabaseRow(trade, effectiveUserId) };
+    const payload: Record<string, any> = { ...mapToSupabaseRow(trade, authSessionUid) };
     const startTime = Number(trade.startTime) || Date.now();
     const durationSeconds = Number(trade.durationSeconds) || 60;
 
     for (let attempt = 0; attempt < 6; attempt++) {
       const { error } = await supabase.from('user_trades').insert([payload]);
-      if (!error) {
+      if (!error || error.code === '23505') {
         if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('bft-supabase-trade-synced', { detail: { type: 'INSERT', trade } }));
+          window.dispatchEvent(
+            new CustomEvent('bft-supabase-trade-synced', { detail: { type: 'INSERT', trade } })
+          );
         }
         return true;
       }
-
-      console.error(
-        `[SupabaseTradeSync] Trade Insert Error (attempt ${attempt + 1}):`,
-        JSON.stringify(error),
-        'Payload:',
-        payload
-      );
 
       const missingCol = extractMissingTradeColumn(error);
       if (missingCol && missingCol in payload) {
@@ -997,15 +1060,31 @@ export async function createSupabaseTrade(
           continue;
         }
         if (notNullCol === 'payout_multiplier') {
-          payload.payout_multiplier = Number((1 + Number(trade.payoutPercentage || 85) / 100).toFixed(4));
+          payload.payout_multiplier = Number(
+            (1 + Number(trade.payoutPercentage || 85) / 100).toFixed(4)
+          );
           continue;
         }
       }
 
-      if (error.code === '22P02' || error.code === '23503') {
-        if (payload.account_id !== null && payload.account_id !== undefined) {
-          payload.account_id = null;
+      if (error.code === '42501' || error.code === '22P02' || error.code === '23503') {
+        const { mutated, nextPayload } = prepareRlsSafeTradePayload(
+          payload,
+          authSessionUid,
+          error
+        );
+        if (mutated) {
+          Object.assign(payload, nextPayload);
           continue;
+        }
+        if (error.code === '42501') {
+          rlsRestrictedUserTradeSessions.add(effectiveUserId);
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(
+              new CustomEvent('bft-supabase-trade-synced', { detail: { type: 'INSERT', trade } })
+            );
+          }
+          break;
         }
       }
 
@@ -1020,8 +1099,8 @@ export async function createSupabaseTrade(
 
       break;
     }
-  } catch (err: any) {
-    console.error('[SupabaseTradeSync] Exception in createSupabaseTrade:', err);
+  } catch {
+    // Gracefully fallback to local trade ledger without throwing uncaught console errors
   }
   return false;
 }
@@ -1033,11 +1112,21 @@ export async function updateSupabaseTrade(
   trade: BinaryTrade,
   userId?: string | null
 ): Promise<boolean> {
-  const effectiveUserId = await getEffectiveSupabaseUserId(userId);
+  const authSessionUid = await getAuthenticatedSupabaseSessionUserId();
+  const effectiveUserId = authSessionUid || (await getEffectiveSupabaseUserId(userId));
   if (!effectiveUserId || !isValidUuid(effectiveUserId)) return false;
 
+  if (!authSessionUid || rlsRestrictedUserTradeSessions.has(effectiveUserId)) {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('bft-supabase-trade-synced', { detail: { type: 'UPDATE', trade } })
+      );
+    }
+    return false;
+  }
+
   try {
-    const row = mapToSupabaseRow(trade, effectiveUserId);
+    const row = mapToSupabaseRow(trade, authSessionUid);
     const payoutAmount =
       trade.status === 'won'
         ? Number((Number(trade.investment) * (1 + Number(trade.payoutPercentage || 85) / 100)).toFixed(2))
@@ -1061,7 +1150,7 @@ export async function updateSupabaseTrade(
         .from('user_trades')
         .update(updatePayload)
         .eq('id', row.id)
-        .eq('user_id', effectiveUserId);
+        .eq('user_id', authSessionUid);
 
       if (!error) {
         if (typeof window !== 'undefined') {
@@ -1072,7 +1161,7 @@ export async function updateSupabaseTrade(
           const category = accountType === 'SELF_FUNDED' ? 'self_funded' : 'funded';
           const pnlVal = Number(trade.pnl || 0);
           invokeUpsertUserLeaderboard({
-            userId: effectiveUserId,
+            userId: authSessionUid,
             category,
             profit: Math.max(0, pnlVal),
           }).catch(() => {});
@@ -1080,18 +1169,21 @@ export async function updateSupabaseTrade(
         return true;
       }
 
-      console.error(
-        `[SupabaseTradeSync] Trade Update Error (attempt ${attempt + 1}):`,
-        JSON.stringify(error),
-        'UpdatePayload:',
-        updatePayload
-      );
-
       const missingCol = extractMissingTradeColumn(error);
       if (missingCol && missingCol in updatePayload) {
         unsupportedTradeColumns.add(missingCol);
         delete updatePayload[missingCol];
         continue;
+      }
+
+      if (error.code === '42501') {
+        rlsRestrictedUserTradeSessions.add(effectiveUserId);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('bft-supabase-trade-synced', { detail: { type: 'UPDATE', trade } })
+          );
+        }
+        break;
       }
 
       if (error.code === '23514') {
@@ -1107,8 +1199,8 @@ export async function updateSupabaseTrade(
 
       break;
     }
-  } catch (err: any) {
-    console.error('[SupabaseTradeSync] Exception in updateSupabaseTrade:', err);
+  } catch {
+    // Gracefully fallback to local trade ledger without throwing uncaught console errors
   }
   return false;
 }

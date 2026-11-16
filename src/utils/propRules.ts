@@ -416,6 +416,9 @@ export const FIRST_WITHDRAWAL_WAITING_DAYS = 14; // Mandatory 14-day waiting per
 export const WITHDRAWAL_GUARANTEE_NOTICE =
   'We process payouts within 3 minutes; if we fail, we pay double!';
 export const MIN_TRADE_DURATION_SECONDS = 30;
+export const MIN_SELF_CAPITAL_DURATION_SECONDS = 5;
+export const MAX_TRADE_DURATION_SECONDS = 14400; // 4 hours (14,400 seconds)
+export const MAX_SINGLE_TRADE_INVESTMENT_USD = 5000; // Strict $5,000 max investment per single trade
 export const INACTIVITY_DAYS_LIMIT = 14;
 export const POSITION_SPIKE_FACTOR = 5;
 export const GUARANTEED_WITHDRAWAL_SECONDS = 180; // 3 minutes
@@ -494,10 +497,14 @@ export function checkFirstWithdrawalWaitingPeriod(
  */
 export function isPersonalLiveAccount(account?: TradingAccount | null): boolean {
   if (!account) return false;
+  const rawType = String((account as any).accountType || (account as any).account_type || '').toLowerCase();
   return (
     account.tier === 'personal' ||
     account.accountCategory === 'personal_live' ||
-    account.phase === 'personal_live'
+    account.phase === 'personal_live' ||
+    rawType === 'self_funded' ||
+    rawType === 'personal' ||
+    rawType === 'self-capital'
   );
 }
 
@@ -1177,11 +1184,99 @@ export function validateWithdrawalRequest(
 }
 
 /**
- * Validates trade duration to prevent tick scalping.
- * Rule: Minimum trade duration: >= 30 seconds.
+ * Clamps any custom trade duration into the valid platform range [5s, 4h (14,400s)].
  */
-export function isValidTradeDuration(durationSeconds: number): boolean {
-  return durationSeconds >= MIN_TRADE_DURATION_SECONDS;
+export function clampCustomTradeDuration(seconds: number): number {
+  if (!Number.isFinite(seconds)) return 60;
+  return Math.max(
+    MIN_SELF_CAPITAL_DURATION_SECONDS,
+    Math.min(MAX_TRADE_DURATION_SECONDS, Math.round(seconds))
+  );
+}
+
+/**
+ * Splits a duration in seconds into { hours, minutes, seconds }.
+ */
+export function durationSecondsToHms(totalSeconds: number): {
+  hours: number;
+  minutes: number;
+  seconds: number;
+} {
+  const clamped = clampCustomTradeDuration(totalSeconds);
+  const hours = Math.floor(clamped / 3600);
+  const minutes = Math.floor((clamped % 3600) / 60);
+  const seconds = clamped % 60;
+  return { hours, minutes, seconds };
+}
+
+/**
+ * Converts custom Hours (0-4), Minutes (0-59), and Seconds (0-59) into a clamped duration in seconds [5s, 14400s].
+ */
+export function hmsToDurationSeconds(hours: number, minutes: number, seconds: number): number {
+  const h = Math.max(0, Math.min(4, Math.floor(Number(hours) || 0)));
+  const m = h >= 4 ? 0 : Math.max(0, Math.min(59, Math.floor(Number(minutes) || 0)));
+  const s = h >= 4 ? 0 : Math.max(0, Math.min(59, Math.floor(Number(seconds) || 0)));
+  return clampCustomTradeDuration(h * 3600 + m * 60 + s);
+}
+
+/**
+ * Determines whether the given account is a Funded / Prop Evaluation account subject to the 30-second minimum duration rule.
+ * Self-Capital (Personal Live) accounts are exempt and can trade starting from 5 seconds.
+ */
+export function isFundedDurationRestrictedAccount(account?: TradingAccount | null): boolean {
+  if (!account) return true;
+  if (isPersonalLiveAccount(account)) return false;
+  return true;
+}
+
+/**
+ * Validates trade duration according to account type:
+ * - Custom range: 5 seconds to 4 hours (14,400 seconds)
+ * - Funded Accounts: strictly blocked under 30 seconds
+ * - Self-Capital Accounts: exempt from 30-second restriction (allowed from 5 seconds)
+ */
+export function validateTradeDurationForAccount(
+  durationSeconds: number,
+  account?: TradingAccount | null
+): {
+  valid: boolean;
+  code?: 'DURATION_BELOW_5S' | 'DURATION_ABOVE_4H' | 'FUNDED_ACCOUNT_UNDER_30S';
+  reason?: string;
+} {
+  const sec = Number(durationSeconds);
+  if (!Number.isFinite(sec) || sec < MIN_SELF_CAPITAL_DURATION_SECONDS) {
+    return {
+      valid: false,
+      code: 'DURATION_BELOW_5S',
+      reason: `Minimum trade duration is ${MIN_SELF_CAPITAL_DURATION_SECONDS} seconds (00:00:05).`,
+    };
+  }
+  if (sec > MAX_TRADE_DURATION_SECONDS) {
+    return {
+      valid: false,
+      code: 'DURATION_ABOVE_4H',
+      reason: 'Maximum trade duration is 4 hours (04:00:00).',
+    };
+  }
+  if (isFundedDurationRestrictedAccount(account) && sec < MIN_TRADE_DURATION_SECONDS) {
+    return {
+      valid: false,
+      code: 'FUNDED_ACCOUNT_UNDER_30S',
+      reason:
+        'Rule Violation (Funded Account): Trade durations under 30 seconds are strictly blocked for Funded Accounts. Self-Capital accounts can place trades starting from 5 seconds.',
+    };
+  }
+  return { valid: true };
+}
+
+/**
+ * Validates trade duration to prevent tick scalping on Funded Accounts while allowing 5s+ on Self-Capital accounts.
+ */
+export function isValidTradeDuration(
+  durationSeconds: number,
+  account?: TradingAccount | null
+): boolean {
+  return validateTradeDurationForAccount(durationSeconds, account).valid;
 }
 
 /**
@@ -1484,6 +1579,7 @@ export function validateZeroToleranceTradeExecution(params: {
     | 'ACCOUNT_HARD_BREACHED'
     | 'ACCOUNT_SOFT_BREACHED'
     | 'INVALID_STAKE'
+    | 'MAX_SINGLE_TRADE_LIMIT_EXCEEDED'
     | 'INSUFFICIENT_BALANCE'
     | 'MAX_RISK_PER_TRADE_EXCEEDED'
     | 'DAILY_DRAWDOWN_BUFFER_EXCEEDED'
@@ -1511,6 +1607,23 @@ export function validateZeroToleranceTradeExecution(params: {
     };
   }
 
+  if (stake > MAX_SINGLE_TRADE_INVESTMENT_USD) {
+    return {
+      allowed: false,
+      code: 'MAX_SINGLE_TRADE_LIMIT_EXCEEDED',
+      reason: `Per-Trade Risk Limit Exceeded: Maximum investment is $${MAX_SINGLE_TRADE_INVESTMENT_USD.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} per single trade across both Self-Capital and Funded accounts.`,
+      remainingDailyBuffer:
+        isPersonalLiveAccount(account) || isDemoAccount(account)
+          ? Infinity
+          : effectiveAvailableBalance,
+      remainingOverallBuffer:
+        isPersonalLiveAccount(account) || isDemoAccount(account)
+          ? Infinity
+          : effectiveAvailableBalance,
+      maxAllowedStake: Math.min(effectiveAvailableBalance, MAX_SINGLE_TRADE_INVESTMENT_USD),
+    };
+  }
+
   if (stake > effectiveAvailableBalance + 1e-6) {
     return {
       allowed: false,
@@ -1518,7 +1631,7 @@ export function validateZeroToleranceTradeExecution(params: {
       reason: `Insufficient balance. Available capital: $${effectiveAvailableBalance.toFixed(2)}`,
       remainingDailyBuffer: effectiveAvailableBalance,
       remainingOverallBuffer: effectiveAvailableBalance,
-      maxAllowedStake: effectiveAvailableBalance,
+      maxAllowedStake: Math.min(effectiveAvailableBalance, MAX_SINGLE_TRADE_INVESTMENT_USD),
     };
   }
 
@@ -1527,7 +1640,7 @@ export function validateZeroToleranceTradeExecution(params: {
       allowed: true,
       remainingDailyBuffer: Infinity,
       remainingOverallBuffer: Infinity,
-      maxAllowedStake: effectiveAvailableBalance,
+      maxAllowedStake: Math.min(effectiveAvailableBalance, MAX_SINGLE_TRADE_INVESTMENT_USD),
     };
   }
 
@@ -1596,7 +1709,12 @@ export function validateZeroToleranceTradeExecution(params: {
     metrics.remainingOverallBuffer
   );
   const maxAllowedStake = Number(
-    Math.min(currentBalance, maxRiskCheck.maxAllowedStake, maxAllowedByDrawdown).toFixed(2)
+    Math.min(
+      currentBalance,
+      maxRiskCheck.maxAllowedStake,
+      maxAllowedByDrawdown,
+      MAX_SINGLE_TRADE_INVESTMENT_USD
+    ).toFixed(2)
   );
 
   if (maxRiskCheck.violated) {

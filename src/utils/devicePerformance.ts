@@ -123,7 +123,7 @@ export function getDevicePerformanceProfile(preference?: PerformancePreference):
     deviceMemoryGb: memoryGb,
     saveDataEnabled: saveData,
     prefersReducedMotion: reducedMotion,
-    recommendedMaxCandles: isLowEnd ? 180 : 500,
+    recommendedMaxCandles: isLowEnd ? 2500 : 10000,
     chartUpdateThrottleMs: isLowEnd ? 48 : 0, // ~20fps throttle on low-end, unbounded RAF on high-end
     backdropBlurEnabled: !isLowEnd,
     highFpsAnimationsEnabled: !isLowEnd,

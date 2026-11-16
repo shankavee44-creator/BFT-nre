@@ -10,6 +10,10 @@ import {
   validateCopyTradingAccountTypeMatch,
   evaluateSingleAccountCopyEligibility,
 } from './copyTradingRules';
+import {
+  prepareRlsSafeTradePayload,
+  createSupabaseTrade,
+} from './supabaseTradeSync';
 
 test('All traders use realistic human names from India, Bangladesh, Pakistan, Dubai, and Ukraine and maintain >= 60% win rate', () => {
   assert.equal(SOCIAL_TRADING_TOP_24H_TRADERS.length, 12);
@@ -145,5 +149,65 @@ test('queryCopyTradersPool finds social traders by numeric ID or human name', ()
 
   const byName = queryCopyTradersPool({ pool, category: 'all', searchQuery: 'Dmytro Bondarenko' });
   assert.ok(byName.traders.some((t) => t.provider_name === 'Dmytro Bondarenko'));
+});
+
+test('prepareRlsSafeTradePayload and createSupabaseTrade handle RLS 42501 and unauthenticated sessions cleanly', async () => {
+  const initialPayload = {
+    id: 'da15afaa-da15-4faa-afb0-0a0f2f7097ce',
+    user_id: '13c8ccda-753a-4717-bee2-3c0536f1b110',
+    asset_symbol: 'EUR/USD',
+    trade_type: 'PUT',
+    amount: 50,
+    entry_price: 1.08404,
+    duration_seconds: 60,
+    status: 'OPEN',
+    account_type: 'SELF_FUNDED',
+    account_id: '1d61647f-8811-4b11-99ed-dceb48bcb3c0',
+    created_at: '2026-11-15T14:57:30.556Z',
+  };
+
+  const rlsError = {
+    code: '42501',
+    message: 'new row violates row-level security policy for table "user_trades"',
+  };
+
+  const firstAttempt = prepareRlsSafeTradePayload(
+    initialPayload,
+    '13c8ccda-753a-4717-bee2-3c0536f1b110',
+    rlsError
+  );
+  assert.equal(firstAttempt.mutated, true);
+  assert.equal(firstAttempt.nextPayload.account_id, null);
+  assert.equal(firstAttempt.nextPayload.user_id, '13c8ccda-753a-4717-bee2-3c0536f1b110');
+
+  // Second call once account_id is already null should report mutated = false so circuit breaker stops retrying
+  const secondAttempt = prepareRlsSafeTradePayload(
+    firstAttempt.nextPayload,
+    '13c8ccda-753a-4717-bee2-3c0536f1b110',
+    rlsError
+  );
+  assert.equal(secondAttempt.mutated, false);
+
+  // Unauthenticated createSupabaseTrade should return false cleanly without throwing or logging console.error
+  const result = await createSupabaseTrade(
+    {
+      id: 'da15afaa-da15-4faa-afb0-0a0f2f7097ce',
+      accountId: '1d61647f-8811-4b11-99ed-dceb48bcb3c0',
+      asset: 'EUR/USD',
+      direction: 'PUT',
+      investment: 50,
+      payoutPercentage: 85,
+      potentialPayout: 42.5,
+      strikePrice: 1.08404,
+      currentPrice: 1.08404,
+      startTime: Date.now(),
+      endTime: Date.now() + 60000,
+      durationSeconds: 60,
+      status: 'active',
+      accountTier: 'personal',
+    },
+    '13c8ccda-753a-4717-bee2-3c0536f1b110'
+  );
+  assert.equal(result, false);
 });
 

@@ -76,11 +76,12 @@ export const QuotexMobileNav: React.FC<QuotexMobileNavProps> = React.memo(({
         </button>
 
         {/* Support / Live Chat Button */}
-        <button
-          type="button"
+        <a
+          href="https://t.me/bft_admin"
+          target="_blank"
+          rel="noopener noreferrer"
           data-testid="mobile-nav-chat"
           onClick={() => {
-            onChangeTab('chat');
             soundEngine.playUiClick();
           }}
           className={`flex flex-col items-center justify-center flex-1 min-h-[44px] py-1 relative transition-colors cursor-pointer ${
@@ -95,8 +96,8 @@ export const QuotexMobileNav: React.FC<QuotexMobileNavProps> = React.memo(({
               1
             </span>
           </div>
-          <span className="text-[10px] font-medium tracking-tight">Support</span>
-        </button>
+          <span className="text-[10px] font-medium tracking-tight">Support Desk</span>
+        </a>
 
         {/* Profile / KYC Button */}
         <button

@@ -42820,6 +42820,8 @@ function getSynchronizedNowMs() {
 }
 var masterStores = /* @__PURE__ */ new Map();
 var GLOBAL_EPOCH = 17040672e5;
+var INITIAL_CANDLE_HISTORY_COUNT = 2500;
+var MAX_CANDLE_HISTORY_CAPACITY = 1e4;
 var GLOBAL_OCTAVE_PERIODS_SEC = [5, 15, 30, 60, 180, 300, 900, 1800, 3600];
 function hashSymbol(str) {
   let h = 2166136261 >>> 0;
@@ -42981,7 +42983,7 @@ function computeDeterministicCandleForBucket(asset, timeframeSeconds, candleTime
     volume: isCurrentActiveBucket ? Math.max(1, Math.floor((45 + wickHash % 115) * progress)) : Math.floor(45 + wickHash % 115)
   };
 }
-function generateDeterministicTimeframeCandles(asset, timeframeSeconds, count = 1500, anchorEndPrice, referenceNowMs = getSynchronizedNowMs()) {
+function generateDeterministicTimeframeCandles(asset, timeframeSeconds, count = INITIAL_CANDLE_HISTORY_COUNT, anchorEndPrice, referenceNowMs = getSynchronizedNowMs()) {
   const canonical = normalizeAssetSymbol(asset.symbol);
   const tf = Math.max(5, timeframeSeconds);
   const tfMs = tf * 1e3;
@@ -43024,7 +43026,7 @@ function getOrCreateMasterHistory(asset) {
     const phaseOffset = (seed >> 8) % 1e3 / 1e3 * Math.PI * 2;
     const initNow = getSynchronizedNowMs();
     const liveSnap = computeSynchronizedTickAtTime(asset, initNow);
-    const baseCandles = generateDeterministicTimeframeCandles(asset, 5, 1500, liveSnap.price, initNow);
+    const baseCandles = generateDeterministicTimeframeCandles(asset, 5, INITIAL_CANDLE_HISTORY_COUNT, liveSnap.price, initNow);
     lastSteppedTimeBySymbol.set(symbolKey, initNow);
     const lastPrice = liveSnap.price;
     const timeframeMap = /* @__PURE__ */ new Map();
@@ -43076,7 +43078,12 @@ function syncAssetStoreWithServerTime(asset, timeframeSeconds, serverTimestampMs
   store.lastPrice = resolvedPrice;
   lastSteppedTimeBySymbol.set(symbolKey, nowMs);
   const tf = Math.max(5, timeframeSeconds);
-  const freshSeries = generateDeterministicTimeframeCandles(asset, tf, 1500, resolvedPrice, nowMs);
+  const existingSeries = store.timeframeSeries.get(tf);
+  const preservedCount = Math.min(
+    MAX_CANDLE_HISTORY_CAPACITY,
+    Math.max(INITIAL_CANDLE_HISTORY_COUNT, existingSeries?.length || 0)
+  );
+  const freshSeries = generateDeterministicTimeframeCandles(asset, tf, preservedCount, resolvedPrice, nowMs);
   store.timeframeSeries.set(tf, freshSeries);
   return [...freshSeries];
 }
@@ -58235,7 +58242,7 @@ data: ${JSON.stringify({ serverTime: Date.now(), symbol: snap.symbol, price: sna
   });
   const distPath = path2.resolve(__dirname, "dist");
   const hasDist = fs2.existsSync(path2.join(distPath, "index.html"));
-  const isProduction = process.env.NODE_ENV === "production";
+  const isProduction = process.env.NODE_ENV === "production" || hasDist && String(process.argv[1] || "").endsWith("server.js");
   const isDev = !isProduction;
   if (isDev) {
     const { createServer: createViteServer } = await import("vite").then((s) => {
@@ -58259,9 +58266,7 @@ data: ${JSON.stringify({ serverTime: Date.now(), symbol: snap.symbol, price: sna
       }
     });
   } else {
-    app.use(express.static(distPath, { setHeaders: __name4((res, filePath) => {
-      setExplicitMimeHeaders(res, filePath);
-    }, "setHeaders") }));
+    app.use(express.static(distPath));
     app.all("/api/*", (req, res) => {
       res.status(404).json({ ok: false, error: `API endpoint not found: ${req.method} ${req.url}` });
     });
@@ -58271,7 +58276,7 @@ data: ${JSON.stringify({ serverTime: Date.now(), symbol: snap.symbol, price: sna
       res.sendFile(path2.join(distPath, "index.html"));
     });
   }
-  const server = app.listen(PORT, () => {
+  const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`BFT Server & Direct USDT (TRC-20) Gateway running on port ${PORT} (mode: ${isProduction ? "production" : "development"})`);
     copyTradingEngine.start();
   });

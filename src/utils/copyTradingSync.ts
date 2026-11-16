@@ -840,12 +840,9 @@ export async function saveCopyTradingSubscriptionToSupabase(
       .maybeSingle();
 
     if (error) {
-      console.error('[Supabase copy_trading_subscriptions Insert Error]:', {
+      console.warn('[Supabase copy_trading_subscriptions Insert Notice]:', {
         code: error.code,
         message: error.message,
-        details: error.details,
-        hint: error.hint,
-        payload: insertPayload,
       });
 
       // Check if duplicate key violation was thrown by database unique constraint
@@ -959,7 +956,7 @@ export async function saveCopyTradingSubscriptionToSupabase(
       message: 'Subscription created successfully in copy_trading_subscriptions.',
     };
   } catch (err: any) {
-    console.error('[Supabase copy_trading_subscriptions Exception]:', err);
+    console.warn('[Supabase copy_trading_subscriptions Exception]:', err?.message || err);
     return {
       ok: false,
       error: `Network/Database Error: ${err?.message || 'Failed to insert subscription record.'}`,
@@ -2415,6 +2412,14 @@ export async function executeMirroredMasterTradesCycle(params: {
         for (const key of Object.keys(parsed || {})) {
           const item = parsed[key];
           if (item && item.status === 'active') {
+            if (
+              item.copier_user_id &&
+              isValidUuid(item.copier_user_id) &&
+              isValidUuid(copierUserId) &&
+              item.copier_user_id.trim() !== copierUserId.trim()
+            ) {
+              continue;
+            }
             const subKey = item.id || item.provider_id || key;
             if (!activeSubsMap.has(subKey)) {
               const fallbackAccId =

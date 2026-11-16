@@ -52,6 +52,7 @@ export interface LightweightTradingChartProps {
   onAddDrawing?: (drawing: ChartDrawingObject) => void;
   onUpdateDrawing?: (drawing: ChartDrawingObject) => void;
   onCompleteDrawingTool?: () => void;
+  onLoadMoreHistory?: () => void;
 }
 
 interface FormattedBar {
@@ -147,6 +148,7 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
   activeTrades,
   tradeResultOverlay,
   zoomLevel = 1,
+  onLoadMoreHistory,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -156,10 +158,15 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
   const lastLoadedTimeframeRef = useRef<string>('');
   const lastLoadedChartTypeRef = useRef<string>('');
   const barsCountRef = useRef<number>(0);
-  const firstFormattedBarRef = useRef<FormattedBar | null>(null);
+  const firstFormattedBarTimeRef = useRef<number>(0);
   const lastFormattedBarRef = useRef<FormattedBar | null>(null);
   const lastPriceYRef = useRef<number>(0);
   const lastCoordUpdateMsRef = useRef<number>(0);
+  const isLoadingHistoryRef = useRef<boolean>(false);
+  const lastHistoryLoadMsRef = useRef<number>(0);
+  const prevZoomLevelRef = useRef<number>(zoomLevel);
+  const onLoadMoreHistoryRef = useRef(onLoadMoreHistory);
+  onLoadMoreHistoryRef.current = onLoadMoreHistory;
 
   const [badgeCoords, setBadgeCoords] = useState<Record<string, { y: number; x: number }>>({});
   const [resultBadgeCoords, setResultBadgeCoords] = useState<{ y: number; x: number } | null>(null);
@@ -202,7 +209,7 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
     setCandleCountdown((prev) => (prev === formatted ? prev : formatted));
   }, [candles, timeframe, now]);
 
-  // Coordinate sync for floating PnL badge pills & live moving price tag (O(1) without re-sorting 1500 bars)
+  // Coordinate sync for floating PnL badge pills & live moving price tag
   const updateCoordinates = useCallback(() => {
     if (!seriesRef.current || !chartRef.current) return;
     if (lastLoadedSymbolRef.current !== asset.symbol) return;
@@ -348,8 +355,9 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
         pinch: true,
       },
       timeScale: {
-        barSpacing: 12,
-        minBarSpacing: 2,
+        barSpacing: 11,
+        minBarSpacing: 0.5,
+        maxBarSpacing: 50,
         rightOffset: 15,
         fixLeftEdge: false,
         fixRightEdge: false,
@@ -375,7 +383,7 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
     const bars = prepareLightweightBars(candles, chartType, asset.pipDecimals, asset);
     barsCountRef.current = bars.length;
     if (bars.length > 0) {
-      firstFormattedBarRef.current = bars[0];
+      firstFormattedBarTimeRef.current = bars[0].time as number;
       lastFormattedBarRef.current = bars[bars.length - 1];
       if (chartType === 'line') {
         series.setData(bars.map((b: FormattedBar) => ({ time: b.time, value: b.close })));
@@ -391,17 +399,42 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
         scaleMargins: { top: 0.1, bottom: 0.1 },
       });
       chart.timeScale().resetTimeScale();
-      chart.timeScale().fitContent();
+      chart.timeScale().scrollToRealTime();
+      requestAnimationFrame(() => updateCoordinatesRef.current());
     }
 
     const handleLogicalRangeChange = (logicalRange: { from: number; to: number } | null) => {
       if (!logicalRange || barsCountRef.current === 0) {
         setIsScrolledFromLive((prev) => (prev ? false : prev));
+        updateCoordinatesRef.current();
         return;
       }
       const lastBarIndex = barsCountRef.current - 1;
       const scrolled = logicalRange.to < lastBarIndex - 2;
       setIsScrolledFromLive((prev) => (prev === scrolled ? prev : scrolled));
+
+      // Seamlessly load deeper historical candles when scrolling/zooming near the left boundary
+      const perf = getDevicePerformanceProfile();
+      if (
+        logicalRange.from <= 120 &&
+        barsCountRef.current < perf.recommendedMaxCandles &&
+        onLoadMoreHistoryRef.current &&
+        !isLoadingHistoryRef.current
+      ) {
+        const nowMs = performance.now();
+        if (nowMs - lastHistoryLoadMsRef.current > 180) {
+          lastHistoryLoadMsRef.current = nowMs;
+          isLoadingHistoryRef.current = true;
+          try {
+            onLoadMoreHistoryRef.current();
+          } finally {
+            setTimeout(() => {
+              isLoadingHistoryRef.current = false;
+            }, 180);
+          }
+        }
+      }
+
       updateCoordinatesRef.current();
     };
     chart.timeScale().subscribeVisibleLogicalRangeChange(handleLogicalRangeChange);
@@ -410,6 +443,7 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
       if (chartRef.current) {
         try {
           chartRef.current.priceScale('right').applyOptions({ autoScale: true });
+          chartRef.current.timeScale().resetTimeScale();
           chartRef.current.timeScale().scrollToRealTime();
           setIsScrolledFromLive(false);
         } catch {
@@ -456,8 +490,10 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
   // Sync external zoomLevel changes smoothly to timeScale barSpacing
   useEffect(() => {
     if (!chartRef.current) return;
+    if (prevZoomLevelRef.current === zoomLevel) return;
+    prevZoomLevelRef.current = zoomLevel;
     try {
-      const targetSpacing = Math.max(3, Math.min(45, Math.round(12 * zoomLevel)));
+      const targetSpacing = Number(Math.max(0.6, Math.min(48, 12 * zoomLevel)).toFixed(2));
       chartRef.current.timeScale().applyOptions({ barSpacing: targetSpacing });
       updateCoordinatesRef.current();
     } catch {
@@ -489,8 +525,8 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
         }
       }
       priceLinesRef.current.clear();
-      firstFormattedBarRef.current = null;
       lastFormattedBarRef.current = null;
+      firstFormattedBarTimeRef.current = 0;
       barsCountRef.current = 0;
       lastPriceYRef.current = 0;
       setCurrentPriceY(0);
@@ -514,7 +550,7 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
       const bars = prepareLightweightBars(candles, chartType, asset.pipDecimals, asset);
       barsCountRef.current = bars.length;
       if (bars.length === 0) return;
-      firstFormattedBarRef.current = bars[0];
+      firstFormattedBarTimeRef.current = bars[0].time as number;
       lastFormattedBarRef.current = bars[bars.length - 1];
 
       if (isChartTypeChanged || isSymbolChanged || !seriesRef.current) {
@@ -552,7 +588,7 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
           scaleMargins: { top: 0.1, bottom: 0.1 },
         });
         chart.timeScale().resetTimeScale();
-        chart.timeScale().fitContent();
+        chart.timeScale().scrollToRealTime();
         setIsScrolledFromLive(false);
         requestAnimationFrame(() => {
           if (chartRef.current && lastLoadedSymbolRef.current === asset.symbol) {
@@ -562,7 +598,8 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
                 mode: PriceScaleMode.Normal,
                 scaleMargins: { top: 0.1, bottom: 0.1 },
               });
-              chartRef.current.timeScale().fitContent();
+              chartRef.current.timeScale().scrollToRealTime();
+              updateCoordinatesRef.current();
             } catch {
               // ignore
             }
@@ -578,6 +615,51 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
     // Fast O(1) incremental live tick update & new candle bucket append (preserves active touch drag & pinch-zoom!)
     const series = seriesRef.current;
     if (!series) return;
+
+    // Detect if older historical candles were prepended when scrolling backward
+    const firstIncomingRaw = Number(candles[0]?.time || 0);
+    const firstIncomingSec =
+      firstIncomingRaw > 1e11 ? Math.floor(firstIncomingRaw / 1000) : Math.floor(firstIncomingRaw);
+    const hasPrependedHistory =
+      firstFormattedBarTimeRef.current > 0 &&
+      firstIncomingSec > 0 &&
+      firstIncomingSec < firstFormattedBarTimeRef.current;
+
+    if (hasPrependedHistory) {
+      const prevFirstTime = firstFormattedBarTimeRef.current;
+      const prevRange = chart.timeScale().getVisibleLogicalRange();
+      const bars = prepareLightweightBars(candles, chartType, asset.pipDecimals, asset);
+      if (bars.length > 0) {
+        let prependedCount = 0;
+        for (const b of bars) {
+          if ((b.time as number) < prevFirstTime) {
+            prependedCount += 1;
+          } else {
+            break;
+          }
+        }
+        barsCountRef.current = bars.length;
+        firstFormattedBarTimeRef.current = bars[0].time as number;
+        lastFormattedBarRef.current = bars[bars.length - 1];
+        try {
+          if (chartType === 'line') {
+            series.setData(bars.map((b: FormattedBar) => ({ time: b.time, value: b.close })));
+          } else {
+            series.setData(bars);
+          }
+          if (prevRange && prependedCount > 0) {
+            chart.timeScale().setVisibleLogicalRange({
+              from: prevRange.from + prependedCount,
+              to: prevRange.to + prependedCount,
+            });
+          }
+        } catch {
+          // ignore
+        }
+      }
+      updateCoordinates();
+      return;
+    }
 
     const prevBar = lastFormattedBarRef.current;
     const recentSlice = candles.slice(-6);
@@ -615,7 +697,7 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
       const bars = prepareLightweightBars(candles, chartType, asset.pipDecimals, asset);
       barsCountRef.current = bars.length;
       if (bars.length > 0) {
-        firstFormattedBarRef.current = bars[0];
+        firstFormattedBarTimeRef.current = bars[0].time as number;
         lastFormattedBarRef.current = bars[bars.length - 1];
         try {
           if (chartType === 'line') {
@@ -685,8 +767,15 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
   const handleGoToLive = useCallback(() => {
     if (chartRef.current) {
       chartRef.current.priceScale('right').applyOptions({ autoScale: true });
+      chartRef.current.timeScale().resetTimeScale();
       chartRef.current.timeScale().scrollToRealTime();
       setIsScrolledFromLive(false);
+      requestAnimationFrame(() => {
+        if (chartRef.current) {
+          chartRef.current.timeScale().scrollToRealTime();
+          setIsScrolledFromLive(false);
+        }
+      });
     }
   }, []);
 
@@ -721,7 +810,7 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
       {isDataValidAndReady && currentPriceY > 0 && (
         <div
           className="absolute right-[60px] z-35 px-2 py-1 rounded bg-[#0b0e14] border border-cyan-500/70 shadow-2xl flex flex-col items-end font-mono text-[10px] select-none transition-all duration-75 pointer-events-none gpu-accelerated"
-          style={{ top: `${currentPriceY - 14}px`, willChange: 'transform' }}
+          style={{ top: `${Math.max(6, currentPriceY - 14)}px`, willChange: 'transform' }}
         >
           <span className="font-bold text-cyan-300 tabular-nums">
             {Number(
@@ -830,7 +919,7 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
             viewBox="0 0 24 24"
             stroke="currentColor"
           >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 5l7 7-m0 0l-7 7m7-7H3" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 5l7 7-7 7M5 12h15" />
           </svg>
         </button>
       )}

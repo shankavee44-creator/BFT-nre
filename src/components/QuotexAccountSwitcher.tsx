@@ -659,6 +659,21 @@ export const QuotexAccountSwitcher: React.FC<QuotexAccountSwitcherProps> = ({
                 <span>Profile & Account</span>
                 <User className="w-3.5 h-3.5 text-[#ff8800]" />
               </button>
+
+              <a
+                href="https://t.me/bft_admin"
+                target="_blank"
+                rel="noopener noreferrer"
+                data-testid="profile-menu-support-desk-link"
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  setIsOpen(false);
+                }}
+                className="w-full min-h-[44px] text-left px-3.5 py-2.5 rounded-xl text-slate-200 hover:text-white hover:bg-white/10 transition-all font-bold cursor-pointer touch-manipulation flex items-center justify-between"
+              >
+                <span>Support Desk</span>
+                <Send className="w-3.5 h-3.5 text-[#0066ff]" />
+              </a>
             </div>
 
             {/* Logout Option */}

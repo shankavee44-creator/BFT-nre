@@ -962,5 +962,89 @@ test('evaluateRealtimeTradingEngine triggers instant soft_breached, hard_breache
   assert.equal(selfEval.updatedAccount.status, 'active');
 });
 
+test('custom duration helpers (5s to 4h), Funded <30s restriction vs Self-Capital 5s+ exemption, and strict $5,000 per-trade limit', async () => {
+  const {
+    clampCustomTradeDuration,
+    durationSecondsToHms,
+    hmsToDurationSeconds,
+    validateTradeDurationForAccount,
+    MAX_SINGLE_TRADE_INVESTMENT_USD,
+  } = await import('./propRules');
+
+  assert.equal(MAX_SINGLE_TRADE_INVESTMENT_USD, 5000);
+
+  // 1. Custom duration clamping and H:M:S conversion (5s to 4h = 14,400s)
+  assert.equal(clampCustomTradeDuration(1), 5);
+  assert.equal(clampCustomTradeDuration(5), 5);
+  assert.equal(clampCustomTradeDuration(14400), 14400);
+  assert.equal(clampCustomTradeDuration(20000), 14400);
+
+  assert.deepEqual(durationSecondsToHms(5), { hours: 0, minutes: 0, seconds: 5 });
+  assert.deepEqual(durationSecondsToHms(95), { hours: 0, minutes: 1, seconds: 35 });
+  assert.deepEqual(durationSecondsToHms(14400), { hours: 4, minutes: 0, seconds: 0 });
+
+  assert.equal(hmsToDurationSeconds(0, 0, 5), 5);
+  assert.equal(hmsToDurationSeconds(0, 0, 2), 5); // clamps to 5s min
+  assert.equal(hmsToDurationSeconds(1, 30, 15), 5415);
+  assert.equal(hmsToDurationSeconds(4, 15, 30), 14400); // clamps to 4h max
+
+  // 2. Rule 1: Funded Account blocks < 30s, Self-Capital Account allows 5s–29s
+  const fundedAcc: TradingAccount = {
+    id: 'ACC-FUNDED-100K',
+    loginId: 'BFT-100K',
+    passwordHash: 'pass',
+    tier: 'instant',
+    accountType: 'instant',
+    tierName: 'Instant Funded',
+    size: 100000,
+    initialBalance: 100000,
+    startingDayEquity: 100000,
+    currentBalance: 100000,
+    equity: 100000,
+    dailyLossLimitPercent: 6,
+    maxOverallLossPercent: 12,
+    profitTargetPercent: 0,
+    status: 'active',
+    phase: 'funded',
+    tradingDaysCompleted: 1,
+    tradesCount: 2,
+    winRate: 50,
+    createdDate: '2026-10-01',
+    lastActiveDate: '2026-10-26',
+  };
+  const selfCapitalAcc = createDefaultPersonalLiveAccount('usr-self', 'self@bft.io', 25000);
+
+  // Funded account < 30s -> BLOCKED
+  const funded5s = validateTradeDurationForAccount(5, fundedAcc);
+  assert.equal(funded5s.valid, false);
+  assert.equal(funded5s.code, 'FUNDED_ACCOUNT_UNDER_30S');
+  assert.equal(isValidTradeDuration(15, fundedAcc), false);
+  assert.equal(isValidTradeDuration(30, fundedAcc), true);
+  assert.equal(isValidTradeDuration(14400, fundedAcc), true);
+
+  // Self-Capital account 5s to 29s -> ALLOWED
+  const self5s = validateTradeDurationForAccount(5, selfCapitalAcc);
+  assert.equal(self5s.valid, true);
+  assert.equal(isValidTradeDuration(5, selfCapitalAcc), true);
+  assert.equal(isValidTradeDuration(15, selfCapitalAcc), true);
+  assert.equal(isValidTradeDuration(14400, selfCapitalAcc), true);
+
+  // 3. Rule 2: Strict $5,000 per-trade investment limit for both Self-Capital and Funded accounts
+  const self5000 = validateZeroToleranceTradeExecution({ account: selfCapitalAcc, stake: 5000 });
+  assert.equal(self5000.allowed, true);
+
+  const self5001 = validateZeroToleranceTradeExecution({ account: selfCapitalAcc, stake: 5001 });
+  assert.equal(self5001.allowed, false);
+  assert.equal(self5001.code, 'MAX_SINGLE_TRADE_LIMIT_EXCEEDED');
+
+  const funded5000 = validateZeroToleranceTradeExecution({ account: fundedAcc, stake: 5000 });
+  assert.equal(funded5000.allowed, true);
+
+  const funded6000 = validateZeroToleranceTradeExecution({ account: fundedAcc, stake: 6000 });
+  assert.equal(funded6000.allowed, false);
+  assert.equal(funded6000.code, 'MAX_SINGLE_TRADE_LIMIT_EXCEEDED');
+});
+
+
 
 

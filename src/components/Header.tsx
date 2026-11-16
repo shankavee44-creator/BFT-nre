@@ -17,6 +17,7 @@ import {
   Award,
   CreditCard,
   ShieldCheck,
+  Send,
   X,
 } from 'lucide-react';
 import { TradingAccount, UserProfile, PromoCodeType } from '../types';
@@ -228,6 +229,19 @@ export const Header: React.FC<HeaderProps> = ({
             <Award className="w-3.5 h-3.5 shrink-0" />
             <span className="hidden sm:inline">Leaderboard</span>
           </button>
+
+          {/* Official Support Desk Link */}
+          <a
+            href="https://t.me/bft_admin"
+            target="_blank"
+            rel="noopener noreferrer"
+            data-testid="header-support-desk-link"
+            title="Support Desk (@bft_admin)"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[#111827] hover:bg-[#161f33] border border-[#0066ff]/40 text-[#0066ff] text-xs font-bold transition-all cursor-pointer whitespace-nowrap"
+          >
+            <Send className="w-3.5 h-3.5 shrink-0" />
+            <span className="hidden xl:inline">Support Desk</span>
+          </a>
 
           {/* Direct USDT (TRC-20) Deposit Button */}
           {onOpenDepositModal && (
@@ -514,6 +528,24 @@ export const Header: React.FC<HeaderProps> = ({
                     <ChevronRight className="w-3.5 h-3.5 text-[#9ca3af] shrink-0" />
                   </button>
 
+                  <a
+                    href="https://t.me/bft_admin"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    data-testid="mobile-profile-support-desk-link"
+                    onClick={() => {
+                      setMobileMenuOpen(false);
+                      setMobileProfileOpen(false);
+                    }}
+                    className="w-full min-h-[44px] px-3 py-2.5 rounded-xl hover:bg-white/10 text-slate-200 hover:text-white flex items-center justify-between font-bold cursor-pointer touch-manipulation"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <Send className="w-4 h-4 text-[#0066ff] shrink-0" />
+                      <span>Support Desk</span>
+                    </div>
+                    <ChevronRight className="w-3.5 h-3.5 text-[#9ca3af] shrink-0" />
+                  </a>
+
                   {onLogout && (
                     <div className="pt-2 border-t border-white/[0.08] mt-1">
                       <button
@@ -635,6 +667,21 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
               );
             })}
+
+            <a
+              href="https://t.me/bft_admin"
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid="mobile-drawer-support-desk-link"
+              onClick={() => setMobileMenuOpen(false)}
+              className="flex items-center justify-between p-3 min-h-[44px] rounded-xl text-left transition-all cursor-pointer touch-manipulation text-[#0066ff] hover:text-white hover:bg-white/5"
+            >
+              <span className="font-bold flex items-center gap-2">
+                <Send className="w-3.5 h-3.5 shrink-0" />
+                <span>Support Desk</span>
+              </span>
+              <span className="text-[10px] uppercase font-mono font-black">@bft_admin</span>
+            </a>
           </div>
 
           {/* Admin Command Center button for authorized admin accounts on mobile */}

@@ -98,8 +98,13 @@ import {
   isAccountSoftBreached,
   isAccountHardBreached,
   evaluateRealtimeTradingEngine,
+  validateTradeDurationForAccount,
+  isFundedDurationRestrictedAccount,
+  clampCustomTradeDuration,
+  MAX_SINGLE_TRADE_INVESTMENT_USD,
 } from '../utils/propRules';
 import { BftLogo } from './BftLogo';
+import { TimeTimerSelectorPopover } from './TimeTimerSelectorPopover';
 import {
   getAuthoritativeAccountBalance,
   resolveAccountBalanceColumn,
@@ -276,7 +281,7 @@ const TIMEFRAME_SECONDS: Record<Timeframe, number> = {
   '1D': 86400,
 };
 
-const EXPIRY_PRESETS = [5, 15, 30, 60, 120, 300, 900, 1800, 3600, 14400];
+const EXPIRY_PRESETS = [5, 10, 15, 30, 60, 120, 300, 900, 1800, 3600, 7200, 14400];
 
 function formatTimerDisplay(seconds: number): string {
   if (seconds < 60) {
@@ -687,6 +692,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   // Dual-Mode Expiry: 'timer' (duration) vs 'time' (clock expiry)
   const [expiryMode, setExpiryMode] = useState<'timer' | 'time'>('timer');
   const [duration, setDuration] = useState<number>(60);
+  const [isTimeSelectorOpen, setIsTimeSelectorOpen] = useState<boolean>(false);
 
   // Investment parameters & Quotex Right-Panel controls
   const [investment, setInvestment] = useState<number>(50);
@@ -744,6 +750,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       if (e.key === 'Escape') {
         setLeftToolbarPopover('none');
         setMobileToolbarPopover('none');
+        setIsTimeSelectorOpen(false);
       }
     };
     document.addEventListener('fullscreenchange', handleFsChange);
@@ -893,7 +900,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
   // Copy Trading Bot Execution Loop: Background poller + Supabase Realtime listener on copy_trading_subscriptions & copy_executed_trades
   useEffect(() => {
-    if (!userProfile?.id || isDemoAccount(effectiveAccount)) return;
+    if (!userProfile?.isLoggedIn || !userProfile?.id || isDemoAccount(effectiveAccount)) return;
     let isCancelled = false;
 
     const runBotCycle = async (cooldownOverrideMs?: number) => {
@@ -1923,6 +1930,15 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     return () => clearInterval(timer);
   }, [account, onUpdateTrade, onUpdateAccount, onPassChallengePhase, trades, selectedAsset.symbol, userProfile?.id, userProfile?.email]);
 
+  // Dynamic backward historical candle loading when scrolling into the past
+  const handleLoadMoreHistory = React.useCallback(() => {
+    const activeSym = selectedAssetRef.current;
+    if (!activeSym) return;
+    const sec = TIMEFRAME_SECONDS[timeframe];
+    const expanded = prependHistoricalCandles(activeSym, sec, 1000);
+    setCandles(expanded);
+  }, [timeframe]);
+
   // Asset Tab Switching with Persistent Cross-View Synchronization
   const handleSelectTabAsset = (asset: AssetInfo) => {
     if (asset.symbol === selectedAsset.symbol) return;
@@ -2004,9 +2020,21 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     const isUnrestrictedPersonalOrDemo =
       isPersonalLiveAccount(activeAcc) || isDemoAccount(activeAcc);
 
-    if (!isValidTradeDuration(durationToUse)) {
+    const durationValidation = validateTradeDurationForAccount(durationToUse, activeAcc);
+    if (!durationValidation.valid) {
       soundEngine.playTradeLoss();
-      setTradeError('Rule Violation: Minimum trade duration is 30 seconds to prevent tick scalping.');
+      setTradeError(
+        durationValidation.reason ||
+          'Funded Account Restriction: Trade durations under 30 seconds are blocked for Funded Accounts. Self-Capital accounts support 5s+ trades.'
+      );
+      return;
+    }
+
+    if (stakeToUse > MAX_SINGLE_TRADE_INVESTMENT_USD) {
+      soundEngine.playTradeLoss();
+      setTradeError(
+        `Per-Trade Risk Limit Exceeded: Maximum investment is $${MAX_SINGLE_TRADE_INVESTMENT_USD.toLocaleString()} per single trade across both Self-Capital and Funded accounts.`
+      );
       return;
     }
 
@@ -2179,7 +2207,61 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     executeTradeAction(trade.direction, targetAssetObj, trade.durationSeconds, trade.investment);
   };
 
+  // Ensure Funded Accounts automatically reset to >= 30s if user had < 30s selected on Self-Capital
+  useEffect(() => {
+    if (isFundedDurationRestrictedAccount(effectiveAccount) && duration < 30) {
+      setDuration(30);
+    }
+  }, [effectiveAccount, duration]);
+
+  const handleSelectDuration = (nextSeconds: number) => {
+    const clamped = clampCustomTradeDuration(nextSeconds);
+    const check = validateTradeDurationForAccount(clamped, effectiveAccount);
+    if (!check.valid) {
+      soundEngine.playTradeLoss();
+      setTradeError(
+        check.reason ||
+          'Funded Account Restriction: Trade durations under 30 seconds are strictly blocked for Funded Accounts. Switch to Self-Capital for 5s–29s trades.'
+      );
+      return;
+    }
+    setTradeError(null);
+    setDuration(clamped);
+  };
+
+  const handleChangeInvestmentAmount = (nextVal: number) => {
+    const sanitized = Math.max(1, Number.isFinite(nextVal) ? nextVal : 1);
+    setInvestment(sanitized);
+    const computedUsd =
+      investmentMode === 'percent'
+        ? Math.max(1, Number(((effectiveAccount.currentBalance * sanitized) / 100).toFixed(2)))
+        : sanitized;
+    if (computedUsd > MAX_SINGLE_TRADE_INVESTMENT_USD) {
+      setTradeError(
+        `Per-Trade Risk Limit Exceeded: Maximum investment is $${MAX_SINGLE_TRADE_INVESTMENT_USD.toLocaleString()} per single trade across both Self-Capital and Funded accounts.`
+      );
+    } else if (tradeError && tradeError.includes('Per-Trade Risk Limit')) {
+      setTradeError(null);
+    }
+  };
+
   const handleTriggerTrade = (direction: BinaryOptionDirection) => {
+    const durationCheck = validateTradeDurationForAccount(duration, effectiveAccount);
+    if (!durationCheck.valid) {
+      soundEngine.playTradeLoss();
+      setTradeError(
+        durationCheck.reason ||
+          'Funded Account Restriction: Trade durations under 30 seconds are strictly blocked for Funded Accounts.'
+      );
+      return;
+    }
+    if (effectiveInvestment > MAX_SINGLE_TRADE_INVESTMENT_USD) {
+      soundEngine.playTradeLoss();
+      setTradeError(
+        `Per-Trade Risk Limit Exceeded: Maximum investment is $${MAX_SINGLE_TRADE_INVESTMENT_USD.toLocaleString()} per single trade across both Self-Capital and Funded accounts.`
+      );
+      return;
+    }
     if (oneClickTrading) {
       executeTradeAction(direction);
     } else {
@@ -2188,22 +2270,18 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     }
   };
 
-  // Step duration up or down through presets (5s to 4h)
+  // Step duration up or down through presets (5s to 4h) while respecting Funded <30s rule
   const handleStepDuration = (dir: 'up' | 'down') => {
     soundEngine.playUiClick();
-    const currentIndex = EXPIRY_PRESETS.indexOf(duration);
     if (dir === 'up') {
-      if (currentIndex === -1 || currentIndex === EXPIRY_PRESETS.length - 1) {
-        setDuration(EXPIRY_PRESETS[EXPIRY_PRESETS.length - 1]);
-      } else {
-        setDuration(EXPIRY_PRESETS[currentIndex + 1]);
-      }
+      const nextPreset = EXPIRY_PRESETS.find((p) => p > duration);
+      const target = nextPreset ?? EXPIRY_PRESETS[EXPIRY_PRESETS.length - 1];
+      handleSelectDuration(target);
     } else {
-      if (currentIndex <= 0) {
-        setDuration(EXPIRY_PRESETS[0]);
-      } else {
-        setDuration(EXPIRY_PRESETS[currentIndex - 1]);
-      }
+      const lowerPresets = EXPIRY_PRESETS.filter((p) => p < duration);
+      const target =
+        lowerPresets.length > 0 ? lowerPresets[lowerPresets.length - 1] : EXPIRY_PRESETS[0];
+      handleSelectDuration(target);
     }
   };
 
@@ -4165,6 +4243,20 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               <ShieldCheck className="w-4 h-4" />
               <span className="text-[8px] font-bold uppercase tracking-tighter mt-0.5">Rules</span>
             </button>
+
+            {/* Official Support Desk Link */}
+            <a
+              href="https://t.me/bft_admin"
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid="sidebar-support-desk-link"
+              onClick={() => soundEngine.playUiClick()}
+              className="w-10 h-10 rounded-lg hover:bg-[#1c202e] flex flex-col items-center justify-center text-slate-400 hover:text-[#0066ff] transition-all cursor-pointer"
+              title="Support Desk (@bft_admin)"
+            >
+              <HelpCircle className="w-4 h-4" />
+              <span className="text-[8px] font-bold uppercase tracking-tighter mt-0.5">Support</span>
+            </a>
           </div>
 
           {/* Bottom Section: Quotex Left-Hand Chart Action Toolbar (Drawing Tools, Timeframes, Chart Types, Indicators) */}
@@ -5288,6 +5380,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               onAddDrawing={handleAddNewDrawing}
               onUpdateDrawing={handleUpdateDrawing}
               onCompleteDrawingTool={() => setActiveDrawingTool('none')}
+              onLoadMoreHistory={handleLoadMoreHistory}
             />
             {/* Quotex-style sleek floating notification pill when trade is opened */}
             {tradeSuccess && (
@@ -5314,7 +5407,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                 data-testid="mobile-zoom-out-chart-btn"
                 onClick={() => {
                   soundEngine.playUiClick();
-                  setZoomLevel((prev) => Number(Math.max(0.35, prev - 0.25).toFixed(2)));
+                  setZoomLevel((prev) => Number(Math.max(0.15, prev - 0.2).toFixed(2)));
                 }}
                 className="w-8 h-8 rounded-lg bg-[#141722]/95 border border-white/10 flex items-center justify-center text-slate-300 active:scale-95 cursor-pointer"
                 title="Zoom Out Chart"
@@ -5695,8 +5788,9 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
           }}
           onOpenAssetModal={() => setIsAssetModalOpen(true)}
           onTogglePendingTrade={() => setPendingOrderEnabled(!pendingOrderEnabled)}
-          onChangeDuration={(d) => setDuration(d)}
-          onChangeInvestment={(inv) => setInvestment(inv)}
+          onChangeDuration={(d) => handleSelectDuration(d)}
+          onOpenTimeSelector={() => setIsTimeSelectorOpen(true)}
+          onChangeInvestment={(inv) => handleChangeInvestmentAmount(inv)}
           onToggleInvestmentMode={() => setInvestmentMode(investmentMode === 'usd' ? 'percent' : 'usd')}
           onTriggerTrade={(dir) => handleTriggerTrade(dir)}
           onToggleTradesDrawer={() => {
@@ -5773,10 +5867,12 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               )}
             </div>
 
-            {/* TIME / EXPIRY CONTROL BOX (Quotex Style) */}
-            <div className="p-2 rounded-lg bg-[#1c202e] border border-[#2a2e39] font-mono">
+            {/* TIME / EXPIRY CONTROL BOX (Quotex Style with Interactive Custom Time & Timer Popup) */}
+            <div className="relative p-2 rounded-lg bg-[#1c202e] border border-[#2a2e39] font-mono">
               <div className="flex items-center justify-between mb-1 text-[10px]">
-                <span className="text-slate-400 font-sans font-semibold">Time</span>
+                <span className="text-slate-400 font-sans font-semibold">
+                  {expiryMode === 'timer' ? 'Timer' : 'Time'}
+                </span>
                 <button
                   type="button"
                   data-testid="switch-time-btn"
@@ -5793,20 +5889,35 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               <div className="flex items-center justify-between bg-[#131722] border border-[#2a2e39] rounded-lg px-2 py-1 mb-1.5">
                 <button
                   type="button"
+                  data-testid="time-step-down-btn"
                   onClick={() => handleStepDuration('down')}
                   className="w-6 h-6 rounded-md bg-[#232838] hover:bg-[#2d3448] text-slate-200 hover:text-white font-black text-sm flex items-center justify-center cursor-pointer transition-colors"
                   title="Decrease Expiry Time"
                 >
                   -
                 </button>
-                <div
-                  data-testid="quotex-time-display"
-                  className="flex-1 text-center font-black text-white text-sm tracking-wider"
-                >
-                  {expiryMode === 'timer' ? formatTimerDisplay(duration) : getClockExpiry(duration)}
-                </div>
                 <button
                   type="button"
+                  data-testid="quotex-time-display"
+                  onClick={() => {
+                    soundEngine.playUiClick();
+                    setIsTimeSelectorOpen((prev) => !prev);
+                  }}
+                  className="flex-1 mx-1 py-0.5 rounded hover:bg-[#1e2538] text-center font-black text-white text-sm tracking-wider cursor-pointer transition-colors flex items-center justify-center gap-1"
+                  title="Click to open Custom Time & Timer Selector (5s – 4h)"
+                >
+                  <span>
+                    {expiryMode === 'timer' ? formatTimerDisplay(duration) : getClockExpiry(duration)}
+                  </span>
+                  <ChevronDown
+                    className={`w-3 h-3 text-slate-400 transition-transform ${
+                      isTimeSelectorOpen ? 'rotate-180 text-[#3b82f6]' : ''
+                    }`}
+                  />
+                </button>
+                <button
+                  type="button"
+                  data-testid="time-step-up-btn"
                   onClick={() => handleStepDuration('up')}
                   className="w-6 h-6 rounded-md bg-[#232838] hover:bg-[#2d3448] text-slate-200 hover:text-white font-black text-sm flex items-center justify-center cursor-pointer transition-colors"
                   title="Increase Expiry Time"
@@ -5817,39 +5928,64 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
 
               <div className="grid grid-cols-4 gap-1 text-[9px]">
                 {[
+                  { label: '5s', val: 5 },
                   { label: '30s', val: 30 },
                   { label: '1m', val: 60 },
                   { label: '5m', val: 300 },
-                  { label: '15m', val: 900 },
-                ].map((p) => (
-                  <button
-                    key={p.val}
-                    type="button"
-                    onClick={() => {
-                      soundEngine.playUiClick();
-                      setDuration(p.val);
-                    }}
-                    className={`py-0.5 rounded font-bold cursor-pointer transition-colors ${
-                      duration === p.val
-                        ? 'bg-[#3b82f6] text-white font-black'
-                        : 'bg-[#131722] text-slate-400 hover:text-white border border-[#2a2e39]'
-                    }`}
-                  >
-                    {p.label}
-                  </button>
-                ))}
+                ].map((p) => {
+                  const lockedForFunded =
+                    isFundedDurationRestrictedAccount(effectiveAccount) && p.val < 30;
+                  return (
+                    <button
+                      key={p.val}
+                      type="button"
+                      data-testid={`quick-duration-${p.val}s`}
+                      onClick={() => {
+                        soundEngine.playUiClick();
+                        handleSelectDuration(p.val);
+                      }}
+                      className={`py-0.5 rounded font-bold cursor-pointer transition-colors flex items-center justify-center gap-0.5 ${
+                        duration === p.val
+                          ? 'bg-[#3b82f6] text-white font-black'
+                          : lockedForFunded
+                          ? 'bg-[#131722]/60 text-slate-500 border border-rose-500/20 hover:border-rose-500/40'
+                          : 'bg-[#131722] text-slate-400 hover:text-white border border-[#2a2e39]'
+                      }`}
+                    >
+                      <span>{p.label}</span>
+                      {lockedForFunded && <Lock className="w-2.5 h-2.5 text-rose-400/80" />}
+                    </button>
+                  );
+                })}
               </div>
+
+              <TimeTimerSelectorPopover
+                isOpen={isTimeSelectorOpen}
+                onClose={() => setIsTimeSelectorOpen(false)}
+                duration={duration}
+                expiryMode={expiryMode}
+                onChangeExpiryMode={(m) => setExpiryMode(m)}
+                onChangeDuration={(sec: number) => handleSelectDuration(sec)}
+                isFundedRestricted={isFundedDurationRestrictedAccount(effectiveAccount)}
+                onNotifyViolation={(msg) => {
+                  soundEngine.playTradeLoss();
+                  setTradeError(msg);
+                }}
+              />
             </div>
 
-            {/* INVESTMENT CONTROL BOX (Quotex Style) */}
+            {/* INVESTMENT CONTROL BOX (Quotex Style with Strict $5,000 Per-Trade Limit) */}
             <div className="p-2 rounded-lg bg-[#1c202e] border border-[#2a2e39] font-mono">
               <div className="flex items-center justify-between text-[10px] mb-1">
                 <span className="text-slate-400 font-sans font-semibold">Investment</span>
                 <div className="flex items-center gap-2">
-                  <span className="text-[8.5px] text-slate-500 hidden xl:inline" data-testid="terminal-max-risk-label">
+                  <span className="text-[8.5px] text-slate-400 hidden xl:inline" data-testid="terminal-max-risk-label">
                     {isPersonalLiveAccount(effectiveAccount) || isDemoAccount(effectiveAccount)
-                      ? 'Max Risk: NONE'
-                      : `Max 5%: $${(((effectiveAccount?.initialBalance || effectiveAccount?.size || 10000) * 5) / 100).toFixed(0)}`}
+                      ? `Max Limit: $${MAX_SINGLE_TRADE_INVESTMENT_USD.toLocaleString()}`
+                      : `Max: $${Math.min(
+                          MAX_SINGLE_TRADE_INVESTMENT_USD,
+                          ((effectiveAccount?.initialBalance || effectiveAccount?.size || 10000) * 5) / 100
+                        ).toFixed(0)}`}
                   </span>
                   <button
                     type="button"
@@ -5871,12 +6007,19 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                 </div>
               </div>
 
-              <div className="flex items-center justify-between bg-[#131722] border border-[#2a2e39] rounded-lg px-2 py-1 mb-1.5">
+              <div
+                className={`flex items-center justify-between bg-[#131722] border rounded-lg px-2 py-1 mb-1.5 transition-colors ${
+                  effectiveInvestment > MAX_SINGLE_TRADE_INVESTMENT_USD
+                    ? 'border-rose-500/70'
+                    : 'border-[#2a2e39]'
+                }`}
+              >
                 <button
                   type="button"
+                  data-testid="investment-step-down-btn"
                   onClick={() => {
                     soundEngine.playUiClick();
-                    setInvestment((v) => Math.max(1, v - (v <= 10 ? 1 : 10)));
+                    handleChangeInvestmentAmount(Math.max(1, investment - (investment <= 10 ? 1 : 10)));
                   }}
                   className="w-6 h-6 rounded-md bg-[#232838] hover:bg-[#2d3448] text-slate-200 hover:text-white font-black text-sm flex items-center justify-center cursor-pointer transition-colors"
                   title="Decrease Investment"
@@ -5886,11 +6029,13 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                 <div className="flex-1 flex items-center justify-center gap-1 font-black text-white text-sm">
                   <input
                     aria-label="Investment Amount"
+                    data-testid="investment-amount-input"
                     type="number"
                     min={1}
+                    max={investmentMode === 'usd' ? MAX_SINGLE_TRADE_INVESTMENT_USD : 100}
                     value={investment}
-                    onChange={(e) => setInvestment(Math.max(1, Number(e.target.value)))}
-                    className="w-14 bg-transparent text-center focus:outline-none font-black text-white"
+                    onChange={(e) => handleChangeInvestmentAmount(Number(e.target.value))}
+                    className="w-16 bg-transparent text-center focus:outline-none font-black text-white"
                   />
                   <span className="text-slate-300 text-xs font-black">
                     {investmentMode === 'usd' ? '$' : '%'}
@@ -5898,26 +6043,37 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                 </div>
                 <button
                   type="button"
+                  data-testid="investment-step-up-btn"
                   onClick={() => {
                     soundEngine.playUiClick();
-                    setInvestment((v) => v + (v < 10 ? 1 : 10));
+                    const step = investment < 10 ? 1 : investment < 100 ? 10 : 100;
+                    const nextVal = investment + step;
+                    if (investmentMode === 'usd' && nextVal > MAX_SINGLE_TRADE_INVESTMENT_USD) {
+                      setInvestment(MAX_SINGLE_TRADE_INVESTMENT_USD);
+                      setTradeError(
+                        `Per-Trade Risk Limit Exceeded: Maximum investment is $${MAX_SINGLE_TRADE_INVESTMENT_USD.toLocaleString()} per single trade across both Self-Capital and Funded accounts.`
+                      );
+                      return;
+                    }
+                    handleChangeInvestmentAmount(nextVal);
                   }}
                   className="w-6 h-6 rounded-md bg-[#232838] hover:bg-[#2d3448] text-slate-200 hover:text-white font-black text-sm flex items-center justify-center cursor-pointer transition-colors"
-                  title="Increase Investment"
+                  title="Increase Investment (Max $5,000)"
                 >
                   +
                 </button>
               </div>
 
               <div className="grid grid-cols-4 gap-1 text-[9px]">
-                {[2, 10, 50, 100].map((amt) => (
+                {[10, 50, 500, 5000].map((amt) => (
                   <button
                     key={amt}
                     type="button"
+                    data-testid={`quick-investment-${amt}`}
                     onClick={() => {
                       soundEngine.playUiClick();
                       setInvestmentMode('usd');
-                      setInvestment(amt);
+                      handleChangeInvestmentAmount(amt);
                     }}
                     className={`py-0.5 rounded font-bold cursor-pointer transition-colors ${
                       investmentMode === 'usd' && investment === amt
@@ -5925,7 +6081,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                         : 'bg-[#131722] text-slate-400 hover:text-white border border-[#2a2e39]'
                     }`}
                   >
-                    ${amt}
+                    ${amt >= 1000 ? `${amt / 1000}k` : amt}
                   </button>
                 ))}
               </div>

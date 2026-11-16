@@ -322,13 +322,14 @@ export const FAQSection: React.FC = () => {
 
           <div className="flex items-center gap-3 shrink-0">
             <a
-              href="https://t.me"
+              href="https://t.me/bft_admin"
               target="_blank"
               rel="noopener noreferrer"
+              data-testid="faq-support-desk-link"
               className="px-5 py-3 rounded-xl bg-[#0066ff] hover:bg-[#1a75ff] text-white font-black text-xs flex items-center gap-2 shadow-[0_4px_14px_rgba(0,102,255,0.35)] transition-all"
             >
               <Send className="w-4 h-4 text-white" />
-              <span>Telegram VIP Desk</span>
+              <span>Support Desk</span>
             </a>
           </div>
         </div>

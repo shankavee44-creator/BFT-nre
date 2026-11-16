@@ -79,6 +79,9 @@ const masterStores: Map<string, AssetMarketState> = new Map();
 // Global Anchor Epoch: Jan 1, 2024 00:00:00 UTC (1704067200000 ms)
 const GLOBAL_EPOCH = 1704067200000;
 
+export const INITIAL_CANDLE_HISTORY_COUNT = 2500;
+export const MAX_CANDLE_HISTORY_CAPACITY = 10000;
+
 // Multi-octave timescales (in seconds) for time-invariant global fractal price trajectory
 const GLOBAL_OCTAVE_PERIODS_SEC = [5, 15, 30, 60, 180, 300, 900, 1800, 3600] as const;
 
@@ -329,7 +332,7 @@ export function computeDeterministicCandleForBucket(
 function generateDeterministicTimeframeCandles(
   asset: AssetInfo,
   timeframeSeconds: number,
-  count: number = 1500,
+  count: number = INITIAL_CANDLE_HISTORY_COUNT,
   anchorEndPrice?: number,
   referenceNowMs: number = getSynchronizedNowMs()
 ): Candle[] {
@@ -393,7 +396,7 @@ export function getOrCreateMasterHistory(asset: AssetInfo): AssetMarketState {
 
     const initNow = getSynchronizedNowMs();
     const liveSnap = computeSynchronizedTickAtTime(asset, initNow);
-    const baseCandles = generateDeterministicTimeframeCandles(asset, 5, 1500, liveSnap.price, initNow);
+    const baseCandles = generateDeterministicTimeframeCandles(asset, 5, INITIAL_CANDLE_HISTORY_COUNT, liveSnap.price, initNow);
     lastSteppedTimeBySymbol.set(symbolKey, initNow);
     const lastPrice = liveSnap.price;
 
@@ -466,7 +469,12 @@ export function syncAssetStoreWithServerTime(
   lastSteppedTimeBySymbol.set(symbolKey, nowMs);
 
   const tf = Math.max(5, timeframeSeconds);
-  const freshSeries = generateDeterministicTimeframeCandles(asset, tf, 1500, resolvedPrice, nowMs);
+  const existingSeries = store.timeframeSeries.get(tf);
+  const preservedCount = Math.min(
+    MAX_CANDLE_HISTORY_CAPACITY,
+    Math.max(INITIAL_CANDLE_HISTORY_COUNT, existingSeries?.length || 0)
+  );
+  const freshSeries = generateDeterministicTimeframeCandles(asset, tf, preservedCount, resolvedPrice, nowMs);
   store.timeframeSeries.set(tf, freshSeries);
 
   return [...freshSeries];
@@ -851,7 +859,8 @@ function updateCandleArrayWithTick(
 
     // If a large time gap occurred (e.g. tab sleep > 200 buckets), regenerate full deterministic series cleanly
     if (numBucketsPassed > 200) {
-      const fresh = generateDeterministicTimeframeCandles(asset, tf, candles.length || 1500, newPrice, now);
+      const targetLen = Math.min(MAX_CANDLE_HISTORY_CAPACITY, Math.max(INITIAL_CANDLE_HISTORY_COUNT, candles.length));
+      const fresh = generateDeterministicTimeframeCandles(asset, tf, targetLen, newPrice, now);
       candles.splice(0, candles.length, ...fresh);
       return;
     }
@@ -882,12 +891,13 @@ function updateCandleArrayWithTick(
       );
     }
 
-    if (candles.length > 1500) {
-      candles.splice(0, candles.length - 1500);
+    if (candles.length > MAX_CANDLE_HISTORY_CAPACITY) {
+      candles.splice(0, candles.length - MAX_CANDLE_HISTORY_CAPACITY);
     }
   } else if (lastCandle && currentBucket < lastCandle.time) {
     // Clock offset resynced backward: rebuild cleanly
-    const fresh = generateDeterministicTimeframeCandles(asset, tf, candles.length || 1500, newPrice, now);
+    const targetLen = Math.min(MAX_CANDLE_HISTORY_CAPACITY, Math.max(INITIAL_CANDLE_HISTORY_COUNT, candles.length));
+    const fresh = generateDeterministicTimeframeCandles(asset, tf, targetLen, newPrice, now);
     candles.splice(0, candles.length, ...fresh);
   }
 }
@@ -901,13 +911,12 @@ export function aggregateCandlesForTimeframe(
 ): Candle[] {
   const store = getOrCreateMasterHistory(asset);
   const tf = Math.max(5, timeframeSeconds);
-  const minPip = Math.pow(10, -asset.pipDecimals);
   const now = Math.max(getSynchronizedNowMs(), lastSteppedTimeBySymbol.get(store.symbol) || 0);
 
   let series = store.timeframeSeries.get(tf);
 
   if (!series || series.length === 0 || !validateCandlesForAsset(asset, series)) {
-    series = generateDeterministicTimeframeCandles(asset, tf, 1500, store.lastPrice, now);
+    series = generateDeterministicTimeframeCandles(asset, tf, INITIAL_CANDLE_HISTORY_COUNT, store.lastPrice, now);
     store.timeframeSeries.set(tf, series);
   } else {
     updateCandleArrayWithTick(series, asset, tf, store.lastPrice, now);
@@ -920,26 +929,32 @@ export function aggregateCandlesForTimeframe(
 export function prependHistoricalCandles(
   asset: AssetInfo,
   timeframeSeconds: number,
-  chunkCount: number = 500
+  chunkCount: number = 1000
 ): Candle[] {
   const store = getOrCreateMasterHistory(asset);
   const tf = Math.max(5, timeframeSeconds);
   const existing = store.timeframeSeries.get(tf) || aggregateCandlesForTimeframe(asset, tf);
-  if (existing.length >= 5000 || existing.length === 0) {
-    return existing;
+  if (existing.length >= MAX_CANDLE_HISTORY_CAPACITY || existing.length === 0) {
+    return [...existing];
+  }
+
+  const remainingCapacity = MAX_CANDLE_HISTORY_CAPACITY - existing.length;
+  const countToPrepend = Math.max(0, Math.min(chunkCount, remainingCapacity));
+  if (countToPrepend === 0) {
+    return [...existing];
   }
 
   const earliest = existing[0];
   const bucketMs = tf * 1000;
   const now = getSynchronizedNowMs();
 
-  const olderCandles: Candle[] = new Array(chunkCount);
-  for (let i = 0; i < chunkCount; i++) {
-    const candleTime = earliest.time - (chunkCount - i) * bucketMs;
+  const olderCandles: Candle[] = new Array(countToPrepend);
+  for (let i = 0; i < countToPrepend; i++) {
+    const candleTime = earliest.time - (countToPrepend - i) * bucketMs;
     olderCandles[i] = computeDeterministicCandleForBucket(asset, tf, candleTime, false, undefined, now);
   }
 
   const combined = [...olderCandles, ...existing];
   store.timeframeSeries.set(tf, combined);
-  return combined;
+  return [...combined];
 }

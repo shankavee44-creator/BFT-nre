@@ -138,6 +138,17 @@ export const LiveChatWidget: React.FC = () => {
             </div>
 
             <div className="flex items-center gap-1">
+              <a
+                href="https://t.me/bft_admin"
+                target="_blank"
+                rel="noopener noreferrer"
+                data-testid="chat-widget-support-desk-link"
+                className="px-2 py-1 rounded-lg bg-white/15 hover:bg-white/25 text-white text-[10px] font-mono font-black flex items-center gap-1 cursor-pointer transition-colors"
+                title="Open Support Desk on Telegram (@bft_admin)"
+              >
+                <Send className="w-3 h-3" />
+                <span>Support Desk</span>
+              </a>
               <button
                 onClick={handleClearChat}
                 className="p-1.5 rounded-lg hover:bg-white/10 text-white cursor-pointer transition-colors"

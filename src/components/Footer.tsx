@@ -1,5 +1,5 @@
 import React from 'react';
-import { Zap, AlertTriangle, ArrowUp } from 'lucide-react';
+import { Zap, AlertTriangle, ArrowUp, Send } from 'lucide-react';
 import { BftLogo } from './BftLogo';
 
 interface FooterProps {
@@ -97,6 +97,18 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenAdminDashboard
                 <button onClick={() => onNavigate('faq')} className="text-[#0066ff] hover:text-[#1a75ff] font-bold transition-colors">
                   FAQ &amp; Knowledge Base
                 </button>
+              </li>
+              <li>
+                <a
+                  href="https://t.me/bft_admin"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  data-testid="footer-support-desk-link"
+                  className="inline-flex items-center gap-1.5 text-[#0066ff] hover:text-[#1a75ff] font-bold transition-colors"
+                >
+                  <Send className="w-3.5 h-3.5 shrink-0" />
+                  <span>Support Desk (@bft_admin)</span>
+                </a>
               </li>
             </ul>
           </div>

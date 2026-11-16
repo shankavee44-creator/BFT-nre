@@ -772,6 +772,18 @@ export const AffiliateDashboard: React.FC<AffiliateDashboardProps> = ({
             >
               <QrCode className="w-4 h-4" />
             </button>
+
+            <a
+              href="https://t.me/bft_admin"
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid="affiliate-support-desk-link"
+              className="px-4 py-3 rounded-2xl bg-[#0066ff] hover:bg-[#1a75ff] text-white text-xs font-mono font-black flex items-center gap-1.5 cursor-pointer transition-colors"
+              title="Contact Official Support Desk (@bft_admin)"
+            >
+              <Send className="w-3.5 h-3.5 shrink-0" />
+              <span>Support Desk</span>
+            </a>
           </div>
         </div>
       </div>
