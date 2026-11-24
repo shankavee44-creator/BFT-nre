@@ -39018,8 +39018,8 @@ function buildPackageSku(params) {
   if (params.accountType === "self_funded") {
     return `BFT-SELF-${cleanAmount}`;
   }
-  const tierNorm = String(params.tier || "two-step").toLowerCase();
-  const tierCode = tierNorm === "one-step" ? "1S" : tierNorm === "instant" ? "INF" : "2S";
+  const tierNorm = String(params.tier || "funded-challenge").toLowerCase();
+  const tierCode = tierNorm === "funded-challenge" || tierNorm === "funded_challenge" ? "FC" : tierNorm === "one-step" || tierNorm === "one_step" ? "1S" : tierNorm === "two-step" || tierNorm === "two_step" ? "2S" : tierNorm === "instant" ? "INF" : "FC";
   const sizeLabel = cleanAmount >= 1e3 ? `${cleanAmount / 1e3}K` : String(cleanAmount);
   return `BFT-${tierCode}-${sizeLabel}`;
 }
@@ -39544,17 +39544,45 @@ async function fetchTronGridTrc20Transfers(options) {
 }
 
 // src/utils/propRules.ts
+var MAX_RISK_PER_TRADE_PERCENT = 5;
+var CHALLENGE_PROFIT_TARGET_PERCENT = 30;
+var CHALLENGE_MAX_OVERALL_LOSS_PERCENT = 10;
+var MIN_PROFITABLE_DAYS = 5;
+var MIN_PROFITABLE_DAY_PERCENT = 1;
+var REAL_FUNDED_PROFIT_SPLIT_PERCENT = 90;
+function isPersonalLiveAccount(account) {
+  if (!account) return false;
+  const rawType = String(account.accountType || account.account_type || "").toLowerCase();
+  return account.tier === "personal" || account.accountCategory === "personal_live" || account.phase === "personal_live" || rawType === "self_funded" || rawType === "personal" || rawType === "self-capital";
+}
+function isDemoAccount(account) {
+  if (!account) return false;
+  return account.tier === "demo" || account.accountCategory === "demo" || account.phase === "demo" || Boolean(account.id && typeof account.id === "string" && account.id.startsWith("BFT-DEMO"));
+}
+function isRealFundedAccount(account) {
+  if (!account) return false;
+  if (isPersonalLiveAccount(account) || isDemoAccount(account)) return false;
+  if (account.account_tier === "REAL_FUNDED") return true;
+  return Boolean(
+    account.isRealFunded || account.is_real_funded || account.phase === "funded" || account.tier === "instant"
+  );
+}
 function normalizeChallengeAccountType(input) {
-  if (!input) return "two_step";
+  if (!input) return "funded_challenge";
   const clean = String(input).toLowerCase().trim().replace(/[^a-z0-9_]/g, "_");
-  if (clean.includes("instant")) return "instant";
-  if (clean.includes("one") || clean.includes("1step") || clean === "one_step") return "one_step";
   if (clean.includes("personal") || clean.includes("self")) return "personal";
   if (clean.includes("demo")) return "demo";
-  return "two_step";
+  if (clean.includes("funded_challenge") || clean === "challenge" || clean === "funded") {
+    return "funded_challenge";
+  }
+  if (clean.includes("instant")) return "instant";
+  if (clean.includes("one") || clean.includes("1step") || clean === "one_step") return "one_step";
+  if (clean.includes("two") || clean.includes("2step") || clean === "two_step") return "two_step";
+  return "funded_challenge";
 }
 function normalizeChallengeTier(input) {
   const normType = normalizeChallengeAccountType(input);
+  if (normType === "funded_challenge") return "funded-challenge";
   if (normType === "one_step") return "one-step";
   if (normType === "two_step") return "two-step";
   if (normType === "instant") return "instant";
@@ -39565,38 +39593,29 @@ function getDynamicAccountLimits(accountTypeOrTier, phase, overrides) {
   const accountType = normalizeChallengeAccountType(accountTypeOrTier);
   const tier = normalizeChallengeTier(accountTypeOrTier);
   const currentPhase = String(phase || "").toLowerCase().trim();
-  let defaultDaily = 8;
-  let defaultMax = 20;
-  let defaultTarget = 25;
-  let step2Target = 15;
-  let maxRiskPerTradePercent = 5;
-  let minProfitableDays = 5;
-  let minProfitableDayPercent = 0.5;
+  let defaultDaily = 0;
+  let defaultMax = CHALLENGE_MAX_OVERALL_LOSS_PERCENT;
+  let defaultTarget = CHALLENGE_PROFIT_TARGET_PERCENT;
+  let step2Target = 0;
+  let maxRiskPerTradePercent = MAX_RISK_PER_TRADE_PERCENT;
+  let minProfitableDays = MIN_PROFITABLE_DAYS;
+  let minProfitableDayPercent = MIN_PROFITABLE_DAY_PERCENT;
   let initialPhase = "phase_1";
-  if (accountType === "one_step") {
-    defaultDaily = 10;
-    defaultMax = 15;
-    defaultTarget = currentPhase === "funded" ? 0 : 30;
+  if (accountType === "funded_challenge" || accountType === "one_step" || accountType === "two_step") {
+    defaultDaily = 0;
+    defaultMax = CHALLENGE_MAX_OVERALL_LOSS_PERCENT;
+    defaultTarget = currentPhase === "funded" ? 0 : CHALLENGE_PROFIT_TARGET_PERCENT;
     step2Target = 0;
-    maxRiskPerTradePercent = 5;
-    minProfitableDays = currentPhase === "funded" ? 0 : 5;
-    minProfitableDayPercent = currentPhase === "funded" ? 0 : 0.5;
-    initialPhase = "phase_1";
-  } else if (accountType === "two_step") {
-    defaultDaily = 8;
-    defaultMax = 20;
-    defaultTarget = currentPhase === "funded" ? 0 : currentPhase === "phase_2" ? 15 : 25;
-    step2Target = 15;
-    maxRiskPerTradePercent = 5;
-    minProfitableDays = currentPhase === "funded" ? 0 : 5;
-    minProfitableDayPercent = currentPhase === "funded" ? 0 : 0.5;
+    maxRiskPerTradePercent = MAX_RISK_PER_TRADE_PERCENT;
+    minProfitableDays = currentPhase === "funded" ? 0 : MIN_PROFITABLE_DAYS;
+    minProfitableDayPercent = currentPhase === "funded" ? 0 : MIN_PROFITABLE_DAY_PERCENT;
     initialPhase = "phase_1";
   } else if (accountType === "instant") {
-    defaultDaily = 6;
-    defaultMax = 12;
+    defaultDaily = 0;
+    defaultMax = CHALLENGE_MAX_OVERALL_LOSS_PERCENT;
     defaultTarget = 0;
     step2Target = 0;
-    maxRiskPerTradePercent = 5;
+    maxRiskPerTradePercent = MAX_RISK_PER_TRADE_PERCENT;
     minProfitableDays = 0;
     minProfitableDayPercent = 0;
     initialPhase = "funded";
@@ -39620,7 +39639,7 @@ function getDynamicAccountLimits(accountTypeOrTier, phase, overrides) {
     initialPhase = "demo";
   }
   const isUnrestricted = accountType === "personal" || accountType === "demo";
-  const dailyLossLimitPercent = isUnrestricted ? 0 : overrides?.dailyDrawdown !== void 0 && overrides.dailyDrawdown > 0 ? overrides.dailyDrawdown : defaultDaily;
+  const dailyLossLimitPercent = isUnrestricted ? 0 : overrides?.dailyDrawdown !== void 0 && overrides.dailyDrawdown >= 0 ? overrides.dailyDrawdown : defaultDaily;
   const maxOverallLossPercent = isUnrestricted ? 0 : overrides?.maxDrawdown !== void 0 && overrides.maxDrawdown > 0 ? overrides.maxDrawdown : defaultMax;
   const profitTargetPercent = isUnrestricted || accountType === "instant" || currentPhase === "funded" ? 0 : overrides?.profitTarget !== void 0 && overrides.profitTarget !== null && overrides.profitTarget > 0 ? overrides.profitTarget : defaultTarget;
   return {
@@ -48030,10 +48049,12 @@ function resolveChallengeTypeLabel(account) {
   if (account.tierName && account.tierName.trim()) {
     return account.tierName.trim();
   }
+  if (account.isRealFunded || account.is_real_funded || account.phase === "funded") {
+    return "Real Funded Account";
+  }
   const norm = normalizeChallengeAccountType(account.accountType || account.tier);
-  if (norm === "one_step") return "One-Step Challenge";
-  if (norm === "instant") return "Instant Funded";
-  return "Two-Step Challenge";
+  if (norm === "funded_challenge") return "Funded Challenge";
+  return "Funded Challenge";
 }
 function buildInitialFundedWalletFromAccount(account, userId, existing, nowMs = Date.now()) {
   const limits = getDynamicAccountLimits(
@@ -48103,11 +48124,29 @@ function buildInitialFundedWalletFromAccount(account, userId, existing, nowMs = 
   const breachReason = existing?.breach_reason ?? (accountStatus === "HARD_BREACH" || accountStatus === "SOFT_BREACH" ? account.breachReason || null : null);
   const nowIso = new Date(nowMs).toISOString();
   const todayKey = getUtcDateKey(nowMs);
+  const isRealFunded = Boolean(
+    existing?.is_real_funded ?? isRealFundedAccount(account)
+  );
+  const accountTier = isRealFunded ? "REAL_FUNDED" : "CHALLENGE";
+  const badgeColor = isRealFunded ? "purple" : "red";
+  const certificateUnlocked = Boolean(
+    existing?.certificate_unlocked || account.certificate_unlocked || accountStatus === "PASSED" || isRealFunded && Boolean(account.certificateId)
+  );
+  const certificateId = existing?.certificate_id || account.certificateId || (certificateUnlocked ? `BFT-CERT-${account.id}` : null);
+  const passedAt = existing?.passed_at || account.passed_at || account.passedAt || (accountStatus === "PASSED" ? nowIso : null);
   return {
     id: String(existing?.id || account.supabaseAccountId || account.id),
     account_id: String(existing?.account_id || account.id),
     user_id: String(existing?.user_id || userId || account.ownerId || "usr_bft_001"),
     challenge_type: String(existing?.challenge_type || resolveChallengeTypeLabel(account)),
+    account_tier: existing?.account_tier || accountTier,
+    badge_color: existing?.badge_color || badgeColor,
+    is_real_funded: isRealFunded,
+    principal_locked: isRealFunded ? true : Boolean(existing?.principal_locked ?? false),
+    profit_split_percent: isRealFunded ? Number(existing?.profit_split_percent ?? account.profit_split_percent ?? REAL_FUNDED_PROFIT_SPLIT_PERCENT) : Number(existing?.profit_split_percent ?? 80),
+    certificate_unlocked: certificateUnlocked,
+    certificate_id: certificateId,
+    passed_at: passedAt,
     account_status: accountStatus,
     soft_breach_until: softBreachUntil,
     breach_reason: breachReason,
@@ -48138,6 +48177,16 @@ function buildSupabaseWalletPayload(wallet) {
     account_id: wallet.account_id,
     user_id: wallet.user_id,
     challenge_type: wallet.challenge_type,
+    account_tier: wallet.account_tier || (wallet.is_real_funded ? "REAL_FUNDED" : "CHALLENGE"),
+    badge_color: wallet.badge_color || (wallet.is_real_funded ? "purple" : "red"),
+    is_real_funded: Boolean(wallet.is_real_funded),
+    principal_locked: Boolean(wallet.principal_locked ?? wallet.is_real_funded),
+    profit_split_percent: Number(
+      wallet.profit_split_percent ?? (wallet.is_real_funded ? REAL_FUNDED_PROFIT_SPLIT_PERCENT : 80)
+    ),
+    certificate_unlocked: Boolean(wallet.certificate_unlocked || wallet.account_status === "PASSED"),
+    certificate_id: wallet.certificate_id ?? null,
+    passed_at: wallet.passed_at ?? null,
     account_status: wallet.account_status,
     soft_breach_until: wallet.soft_breach_until,
     breach_reason: wallet.breach_reason,

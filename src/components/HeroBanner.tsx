@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Zap,
   ShieldCheck,
@@ -9,8 +9,11 @@ import {
   DollarSign,
   Tag,
   UserPlus,
+  X,
+  CheckCircle2,
 } from 'lucide-react';
 import { PromoCodeType } from '../types';
+import { validatePromoCode } from '../utils/propRules';
 
 export const HERO_BACKGROUND_VIDEO_SRC =
   '/assets/aistudio/Santa_Claus_riding_sleigh_ce499b44_1080p_fa553f65.mp4';
@@ -35,6 +38,22 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
   isLoggedIn = false,
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [promoInput, setPromoInput] = useState<string>(
+    activePromoCode && activePromoCode !== 'NONE' ? String(activePromoCode) : ''
+  );
+  const [promoError, setPromoError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (activePromoCode && activePromoCode !== 'NONE') {
+      setPromoInput(String(activePromoCode));
+      setPromoError(null);
+    } else if (activePromoCode === 'NONE') {
+      const currentValid = validatePromoCode(promoInput);
+      if (currentValid.valid) {
+        setPromoInput('');
+      }
+    }
+  }, [activePromoCode]);
 
   useEffect(() => {
     const vid = videoRef.current;
@@ -46,6 +65,27 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
       });
     }
   }, []);
+
+  const activePromoValidation = validatePromoCode(activePromoCode);
+
+  const handleApplyHeroPromo = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const result = validatePromoCode(promoInput);
+    if (result.valid) {
+      setPromoError(null);
+      setPromoInput(String(result.code));
+      onSelectPromoCode(result.code);
+    } else {
+      onSelectPromoCode('NONE');
+      setPromoError(result.isCleared ? null : result.error || 'Invalid bonus code.');
+    }
+  };
+
+  const handleClearHeroPromo = () => {
+    setPromoInput('');
+    setPromoError(null);
+    onSelectPromoCode('NONE');
+  };
 
   return (
     <section
@@ -106,13 +146,14 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
         </h1>
 
         <p className="text-sm sm:text-base lg:text-lg text-slate-200 max-w-2xl mx-auto mb-6 font-medium leading-relaxed">
-          Get funded up to <strong className="text-white font-bold">$100,000</strong> with{' '}
-          <strong className="text-[#ff8800] font-bold">Binary Funded Trader (BFT)</strong>. Withdraw{' '}
-          <strong className="text-emerald-400 font-bold">80% profit split</strong> in your first 3 months, automatically scaling to{' '}
-          <strong className="text-[#ff8800] font-bold">90% profit split + Account Scaling</strong> after Month 3.
+          Get funded up to <strong className="text-white font-bold">$200,000</strong> with{' '}
+          <strong className="text-[#ff8800] font-bold">Binary Funded Trader (BFT)</strong>. Pass one
+          unified challenge (30% target, 10% max loss, 5 qualifying ≥1% days) to unlock a{' '}
+          <strong className="text-emerald-400 font-bold">Real Funded Account</strong> with{' '}
+          <strong className="text-[#ff8800] font-bold">80% → 90% profit split</strong> &amp; weekly payouts.
         </p>
 
-        {/* Active Discount Promo Codes Selector Banner */}
+        {/* Unified Funded Challenge Pricing & Bonus Code Input */}
         <div className="max-w-3xl mx-auto mb-8 p-4 rounded-2xl bg-[#111827] border border-[#ff8800]/40 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3 text-left">
             <div className="w-10 h-10 rounded-xl bg-[#ff8800]/15 border border-[#ff8800]/40 flex items-center justify-center text-[#ff8800] shrink-0">
@@ -120,36 +161,68 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
             </div>
             <div>
               <div className="text-xs font-bold text-[#ff8800] uppercase tracking-wider">
-                Live Promotional Discount Applied to Packages Below
+                Unified Funded Challenge • $5,000 ($49) to $200,000 ($1,199)
               </div>
               <div className="text-xs text-slate-200 font-medium">
-                Click a code to toggle live discounted package pricing across all tiers:
+                {activePromoValidation.valid ? (
+                  <span className="inline-flex items-center gap-1.5 text-emerald-400 font-bold">
+                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                    <span>
+                      Bonus code {activePromoValidation.code} applied ({activePromoValidation.discountPercent}% OFF active)
+                    </span>
+                  </span>
+                ) : promoError ? (
+                  <span data-testid="hero-promo-error" className="text-rose-400 font-semibold">
+                    {promoError}
+                  </span>
+                ) : (
+                  'Standard institutional pricing active — enter a bonus code if eligible:'
+                )}
               </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <form
+            onSubmit={handleApplyHeroPromo}
+            className="flex items-center gap-2 shrink-0 flex-wrap justify-center"
+          >
+            <div className="relative flex items-center">
+              <input
+                type="text"
+                data-testid="hero-promo-code-input"
+                value={promoInput}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setPromoInput(val);
+                  if (!val.trim()) {
+                    setPromoError(null);
+                    onSelectPromoCode('NONE');
+                  }
+                }}
+                placeholder="Enter bonus code"
+                aria-label="Enter bonus code"
+                className="w-36 sm:w-40 px-3 py-2 rounded-xl bg-[#0b0f19] border border-white/[0.15] text-xs font-bold text-white placeholder:text-slate-500 uppercase focus:outline-none focus:border-[#ff8800]"
+              />
+              {(promoInput || activePromoValidation.valid) && (
+                <button
+                  type="button"
+                  data-testid="hero-remove-promo-code-btn"
+                  onClick={handleClearHeroPromo}
+                  title="Clear bonus code"
+                  className="absolute right-2 text-slate-400 hover:text-white cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
             <button
-              onClick={() => onSelectPromoCode('SPOOKY40')}
-              className={`px-3.5 py-2 rounded-xl text-xs font-extrabold transition-all cursor-pointer border ${
-                activePromoCode === 'SPOOKY40' || activePromoCode === 'BFT40'
-                  ? 'bg-[#ff8800] text-slate-950 border-[#ff8800]'
-                  : 'bg-[#0b0f19] text-slate-200 border-white/[0.12] hover:text-white'
-              }`}
+              type="submit"
+              data-testid="hero-apply-promo-code-btn"
+              className="px-3.5 py-2 rounded-xl text-xs font-extrabold transition-all cursor-pointer border bg-[#ff8800] text-slate-950 border-[#ff8800] hover:bg-[#ff9900]"
             >
-              SPOOKY40 (40% OFF New)
+              Apply Code
             </button>
-            <button
-              onClick={() => onSelectPromoCode('SPOOKY20')}
-              className={`px-3.5 py-2 rounded-xl text-xs font-extrabold transition-all cursor-pointer border ${
-                activePromoCode === 'SPOOKY20' || activePromoCode === 'BFT20'
-                  ? 'bg-[#ff8800] text-slate-950 border-[#ff8800]'
-                  : 'bg-[#0b0f19] text-slate-200 border-white/[0.12] hover:text-white'
-              }`}
-            >
-              SPOOKY20 (20% OFF Existing)
-            </button>
-          </div>
+          </form>
         </div>
 
         {/* Double Payout Guarantee Card */}
@@ -190,7 +263,9 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
             onClick={onSelectTier}
             className="px-8 py-4 rounded-xl bg-[#0066ff] hover:bg-[#1a75ff] text-white font-extrabold text-sm sm:text-base shadow-[0_4px_18px_rgba(0,102,255,0.35)] cursor-pointer transition-colors"
           >
-            Claim {activePromoCode} Discounted Challenge
+            {activePromoCode && activePromoCode !== 'NONE'
+              ? `Claim ${activePromoCode} Discounted Challenge`
+              : 'Start Funded Challenge ($49 – $1,199)'}
           </button>
           <button
             onClick={onOpenTerminal}

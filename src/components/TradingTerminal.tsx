@@ -48,6 +48,7 @@ import {
   Minimize2,
   BarChart2,
   LineChart,
+  MessageCircle,
 } from 'lucide-react';
 import {
   TradingAccount,
@@ -89,7 +90,7 @@ import {
   isLiveFundedAccount,
   isPersonalLiveAccount,
   isDemoAccount,
-  getAccountStatusBadgeLabel,
+  resolveAccountBadgeMeta,
   getChallengeProfitTarget,
   sanitizeAccountForAntiBreach,
   calculateLiveAccountEquity,
@@ -98,6 +99,7 @@ import {
   isAccountSoftBreached,
   isAccountHardBreached,
   evaluateRealtimeTradingEngine,
+  evaluateFundedTradeRiskRules,
   validateTradeDurationForAccount,
   isFundedDurationRestrictedAccount,
   clampCustomTradeDuration,
@@ -212,6 +214,7 @@ import { QuotexLeaderboardModal } from './QuotexLeaderboardModal';
 import { CopyTradingModal } from './CopyTradingModal';
 import { QuotexMobileDock } from './QuotexMobileDock';
 import { QuotexMobileNav } from './QuotexMobileNav';
+import { TerminalLiveChatDrawer } from './TerminalLiveChatDrawer';
 import { PriceAlertModal, PriceAlert } from './PriceAlertModal';
 import { LightweightTradingChart } from './LightweightTradingChart';
 import { AssetFlagIcon } from './CountryFlagIcon';
@@ -729,6 +732,8 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   const [tradeSuccess, setTradeSuccess] = useState<string | null>(null);
   const [isAssetModalOpen, setIsAssetModalOpen] = useState(false);
   const [isSignalsDrawerOpen, setIsSignalsDrawerOpen] = useState(false);
+  const [isLiveChatDrawerOpen, setIsLiveChatDrawerOpen] = useState(false);
+  const [unreadLiveChatCount, setUnreadLiveChatCount] = useState(0);
   const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(false);
   const [isCopyTradingOpen, setIsCopyTradingOpen] = useState(false);
   const [isRulesModalOpen, setIsRulesModalOpen] = useState(false);
@@ -1197,11 +1202,13 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
     return () => clearInterval(interval);
   }, [isSoftBreached, account]);
 
+  const autoPassTriggeredIdsRef = useRef<Set<string>>(new Set());
+
   const riskBarricade = isRiskBarricadeActive(
     metrics.dailyDrawdownPercent,
-    effectiveAccount?.dailyLossLimitPercent || 6,
+    effectiveAccount?.dailyLossLimitPercent ?? 0,
     metrics.overallLossPercent,
-    effectiveAccount?.maxOverallLossPercent || 12,
+    effectiveAccount?.maxOverallLossPercent ?? 10,
     1.0
   );
 
@@ -1311,7 +1318,10 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         nowMs,
       }).catch(() => {});
 
-      onPassChallengePhase?.(engineResult.updatedAccount);
+      if (!autoPassTriggeredIdsRef.current.has(engineResult.updatedAccount.id)) {
+        autoPassTriggeredIdsRef.current.add(engineResult.updatedAccount.id);
+        onPassChallengePhase?.(engineResult.updatedAccount);
+      }
     }
   }, [liveEquity, account, onUpdateAccount, onUpdateTrade, onPassChallengePhase, userProfile?.id, userProfile?.email]);
 
@@ -1981,7 +1991,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               winRate: updatedAccount.winRate,
             }).catch(() => {});
 
-            // Update purchased_funded_wallets analytics, profitable day check (>= 0.5%), & auto-breach check
+            // Update purchased_funded_wallets analytics, profitable day check (>= 1%), auto-pass & auto-breach check
             syncFundedWalletOnTradeClose({
               account: updatedAccount,
               tradePnl: settlement.pnl,
@@ -1990,21 +2000,27 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
             })
               .then((walletSync) => {
                 if (!walletSync.wallet) return;
-                if (walletSync.incrementedProfitableDay) {
-                  const syncedAcc: TradingAccount = {
+                let latestAcc = updatedAccount;
+                if (
+                  walletSync.incrementedProfitableDay ||
+                  walletSync.wallet.completed_profitable_days !== updatedAccount.tradingDaysCompleted
+                ) {
+                  latestAcc = {
                     ...updatedAccount,
                     tradingDaysCompleted: walletSync.wallet.completed_profitable_days,
                   };
-                  runningAccount = syncedAcc;
-                  accountRef.current = syncedAcc;
-                  onUpdateAccount(syncedAcc);
+                  runningAccount = latestAcc;
+                  accountRef.current = latestAcc;
+                  onUpdateAccount(latestAcc);
                 }
                 if (walletSync.triggeredBreach === 'HARD_BREACH') {
                   const breachedAcc: TradingAccount = {
-                    ...updatedAccount,
+                    ...latestAcc,
                     status: 'hard_breached',
                     breachType: 'hard',
-                    breachReason: walletSync.wallet.breach_reason || 'Drawdown Limit Exceeded.',
+                    breachReason:
+                      walletSync.wallet.breach_reason ||
+                      '10% Max Overall Loss Limit Exceeded.',
                     breachedAt: now,
                   };
                   runningAccount = breachedAcc;
@@ -2018,15 +2034,33 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                     status: 'hard_breached',
                   }).catch(() => {});
                   setIsBreachModalOpen(true);
+                } else if (
+                  walletSync.becamePassed &&
+                  !isLiveFundedAccount(latestAcc) &&
+                  !autoPassTriggeredIdsRef.current.has(latestAcc.id)
+                ) {
+                  autoPassTriggeredIdsRef.current.add(latestAcc.id);
+                  setTimeout(() => {
+                    onPassChallengePhase?.(latestAcc);
+                  }, 700);
                 }
               })
               .catch(() => {});
           }
 
-          // Check if a One-Step or Two-Step Challenge account just hit its profit target!
-          if (account && settlement.status === 'won' && !isLiveFundedAccount(updatedAccount)) {
-            const targetStatus = getChallengeProfitTarget(updatedAccount);
+          // Check if a Funded Challenge account just met BOTH 30% Profit Target AND >= 5 qualifying (>=1%) days
+          if (
+            account &&
+            settlement.status === 'won' &&
+            !isLiveFundedAccount(updatedAccount) &&
+            !autoPassTriggeredIdsRef.current.has(updatedAccount.id)
+          ) {
+            const targetStatus = getChallengeProfitTarget(
+              updatedAccount,
+              updatedAccount.tradingDaysCompleted
+            );
             if (targetStatus.isTargetMet) {
+              autoPassTriggeredIdsRef.current.add(updatedAccount.id);
               setTimeout(() => {
                 onPassChallengePhase?.(updatedAccount);
               }, 900);
@@ -2104,7 +2138,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   ) => {
     if (hasNoAccount) {
       soundEngine.playErrorAlert();
-      setTradeError('Trading Terminal Locked: Please purchase a Challenge or Instant Funded plan to unlock live trading.');
+      setTradeError('Trading Terminal Locked: Please purchase a Funded Challenge plan to unlock live trading.');
       return;
     }
     const activeAcc = effectiveAccount;
@@ -2152,7 +2186,94 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       return;
     }
 
-    // Zero-Tolerance Drawdown & 5% Max Risk Per Trade Execution Guard
+    // Strict Funded & Challenge Trading Rules: Immediate HARD_BREACH on violation
+    if (!isUnrestrictedPersonalOrDemo) {
+      const triggerImmediateHardBreach = (reasonText: string) => {
+        const breachTs = Date.now();
+        const hardLockedAcc: TradingAccount = {
+          ...activeAcc,
+          status: 'hard_breached',
+          breachType: 'hard',
+          breachReason: reasonText,
+          breachedAt: breachTs,
+        };
+        accountRef.current = hardLockedAcc;
+        onUpdateAccount(hardLockedAcc);
+        updateSupabaseTradingAccountState({
+          accountId: hardLockedAcc.id,
+          supabaseAccountId: hardLockedAcc.supabaseAccountId,
+          userId: userProfile?.id || hardLockedAcc.ownerId,
+          userEmail: userProfile?.email || hardLockedAcc.ownerEmail,
+          accountType: hardLockedAcc.accountType || hardLockedAcc.tier,
+          startingBalance: hardLockedAcc.initialBalance || hardLockedAcc.size,
+          currentBalance: hardLockedAcc.currentBalance,
+          equity: hardLockedAcc.equity,
+          startingDayEquity: hardLockedAcc.startingDayEquity,
+          status: 'hard_breached',
+          phase: hardLockedAcc.phase,
+          tradesCount: hardLockedAcc.tradesCount,
+          winRate: hardLockedAcc.winRate,
+        }).catch(() => {});
+        syncFundedWalletBreachState({
+          account: hardLockedAcc,
+          status: 'HARD_BREACH',
+          breachReason: reasonText,
+          userId: userProfile?.id || hardLockedAcc.ownerId,
+          nowMs: breachTs,
+        }).catch(() => {});
+        setTradeError(reasonText);
+        setIsBreachModalOpen(true);
+      };
+
+      const strictRiskResult = evaluateFundedTradeRiskRules({
+        account: activeAcc,
+        stake: stakeToUse,
+        assetSymbol: assetToTrade.symbol,
+        direction,
+        activeTrades,
+        allTrades: trades,
+        stakesAlreadyDeducted: true,
+      });
+
+      if (strictRiskResult.violated) {
+        soundEngine.playTradeLoss();
+        const reasonText =
+          strictRiskResult.reason ||
+          'Strict Funded Trading Rule Violation: Immediate HARD BREACH triggered.';
+        if (strictRiskResult.triggerHardBreach) {
+          triggerImmediateHardBreach(reasonText);
+        } else {
+          setTradeError(reasonText);
+        }
+        return;
+      }
+
+      if (isDuringRestrictedNewsWindow(Date.now()).restricted) {
+        soundEngine.playTradeLoss();
+        const reasonText =
+          'Economic News Window: Trading within 2 minutes of High-Impact Macro Releases is restricted.';
+        const untilIso = new Date(Date.now() + DEFAULT_SOFT_BREACH_COOLDOWN_MS).toISOString();
+        const softLockedAcc: TradingAccount = {
+          ...activeAcc,
+          status: 'soft_breached',
+          breachType: 'soft',
+          breachReason: reasonText,
+          softBreachResetTime: Date.parse(untilIso),
+        };
+        onUpdateAccount(softLockedAcc);
+        syncFundedWalletBreachState({
+          account: softLockedAcc,
+          status: 'SOFT_BREACH',
+          breachReason: reasonText,
+          softBreachUntilIso: untilIso,
+          userId: userProfile?.id || activeAcc.ownerId,
+        }).catch(() => {});
+        setTradeError(reasonText);
+        return;
+      }
+    }
+
+    // Zero-Tolerance Balance & Drawdown Guard
     const zeroToleranceCheck = validateZeroToleranceTradeExecution({
       account: activeAcc,
       stake: stakeToUse,
@@ -2172,68 +2293,6 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         setIsBreachModalOpen(true);
       }
       return;
-    }
-
-    // Additional Prop Guardrails apply ONLY to Prop Trading Accounts (Challenge & Instant Funded)
-    if (!isUnrestrictedPersonalOrDemo) {
-      const triggerMinorSoftBreach = (reasonText: string) => {
-        const untilIso = new Date(Date.now() + DEFAULT_SOFT_BREACH_COOLDOWN_MS).toISOString();
-        const softLockedAcc: TradingAccount = {
-          ...activeAcc,
-          status: 'soft_breached',
-          breachType: 'soft',
-          breachReason: reasonText,
-          softBreachResetTime: Date.parse(untilIso),
-        };
-        onUpdateAccount(softLockedAcc);
-        syncFundedWalletBreachState({
-          account: softLockedAcc,
-          status: 'SOFT_BREACH',
-          breachReason: reasonText,
-          softBreachUntilIso: untilIso,
-          userId: userProfile?.id || activeAcc.ownerId,
-        }).catch(() => {});
-      };
-
-      const hedgingCheck = isHedgingViolation(direction, assetToTrade.symbol, activeTrades);
-      if (hedgingCheck.detected) {
-        soundEngine.playTradeLoss();
-        const reasonText =
-          hedgingCheck.reason ||
-          `Hedging Prohibited: Simultaneous opposing position on ${assetToTrade.symbol}.`;
-        triggerMinorSoftBreach(reasonText);
-        setTradeError(reasonText);
-        return;
-      }
-
-      const martingaleCheck = isMartingalePattern(stakeToUse, trades);
-      if (martingaleCheck.detected) {
-        soundEngine.playTradeLoss();
-        const reasonText =
-          martingaleCheck.reason ||
-          'Martingale Strategy Violation: Explosive stake doubling (≥1.8x) following a loss is strictly prohibited.';
-        triggerMinorSoftBreach(reasonText);
-        setTradeError(reasonText);
-        return;
-      }
-
-      if (isDuringRestrictedNewsWindow(Date.now()).restricted) {
-        soundEngine.playTradeLoss();
-        const reasonText =
-          'Economic News Window: Trading within 2 minutes of High-Impact Macro Releases is restricted.';
-        triggerMinorSoftBreach(reasonText);
-        setTradeError(reasonText);
-        return;
-      }
-
-      if (isPositionSizeSpike(stakeToUse, trades.map((t) => t.investment))) {
-        soundEngine.playTradeLoss();
-        const reasonText =
-          'Volume Spike Violation: Stake exceeds 5x your recent average trading volume.';
-        triggerMinorSoftBreach(reasonText);
-        setTradeError(reasonText);
-        return;
-      }
     }
 
     // Atomic balance deduction on trade placement (local state + Supabase profiles table)
@@ -3919,24 +3978,46 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               data-testid="mobile-account-switcher"
               className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#1c202e] border border-[#2a2e39] text-[11px] font-mono"
             >
-              <div
-                className={`w-2 h-2 rounded-full ${
-                  isBreached
-                    ? 'bg-rose-500 animate-pulse'
-                    : isPersonalLiveAccount(effectiveAccount) || isLiveFundedAccount(effectiveAccount)
-                    ? 'bg-[#00e676]'
-                    : 'bg-[#ff8800]'
-                }`}
-              />
-              <span className="text-[9px] uppercase font-black px-1 py-0.2 rounded bg-[#ff8800]/15 text-[#ff8800] border border-[#ff8800]/30">
-                {isPersonalLiveAccount(effectiveAccount)
-                  ? 'PERSONAL'
-                  : isDemoAccount(effectiveAccount)
-                  ? 'DEMO'
-                  : isLiveFundedAccount(effectiveAccount)
-                  ? 'LIVE'
-                  : 'CHALLENGE'}
-              </span>
+              {(() => {
+                const effBadge = resolveAccountBadgeMeta(effectiveAccount);
+                const dotColor = isBreached
+                  ? 'bg-rose-500 animate-pulse'
+                  : effBadge.badge_color === 'green'
+                  ? 'bg-[#00e676]'
+                  : effBadge.badge_color === 'yellow'
+                  ? 'bg-amber-400'
+                  : effBadge.badge_color === 'purple'
+                  ? 'bg-purple-400'
+                  : effBadge.isPassedChallenge
+                  ? 'bg-emerald-400'
+                  : 'bg-red-500';
+                const pillStyle =
+                  effBadge.badge_color === 'green'
+                    ? 'bg-[#00e676]/15 text-[#00e676] border-[#00e676]/35'
+                    : effBadge.badge_color === 'yellow'
+                    ? 'bg-amber-400/15 text-amber-300 border-amber-400/40'
+                    : effBadge.badge_color === 'purple'
+                    ? 'bg-purple-500/20 text-purple-300 border-purple-500/50'
+                    : effBadge.isPassedChallenge
+                    ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/45'
+                    : 'bg-red-500/20 text-red-400 border-red-500/45';
+                const isEffChallenge =
+                  effBadge.account_tier === 'CHALLENGE' && !effBadge.isPassedChallenge;
+                return (
+                  <>
+                    <div className={`w-2 h-2 rounded-full ${dotColor}`} />
+                    <span
+                      data-testid="terminal-active-account-badge"
+                      data-badge-color={effBadge.isPassedChallenge ? 'emerald' : effBadge.badge_color}
+                      className={`text-[9px] ${
+                        isEffChallenge ? '' : 'uppercase '
+                      }font-black px-1.5 py-0.2 rounded border ${pillStyle}`}
+                    >
+                      {isEffChallenge ? 'Challenge' : effBadge.label}
+                    </span>
+                  </>
+                );
+              })()}
               <span className="text-[11px] font-black font-mono text-white">
                 ${formatMobileAccountBalance(effectiveAccount.currentBalance, 2)}
               </span>
@@ -4008,6 +4089,19 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                 {accounts &&
                   accounts.map((acc) => {
                     const accBal = getAuthoritativeAccountBalance(acc, userProfile);
+                    const accBadge = resolveAccountBadgeMeta(acc);
+                    const isAccChallenge =
+                      accBadge.account_tier === 'CHALLENGE' && !accBadge.isPassedChallenge;
+                    const rowBadgeClasses =
+                      accBadge.badge_color === 'green'
+                        ? 'bg-[#00c853]/20 text-[#00e676] border border-[#00e676]/40'
+                        : accBadge.badge_color === 'yellow'
+                        ? 'bg-amber-400/20 text-amber-300 border border-amber-400/40'
+                        : accBadge.badge_color === 'purple'
+                        ? 'bg-purple-500/20 text-purple-300 border border-purple-500/50'
+                        : accBadge.isPassedChallenge
+                        ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/45'
+                        : 'bg-red-500/20 text-red-400 border border-red-500/45';
                     return (
                       <button
                         key={acc.id}
@@ -4017,7 +4111,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                         }}
                         className={`w-full flex items-center justify-between p-2 rounded-lg text-left transition-colors mb-1 ${
                           acc.id === effectiveAccount?.id
-                            ? 'bg-[#252b3b] border border-[#ff8800]/50 text-white'
+                            ? 'bg-[#252b3b] border border-white/25 text-white'
                             : 'hover:bg-[#1b1f2b] text-slate-300'
                         }`}
                       >
@@ -4027,6 +4121,8 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                               ? 'Personal Live (Self-Capital)'
                               : isDemoAccount(acc)
                               ? 'Demo Practice Account'
+                              : isAccChallenge
+                              ? 'Challenge'
                               : acc.id}
                           </div>
                           <div className="text-[10px] text-[#00e676] font-mono">
@@ -4034,13 +4130,13 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                           </div>
                         </div>
                         <span
-                          className={`text-[9px] px-1.5 py-0.5 rounded font-black uppercase ${
-                            isLiveFundedAccount(acc)
-                              ? 'bg-[#00c853]/25 text-[#00e676]'
-                              : 'bg-[#ff8800]/20 text-[#ff8800]'
-                          }`}
+                          data-testid={`terminal-dropdown-badge-${acc.id}`}
+                          data-badge-color={accBadge.isPassedChallenge ? 'emerald' : accBadge.badge_color}
+                          className={`text-[9px] px-1.5 py-0.5 rounded font-black ${
+                            isAccChallenge ? '' : 'uppercase '
+                          }${rowBadgeClasses}`}
                         >
-                          {getAccountStatusBadgeLabel(acc)}
+                          {isAccChallenge ? 'Challenge' : accBadge.label}
                         </span>
                       </button>
                     );
@@ -4298,6 +4394,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                 soundEngine.playUiClick();
                 setIsDrawingDrawerOpen(false);
                 setIsCopyTradingOpen(false);
+                setIsLiveChatDrawerOpen(false);
                 setIsSignalsDrawerOpen(!isSignalsDrawerOpen);
               }}
               className={`w-10 h-10 rounded-lg flex flex-col items-center justify-center transition-all cursor-pointer relative ${
@@ -4352,6 +4449,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                 soundEngine.playUiClick();
                 setIsSignalsDrawerOpen(false);
                 setIsDrawingDrawerOpen(false);
+                setIsLiveChatDrawerOpen(false);
                 setIsCopyTradingOpen((prev) => !prev);
               }}
               className={`w-10 h-10 rounded-lg flex flex-col items-center justify-center transition-all cursor-pointer relative ${
@@ -4391,19 +4489,36 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
               <span className="text-[8px] font-bold uppercase tracking-tighter mt-0.5">Rules</span>
             </button>
 
-            {/* Official Support Desk Link */}
-            <a
-              href="https://t.me/bft_admin"
-              target="_blank"
-              rel="noopener noreferrer"
-              data-testid="sidebar-support-desk-link"
-              onClick={() => soundEngine.playUiClick()}
-              className="w-10 h-10 rounded-lg hover:bg-[#1c202e] flex flex-col items-center justify-center text-slate-400 hover:text-[#0066ff] transition-all cursor-pointer"
-              title="Support Desk (@bft_admin)"
+            {/* Live Chat Group Room */}
+            <button
+              type="button"
+              data-testid="sidebar-live-chat-btn"
+              onClick={() => {
+                soundEngine.playUiClick();
+                setLeftToolbarPopover('none');
+                setIsSignalsDrawerOpen(false);
+                setIsDrawingDrawerOpen(false);
+                setIsCopyTradingOpen(false);
+                setUnreadLiveChatCount(0);
+                setIsLiveChatDrawerOpen((prev) => !prev);
+              }}
+              className={`w-11 h-10 rounded-lg flex flex-col items-center justify-center transition-all cursor-pointer relative ${
+                isLiveChatDrawerOpen
+                  ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-400/40'
+                  : 'hover:bg-[#1c202e] text-slate-400 hover:text-cyan-400'
+              }`}
+              title="Trader Live Chat"
             >
-              <HelpCircle className="w-4 h-4" />
-              <span className="text-[8px] font-bold uppercase tracking-tighter mt-0.5">Support</span>
-            </a>
+              <MessageCircle className="w-4 h-4" />
+              <span className="text-[7px] font-bold uppercase tracking-tight mt-0.5 leading-none whitespace-nowrap">
+                Live Chat
+              </span>
+              {unreadLiveChatCount > 0 && !isLiveChatDrawerOpen && (
+                <span className="absolute -top-0.5 -right-0.5 px-1 min-w-[14px] h-[14px] rounded-full bg-cyan-400 text-slate-950 font-mono font-black text-[8.5px] flex items-center justify-center">
+                  {unreadLiveChatCount > 9 ? '9+' : unreadLiveChatCount}
+                </span>
+              )}
+            </button>
           </div>
 
           {/* Bottom Section: Quotex Left-Hand Chart Action Toolbar (Drawing Tools, Timeframes, Chart Types, Indicators) */}
@@ -4419,6 +4534,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                 soundEngine.playUiClick();
                 setLeftToolbarPopover('none');
                 setIsSignalsDrawerOpen(false);
+                setIsLiveChatDrawerOpen(false);
                 setIsDrawingDrawerOpen((prev) => !prev);
               }}
               className={`w-10 h-9 rounded-lg flex flex-col items-center justify-center transition-all cursor-pointer relative ${
@@ -5782,16 +5898,25 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                           Or switch to another active account:
                         </div>
                         <div className="flex flex-wrap gap-2 justify-center">
-                          {otherActiveAccounts.map((act) => (
-                            <button
-                              key={act.id}
-                              onClick={() => onSelectAccount?.(act.id)}
-                              className="px-3 py-1.5 rounded-xl bg-[#131722] hover:bg-[#252b3b] border border-[#00e676]/40 text-[#00e676] text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
-                            >
-                              <span className="w-2 h-2 rounded-full bg-[#00e676]" />
-                              <span>{act.id} (${(act?.currentBalance ?? 0).toLocaleString()})</span>
-                            </button>
-                          ))}
+                          {otherActiveAccounts.map((act) => {
+                            const actBadge = resolveAccountBadgeMeta(act);
+                            const isActChallenge =
+                              actBadge.account_tier === 'CHALLENGE' && !actBadge.isPassedChallenge;
+                            return (
+                              <button
+                                key={act.id}
+                                onClick={() => onSelectAccount?.(act.id)}
+                                className="px-3 py-1.5 rounded-xl bg-[#131722] hover:bg-[#252b3b] border border-[#00e676]/40 text-[#00e676] text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
+                              >
+                                <span className="w-2 h-2 rounded-full bg-[#00e676]" />
+                                <span>
+                                  {isActChallenge
+                                    ? 'Challenge'
+                                    : `${act.id} ($${(act?.currentBalance ?? 0).toLocaleString()})`}
+                                </span>
+                              </button>
+                            );
+                          })}
                         </div>
                       </div>
                     )}
@@ -5849,16 +5974,25 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
                           Or switch to another active account:
                         </div>
                         <div className="flex flex-wrap gap-2 justify-center">
-                          {otherActiveAccounts.map((act) => (
-                            <button
-                              key={act.id}
-                              onClick={() => onSelectAccount?.(act.id)}
-                              className="px-3 py-1.5 rounded-xl bg-[#131722] hover:bg-[#252b3b] border border-[#00e676]/40 text-[#00e676] text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
-                            >
-                              <span className="w-2 h-2 rounded-full bg-[#00e676]" />
-                              <span>{act.id} (${(act?.currentBalance ?? 0).toLocaleString()})</span>
-                            </button>
-                          ))}
+                          {otherActiveAccounts.map((act) => {
+                            const actBadge = resolveAccountBadgeMeta(act);
+                            const isActChallenge =
+                              actBadge.account_tier === 'CHALLENGE' && !actBadge.isPassedChallenge;
+                            return (
+                              <button
+                                key={act.id}
+                                onClick={() => onSelectAccount?.(act.id)}
+                                className="px-3 py-1.5 rounded-xl bg-[#131722] hover:bg-[#252b3b] border border-[#00e676]/40 text-[#00e676] text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
+                              >
+                                <span className="w-2 h-2 rounded-full bg-[#00e676]" />
+                                <span>
+                                  {isActChallenge
+                                    ? 'Challenge'
+                                    : `${act.id} ($${(act?.currentBalance ?? 0).toLocaleString()})`}
+                                </span>
+                              </button>
+                            );
+                          })}
                         </div>
                       </div>
                     )}
@@ -6418,6 +6552,14 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
           }}
         />
 
+        {/* In-Terminal Live Chat Group Room (Docked beside Left Toolbar on Desktop) */}
+        <TerminalLiveChatDrawer
+          isOpen={isLiveChatDrawerOpen}
+          onClose={() => setIsLiveChatDrawerOpen(false)}
+          userProfile={userProfile}
+          onUnreadIncrement={() => setUnreadLiveChatCount((c) => c + 1)}
+        />
+
         {/* Copy Trading Side-Over Panel (Docked cleanly inside Trading Workspace on Desktop) */}
         <CopyTradingModal
           isOpen={isCopyTradingOpen}
@@ -6585,6 +6727,14 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
         isSoundMuted={!soundEnabled}
         onToggleSound={handleToggleSound}
         onOpenCopyTrading={() => setIsCopyTradingOpen(true)}
+        onOpenLiveChat={() => {
+          setIsSignalsDrawerOpen(false);
+          setIsCopyTradingOpen(false);
+          setIsDrawingDrawerOpen(false);
+          setUnreadLiveChatCount(0);
+          setIsLiveChatDrawerOpen(true);
+        }}
+        unreadChatCount={unreadLiveChatCount}
         signalsCount={3}
       />
       {/* Confirmation Modal (only if One-Click is disabled) */}

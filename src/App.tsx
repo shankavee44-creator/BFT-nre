@@ -12,6 +12,11 @@ import { WithdrawalModal } from './components/WithdrawalModal';
 import { UserDashboard } from './components/UserDashboard';
 import { AuthModal } from './components/AuthModal';
 import { AdminDashboard } from './components/AdminDashboard';
+import {
+  PassedChallengeCertificateModal,
+  buildPassedCertificateRecord,
+  type PassedCertificateRecord,
+} from './components/PassedChallengeCertificateModal';
 import { GitHubSyncModal } from './components/GitHubSyncModal';
 import { LiveChatWidget } from './components/LiveChatWidget';
 import { FAQSection } from './components/FAQSection';
@@ -119,6 +124,9 @@ import {
   isAccountSoftBreached,
   isAccountHardBreached,
   sanitizeAccountForAntiBreach,
+  executeSelfCapitalChallengePurchase,
+  resolveAvailableSelfCapitalBalance,
+  type SelfCapitalChallengePurchaseResult,
 } from './utils/propRules';
 import {
   apiGetMe,
@@ -127,6 +135,7 @@ import {
   apiSubmitKyc,
   apiPassChallenge,
   apiDepositPersonalAccount,
+  apiPurchaseChallengeFromSelfCapital,
   apiUpdateAccountState,
   apiGetWithdrawals,
   apiGetUserPurchases,
@@ -242,8 +251,8 @@ export default function App() {
     []
   );
 
-  // Active BFT Promo Code ('SPOOKY40' = 40% OFF New Users, 'SPOOKY20' = 20% OFF Existing Users)
-  const [activePromoCode, setActivePromoCode] = useState<PromoCodeType>('SPOOKY40');
+  // Active BFT Promo Code ('NONE' = Exact Standard Package Pricing; optional promo codes can be toggled)
+  const [activePromoCode, setActivePromoCode] = useState<PromoCodeType>('NONE');
   const [dailyWithdrawalsAddOn, setDailyWithdrawalsAddOn] = useState<boolean>(false);
 
   // 3-Tier Multi-Level Affiliate State
@@ -258,8 +267,12 @@ export default function App() {
 
   // Modals state
   const [selectedPackageToBuy, setSelectedPackageToBuy] = useState<EvaluationPackage | null>(null);
+  const [selfCapitalPurchaseResult, setSelfCapitalPurchaseResult] =
+    useState<SelfCapitalChallengePurchaseResult | null>(null);
   const [isDepositModalOpen, setIsDepositModalOpen] = useState(false);
   const [isWithdrawalModalOpen, setIsWithdrawalModalOpen] = useState(false);
+  const [passedCertificateRecord, setPassedCertificateRecord] =
+    useState<PassedCertificateRecord | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authModalMode, setAuthModalMode] = useState<'login' | 'register'>('login');
   const [isAdminDashboardOpen, setIsAdminDashboardOpen] = useState(false);
@@ -1230,7 +1243,7 @@ export default function App() {
           userEmail: userProfileRef.current.email,
         });
         if (p && isMounted) {
-          applyProfileRowToState(p, 'direct');
+          applyProfileRowToState(p, 'poll');
         }
       } catch {
         // Fallback
@@ -1452,28 +1465,79 @@ export default function App() {
   };
 
   const handlePassChallengePhase = async (accountToPass: TradingAccount) => {
+    const exactPackageBalance = Number(accountToPass.size || accountToPass.initialBalance || 5000);
+    const nowIso = new Date().toISOString();
+    const nowDate = nowIso.split('T')[0];
+    const generatedCertId =
+      accountToPass.certificateId ||
+      `BFT-CERT-${accountToPass.id}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+    const normalizeRealFunded = (raw: TradingAccount, certId: string): TradingAccount => ({
+      ...raw,
+      size: exactPackageBalance as TradingAccount['size'],
+      initialBalance: exactPackageBalance,
+      currentBalance: exactPackageBalance,
+      equity: exactPackageBalance,
+      startingDayEquity: exactPackageBalance,
+      phase: 'funded',
+      challengePhase: 'funded',
+      status: 'active',
+      account_tier: 'REAL_FUNDED',
+      badge_color: 'purple',
+      isRealFunded: true,
+      is_real_funded: true,
+      principal_locked: true,
+      profit_split_percent: 90,
+      scalingActive: true,
+      certificate_unlocked: true,
+      certificateId: certId,
+      passedAt: nowDate,
+      passed_at: nowIso,
+      sourceChallengeAccountId: accountToPass.id,
+      dailyLossLimitPercent: 0,
+      maxOverallLossPercent: 10,
+      profitTargetPercent: 0,
+      minTradingDaysRequired: 5,
+      withdrawalFrequency: accountToPass.withdrawalFrequency || 'WEEKLY',
+      dailyWithdrawalsUnlocked: Boolean(accountToPass.dailyWithdrawalsUnlocked),
+      ownerId: userProfile.id,
+      ownerEmail: userProfile.email,
+    });
+
+    const normalizeLockedChallenge = (raw: TradingAccount, certId: string): TradingAccount => ({
+      ...raw,
+      status: 'passed',
+      account_tier: 'CHALLENGE',
+      badge_color: 'red',
+      certificate_unlocked: true,
+      certificateId: certId,
+      passedAt: nowDate,
+      passed_at: nowIso,
+      ownerId: userProfile.id,
+      ownerEmail: userProfile.email,
+    });
+
     try {
       const apiRes = await apiPassChallenge({
         accountId: accountToPass.id,
-        provisionLiveDirectly: false,
+        provisionLiveDirectly: true,
       });
       if (apiRes && apiRes.ok && apiRes.deployedAccount && apiRes.lockedAccount) {
-        const deployed: TradingAccount = {
-          ...apiRes.deployedAccount,
-          ownerId: userProfile.id,
-          ownerEmail: userProfile.email,
-        };
-        const locked: TradingAccount = {
-          ...apiRes.lockedAccount,
-          ownerId: userProfile.id,
-          ownerEmail: userProfile.email,
-        };
+        const certId = apiRes.certificateId || generatedCertId;
+        const deployed = normalizeRealFunded(apiRes.deployedAccount, certId);
+        const locked = normalizeLockedChallenge(apiRes.lockedAccount, certId);
         const updatedList = Array.isArray(apiRes.accounts)
-          ? apiRes.accounts.map((a: TradingAccount) => ({
-              ...a,
-              ownerId: userProfile.id,
-              ownerEmail: userProfile.email,
-            }))
+          ? apiRes.accounts.map((a: TradingAccount) =>
+              a.id === deployed.id
+                ? deployed
+                : a.id === locked.id
+                ? locked
+                : {
+                    ...a,
+                    ownerId: userProfile.id,
+                    ownerEmail: userProfile.email,
+                  }
+            )
           : [deployed, ...accounts.map((a) => (a.id === accountToPass.id ? locked : a))];
 
         setAccounts(updatedList);
@@ -1490,7 +1554,7 @@ export default function App() {
           startingBalance: locked.initialBalance || locked.size,
           currentBalance: locked.currentBalance,
           equity: locked.equity,
-          status: locked.status,
+          status: 'passed',
           phase: locked.phase,
         }).catch(() => {});
         insertSupabaseTradingAccount({
@@ -1510,12 +1574,9 @@ export default function App() {
         }).catch(() => {});
         insertPurchasedFundedWallet(deployed, userProfile.id).catch(() => {});
 
-        if (deployed.phase === 'phase_2') {
-          setCurrentTab('terminal');
-        } else {
-          setDashboardSubTab('live_funded');
-          handleNavigateTab('dashboard', { accountId: deployed.id });
-        }
+        setPassedCertificateRecord(buildPassedCertificateRecord(locked, userProfile, deployed.id));
+        setDashboardSubTab('live_funded');
+        handleNavigateTab('dashboard', { accountId: deployed.id });
         return;
       }
     } catch {
@@ -1523,16 +1584,9 @@ export default function App() {
     }
 
     const result = advanceChallengeAccountPhase(accountToPass);
-    const deployedNext: TradingAccount = {
-      ...result.deployedNextAccount,
-      ownerId: userProfile.id,
-      ownerEmail: userProfile.email,
-    };
-    const lockedPrev: TradingAccount = {
-      ...result.lockedPreviousAccount,
-      ownerId: userProfile.id,
-      ownerEmail: userProfile.email,
-    };
+    const certId = result.certificateId || generatedCertId;
+    const deployedNext = normalizeRealFunded(result.deployedNextAccount, certId);
+    const lockedPrev = normalizeLockedChallenge(result.lockedPreviousAccount, certId);
     const updatedList = [
       deployedNext,
       ...accounts.map((a) => (a.id === accountToPass.id ? lockedPrev : a)),
@@ -1551,7 +1605,7 @@ export default function App() {
       startingBalance: lockedPrev.initialBalance || lockedPrev.size,
       currentBalance: lockedPrev.currentBalance,
       equity: lockedPrev.equity,
-      status: lockedPrev.status,
+      status: 'passed',
       phase: lockedPrev.phase,
     }).catch(() => {});
     insertSupabaseTradingAccount({
@@ -1571,12 +1625,9 @@ export default function App() {
     }).catch(() => {});
     insertPurchasedFundedWallet(deployedNext, userProfile.id).catch(() => {});
 
-    if (deployedNext.phase === 'phase_2') {
-      setCurrentTab('terminal');
-    } else {
-      setDashboardSubTab('live_funded');
-      handleNavigateTab('dashboard', { accountId: deployedNext.id });
-    }
+    setPassedCertificateRecord(buildPassedCertificateRecord(lockedPrev, userProfile, deployedNext.id));
+    setDashboardSubTab('live_funded');
+    handleNavigateTab('dashboard', { accountId: deployedNext.id });
   };
 
   const handlePurchaseRecorded = React.useCallback((purchase: NormalizedPurchaseRecord) => {
@@ -1590,12 +1641,36 @@ export default function App() {
     if (purchaseRecord) {
       handlePurchaseRecorded(purchaseRecord);
     }
+    const isPersonalOrDemo = isPersonalLiveAccount(newAccount) || isDemoAccount(newAccount);
+    const isRealFunded = Boolean(
+      newAccount.account_tier === 'REAL_FUNDED' ||
+        newAccount.isRealFunded ||
+        newAccount.is_real_funded ||
+        newAccount.phase === 'funded'
+    );
     const ownedAccount: TradingAccount = {
       ...newAccount,
+      account_tier: isPersonalOrDemo
+        ? isPersonalLiveAccount(newAccount)
+          ? 'LIVE'
+          : 'DEMO'
+        : isRealFunded
+        ? 'REAL_FUNDED'
+        : 'CHALLENGE',
+      badge_color: isPersonalOrDemo
+        ? isPersonalLiveAccount(newAccount)
+          ? 'green'
+          : 'yellow'
+        : isRealFunded
+        ? 'purple'
+        : 'red',
+      certificate_unlocked: Boolean(newAccount.certificate_unlocked),
+      principal_locked: isRealFunded,
+      profit_split_percent: isRealFunded ? 90 : undefined,
       ownerId: userProfile.id,
       ownerEmail: userProfile.email,
     };
-    if (!isPersonalLiveAccount(ownedAccount) && !isDemoAccount(ownedAccount)) {
+    if (!isPersonalOrDemo) {
       insertPurchasedFundedWallet(ownedAccount, userProfile.id).catch(() => {});
     }
     const updated = [ownedAccount, ...accounts];
@@ -1604,6 +1679,7 @@ export default function App() {
     setActiveAccountId(ownedAccount.id);
     saveActiveAccountId(ownedAccount.id);
     setSelectedPackageToBuy(null);
+    setSelfCapitalPurchaseResult(null);
     handleUpdateProfile({
       ...userProfile,
       activeAccountId: ownedAccount.id,
@@ -1611,6 +1687,169 @@ export default function App() {
     });
     setProtectedRouteNotice(null);
     setCurrentTab('terminal');
+  };
+
+  const handleNavigateToPricingSection = () => {
+    setCurrentTab('home');
+    if (typeof window !== 'undefined' && window.location.pathname !== '/') {
+      window.history.pushState(null, '', '/');
+    }
+    setTimeout(() => {
+      document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' });
+    }, 80);
+  };
+
+  const handleStartNowPackage = (pkg: EvaluationPackage, unlockDaily?: boolean) => {
+    const unlockDailyFlag = Boolean(unlockDaily);
+    setDailyWithdrawalsAddOn(unlockDailyFlag);
+
+    const latestStoredProfile = loadProfile();
+    const latestStoredAccounts = loadAccounts();
+    const currentProf = userProfileRef.current;
+
+    const storedBalance = resolveAvailableSelfCapitalBalance(
+      latestStoredProfile,
+      latestStoredAccounts
+    );
+    const stateBalance = resolveAvailableSelfCapitalBalance(currentProf, accounts);
+    const availableSelfCapital =
+      latestStoredProfile &&
+      typeof latestStoredProfile.selfBalance === 'number' &&
+      Number.isFinite(latestStoredProfile.selfBalance) &&
+      latestStoredProfile.selfBalance !== currentProf.selfBalance
+        ? Number(latestStoredProfile.selfBalance.toFixed(2))
+        : currentProf.selfBalance !== undefined
+        ? stateBalance
+        : Math.max(stateBalance, storedBalance);
+
+    const ownerId = currentProf.id || latestStoredProfile?.id || 'usr_bft_001';
+    const ownerEmail =
+      currentProf.email || latestStoredProfile?.email || 'trader@binaryfunded.com';
+
+    const purchaseOutcome = executeSelfCapitalChallengePurchase({
+      pkg,
+      selfCapitalBalance: availableSelfCapital,
+      promoCode: activePromoCode,
+      unlockDailyWithdrawals: unlockDailyFlag,
+      applyBreachDiscount: false,
+      ownerId,
+      ownerEmail,
+    });
+
+    if (!purchaseOutcome.ok) {
+      setSelectedPackageToBuy(pkg);
+      setSelfCapitalPurchaseResult(purchaseOutcome);
+      return;
+    }
+
+    const {
+      account: newChallengeAccount,
+      remainingSelfCapital,
+      deductedAmount,
+      packageName,
+    } = purchaseOutcome;
+
+    recordDirectBalanceCommit('self_balance', remainingSelfCapital);
+
+    const nextProfile: UserProfile = {
+      ...currentProf,
+      id: ownerId,
+      email: ownerEmail,
+      selfBalance: remainingSelfCapital,
+      activeAccountId: newChallengeAccount.id,
+      isLoggedIn: true,
+    };
+    userProfileRef.current = nextProfile;
+    setUserProfile(nextProfile);
+    saveProfile(nextProfile);
+    broadcastSyncEvent('PROFILE_UPDATED', nextProfile);
+
+    setAccounts((prev) => {
+      let hasPersonal = false;
+      const updatedExisting = prev.map((acc) => {
+        if (isPersonalLiveAccount(acc)) {
+          hasPersonal = true;
+          return {
+            ...acc,
+            currentBalance: remainingSelfCapital,
+            equity: remainingSelfCapital,
+            startingDayEquity: remainingSelfCapital,
+          };
+        }
+        return acc;
+      });
+      if (!hasPersonal) {
+        const defaultPersonal = createDefaultPersonalLiveAccount(
+          ownerId,
+          ownerEmail,
+          remainingSelfCapital
+        );
+        updatedExisting.push(defaultPersonal);
+      }
+      const nextList = [newChallengeAccount, ...updatedExisting];
+      saveAccounts(nextList);
+      return nextList;
+    });
+
+    setActiveAccountId(newChallengeAccount.id);
+    saveActiveAccountId(newChallengeAccount.id);
+    setProtectedRouteNotice(null);
+
+    const nowIso = new Date().toISOString();
+    const purchaseRecord: NormalizedPurchaseRecord = {
+      id: `PUR-${Date.now().toString(36).toUpperCase()}`,
+      user_id: ownerId,
+      account_id: newChallengeAccount.id,
+      package_id: `challenge_funded_challenge_${pkg.size}`,
+      package_name: packageName,
+      package_sku: `challenge_funded_challenge_${pkg.size}`,
+      amount: deductedAmount,
+      package_amount: deductedAmount,
+      account_type: 'challenge',
+      status: 'active',
+      tx_hash: `SELF_CAPITAL_${Date.now()}`,
+      created_at: nowIso,
+    };
+    handlePurchaseRecorded(purchaseRecord);
+
+    handleProcessCommissions({
+      buyerUserId: ownerId,
+      buyerName: nextProfile.fullName || 'Funded Trader',
+      buyerEmail: ownerEmail,
+      packageTier: pkg.tier,
+      packageName,
+      packagePrice: deductedAmount,
+      referralCodeUsed: nextProfile.referredBy || getStoredReferralCode(),
+    });
+
+    insertPurchasedFundedWallet(newChallengeAccount, ownerId).catch(() => {});
+    insertSupabaseTradingAccount({
+      account: newChallengeAccount,
+      userId: ownerId,
+      userEmail: ownerEmail,
+    }).catch(() => {});
+    commitProfileBalanceToSupabase({
+      userId: ownerId,
+      userEmail: ownerEmail,
+      column: 'self_balance',
+      newBalance: remainingSelfCapital,
+    }).catch(() => {});
+    apiPurchaseChallengeFromSelfCapital({
+      userId: ownerId,
+      email: ownerEmail,
+      fullName: nextProfile.fullName,
+      accountId: newChallengeAccount.id,
+      tierName: pkg.name,
+      size: pkg.size,
+      price: deductedAmount,
+      selfCapitalBalance: availableSelfCapital,
+      remainingSelfCapital,
+      dailyWithdrawalsUnlocked: unlockDailyFlag,
+      referralCode: nextProfile.referredBy || getStoredReferralCode(),
+    }).catch(() => {});
+
+    setSelectedPackageToBuy(pkg);
+    setSelfCapitalPurchaseResult(purchaseOutcome);
   };
 
   const handleOpenAuthModal = (mode: 'login' | 'register') => {
@@ -1896,7 +2135,7 @@ export default function App() {
           onOpenDepositModal={() => setIsDepositModalOpen(true)}
           onOpenAuthModal={handleOpenAuthModal}
           onLogout={handleLogout}
-          onOpenChallengeModal={() => setSelectedPackageToBuy(PACKAGES[2])}
+          onOpenChallengeModal={handleNavigateToPricingSection}
           onOpenAdminDashboard={() => setIsAdminDashboardOpen(true)}
           onOpenGitHubSync={() => setIsGitHubSyncOpen(true)}
           trades={trades}
@@ -1984,10 +2223,7 @@ export default function App() {
             <PricingTiers
               activePromoCode={activePromoCode}
               onSelectPromoCode={setActivePromoCode}
-              onSelectPackage={(pkg, unlockDaily) => {
-                setDailyWithdrawalsAddOn(Boolean(unlockDaily));
-                setSelectedPackageToBuy(pkg);
-              }}
+              onSelectPackage={(pkg, unlockDaily) => handleStartNowPackage(pkg, unlockDaily)}
               onOpenRules={() => setCurrentTab('rules')}
             />
             <TradingRules />
@@ -2011,17 +2247,12 @@ export default function App() {
             onSyncTrades={handleSyncIncomingTrades}
             onOpenWithdrawalModal={() => setIsWithdrawalModalOpen(true)}
             onOpenDepositModal={() => setIsDepositModalOpen(true)}
-            onOpenChallengeModal={() => setSelectedPackageToBuy(PACKAGES[2])}
+            onOpenChallengeModal={handleNavigateToPricingSection}
             onNavigateTab={handleNavigateTab}
             userProfile={userProfile}
             onUpdateProfile={handleUpdateProfile}
             onPassChallengePhase={handlePassChallengePhase}
-            onNavigateToPricing={() => {
-              setCurrentTab('home');
-              setTimeout(() => {
-                document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' });
-              }, 100);
-            }}
+            onNavigateToPricing={handleNavigateToPricingSection}
           />
         )}
 
@@ -2044,7 +2275,7 @@ export default function App() {
               userProfile={userProfile}
               onUpdateProfile={handleUpdateProfile}
               onNavigateToKyc={() => setCurrentTab('dashboard')}
-              onOpenChallengeModal={() => setSelectedPackageToBuy(PACKAGES[2])}
+              onOpenChallengeModal={handleNavigateToPricingSection}
               onOpenDepositModal={() => setIsDepositModalOpen(true)}
               onNavigateTab={handleNavigateTab}
               trades={trades}
@@ -2068,15 +2299,20 @@ export default function App() {
             onOpenTerminal={(accountId?: string) =>
               handleNavigateTab('terminal', accountId ? { accountId } : undefined)
             }
-            onOpenChallengeModal={() => setSelectedPackageToBuy(PACKAGES[2])}
+            onOpenChallengeModal={handleNavigateToPricingSection}
             onOpenWithdrawalModal={() => handleNavigateTab('withdrawals')}
-            onNavigateToPricing={() => {
-              setCurrentTab('home');
-              setTimeout(() => {
-                document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' });
-              }, 100);
-            }}
+            onNavigateToPricing={handleNavigateToPricingSection}
             onPassChallengePhase={handlePassChallengePhase}
+            onOpenPassedCertificate={(acc: TradingAccount) => {
+              const linkedRealFunded = userAccounts.find(
+                (a) =>
+                  a.sourceChallengeAccountId === acc.id &&
+                  (a.account_tier === 'REAL_FUNDED' || a.isRealFunded || a.is_real_funded)
+              );
+              setPassedCertificateRecord(
+                buildPassedCertificateRecord(acc, userProfile, linkedRealFunded?.id)
+              );
+            }}
             initialTab={currentTab === 'affiliate' ? 'affiliate' : dashboardSubTab}
             onLogout={handleLogout}
             onOpenAdminDashboard={() => setIsAdminDashboardOpen(true)}
@@ -2085,16 +2321,51 @@ export default function App() {
       </main>
 
       {/* Modals */}
-      {selectedPackageToBuy && (
+      <PassedChallengeCertificateModal
+        isOpen={Boolean(passedCertificateRecord)}
+        record={passedCertificateRecord}
+        onClose={() => setPassedCertificateRecord(null)}
+        onOpenRealFundedAccount={(rfId) => {
+          handleSelectAccount(rfId);
+          setDashboardSubTab('live_funded');
+          handleNavigateTab('dashboard', { accountId: rfId });
+        }}
+      />
+
+      {selfCapitalPurchaseResult && (
         <PaymentModal
           packageToBuy={selectedPackageToBuy}
+          purchaseResult={selfCapitalPurchaseResult}
           userProfile={userProfile}
           activePromoCode={activePromoCode}
           initialDailyWithdrawals={dailyWithdrawalsAddOn}
-          applyBreachDiscount={Boolean(
-            activeAccount?.discountEligible || activeAccount?.breachType === 'hard'
-          )}
-          onClose={() => setSelectedPackageToBuy(null)}
+          applyBreachDiscount={false}
+          onClose={() => {
+            setSelectedPackageToBuy(null);
+            setSelfCapitalPurchaseResult(null);
+          }}
+          onOpenDepositModal={() => {
+            setSelectedPackageToBuy(null);
+            setSelfCapitalPurchaseResult(null);
+            setIsDepositModalOpen(true);
+          }}
+          onOpenTerminal={(accId) => {
+            setSelectedPackageToBuy(null);
+            setSelfCapitalPurchaseResult(null);
+            if (accId) {
+              handleSelectAccount(accId);
+            }
+            handleNavigateTab('terminal', accId ? { accountId: accId } : undefined);
+          }}
+          onOpenDashboard={(accId) => {
+            setSelectedPackageToBuy(null);
+            setSelfCapitalPurchaseResult(null);
+            if (accId) {
+              handleSelectAccount(accId);
+            }
+            setDashboardSubTab('live_funded');
+            handleNavigateTab('dashboard', accId ? { accountId: accId } : undefined);
+          }}
           onSuccess={handleNewAccountPurchased}
           onPurchaseRecorded={handlePurchaseRecorded}
           onCommissionsProcessed={handleProcessCommissions}
@@ -2132,7 +2403,7 @@ export default function App() {
           }}
           onOpenChallengeModal={() => {
             setIsWithdrawalModalOpen(false);
-            setSelectedPackageToBuy(PACKAGES[2]);
+            handleNavigateToPricingSection();
           }}
           onOpenDepositModal={() => {
             setIsWithdrawalModalOpen(false);

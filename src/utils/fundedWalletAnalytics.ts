@@ -1,11 +1,14 @@
 import { supabase } from './supabase.ts';
 import type { TradingAccount } from '../types/index.ts';
 import {
+  calculateRealFundedWithdrawalAllowance,
   calculateWithdrawalBreakdown,
   getDynamicAccountLimits,
   isDemoAccount,
   isPersonalLiveAccount,
+  isRealFundedAccount,
   normalizeChallengeAccountType,
+  REAL_FUNDED_PROFIT_SPLIT_PERCENT,
 } from './propRules.ts';
 
 export type FundedWalletStatus = 'ACTIVE' | 'PASSED' | 'SOFT_BREACH' | 'HARD_BREACH';
@@ -15,6 +18,14 @@ export interface PurchasedFundedWallet {
   account_id: string;
   user_id: string;
   challenge_type: string;
+  account_tier?: 'CHALLENGE' | 'REAL_FUNDED';
+  badge_color?: 'red' | 'purple';
+  is_real_funded?: boolean;
+  principal_locked?: boolean;
+  profit_split_percent?: number;
+  certificate_unlocked?: boolean;
+  certificate_id?: string | null;
+  passed_at?: string | null;
   account_status: FundedWalletStatus;
   soft_breach_until: string | null;
   breach_reason: string | null;
@@ -56,7 +67,7 @@ export interface FundedWalletBreachState {
 export const FUNDED_WALLETS_STORAGE_KEY = 'bft_funded_wallets_v1';
 export const FUNDED_WALLET_UPDATED_EVENT = 'bft-funded-wallet-updated';
 export const DEFAULT_SOFT_BREACH_COOLDOWN_MS = 15 * 60 * 1000; // 15-minute minor rule infraction cooldown
-export const PROFITABLE_DAY_THRESHOLD_PERCENT = 0.5; // 0.5% of initial balance per calendar day
+export const PROFITABLE_DAY_THRESHOLD_PERCENT = 1; // 1% of initial balance per calendar day
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const unsupportedWalletColumns = new Set<string>();
@@ -102,10 +113,12 @@ function resolveChallengeTypeLabel(account: TradingAccount): string {
   if (account.tierName && account.tierName.trim()) {
     return account.tierName.trim();
   }
+  if (account.isRealFunded || account.is_real_funded || account.phase === 'funded') {
+    return 'Real Funded Account';
+  }
   const norm = normalizeChallengeAccountType(account.accountType || account.tier);
-  if (norm === 'one_step') return 'One-Step Challenge';
-  if (norm === 'instant') return 'Instant Funded';
-  return 'Two-Step Challenge';
+  if (norm === 'funded_challenge') return 'Funded Challenge';
+  return 'Funded Challenge';
 }
 
 export function buildInitialFundedWalletFromAccount(
@@ -215,11 +228,43 @@ export function buildInitialFundedWalletFromAccount(
   const nowIso = new Date(nowMs).toISOString();
   const todayKey = getUtcDateKey(nowMs);
 
+  const isRealFunded = Boolean(
+    existing?.is_real_funded ??
+      isRealFundedAccount(account)
+  );
+  const accountTier: 'CHALLENGE' | 'REAL_FUNDED' = isRealFunded ? 'REAL_FUNDED' : 'CHALLENGE';
+  const badgeColor: 'red' | 'purple' = isRealFunded ? 'purple' : 'red';
+  const certificateUnlocked = Boolean(
+    existing?.certificate_unlocked ||
+      account.certificate_unlocked ||
+      accountStatus === 'PASSED' ||
+      (isRealFunded && Boolean(account.certificateId))
+  );
+  const certificateId =
+    existing?.certificate_id ||
+    account.certificateId ||
+    (certificateUnlocked ? `BFT-CERT-${account.id}` : null);
+  const passedAt =
+    existing?.passed_at ||
+    account.passed_at ||
+    account.passedAt ||
+    (accountStatus === 'PASSED' ? nowIso : null);
+
   return {
     id: String(existing?.id || account.supabaseAccountId || account.id),
     account_id: String(existing?.account_id || account.id),
     user_id: String(existing?.user_id || userId || account.ownerId || 'usr_bft_001'),
     challenge_type: String(existing?.challenge_type || resolveChallengeTypeLabel(account)),
+    account_tier: existing?.account_tier || accountTier,
+    badge_color: existing?.badge_color || badgeColor,
+    is_real_funded: isRealFunded,
+    principal_locked: isRealFunded ? true : Boolean(existing?.principal_locked ?? false),
+    profit_split_percent: isRealFunded
+      ? Number(existing?.profit_split_percent ?? account.profit_split_percent ?? REAL_FUNDED_PROFIT_SPLIT_PERCENT)
+      : Number(existing?.profit_split_percent ?? 80),
+    certificate_unlocked: certificateUnlocked,
+    certificate_id: certificateId,
+    passed_at: passedAt,
     account_status: accountStatus,
     soft_breach_until: softBreachUntil,
     breach_reason: breachReason,
@@ -278,12 +323,28 @@ export function normalizeSupabaseFundedWalletRow(
     Number(row.starting_day_balance ?? row.daily_starting_balance ?? initialBalance)
   );
 
+  const isRealFunded = Boolean(row.is_real_funded ?? row.account_tier === 'REAL_FUNDED');
+  const normalizedStatus = normalizeFundedWalletStatus(row.account_status ?? row.status);
+  const certificateUnlocked = Boolean(
+    row.certificate_unlocked ?? (normalizedStatus === 'PASSED')
+  );
+
   return {
     id: String(row.id || row.account_id || ''),
     account_id: String(row.account_id || row.trading_account_id || row.id || ''),
     user_id: String(row.user_id || ''),
     challenge_type: String(row.challenge_type || row.tier_name || 'Funded Challenge'),
-    account_status: normalizeFundedWalletStatus(row.account_status ?? row.status),
+    account_tier: isRealFunded ? 'REAL_FUNDED' : 'CHALLENGE',
+    badge_color: isRealFunded ? 'purple' : 'red',
+    is_real_funded: isRealFunded,
+    principal_locked: isRealFunded ? true : Boolean(row.principal_locked ?? false),
+    profit_split_percent: isRealFunded
+      ? Number(row.profit_split_percent ?? REAL_FUNDED_PROFIT_SPLIT_PERCENT)
+      : Number(row.profit_split_percent ?? 80),
+    certificate_unlocked: certificateUnlocked,
+    certificate_id: row.certificate_id ? String(row.certificate_id) : null,
+    passed_at: row.passed_at ? String(row.passed_at) : null,
+    account_status: normalizedStatus,
     soft_breach_until: row.soft_breach_until ? String(row.soft_breach_until) : null,
     breach_reason: row.breach_reason ? String(row.breach_reason) : null,
     initial_balance: initialBalance,
@@ -560,7 +621,7 @@ export function applyClosedTradeToFundedWallet(
     if (maxExceeded) {
       nextStatus = 'HARD_BREACH';
       softBreachUntil = null;
-      breachReason = `Max Drawdown Limit Exceeded ($${currentMaxDrawdown.toFixed(2)} / $${wallet.max_drawdown_limit_amount.toFixed(2)} max ${wallet.max_drawdown_limit_percent}%).`;
+      breachReason = `Max Overall Loss Limit Exceeded ($${currentMaxDrawdown.toFixed(2)} / $${wallet.max_drawdown_limit_amount.toFixed(2)} max ${wallet.max_drawdown_limit_percent}%).`;
       triggeredBreach = 'HARD_BREACH';
     } else if (dailyExceeded) {
       nextStatus = 'HARD_BREACH';
@@ -577,6 +638,7 @@ export function applyClosedTradeToFundedWallet(
       breachReason = params.minorInfractionReason;
       triggeredBreach = 'SOFT_BREACH';
     } else if (
+      !wallet.is_real_funded &&
       nextStatus === 'ACTIVE' &&
       wallet.profit_target_amount > 0 &&
       currentProfitAmount >= wallet.profit_target_amount &&
@@ -589,9 +651,15 @@ export function applyClosedTradeToFundedWallet(
     }
   }
 
+  const nowIso = new Date(nowMs).toISOString();
   const updatedWallet: PurchasedFundedWallet = {
     ...wallet,
     account_status: nextStatus,
+    certificate_unlocked: becamePassed ? true : Boolean(wallet.certificate_unlocked),
+    certificate_id: becamePassed
+      ? wallet.certificate_id || `BFT-CERT-${wallet.account_id}`
+      : wallet.certificate_id ?? null,
+    passed_at: becamePassed ? nowIso : wallet.passed_at ?? null,
     soft_breach_until: softBreachUntil,
     breach_reason: breachReason,
     current_balance: nextBalance,
@@ -604,7 +672,7 @@ export function applyClosedTradeToFundedWallet(
     daily_profit_date: todayKey,
     last_profitable_day_date: lastProfitableDayDate,
     starting_day_balance: startingDayBalance,
-    updated_at: new Date(nowMs).toISOString(),
+    updated_at: nowIso,
   };
 
   return {
@@ -745,6 +813,16 @@ export function buildSupabaseWalletPayload(wallet: PurchasedFundedWallet): Recor
     account_id: wallet.account_id,
     user_id: wallet.user_id,
     challenge_type: wallet.challenge_type,
+    account_tier: wallet.account_tier || (wallet.is_real_funded ? 'REAL_FUNDED' : 'CHALLENGE'),
+    badge_color: wallet.badge_color || (wallet.is_real_funded ? 'purple' : 'red'),
+    is_real_funded: Boolean(wallet.is_real_funded),
+    principal_locked: Boolean(wallet.principal_locked ?? wallet.is_real_funded),
+    profit_split_percent: Number(
+      wallet.profit_split_percent ?? (wallet.is_real_funded ? REAL_FUNDED_PROFIT_SPLIT_PERCENT : 80)
+    ),
+    certificate_unlocked: Boolean(wallet.certificate_unlocked || wallet.account_status === 'PASSED'),
+    certificate_id: wallet.certificate_id ?? null,
+    passed_at: wallet.passed_at ?? null,
     account_status: wallet.account_status,
     soft_breach_until: wallet.soft_breach_until,
     breach_reason: wallet.breach_reason,
@@ -1003,9 +1081,20 @@ export async function syncFundedWalletBreachState(params: {
   const existingLocal = findWalletForAccount(readLocalFundedWallets(), account);
   const baseWallet = buildInitialFundedWalletFromAccount(account, resolvedUid, existingLocal, nowMs);
 
+  const nowIso = new Date(nowMs).toISOString();
   const nextWallet: PurchasedFundedWallet = {
     ...baseWallet,
     account_status: params.status,
+    certificate_unlocked:
+      params.status === 'PASSED' ? true : Boolean(baseWallet.certificate_unlocked),
+    certificate_id:
+      params.status === 'PASSED'
+        ? baseWallet.certificate_id || account.certificateId || `BFT-CERT-${account.id}`
+        : baseWallet.certificate_id ?? null,
+    passed_at:
+      params.status === 'PASSED'
+        ? baseWallet.passed_at || account.passed_at || nowIso
+        : baseWallet.passed_at ?? null,
     soft_breach_until:
       params.status === 'SOFT_BREACH'
         ? params.softBreachUntilIso ||
@@ -1024,7 +1113,7 @@ export async function syncFundedWalletBreachState(params: {
     current_max_drawdown: round2(
       Math.max(0, baseWallet.initial_balance - Math.min(account.currentBalance, account.equity))
     ),
-    updated_at: new Date(nowMs).toISOString(),
+    updated_at: nowIso,
   };
 
   return persistWalletToSupabase(nextWallet);
@@ -1198,12 +1287,15 @@ export function subscribePurchasedFundedWalletsRealtime(params: {
 export interface LiveFundedAccountMetrics {
   accountId: string;
   tierLabel: string;
+  isRealFunded: boolean;
+  principalLocked: boolean;
   initialBalance: number;
   currentBalance: number;
   liveEquity: number;
   netProfit: number;
   netProfitPercent: number;
   profitSplitPercent: number;
+  maxWithdrawableProfit: number;
   scalingActive: boolean;
   dailyDrawdownUsed: number;
   dailyDrawdownLimit: number;
@@ -1221,18 +1313,15 @@ export interface LiveFundedAccountMetrics {
 export function formatChallengeTierLabel(account?: Partial<TradingAccount> | null): string {
   const size = Math.max(0, Number(account?.size || account?.initialBalance || 0));
   const formattedSize = size > 0 ? `$${size.toLocaleString('en-US')}` : 'Funded';
-  const rawTier = String(account?.accountType || account?.tier || account?.tierName || '').toLowerCase();
-
-  if (rawTier.includes('two') || rawTier.includes('2')) {
-    return `${formattedSize} 2-Step Funded`;
+  if (
+    account?.account_tier === 'REAL_FUNDED' ||
+    account?.isRealFunded ||
+    account?.is_real_funded ||
+    account?.phase === 'funded'
+  ) {
+    return `${formattedSize} Real Funded`;
   }
-  if (rawTier.includes('one') || rawTier.includes('1')) {
-    return `${formattedSize} 1-Step Funded`;
-  }
-  if (rawTier.includes('instant')) {
-    return `${formattedSize} Instant Funded`;
-  }
-  return `${formattedSize} Funded Account`;
+  return `${formattedSize} Funded Challenge`;
 }
 
 export function resolveLiveFundedAccountMetrics(
@@ -1264,15 +1353,43 @@ export function resolveLiveFundedAccountMetrics(
     initialBalance > 0 ? r2((netProfit / initialBalance) * 100) : 0;
 
   const isPersonal = isPersonalLiveAccount(account);
+  const realFunded = Boolean(wallet?.is_real_funded || isRealFundedAccount(account));
+  const allowance = calculateRealFundedWithdrawalAllowance(
+    account
+      ? {
+          ...account,
+          initialBalance,
+          currentBalance,
+          isRealFunded: realFunded,
+          is_real_funded: realFunded,
+          account_tier: realFunded ? 'REAL_FUNDED' : account.account_tier,
+          profit_split_percent:
+            wallet?.profit_split_percent ?? account.profit_split_percent ?? REAL_FUNDED_PROFIT_SPLIT_PERCENT,
+        }
+      : null
+  );
   const breakdown = calculateWithdrawalBreakdown(
     1000,
     Number(account?.monthsCompleted ?? 1),
-    isPersonal
+    isPersonal,
+    realFunded
   );
-  const profitSplitPercent = isPersonal ? 100 : account?.scalingActive ? 90 : breakdown.profitSplitPercent;
+  const profitSplitPercent = isPersonal
+    ? 100
+    : realFunded
+    ? allowance.profitSplitPercent
+    : account?.scalingActive
+    ? 90
+    : breakdown.profitSplitPercent;
+  const principalLocked = realFunded ? allowance.principalLocked : false;
+  const maxWithdrawableProfit = isPersonal
+    ? currentBalance
+    : realFunded
+    ? allowance.maxWithdrawableProfit
+    : 0;
 
   const dailyDrawdownLimitPercent = r2(
-    Number(wallet?.daily_drawdown_limit_percent ?? account?.dailyLossLimitPercent ?? 8)
+    Number(wallet?.daily_drawdown_limit_percent ?? account?.dailyLossLimitPercent ?? 0)
   );
   const dailyDrawdownLimit = r2(
     Number(
@@ -1298,7 +1415,7 @@ export function resolveLiveFundedAccountMetrics(
       : 0;
 
   const maxDrawdownLimitPercent = r2(
-    Number(wallet?.max_drawdown_limit_percent ?? account?.maxOverallLossPercent ?? 20)
+    Number(wallet?.max_drawdown_limit_percent ?? account?.maxOverallLossPercent ?? 10)
   );
   const maxDrawdownLimit = r2(
     Number(
@@ -1337,12 +1454,15 @@ export function resolveLiveFundedAccountMetrics(
   return {
     accountId: String(wallet?.account_id || account?.id || ''),
     tierLabel,
+    isRealFunded: realFunded,
+    principalLocked,
     initialBalance,
     currentBalance,
     liveEquity,
     netProfit,
     netProfitPercent,
     profitSplitPercent,
+    maxWithdrawableProfit,
     scalingActive: profitSplitPercent >= 90,
     dailyDrawdownUsed,
     dailyDrawdownLimit,

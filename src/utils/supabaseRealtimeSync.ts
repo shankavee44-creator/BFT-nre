@@ -695,8 +695,8 @@ export function shouldAcceptRemoteBalance(
       }
     }
 
-    // Within 3.5s of a local trade placement/settlement commit, block stale poll responses
-    if ((source === 'poll' || source === 'initial') && nowMs - mutation.updatedAt < 3500) {
+    // While a local balance commit (e.g. Self Capital challenge deduction or trade settlement) is unconfirmed within 60s, block stale poll responses
+    if ((source === 'poll' || source === 'initial') && !mutation.confirmedBySupabase && nowMs - mutation.updatedAt < 60000) {
       return false;
     }
 

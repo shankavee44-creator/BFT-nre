@@ -88,7 +88,7 @@ export const LiveChatWidget: React.FC = () => {
         {
           id: `a-${Date.now()}`,
           sender: 'agent',
-          text: 'Our AI Risk Desk is reviewing your request. Quick Reminder: Use code SPOOKY40 for 40% OFF your first evaluation, or SPOOKY20 for 20% OFF existing orders. Withdrawals process via automated TRC-20 USDT in under 3 minutes!',
+          text: 'Our AI Risk Desk is reviewing your request. Quick Reminder: Use code SPOOKY40 for 40% OFF your evaluation. Withdrawals process via automated TRC-20 USDT in under 3 minutes!',
           time: 'Now',
         },
       ]);

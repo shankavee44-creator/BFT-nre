@@ -1,31 +1,28 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-  Zap,
-  Rocket,
-  Eye,
-  EyeOff,
-  ArrowRight,
   Info,
   Calendar,
   Timer,
   Banknote,
-  CircleDollarSign,
   Target,
-  ArrowDownToLine,
   TrendingDown,
   Plus,
   ShieldCheck,
-  Tag,
   CalendarClock,
   ShieldAlert,
+  Layers,
+  Award,
+  Tag,
+  X,
+  CheckCircle2,
 } from 'lucide-react';
-import { ChallengeTier, EvaluationPackage, PromoCodeType } from '../types';
-import { PROMO_CODES } from '../utils/propRules';
+import { EvaluationPackage, PromoCodeType } from '../types';
+import { PROMO_CODES, validatePromoCode } from '../utils/propRules';
 import {
   PricingCurrencyCode,
   PRICING_CURRENCIES,
   getCurrencyConfig,
-  getBftCardsForTier,
+  getUnifiedChallengeCards,
   formatFtmoCurrencyAmount,
   formatMetricValue,
   BftPricingCardSpec,
@@ -80,16 +77,6 @@ const UkFlagCircle: React.FC = () => (
   </svg>
 );
 
-const TwoStepIcon: React.FC<{ active?: boolean }> = ({ active }) => (
-  <svg
-    viewBox="0 0 20 20"
-    className={`w-4 h-4 shrink-0 ${active ? 'text-[#0b0d13]' : 'text-white'}`}
-    fill="currentColor"
-    aria-hidden="true"
-  >
-    <path d="M3 13.5L8.5 5.5L11 9.5L17 3.5L15.5 11.5L11.5 8.5L6.5 16.5L3 13.5Z" />
-  </svg>
-);
 
 const DiscountPercentBadge: React.FC = () => (
   <span
@@ -106,24 +93,62 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
   onSelectPackage,
   onOpenRules,
 }) => {
-  const [selectedTier, setSelectedTier] = useState<ChallengeTier>('two-step');
   const [selectedCurrency, setSelectedCurrency] = useState<PricingCurrencyCode>('USD');
   const [showNumbers, setShowNumbers] = useState<boolean>(true);
-  const [showPhases, setShowPhases] = useState<boolean>(true);
   const [isMoreCurrenciesOpen, setIsMoreCurrenciesOpen] = useState<boolean>(false);
   const [dailyWithdrawalsAddOn, setDailyWithdrawalsAddOn] = useState<boolean>(false);
+  const [promoCodeInput, setPromoCodeInput] = useState<string>(
+    activePromoCode && activePromoCode !== 'NONE' ? String(activePromoCode) : ''
+  );
+  const [promoFeedbackError, setPromoFeedbackError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (activePromoCode && activePromoCode !== 'NONE') {
+      setPromoCodeInput(String(activePromoCode));
+      setPromoFeedbackError(null);
+    } else if (activePromoCode === 'NONE') {
+      const currentValid = validatePromoCode(promoCodeInput);
+      if (currentValid.valid) {
+        setPromoCodeInput('');
+      }
+    }
+  }, [activePromoCode]);
+
+  const activePromoValidation = validatePromoCode(activePromoCode);
+  const effectivePromoCode: PromoCodeType = activePromoValidation.valid ? activePromoValidation.code : 'NONE';
 
   const currencyCfg = getCurrencyConfig(selectedCurrency);
-  const cards = getBftCardsForTier(selectedTier, activePromoCode, dailyWithdrawalsAddOn);
+  const cards = getUnifiedChallengeCards(effectivePromoCode, dailyWithdrawalsAddOn);
 
   const handleStartNow = (spec: BftPricingCardSpec) => {
     onSelectPackage(spec.pkg, dailyWithdrawalsAddOn);
   };
 
+  const handleApplyPromoCode = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const validation = validatePromoCode(promoCodeInput);
+    if (validation.valid) {
+      setPromoFeedbackError(null);
+      setPromoCodeInput(String(validation.code));
+      onSelectPromoCode(validation.code);
+    } else {
+      onSelectPromoCode('NONE');
+      setPromoFeedbackError(validation.isCleared ? null : validation.error || 'Invalid bonus code.');
+    }
+  };
+
+  const handleClearPromoCode = () => {
+    setPromoCodeInput('');
+    setPromoFeedbackError(null);
+    onSelectPromoCode('NONE');
+  };
+
   const primaryCurrencies = PRICING_CURRENCIES.filter((c) => c.isPrimaryPill);
   const extraCurrencies = PRICING_CURRENCIES.filter((c) => !c.isPrimaryPill);
   const activePromoInfo =
-    (activePromoCode && PROMO_CODES[activePromoCode]) || PROMO_CODES.SPOOKY40;
+    effectivePromoCode && effectivePromoCode !== 'NONE' && PROMO_CODES[effectivePromoCode]
+      ? PROMO_CODES[effectivePromoCode]
+      : null;
 
   return (
     <section
@@ -131,7 +156,7 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
       data-testid="ftmo-pricing-section"
       className="pt-8 pb-20 md:pt-12 md:pb-28 relative bg-[#07090e] border-b border-white/[0.08] overflow-hidden select-none font-sans"
     >
-      {/* Top Spotlight Beam & Conical Cyan-Blue Glow (FTMO Visual Styling) */}
+      {/* Top Spotlight Beam & Conical Cyan-Blue Glow */}
       <div className="relative max-w-[1380px] mx-auto px-4 sm:px-6 lg:px-8 z-10">
         <div className="relative flex flex-col items-center text-center pt-6 pb-8">
           {/* Horizontal Cyan Light Bar */}
@@ -145,87 +170,36 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
             data-testid="pricing-main-heading"
             className="relative z-10 text-3xl sm:text-5xl font-extrabold text-white tracking-[-0.02em] leading-[1.12] mt-7 text-balance font-sans"
           >
-            Choose Your Path with BFT
+            BFT Unified Funded Challenge
           </h2>
-          <p className="relative z-10 text-slate-200 text-sm sm:text-base mt-3 font-medium leading-[1.65] max-w-2xl">
-            Pick the way you start. All BFT accounts feature{' '}
-            <strong className="text-white font-bold">80% profit split for the first 3 months</strong>, automatically upgrading to{' '}
-            <strong className="text-[#ff8800] font-bold">90% profit split + Account Scaling</strong> after Month 3.
+          <p className="relative z-10 text-slate-200 text-sm sm:text-base mt-3 font-medium leading-[1.65] max-w-3xl">
+            One transparent path from <strong className="text-white font-bold">$5,000 up to $200,000</strong>. Reach the{' '}
+            <strong className="text-[#00e5ff] font-bold">30% profit target</strong> across{' '}
+            <strong className="text-white font-bold">5 qualifying trading days (≥1% profit/day)</strong> within a{' '}
+            <strong className="text-rose-400 font-bold">10% max overall loss limit</strong> to automatically graduate to your Real Funded Account.
           </p>
 
-          {/* 3-Tab Challenge Type Selector: 2-Step | 1-Step | Instant (New) */}
+          {/* Unified Funded Challenge Criteria Strip */}
           <div
-            role="tablist"
-            aria-label="Challenge Type Selector"
-            className="relative z-10 mt-7 inline-flex items-center p-1.5 rounded-2xl bg-[#111827] border border-white/[0.12] shadow-2xl"
+            data-testid="unified-challenge-badge"
+            className="relative z-10 mt-6 inline-flex flex-wrap items-center justify-center gap-2 sm:gap-3 px-4 py-2.5 rounded-2xl bg-[#111827] border border-[#38BDF8]/35 shadow-2xl text-xs font-bold"
           >
-            {/* 2-Step Tab */}
-            <button
-              type="button"
-              role="tab"
-              aria-selected={selectedTier === 'two-step'}
-              data-testid="tier-tab-two-step"
-              onClick={() => setSelectedTier('two-step')}
-              className={`px-4 sm:px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0 ${
-                selectedTier === 'two-step'
-                  ? 'bg-white text-[#0b0d13] shadow-md'
-                  : 'text-white hover:bg-white/5'
-              }`}
-            >
-              <TwoStepIcon active={selectedTier === 'two-step'} />
-              <span>2-Step</span>
-            </button>
-
-            {/* 1-Step Tab */}
-            <button
-              type="button"
-              role="tab"
-              aria-selected={selectedTier === 'one-step'}
-              data-testid="tier-tab-one-step"
-              onClick={() => setSelectedTier('one-step')}
-              className={`px-4 sm:px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0 ${
-                selectedTier === 'one-step'
-                  ? 'bg-white text-[#0b0d13] shadow-md'
-                  : 'text-white hover:bg-white/5'
-              }`}
-            >
-              <Rocket
-                className={`w-4 h-4 shrink-0 ${
-                  selectedTier === 'one-step' ? 'text-[#0b0d13]' : 'text-white'
-                }`}
-              />
-              <span>1-Step</span>
-            </button>
-
-            <span aria-hidden="true" className="h-5 w-px bg-white/15 mx-0.5" />
-
-            {/* Instant Tab with green "New" badge */}
-            <button
-              type="button"
-              role="tab"
-              aria-selected={selectedTier === 'instant'}
-              data-testid="tier-tab-instant"
-              onClick={() => setSelectedTier('instant')}
-              className={`relative px-4 sm:px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0 ${
-                selectedTier === 'instant'
-                  ? 'bg-white text-[#0b0d13] shadow-md'
-                  : 'text-white hover:bg-white/5'
-              }`}
-            >
-              <span className="absolute -top-3 right-1.5 px-2 py-0.5 rounded-full bg-[#00c853] text-white text-[10px] font-extrabold tracking-wide shadow">
-                New
-              </span>
-              <Zap
-                className={`w-4 h-4 shrink-0 fill-current ${
-                  selectedTier === 'instant' ? 'text-[#0b0d13]' : 'text-white'
-                }`}
-              />
-              <span>Instant</span>
-            </button>
+            <span className="inline-flex items-center gap-1.5 text-[#00e5ff]">
+              <Award className="w-4 h-4 shrink-0" />
+              <span>Single Funded Challenge</span>
+            </span>
+            <span aria-hidden="true" className="hidden sm:inline-block h-4 w-px bg-white/15" />
+            <span className="text-white">30% Profit Target</span>
+            <span aria-hidden="true" className="hidden sm:inline-block h-4 w-px bg-white/15" />
+            <span className="text-rose-300">10% Max Overall Loss</span>
+            <span aria-hidden="true" className="hidden sm:inline-block h-4 w-px bg-white/15" />
+            <span className="text-emerald-300">5 Min Days (≥1%/day)</span>
+            <span aria-hidden="true" className="hidden sm:inline-block h-4 w-px bg-white/15" />
+            <span className="text-[#ffaa00]">Auto-Pass → Real Funded</span>
           </div>
         </div>
 
-        {/* Filter & Controls Toolbar: Currency Pills + Promo/Daily Add-on (Left) & Show Numbers / Show Phases (Right) */}
+        {/* Filter & Controls Toolbar: Currency Pills + Daily Add-on (Left) & Show Numbers (Right) */}
         <div className="border-y border-white/[0.08] py-3.5 mb-8 flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-4 relative z-20">
           {/* Left: USD, EUR, GBP, More + Original BFT Promo Code & Daily Withdrawals Toggles */}
           <div className="flex flex-wrap items-center gap-2 relative">
@@ -311,36 +285,7 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
 
             <span aria-hidden="true" className="hidden sm:inline-block h-4 w-px bg-white/15 mx-1" />
 
-            {/* Original BFT Promo Code Quick Switcher (SPOOKY40 / SPOOKY20) */}
-            <div className="inline-flex items-center gap-1.5 bg-[#111827] border border-white/[0.08] rounded-xl p-1">
-              <Tag className="w-3.5 h-3.5 text-[#ff7b00] ml-2 shrink-0" />
-              <button
-                type="button"
-                data-testid="promo-btn-spooky40"
-                onClick={() => onSelectPromoCode('SPOOKY40')}
-                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors cursor-pointer whitespace-nowrap ${
-                  activePromoCode === 'SPOOKY40' || activePromoCode === 'BFT40'
-                    ? 'bg-[#ff7b00] text-[#0b0d13]'
-                    : 'text-[#9ca3af] hover:text-white'
-                }`}
-              >
-                SPOOKY40 (-40%)
-              </button>
-              <button
-                type="button"
-                data-testid="promo-btn-spooky20"
-                onClick={() => onSelectPromoCode('SPOOKY20')}
-                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors cursor-pointer whitespace-nowrap ${
-                  activePromoCode === 'SPOOKY20' || activePromoCode === 'BFT20'
-                    ? 'bg-[#ff7b00] text-[#0b0d13]'
-                    : 'text-[#9ca3af] hover:text-white'
-                }`}
-              >
-                SPOOKY20 (-20%)
-              </button>
-            </div>
-
-            {/* Original BFT Daily Withdrawals (+15%) Add-On Toggle */}
+            {/* Daily Withdrawals (+15%) Add-On Toggle */}
             <label
               data-testid="daily-withdrawals-addon-label"
               className={`px-3 py-1.5 rounded-xl border text-[11px] font-bold flex items-center gap-2 cursor-pointer transition-colors whitespace-nowrap shrink-0 ${
@@ -358,11 +303,77 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
               <CalendarClock className="w-3.5 h-3.5 text-[#ffaa00] shrink-0" />
               <span>Daily Withdrawals (+15%)</span>
             </label>
+
+            <span className="px-3 py-1.5 rounded-xl bg-[#111827] border border-white/[0.08] text-[11px] font-semibold text-slate-300 whitespace-nowrap">
+              Standard: Weekly Payouts • 7-Day 1st Wait
+            </span>
           </div>
 
-          {/* Right: Show Numbers Switch | Show Phases Toggle | Profit Simulator -> */}
-          <div className="flex flex-wrap items-center justify-between sm:justify-end gap-4 sm:gap-5">
-            {/* Show Numbers Toggle Switch */}
+          {/* Right: Bonus Code Entry + Show Numbers Switch */}
+          <div className="flex flex-wrap items-center justify-between sm:justify-end gap-3 sm:gap-4">
+            <form
+              onSubmit={handleApplyPromoCode}
+              data-testid="pricing-promo-code-form"
+              className="flex flex-wrap items-center gap-2"
+            >
+              <div className="relative flex items-center">
+                <Tag className="w-3.5 h-3.5 text-[#ff8800] absolute left-2.5 pointer-events-none" />
+                <input
+                  type="text"
+                  data-testid="promo-code-input"
+                  value={promoCodeInput}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setPromoCodeInput(val);
+                    if (!val.trim()) {
+                      setPromoFeedbackError(null);
+                      onSelectPromoCode('NONE');
+                    }
+                  }}
+                  placeholder="Bonus code"
+                  aria-label="Bonus code"
+                  className="w-32 sm:w-36 pl-7 pr-7 py-1.5 rounded-xl bg-[#111827] border border-white/[0.12] text-xs font-bold text-white placeholder:text-slate-500 uppercase focus:outline-none focus:border-[#ff8800]"
+                />
+                {(promoCodeInput || activePromoValidation.valid) && (
+                  <button
+                    type="button"
+                    data-testid="remove-promo-code-btn"
+                    onClick={handleClearPromoCode}
+                    title="Remove bonus code"
+                    className="absolute right-2 text-slate-400 hover:text-white cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+              <button
+                type="submit"
+                data-testid="apply-promo-code-btn"
+                className="px-3 py-1.5 rounded-xl bg-[#ff8800] hover:bg-[#ff9900] text-slate-950 text-xs font-extrabold transition-colors cursor-pointer whitespace-nowrap"
+              >
+                Apply
+              </button>
+
+              {activePromoValidation.valid && (
+                <span
+                  data-testid="promo-code-status"
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-emerald-500/15 border border-emerald-500/35 text-emerald-400 text-[11px] font-bold whitespace-nowrap"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                  <span>{activePromoValidation.code} ({activePromoValidation.discountPercent}% OFF)</span>
+                </span>
+              )}
+
+              {!activePromoValidation.valid && promoFeedbackError && (
+                <span
+                  data-testid="promo-code-status"
+                  className="text-rose-400 text-[11px] font-bold whitespace-nowrap"
+                >
+                  {promoFeedbackError}
+                </span>
+              )}
+            </form>
+
             <button
               type="button"
               role="switch"
@@ -382,33 +393,13 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
                 Show Numbers
               </span>
             </button>
-
-            <span aria-hidden="true" className="hidden sm:inline-block h-4 w-px bg-white/15" />
-
-            {/* Show Phases Button */}
-            <button
-              type="button"
-              data-testid="toggle-show-phases"
-              aria-pressed={showPhases}
-              onClick={() => setShowPhases((prev) => !prev)}
-              className={`flex items-center gap-2 text-xs sm:text-[13px] font-bold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                showPhases ? 'text-white' : 'text-[#9ca3af] hover:text-white'
-              }`}
-            >
-              {showPhases ? (
-                <Eye className="w-4 h-4 text-slate-300" />
-              ) : (
-                <EyeOff className="w-4 h-4 text-[#9ca3af]" />
-              )}
-              <span>Show Phases</span>
-            </button>
           </div>
         </div>
 
-        {/* Main FTMO-Styled Grid with All 6 Original BFT Packages ($100k, $50k, $25k, $10k Best Value, $5k, $2.5k) */}
+        {/* Main 6-Column Unified Funded Challenge Grid ($200k, $100k, $50k, $25k, $10k Best Value, $5k) */}
         <div
           data-testid="ftmo-pricing-cards-grid"
-          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-[175px_repeat(6,minmax(0,1fr))] gap-4 xl:gap-2.5 items-stretch"
+          className="bft-packages-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-[175px_repeat(6,minmax(0,1fr))] gap-4 xl:gap-2.5 items-stretch"
         >
           {/* Left Labels Column (Desktop XL) */}
           <div className="hidden xl:flex flex-col justify-between pr-1">
@@ -416,59 +407,59 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
               {/* Top Header Spacer matching Account Card Header */}
               <div className="h-[108px]" />
 
-              {/* 8 Aligned Metric Labels (including BFT's 5% Max Risk/Trade rule) */}
+              {/* 8 Aligned Metric Labels */}
               <div className="py-3 space-y-0">
-                <div className="h-[52px] flex items-center gap-2 text-[#e5e7eb] text-[12.5px] font-bold">
-                  <Target className="w-4 h-4 text-slate-400 shrink-0" />
+                <div className="h-[46px] flex items-center gap-2 text-[#e5e7eb] text-[12.5px] font-bold">
+                  <Target className="w-4 h-4 text-[#00e5ff] shrink-0" />
                   <span className="border-b border-dotted border-slate-500 pb-0.5">
                     Profit Target
                   </span>
                 </div>
 
                 <div className="h-[38px] flex items-center gap-2 text-[#e5e7eb] text-[12.5px] font-bold">
-                  <ArrowDownToLine className="w-4 h-4 text-slate-400 shrink-0" />
+                  <TrendingDown className="w-4 h-4 text-rose-400 shrink-0" />
                   <span className="border-b border-dotted border-slate-500 pb-0.5">
-                    Max Daily Loss
+                    Max Loss Limit
                   </span>
                 </div>
 
                 <div className="h-[38px] flex items-center gap-2 text-[#e5e7eb] text-[12.5px] font-bold">
-                  <TrendingDown className="w-4 h-4 text-slate-400 shrink-0" />
-                  <span className="border-b border-dotted border-slate-500 pb-0.5">
-                    Max Loss
-                  </span>
-                </div>
-
-                <div className="h-[38px] flex items-center gap-2 text-[#e5e7eb] text-[12.5px] font-bold">
-                  <ShieldAlert className="w-4 h-4 text-slate-400 shrink-0" />
+                  <ShieldAlert className="w-4 h-4 text-[#ffaa00] shrink-0" />
                   <span className="border-b border-dotted border-slate-500 pb-0.5">
                     Max Risk / Trade
                   </span>
                 </div>
 
                 <div className="h-[38px] flex items-center gap-2 text-[#e5e7eb] text-[12.5px] font-bold">
-                  <Timer className="w-4 h-4 text-slate-400 shrink-0" />
+                  <Layers className="w-4 h-4 text-[#ffaa00] shrink-0" />
                   <span className="border-b border-dotted border-slate-500 pb-0.5">
-                    Min Trading days
+                    Max Open Risk
+                  </span>
+                </div>
+
+                <div className="h-[38px] flex items-center gap-2 text-[#e5e7eb] text-[12.5px] font-bold">
+                  <Timer className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span className="border-b border-dotted border-slate-500 pb-0.5">
+                    Min Trading Days
+                  </span>
+                </div>
+
+                <div className="h-[38px] flex items-center gap-2 text-[#e5e7eb] text-[12.5px] font-bold">
+                  <ShieldCheck className="w-4 h-4 text-slate-400 shrink-0" />
+                  <span className="border-b border-dotted border-slate-500 pb-0.5">
+                    Trades / Pair
                   </span>
                 </div>
 
                 <div className="h-[38px] flex items-center gap-2 text-[#e5e7eb] text-[12.5px] font-bold">
                   <Calendar className="w-4 h-4 text-slate-400 shrink-0" />
                   <span className="border-b border-dotted border-slate-500 pb-0.5">
-                    Trading Period
+                    Withdrawals
                   </span>
                 </div>
 
                 <div className="h-[38px] flex items-center gap-2 text-[#e5e7eb] text-[12.5px] font-bold">
-                  <CircleDollarSign className="w-4 h-4 text-slate-400 shrink-0" />
-                  <span className="border-b border-dotted border-slate-500 pb-0.5">
-                    Refund
-                  </span>
-                </div>
-
-                <div className="h-[38px] flex items-center gap-2 text-[#e5e7eb] text-[12.5px] font-bold">
-                  <Banknote className="w-4 h-4 text-slate-400 shrink-0" />
+                  <Banknote className="w-4 h-4 text-emerald-400 shrink-0" />
                   <span className="border-b border-dotted border-slate-500 pb-0.5">
                     Rewards Split
                   </span>
@@ -480,48 +471,29 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
             <div>
               <div className="h-[126px] flex flex-col justify-center pr-2">
                 <span className="text-xs text-[#9ca3af] font-medium leading-relaxed">
-                  One-time refundable fee
+                  One-time challenge fee
                   <br />
-                  ({activePromoInfo.code}: {activePromoInfo.label})
+                  {dailyWithdrawalsAddOn
+                    ? '(+15% Daily Payouts Add-on)'
+                    : activePromoInfo
+                    ? `(${activePromoInfo.code}: ${activePromoInfo.label})`
+                    : '(Auto-unlocks Real Funded)'}
                 </span>
               </div>
-              {/* Spacer matching detached Avg. Reward card */}
               <div className="h-[74px] mt-3" />
             </div>
           </div>
 
-          {/* 6 Original BFT Pricing Cards ($100,000 | $50,000 | $25,000 | $10,000 Best Value | $5,000 | $2,500) */}
+          {/* 6 Unified Funded Challenge Pricing Cards ($200k | $100k | $50k | $25k | $10k Best Value | $5k) */}
           {cards.map((spec) => {
             const formattedAccountSize = formatFtmoCurrencyAmount(
               spec.size * currencyCfg.accountMultiplier,
               currencyCfg.accountSymbol
             );
 
-            const phase1Text =
-              spec.phase1TargetPercent > 0
-                ? formatMetricValue({
-                    size: spec.size,
-                    percent: spec.phase1TargetPercent,
-                    showNumbers,
-                    accountSymbol: currencyCfg.accountSymbol,
-                    accountMultiplier: currencyCfg.accountMultiplier,
-                  })
-                : 'None (Direct Live)';
-
-            const phase2Text =
-              spec.phase2TargetPercent !== null
-                ? formatMetricValue({
-                    size: spec.size,
-                    percent: spec.phase2TargetPercent,
-                    showNumbers,
-                    accountSymbol: currencyCfg.accountSymbol,
-                    accountMultiplier: currencyCfg.accountMultiplier,
-                  })
-                : null;
-
-            const maxDailyLossText = formatMetricValue({
+            const profitTargetText = formatMetricValue({
               size: spec.size,
-              percent: spec.maxDailyLossPercent,
+              percent: spec.phase1TargetPercent,
               showNumbers,
               accountSymbol: currencyCfg.accountSymbol,
               accountMultiplier: currencyCfg.accountMultiplier,
@@ -558,21 +530,23 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
               currencyCfg.feeSymbol
             );
 
+            const hasPromoDiscount = spec.discountSavedUsd > 0;
+
             return (
               <div
                 key={`${spec.tier}-${spec.size}`}
                 data-testid={`pricing-column-${spec.size}`}
-                className="flex flex-col justify-between"
+                data-best-value={spec.isBestValue ? 'true' : 'false'}
+                className="bft-package-card flex flex-col justify-between"
               >
                 {/* Upper Main Dark Card */}
                 <div
-                  className={`relative rounded-2xl flex-1 flex flex-col justify-between transition-all duration-200 ${
+                  className={`bft-package-card-surface relative rounded-2xl flex-1 flex flex-col justify-between ${
                     spec.isBestValue
                       ? 'bg-[#111827] border border-[#ff7b00]/65 shadow-[0_0_35px_rgba(255,123,0,0.12)]'
-                      : 'bg-[#111827] border border-white/[0.08] hover:border-white/20'
+                      : 'bg-[#111827] border border-white/[0.08]'
                   }`}
                 >
-                  {/* Orange "Best Value" Top Pill Badge on our popular $10,000 Card */}
                   {spec.isBestValue && (
                     <>
                       <div
@@ -581,7 +555,6 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
                       >
                         Best Value
                       </div>
-                      {/* Subtle Warm Orange Top Radial Gradient inside Best Value Card */}
                       <div
                         aria-hidden="true"
                         className="pointer-events-none absolute inset-x-0 top-0 h-32 rounded-t-2xl bg-[radial-gradient(ellipse_at_top,rgba(205,98,18,0.42)_0%,rgba(17,24,39,0)_72%)]"
@@ -592,8 +565,8 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
                   <div>
                     {/* Account Size Header */}
                     <div className="relative z-10 h-[108px] flex flex-col items-center justify-center px-3 text-center">
-                      <span className="text-[11px] text-[#9ca3af] font-medium mb-1">
-                        Account
+                      <span className="text-[11px] text-[#38BDF8] font-bold uppercase tracking-wider mb-1">
+                        Funded Challenge
                       </span>
                       <div
                         data-testid={`card-account-size-${spec.size}`}
@@ -606,82 +579,33 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
 
                     {/* 8 Metric Rows */}
                     <div className="relative z-10 px-4 py-3 space-y-0">
-                      {/* 1. Profit Target */}
+                      {/* 1. Profit Target (30%) */}
                       <div
                         data-testid={`card-profit-target-${spec.size}`}
-                        className="h-[52px] flex items-center justify-between xl:justify-start"
+                        className="h-[46px] flex items-center justify-between xl:justify-start"
                       >
                         <span className="xl:hidden text-xs text-slate-400 font-medium">
                           Profit Target
                         </span>
-                        {spec.phase1TargetPercent === 0 ? (
-                          <div className="text-right xl:text-left">
-                            <span className="text-xs font-extrabold text-[#22e57a] uppercase tracking-wider">
-                              None (Direct Live)
-                            </span>
-                          </div>
-                        ) : showPhases && phase2Text ? (
-                          <div className="flex flex-col justify-center leading-tight text-right xl:text-left">
-                            <div className="flex items-center justify-end xl:justify-start gap-1.5">
-                              <span className="text-[10px] font-bold text-[#8e96a4] uppercase tracking-wider">
-                                P1
-                              </span>
-                              <span className="text-[11.5px] font-extrabold text-white tabular-nums">
-                                {phase1Text}
-                              </span>
-                            </div>
-                            <div className="flex items-center justify-end xl:justify-start gap-1.5 mt-1">
-                              <span className="text-[10px] font-bold text-[#8e96a4] uppercase tracking-wider">
-                                P2
-                              </span>
-                              <span className="text-[11.5px] font-extrabold text-white tabular-nums">
-                                {phase2Text}
-                              </span>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="flex items-center justify-end xl:justify-start gap-1.5">
-                            {showPhases && (
-                              <span className="text-[10px] font-bold text-[#8e96a4] uppercase tracking-wider">
-                                P1
-                              </span>
-                            )}
-                            <span className="text-xs font-extrabold text-white tabular-nums">
-                              {phase2Text && !showPhases
-                                ? `${phase1Text} / ${phase2Text}`
-                                : phase1Text}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* 2. Max Daily Loss */}
-                      <div
-                        data-testid={`card-daily-loss-${spec.size}`}
-                        className="h-[38px] flex items-center justify-between xl:justify-start"
-                      >
-                        <span className="xl:hidden text-xs text-slate-400 font-medium">
-                          Max Daily Loss
-                        </span>
-                        <span className="text-xs font-semibold text-[#e5e7eb] tabular-nums">
-                          {maxDailyLossText}
+                        <span className="text-xs font-extrabold text-[#00e5ff] tabular-nums">
+                          {profitTargetText}
                         </span>
                       </div>
 
-                      {/* 3. Max Overall Loss */}
+                      {/* 2. Max Overall Loss Limit (10% -> Hard Breach) */}
                       <div
                         data-testid={`card-max-loss-${spec.size}`}
                         className="h-[38px] flex items-center justify-between xl:justify-start"
                       >
                         <span className="xl:hidden text-xs text-slate-400 font-medium">
-                          Max Loss
+                          Max Loss Limit
                         </span>
-                        <span className="text-xs font-semibold text-[#e5e7eb] tabular-nums">
+                        <span className="text-xs font-bold text-rose-300 tabular-nums">
                           {maxLossText}
                         </span>
                       </div>
 
-                      {/* 4. Max Risk Per Trade (5%) */}
+                      {/* 3. Max Risk Per Trade (5% of Current Balance) */}
                       <div
                         data-testid={`card-max-risk-${spec.size}`}
                         className="h-[38px] flex items-center justify-between xl:justify-start"
@@ -694,41 +618,50 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
                         </span>
                       </div>
 
-                      {/* 5. Min Trading days */}
-                      <div className="h-[38px] flex items-center justify-between xl:justify-start">
+                      {/* 4. Max Combined Open Risk (5% Total) */}
+                      <div
+                        data-testid={`card-combined-risk-${spec.size}`}
+                        className="h-[38px] flex items-center justify-between xl:justify-start"
+                      >
                         <span className="xl:hidden text-xs text-slate-400 font-medium">
-                          Min Trading days
+                          Max Open Risk
                         </span>
-                        <span className="text-xs font-semibold text-[#e5e7eb]">
-                          {spec.minTradingDaysLabel}
+                        <span className="text-xs font-semibold text-[#ffaa00] tabular-nums">
+                          5% Combined
                         </span>
                       </div>
 
-                      {/* 6. Trading Period */}
-                      <div className="h-[38px] flex items-center justify-between xl:justify-start">
+                      {/* 5. Min Trading Days (5 Days >= 1%/day) */}
+                      <div
+                        data-testid={`card-min-days-${spec.size}`}
+                        className="h-[38px] flex items-center justify-between xl:justify-start"
+                      >
                         <span className="xl:hidden text-xs text-slate-400 font-medium">
-                          Trading Period
+                          Min Trading Days
                         </span>
-                        <span className="text-xs font-semibold text-[#e5e7eb]">
-                          {spec.tradingPeriodLabel}
+                        <span className="text-xs font-semibold text-emerald-300">
+                          5 days (≥1%/day)
                         </span>
                       </div>
 
-                      {/* 7. Refund */}
+                      {/* 6. Max Open Trades / Currency Pair */}
                       <div className="h-[38px] flex items-center justify-between xl:justify-start">
                         <span className="xl:hidden text-xs text-slate-400 font-medium">
-                          Refund
+                          Trades / Pair
                         </span>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-xs font-semibold text-[#e5e7eb]">
-                            {spec.refundLabel}
-                          </span>
-                          {spec.refundBadge && (
-                            <span className="px-1.5 py-0.5 rounded bg-[#0c3b24] text-[#22e57a] text-[10px] font-extrabold">
-                              {spec.refundBadge}
-                            </span>
-                          )}
-                        </div>
+                        <span className="text-xs font-semibold text-[#e5e7eb]">
+                          Max 1 / Pair
+                        </span>
+                      </div>
+
+                      {/* 7. Withdrawals (Weekly / +15% Daily) */}
+                      <div className="h-[38px] flex items-center justify-between xl:justify-start">
+                        <span className="xl:hidden text-xs text-slate-400 font-medium">
+                          Withdrawals
+                        </span>
+                        <span className="text-xs font-semibold text-[#e5e7eb]">
+                          {dailyWithdrawalsAddOn ? 'Daily (+15%)' : 'Weekly (7d Wait)'}
+                        </span>
                       </div>
 
                       {/* 8. Rewards Split (80% -> 90%) */}
@@ -743,18 +676,18 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
                     </div>
                   </div>
 
-                  {/* Card Footer: Original & Discounted Fee + Bright Blue "Start now" CTA Button */}
+                  {/* Card Footer: Exact Package Price + Bright Blue "Start now" CTA Button */}
                   <div className="relative z-10 px-4 pb-5 pt-1 h-[126px] flex flex-col justify-end">
                     <div className="w-full border-t border-white/[0.08] mb-3.5" />
 
-                    {/* Price Row (Uses exact BFT discounted price + crossed-out original price) */}
+                    {/* Price Row */}
                     <div
                       data-testid={`card-fee-${spec.size}`}
                       className="flex items-center justify-center gap-1.5 mb-3 h-7"
                     >
-                      <DiscountPercentBadge />
+                      {hasPromoDiscount && <DiscountPercentBadge />}
                       <span
-                        className={`text-base sm:text-lg font-extrabold leading-none pb-0.5 tabular-nums ${
+                        className={`text-lg sm:text-xl font-extrabold leading-none pb-0.5 tabular-nums ${
                           spec.isBestValue
                             ? 'text-[#ff7b00] border-b-2 border-dashed border-[#ff7b00]'
                             : 'text-white'
@@ -762,9 +695,11 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
                       >
                         {finalFeeFormatted}
                       </span>
-                      <span className="text-[11px] font-semibold text-[#9ca3af] line-through tabular-nums">
-                        {originalFeeFormatted}
-                      </span>
+                      {hasPromoDiscount && (
+                        <span className="text-[11px] font-semibold text-[#9ca3af] line-through tabular-nums">
+                          {originalFeeFormatted}
+                        </span>
+                      )}
                     </div>
 
                     {/* Bright Blue "Start now" CTA Button */}
@@ -782,7 +717,7 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
                 {/* Detached Bottom Footer Card: Avg. Reward */}
                 <div
                   data-testid={`avg-reward-card-${spec.size}`}
-                  className="mt-3 h-[74px] rounded-2xl bg-[#111827] border border-white/[0.08] px-3 py-2.5 flex flex-col items-center justify-center text-center"
+                  className="bft-package-subcard mt-3 h-[74px] rounded-2xl bg-[#111827] border border-white/[0.08] px-3 py-2.5 flex flex-col items-center justify-center text-center"
                 >
                   <span className="px-2.5 py-0.5 rounded-md bg-[#161f33] text-white text-xs font-extrabold tabular-nums mb-1">
                     {avgRewardFormatted}
@@ -797,18 +732,23 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
           })}
         </div>
 
-        {/* Original BFT Progression & Rulebook Summary Bar */}
-        <div className="mt-10 p-4 sm:p-5 rounded-2xl bg-[#111827] border border-white/[0.08] flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
+        {/* Strict Risk & Auto-Graduation Summary Bar */}
+        <div className="mt-10 p-4 sm:p-5 rounded-2xl bg-[#111827] border border-white/[0.08] flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+          <div className="flex items-start sm:items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-[#0066ff]/15 border border-[#0066ff]/30 flex items-center justify-center text-[#0066ff] shrink-0">
               <ShieldCheck className="w-4 h-4" />
             </div>
             <div>
               <div className="text-xs sm:text-sm font-bold text-white">
-                BFT Prop Firm Rulebook &amp; Risk Parameters
+                Strict Funded Risk Rules (Immediate Hard Breach on Violation)
               </div>
-              <div className="text-[11px] sm:text-xs text-[#9ca3af]">
-                Inspect 5% Max Risk Per Trade, 5 Minimum Profitable Days (≥0.5%/day), 80% → 90% Scaling Split, and Soft vs Hard Breach rules.
+              <div className="text-[11px] sm:text-xs text-[#9ca3af] leading-relaxed mt-0.5">
+                Max <strong className="text-white">5% risk per single trade</strong> &amp;{' '}
+                <strong className="text-white">5% max combined open risk</strong> of current wallet balance •{' '}
+                <strong className="text-white">Max 1 open trade per currency pair</strong> •{' '}
+                <strong className="text-rose-300">No Martingale &amp; No Hedging</strong> •{' '}
+                <strong className="text-rose-300">10% Max Overall Loss</strong> •{' '}
+                <strong className="text-emerald-300">Weekly withdrawals (7-day 1st wait, +15% for Daily)</strong>.
               </div>
             </div>
           </div>

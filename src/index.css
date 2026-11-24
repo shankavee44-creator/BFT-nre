@@ -743,4 +743,109 @@ button:active:not(:disabled),
   flex-shrink: 0;
 }
 
+/* ============================================================================
+   FUNDED PACKAGES GRID — PREMIUM HOVER DEPTH & RECEDING ANIMATION
+   ============================================================================ */
+.bft-package-card {
+  position: relative;
+  z-index: 1;
+  transform-origin: center center;
+  backface-visibility: hidden;
+  transition:
+    transform 300ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 300ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.bft-package-card-surface,
+.bft-package-subcard {
+  transition:
+    border-color 300ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 300ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  /* Recede all other package cards while any card in the grid is hovered */
+  .bft-packages-grid:has(.bft-package-card:hover) .bft-package-card:not(:hover) {
+    transform: scale(0.97) translateZ(0);
+    opacity: 0.76;
+    z-index: 1;
+  }
+
+  /* Recede unfocused cards during keyboard navigation when mouse is not hovering */
+  .bft-packages-grid:has(:focus-visible):not(:has(.bft-package-card:hover))
+    .bft-package-card:not(:focus-within) {
+    transform: scale(0.97) translateZ(0);
+    opacity: 0.76;
+    z-index: 1;
+  }
+
+  /* Lift hovered card forward */
+  .bft-packages-grid .bft-package-card:hover {
+    transform: translateY(-10px) scale(1.03) translateZ(0);
+    opacity: 1;
+    z-index: 30;
+    will-change: transform, opacity;
+  }
+
+  /* Lift keyboard-focused card forward */
+  .bft-packages-grid:not(:has(.bft-package-card:hover)) .bft-package-card:has(:focus-visible) {
+    transform: translateY(-10px) scale(1.03) translateZ(0);
+    opacity: 1;
+    z-index: 30;
+    will-change: transform, opacity;
+  }
+
+  .bft-packages-grid .bft-package-card:hover .bft-package-card-surface,
+  .bft-packages-grid:not(:has(.bft-package-card:hover))
+    .bft-package-card:has(:focus-visible)
+    .bft-package-card-surface {
+    border-color: rgba(56, 189, 248, 0.65);
+    box-shadow:
+      0 24px 52px -12px rgba(0, 0, 0, 0.82),
+      0 0 38px rgba(56, 189, 248, 0.22);
+  }
+
+  .bft-packages-grid .bft-package-card[data-best-value='true']:hover .bft-package-card-surface,
+  .bft-packages-grid:not(:has(.bft-package-card:hover))
+    .bft-package-card[data-best-value='true']:has(:focus-visible)
+    .bft-package-card-surface {
+    border-color: rgba(255, 136, 0, 0.92);
+    box-shadow:
+      0 24px 52px -12px rgba(0, 0, 0, 0.85),
+      0 0 42px rgba(255, 123, 0, 0.34);
+  }
+
+  .bft-packages-grid .bft-package-card:hover .bft-package-subcard,
+  .bft-packages-grid:not(:has(.bft-package-card:hover))
+    .bft-package-card:has(:focus-visible)
+    .bft-package-subcard {
+    border-color: rgba(56, 189, 248, 0.42);
+    box-shadow: 0 14px 30px -10px rgba(0, 0, 0, 0.72);
+  }
+
+  .bft-packages-grid .bft-package-card[data-best-value='true']:hover .bft-package-subcard,
+  .bft-packages-grid:not(:has(.bft-package-card:hover))
+    .bft-package-card[data-best-value='true']:has(:focus-visible)
+    .bft-package-subcard {
+    border-color: rgba(255, 136, 0, 0.55);
+    box-shadow: 0 14px 30px -10px rgba(0, 0, 0, 0.75);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bft-package-card,
+  .bft-package-card-surface,
+  .bft-package-subcard {
+    transition-duration: 0.01ms !important;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .bft-packages-grid:has(.bft-package-card:hover) .bft-package-card:not(:hover),
+    .bft-packages-grid:has(:focus-visible) .bft-package-card:not(:focus-within),
+    .bft-packages-grid .bft-package-card:hover,
+    .bft-packages-grid .bft-package-card:has(:focus-visible) {
+      transform: none !important;
+    }
+  }
+}
 

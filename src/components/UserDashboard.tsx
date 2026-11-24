@@ -31,6 +31,7 @@ import {
   ChevronDown,
   Info,
   BarChart3,
+  Award,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import {
@@ -75,11 +76,15 @@ import {
 } from '../utils/kycVerification';
 import {
   isLiveFundedAccount,
+  isRealFundedAccount,
+  isPassedChallengeAccount,
   isPersonalLiveAccount,
   isDemoAccount,
   isAccountSoftBreached,
   isAccountHardBreached,
   getAccountStatusBadgeLabel,
+  resolveAccountBadgeMeta,
+  calculateRealFundedWithdrawalAllowance,
   getChallengeProfitTarget,
   getPackageSku,
 } from '../utils/propRules';
@@ -161,6 +166,7 @@ interface UserDashboardProps {
   onOpenWithdrawalModal?: () => void;
   onNavigateToPricing?: () => void;
   onPassChallengePhase?: (account: TradingAccount) => void;
+  onOpenPassedCertificate?: (account: TradingAccount) => void;
   initialTab?:
     | 'accounts'
     | 'live_funded'
@@ -191,6 +197,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   onOpenWithdrawalModal,
   onNavigateToPricing,
   onPassChallengePhase,
+  onOpenPassedCertificate,
   initialTab = 'accounts',
   onLogout,
   onOpenAdminDashboard,
@@ -2450,7 +2457,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               <p className="text-xs sm:text-sm text-slate-400 max-w-xl mx-auto mt-2 leading-relaxed">
                 Welcome to Binary Funded Trader,{' '}
                 <strong className="text-white">{userProfile.fullName || userProfile.email}</strong>. You have not
-                yet purchased a Challenge or Instant Funded account. Select a funding evaluation plan below to
+                yet purchased a Funded Challenge account. Select a funding challenge package below to
                 receive your live OTC trading terminal credentials immediately.
               </p>
 
@@ -2479,16 +2486,16 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                     }}
                     className="w-full sm:w-auto px-6 py-3.5 min-h-[44px] rounded-xl bg-[#141418] hover:bg-[#1c1c22] border border-white/15 text-white font-bold text-xs sm:text-sm font-mono flex items-center justify-center gap-2 cursor-pointer transition-colors"
                   >
-                    <span>Compare All Evaluation Tiers</span>
+                    <span>Compare All Challenge Packages</span>
                   </button>
                 )}
               </div>
 
               <div className="mt-8 pt-6 border-t border-white/10 grid grid-cols-1 sm:grid-cols-3 gap-3 text-left font-mono text-xs">
                 <div className="p-3.5 rounded-xl bg-[#111115] border border-white/10">
-                  <div className="text-[#ff8800] font-black">1. Choose Evaluation</div>
+                  <div className="text-[#ff8800] font-black">1. Choose Funded Challenge</div>
                   <div className="text-[11px] text-slate-400 mt-1">
-                    Select One-Step, Two-Step, or Instant Funded capital up to $100,000.
+                    Select unified Funded Challenge capital from $5,000 ($49) up to $200,000 ($1,199).
                   </div>
                 </div>
                 <div className="p-3.5 rounded-xl bg-[#111115] border border-white/10">
@@ -2522,13 +2529,44 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                 const isPersonal = isPersonalLiveAccount(acc);
                 const isDemo = isDemoAccount(acc);
                 const isFundedCard = !isPersonal && !isDemo;
-                const isLive = isLiveFundedAccount(acc);
-                const challengeTarget = getChallengeProfitTarget(acc);
+                const matchedWallet = isFundedCard ? findWalletForAccount(fundedWallets, acc) : null;
+                const isRealFunded =
+                  isFundedCard && Boolean(isRealFundedAccount(acc) || matchedWallet?.is_real_funded);
+                const isPassedChallenge =
+                  isFundedCard &&
+                  !isRealFunded &&
+                  Boolean(isPassedChallengeAccount(acc) || matchedWallet?.account_status === 'PASSED');
+                const isLive = isRealFunded || isLiveFundedAccount(acc);
+                const hasUnlockedCertificate =
+                  isFundedCard &&
+                  Boolean(
+                    acc.certificate_unlocked ||
+                      matchedWallet?.certificate_unlocked ||
+                      isPassedChallenge ||
+                      (isRealFunded && (acc.certificateId || matchedWallet?.certificate_id))
+                  );
+                const rfAllowance = isRealFunded
+                  ? calculateRealFundedWithdrawalAllowance(acc)
+                  : null;
+                const badgeMeta = resolveAccountBadgeMeta({
+                  ...acc,
+                  account_tier: isRealFunded
+                    ? 'REAL_FUNDED'
+                    : isPersonal
+                    ? 'LIVE'
+                    : isDemo
+                    ? 'DEMO'
+                    : 'CHALLENGE',
+                  status: isPassedChallenge ? 'passed' : acc.status,
+                });
+                const challengeTarget = getChallengeProfitTarget(
+                  acc,
+                  matchedWallet?.completed_profitable_days
+                );
                 const progressPct = challengeTarget.isChallenge
                   ? Math.min(100, Math.max(0, (Math.max(0, profit) / Math.max(1, challengeTarget.targetAmount)) * 100))
                   : 100;
 
-                const matchedWallet = isFundedCard ? findWalletForAccount(fundedWallets, acc) : null;
                 const breachState = isFundedCard
                   ? resolveFundedWalletBreachState(matchedWallet, acc, nowTick)
                   : null;
@@ -2543,7 +2581,11 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                   ? 'HARD BREACH'
                   : isSoftBreached
                   ? 'SOFT BREACH'
-                  : (matchedWallet?.account_status === 'PASSED' ? 'PASSED' : acc.status.toUpperCase());
+                  : isPassedChallenge
+                  ? 'PASSED'
+                  : isRealFunded
+                  ? 'ACTIVE FUNDED'
+                  : acc.status.toUpperCase();
 
                 return (
                   <div
@@ -2555,41 +2597,61 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                         : isSoftBreached
                         ? 'border-amber-500/60'
                         : isPersonal
-                        ? 'border-[#ff8800] hover:border-[#ffaa00]'
-                        : acc.status === 'passed' || acc.status === 'passed_phase_1' || matchedWallet?.account_status === 'PASSED'
+                        ? 'border-[#00e676]/45 hover:border-[#00e676]'
+                        : isDemo
+                        ? 'border-amber-400/35 hover:border-amber-400/70'
+                        : isRealFunded
+                        ? 'border-purple-500/60 hover:border-purple-400'
+                        : isPassedChallenge
                         ? 'border-emerald-500/50'
-                        : 'border-white/15 hover:border-[#ff8800]'
+                        : 'border-red-500/35 hover:border-red-400/70'
                     }`}
                   >
                     <div className="flex items-center justify-between mb-3 gap-2">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-base font-black text-white font-mono">
-                          {isPersonal
-                            ? `Personal Live (${acc.id})`
-                            : isDemo
-                            ? `Demo (${acc.id})`
-                            : acc.id}
-                        </span>
-                        <span
-                          className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded font-mono border ${
-                            isPersonal
-                              ? 'bg-[#ff8800] text-slate-950 border-[#ff8800]'
-                              : isDemo
-                              ? 'bg-white/10 text-slate-300 border-white/20'
-                              : isLive
-                              ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40'
-                              : 'bg-[#ff8800]/15 text-[#ff8800] border-[#ff8800]/30'
-                          }`}
-                        >
-                          {isPersonal
-                            ? 'PERSONAL LIVE (SELF-FUNDED)'
-                            : isDemo
-                            ? 'DEMO PRACTICE'
-                            : isLive
-                            ? 'LIVE FUNDED'
-                            : `CHALLENGE (${acc.phase.toUpperCase()})`}
-                        </span>
-                      </div>
+                      {(() => {
+                        const isChallengeCard =
+                          !isPersonal && !isDemo && !isRealFunded && !isPassedChallenge;
+                        return (
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-base font-black text-white font-mono">
+                              {isPersonal
+                                ? `Personal Live (${acc.id})`
+                                : isDemo
+                                ? `Demo (${acc.id})`
+                                : isChallengeCard
+                                ? 'Challenge'
+                                : acc.id}
+                            </span>
+                            <span
+                              data-testid={`account-tier-badge-${acc.id}`}
+                              data-badge-color={isPassedChallenge ? 'emerald' : badgeMeta.badge_color}
+                              className={`text-[10px] font-black ${
+                                isChallengeCard ? '' : 'uppercase '
+                              }px-2 py-0.5 rounded font-mono border ${
+                                isPersonal
+                                  ? 'bg-[#00e676]/15 text-[#00e676] border-[#00e676]/45'
+                                  : isDemo
+                                  ? 'bg-amber-400/15 text-amber-300 border-amber-400/45'
+                                  : isRealFunded
+                                  ? 'bg-purple-500/20 text-purple-300 border-purple-500/55 shadow-[0_0_12px_rgba(168,85,247,0.2)]'
+                                  : isPassedChallenge
+                                  ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/50'
+                                  : 'bg-red-500/20 text-red-400 border-red-500/45'
+                              }`}
+                            >
+                              {isPersonal
+                                ? 'LIVE'
+                                : isDemo
+                                ? 'DEMO'
+                                : isRealFunded
+                                ? 'REAL FUNDED'
+                                : isPassedChallenge
+                                ? 'PASSED'
+                                : 'Challenge'}
+                            </span>
+                          </div>
+                        );
+                      })()}
                       <span
                         data-testid={
                           isHardBreached
@@ -2603,8 +2665,10 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                             ? 'bg-rose-950/90 text-rose-300 border border-rose-500/70 font-black'
                             : isSoftBreached
                             ? 'bg-amber-950/90 text-amber-300 border border-amber-500/70 font-black'
-                            : acc.status === 'passed' || acc.status === 'passed_phase_1' || matchedWallet?.account_status === 'PASSED'
-                            ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-500/50'
+                            : isRealFunded
+                            ? 'bg-purple-950/80 text-purple-300 border border-purple-500/50'
+                            : isPassedChallenge
+                            ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-500/50 font-black'
                             : 'bg-emerald-950/60 text-emerald-400 border border-emerald-500/30'
                         }`}
                       >
@@ -2645,12 +2709,31 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                       </div>
                     )}
 
-                    {/* Challenge Profit Target Progress Bar for One-Step & Two-Step Challenge Accounts */}
+                    {/* Real Funded 90% Profit-Only & Principal Locked Notice */}
+                    {isRealFunded && rfAllowance && !isHardBreached && (
+                      <div
+                        data-testid={`real-funded-payout-rule-${acc.id}`}
+                        className="mb-3 p-2.5 rounded-xl bg-purple-950/25 border border-purple-500/35 font-mono text-[11px] flex flex-wrap items-center justify-between gap-2"
+                      >
+                        <span className="text-purple-200 font-bold flex items-center gap-1.5">
+                          <Lock className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                          <span>
+                            90% Earned Profit Only · Principal Locked ($
+                            {rfAllowance.fundedPrincipal.toLocaleString('en-US')})
+                          </span>
+                        </span>
+                        <span className="text-emerald-400 font-black tabular-nums">
+                          Withdrawable: ${rfAllowance.maxWithdrawableProfit.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Challenge Profit Target & 5 Qualifying Days (>=1%/day) Progress Bar */}
                     {!isLive && !isPersonal && !isDemo && acc.status === 'active' && !isHardBreached && !isSoftBreached && (
-                      <div className="mb-3 p-3 rounded-xl bg-[#111115] border border-[#ff8800]/30 font-mono text-xs">
+                      <div className="mb-3 p-3 rounded-xl bg-[#111115] border border-red-500/30 font-mono text-xs">
                         <div className="flex items-center justify-between mb-1.5">
-                          <span className="text-[10px] uppercase font-bold text-[#ff8800]">
-                            Challenge Profit Target ({challengeTarget.targetPercent}%)
+                          <span className="text-[10px] uppercase font-bold text-red-400">
+                            Challenge Target ({challengeTarget.targetPercent}%) · {challengeTarget.completedProfitableDays}/{challengeTarget.minProfitableDays} Days (≥1%)
                           </span>
                           <span className="text-[11px] font-black text-white">
                             ${Math.max(0, profit).toFixed(2)} / ${challengeTarget.targetAmount.toLocaleString()}
@@ -2658,20 +2741,20 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                         </div>
                         <div className="w-full h-2 rounded-full bg-[#0a0a0a] overflow-hidden border border-white/10">
                           <div
-                            className="h-full bg-[#ff8800] transition-all duration-300"
+                            className="h-full bg-red-500 transition-all duration-300"
                             style={{ width: `${progressPct}%` }}
                           />
                         </div>
                         <div className="flex items-center justify-between mt-1.5 text-[10px] text-slate-400">
-                          <span>Withdrawals unlock after passing challenge</span>
-                          {profit >= challengeTarget.targetAmount && onPassChallengePhase && (
+                          <span>Auto-unlocks Purple REAL FUNDED &amp; Certificate at 30% + 5 qualifying ≥1% days</span>
+                          {challengeTarget.isTargetMet && onPassChallengePhase && (
                             <button
                               type="button"
                               data-testid={`claim-live-account-btn-${acc.id}`}
                               onClick={() => onPassChallengePhase(acc)}
-                              className="px-2 py-0.5 rounded bg-emerald-500 text-slate-950 font-black uppercase cursor-pointer"
+                              className="px-2 py-0.5 rounded bg-purple-500 text-white font-black uppercase cursor-pointer"
                             >
-                              Claim Live Funded Account →
+                              Unlock Real Funded →
                             </button>
                           )}
                         </div>
@@ -2694,11 +2777,15 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                         </span>
                       </div>
                       <div>
-                        <span className="text-[10px] text-slate-400 block uppercase">Limits (DD/Max)</span>
+                        <span className="text-[10px] text-slate-400 block uppercase">
+                          {isPersonal || isDemo ? 'Limits' : acc.dailyLossLimitPercent > 0 ? 'Limits (DD/Max)' : 'Max Loss / Risk'}
+                        </span>
                         <span className="font-bold text-[#ff8800] tabular-nums">
                           {isPersonal || isDemo
                             ? 'NONE'
-                            : `${acc.dailyLossLimitPercent}% / ${acc.maxOverallLossPercent}%`}
+                            : acc.dailyLossLimitPercent > 0
+                            ? `${acc.dailyLossLimitPercent}% / ${acc.maxOverallLossPercent}%`
+                            : `${acc.maxOverallLossPercent}% Max · 5% Risk`}
                         </span>
                       </div>
                       <div>
@@ -2779,6 +2866,21 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                             <span>Analytics</span>
                           </button>
 
+                          {hasUnlockedCertificate && onOpenPassedCertificate && (
+                            <button
+                              type="button"
+                              data-testid={`view-certificate-btn-${acc.id}`}
+                              onClick={() => {
+                                soundEngine.playUiClick();
+                                onOpenPassedCertificate(acc);
+                              }}
+                              className="px-3.5 py-2.5 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 cursor-pointer font-mono bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 border border-purple-500/50 transition-all whitespace-nowrap shrink-0"
+                            >
+                              <Award className="w-3.5 h-3.5 text-purple-300 shrink-0" />
+                              <span>View Certificate</span>
+                            </button>
+                          )}
+
                           {isHardBreached ? (
                             <button
                               type="button"
@@ -2788,7 +2890,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                               <ShoppingBag className="w-3.5 h-3.5 shrink-0" />
                               <span>10% Reset Courtesy</span>
                             </button>
-                          ) : isLive ? (
+                          ) : isRealFunded ? (
                             <button
                               type="button"
                               data-testid={`withdraw-account-btn-${acc.id}`}
@@ -2804,15 +2906,23 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                               ) : (
                                 <Lock className="w-3.5 h-3.5 text-[#ff8800]" />
                               )}
-                              <span>Withdraw</span>
+                              <span>Withdraw (90% Profit)</span>
                             </button>
+                          ) : isPassedChallenge ? (
+                            <div
+                              data-testid={`passed-challenge-archived-${acc.id}`}
+                              className="px-3 py-2.5 rounded-xl bg-emerald-950/40 border border-emerald-500/40 text-emerald-300 font-mono text-[11px] font-bold flex items-center gap-1.5 select-none whitespace-nowrap shrink-0"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                              <span>Challenge Passed</span>
+                            </div>
                           ) : (
                             <div
                               data-testid={`withdraw-locked-challenge-${acc.id}`}
-                              title="Challenge accounts cannot withdraw funds until the profit target is reached and the Live Funded Account is provisioned."
+                              title="Challenge accounts cannot withdraw funds until the profit target is reached and the Real Funded Account is provisioned."
                               className="px-3 py-2.5 rounded-xl bg-[#141418] border border-white/10 text-slate-400 font-mono text-[11px] font-bold flex items-center gap-1.5 select-none whitespace-nowrap shrink-0"
                             >
-                              <Lock className="w-3.5 h-3.5 text-[#ff8800]" />
+                              <Lock className="w-3.5 h-3.5 text-red-400" />
                               <span>Challenge Phase (No Withdrawals)</span>
                             </div>
                           )}
@@ -3310,6 +3420,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           onOpenAnalytics={(acc) => setAnalyticsModalAccount(acc)}
           onRequestPayout={(accId) => handleAttemptWithdrawal(accId)}
           onOpenChallengeModal={onOpenChallengeModal}
+          onOpenPassedCertificate={onOpenPassedCertificate}
         />
       )}
 

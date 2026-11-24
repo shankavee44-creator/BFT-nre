@@ -264,7 +264,8 @@ export const FundedWalletAnalyticsModal: React.FC<FundedWalletAnalyticsModalProp
 
   const minDays = Math.max(1, wallet.min_profitable_days || 5);
   const completedDays = Math.max(0, Math.min(minDays, wallet.completed_profitable_days || 0));
-  const dailyThresholdDollars = Number(((wallet.initial_balance * 0.5) / 100).toFixed(2));
+  const dailyThresholdDollars = Number(((wallet.initial_balance * 1) / 100).toFixed(2));
+  const maxRisk5PctDollars = Number(((wallet.current_balance * 5) / 100).toFixed(2));
 
   return (
     <div
@@ -288,8 +289,25 @@ export const FundedWalletAnalyticsModal: React.FC<FundedWalletAnalyticsModalProp
               <div className="flex flex-wrap items-center gap-2 mb-1.5">
                 <span className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded bg-[#38BDF8]/15 text-[#38BDF8] border border-[#38BDF8]/35 font-mono">
                   <BarChart3 className="w-3.5 h-3.5 text-[#00E5FF]" />
-                  FUNDED WALLET ANALYTICS
+                  {wallet.is_real_funded ? 'REAL FUNDED ANALYTICS' : 'FUNDED WALLET ANALYTICS'}
                 </span>
+                {wallet.is_real_funded ? (
+                  <span
+                    data-testid="analytics-tier-badge"
+                    data-badge-color="purple"
+                    className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/50 font-mono"
+                  >
+                    REAL FUNDED · 90% PROFIT (PRINCIPAL LOCKED)
+                  </span>
+                ) : (
+                  <span
+                    data-testid="analytics-tier-badge"
+                    data-badge-color="red"
+                    className="inline-flex items-center gap-1 text-[10px] font-black tracking-wider px-2.5 py-0.5 rounded-full bg-red-500/20 text-red-400 border border-red-500/45 font-mono"
+                  >
+                    Challenge
+                  </span>
+                )}
                 <span
                   data-testid="analytics-status-badge"
                   className={`inline-flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full border font-mono ${statusConfig.classes}`}
@@ -303,9 +321,15 @@ export const FundedWalletAnalyticsModal: React.FC<FundedWalletAnalyticsModalProp
                 id="funded-analytics-modal-title"
                 className="text-xl sm:text-2xl font-black text-white tracking-tight flex flex-wrap items-center gap-x-2.5 gap-y-1"
               >
-                <span className="font-mono text-[#00E5FF]">{wallet.account_id}</span>
-                <span className="text-slate-500 font-normal">/</span>
-                <span className="text-slate-100">{wallet.challenge_type}</span>
+                {!wallet.is_real_funded && wallet.account_status !== 'PASSED' ? (
+                  <span className="font-mono text-[#00E5FF]">Challenge</span>
+                ) : (
+                  <>
+                    <span className="font-mono text-[#00E5FF]">{wallet.account_id}</span>
+                    <span className="text-slate-500 font-normal">/</span>
+                    <span className="text-slate-100">{wallet.challenge_type}</span>
+                  </>
+                )}
               </h2>
             </div>
 
@@ -419,9 +443,9 @@ export const FundedWalletAnalyticsModal: React.FC<FundedWalletAnalyticsModalProp
                     Profit Target Tracker
                   </h3>
                   <p className="text-xs text-slate-400">
-                    {wallet.profit_target_percent > 0
-                      ? `Target: ${wallet.profit_target_percent}% (${formatMoney(wallet.profit_target_amount)})`
-                      : 'Instant Funded — Direct Profit Generation (No Target Gate)'}
+                    {wallet.profit_target_percent > 0 && !wallet.is_real_funded
+                      ? `Target: ${wallet.profit_target_percent}% (${formatMoney(wallet.profit_target_amount)}) + 5 Days (≥1%/day)`
+                      : 'Real Funded Account — Live Profit Generation (Weekly Payouts • 7-Day 1st Wait)'}
                   </p>
                 </div>
               </div>
@@ -466,58 +490,89 @@ export const FundedWalletAnalyticsModal: React.FC<FundedWalletAnalyticsModalProp
 
           {/* 2. Drawdown Limit Meters (Daily + Max) */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Daily Drawdown Limit */}
-            <section
-              data-testid="analytics-daily-drawdown-card"
-              className={`p-5 rounded-2xl bg-[#0B111A] border ${dailyMeterTone.border}`}
-            >
-              <div className="flex items-start justify-between gap-2 mb-3">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-xl bg-[#06090F] border border-[#38BDF8]/30 flex items-center justify-center">
-                    <TrendingDown className={`w-4 h-4 ${dailyMeterTone.text}`} />
+            {/* Overall Risk Exposure / Daily Cap Info */}
+            {wallet.daily_drawdown_limit_percent > 0 ? (
+              <section
+                data-testid="analytics-daily-drawdown-card"
+                className={`p-5 rounded-2xl bg-[#0B111A] border ${dailyMeterTone.border}`}
+              >
+                <div className="flex items-start justify-between gap-2 mb-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-xl bg-[#06090F] border border-[#38BDF8]/30 flex items-center justify-center">
+                      <TrendingDown className={`w-4 h-4 ${dailyMeterTone.text}`} />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-black text-white">Daily Drawdown Limit</h3>
+                      <span className="text-[11px] text-slate-400 font-mono">
+                        Max {wallet.daily_drawdown_limit_percent}% Daily Cap
+                      </span>
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="text-sm font-black text-white">Daily Drawdown Limit</h3>
-                    <span className="text-[11px] text-slate-400 font-mono">
-                      Max {wallet.daily_drawdown_limit_percent}% Daily Cap
-                    </span>
-                  </div>
+                  <span
+                    className={`text-[10px] font-black uppercase px-2 py-0.5 rounded bg-[#06090F] border border-white/10 font-mono ${dailyMeterTone.text}`}
+                  >
+                    {dailyMeterTone.badge}
+                  </span>
                 </div>
-                <span
-                  className={`text-[10px] font-black uppercase px-2 py-0.5 rounded bg-[#06090F] border border-white/10 font-mono ${dailyMeterTone.text}`}
-                >
-                  {dailyMeterTone.badge}
-                </span>
-              </div>
 
-              <div className="flex items-baseline justify-between mb-2 font-mono tabular-nums">
-                <span className={`text-lg font-black ${dailyMeterTone.text}`}>
-                  {formatMoney(wallet.current_daily_drawdown)}
-                </span>
-                <span className="text-xs text-slate-400">
-                  of {formatMoney(wallet.daily_drawdown_limit_amount)} ({wallet.daily_drawdown_limit_percent}%)
-                </span>
-              </div>
+                <div className="flex items-baseline justify-between mb-2 font-mono tabular-nums">
+                  <span className={`text-lg font-black ${dailyMeterTone.text}`}>
+                    {formatMoney(wallet.current_daily_drawdown)}
+                  </span>
+                  <span className="text-xs text-slate-400">
+                    of {formatMoney(wallet.daily_drawdown_limit_amount)} ({wallet.daily_drawdown_limit_percent}%)
+                  </span>
+                </div>
 
-              <div className="w-full h-2.5 rounded-full bg-[#06090F] border border-white/10 overflow-hidden">
-                <div
-                  className={`h-full rounded-full transition-all duration-500 ${dailyMeterTone.bar}`}
-                  style={{ width: `${dailyUsagePct}%` }}
-                />
-              </div>
+                <div className="w-full h-2.5 rounded-full bg-[#06090F] border border-white/10 overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${dailyMeterTone.bar}`}
+                    style={{ width: `${dailyUsagePct}%` }}
+                  />
+                </div>
 
-              <div className="flex items-center justify-between mt-2 text-[11px] font-mono tabular-nums text-slate-400">
-                <span>Used: {dailyUsagePct}%</span>
-                <span>
-                  Buffer Left:{' '}
-                  <strong className="text-slate-200">
-                    {formatMoney(
-                      Math.max(0, wallet.daily_drawdown_limit_amount - wallet.current_daily_drawdown)
-                    )}
-                  </strong>
-                </span>
-              </div>
-            </section>
+                <div className="flex items-center justify-between mt-2 text-[11px] font-mono tabular-nums text-slate-400">
+                  <span>Used: {dailyUsagePct}%</span>
+                  <span>
+                    Buffer Left:{' '}
+                    <strong className="text-slate-200">
+                      {formatMoney(
+                        Math.max(0, wallet.daily_drawdown_limit_amount - wallet.current_daily_drawdown)
+                      )}
+                    </strong>
+                  </span>
+                </div>
+              </section>
+            ) : (
+              <section
+                data-testid="analytics-daily-drawdown-card"
+                className="p-5 rounded-2xl bg-[#0B111A] border border-[#38BDF8]/30 flex flex-col justify-between"
+              >
+                <div className="flex items-start justify-between gap-2 mb-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-xl bg-[#06090F] border border-[#38BDF8]/30 flex items-center justify-center">
+                      <ShieldCheck className="w-4 h-4 text-[#00E5FF]" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-black text-white">Overall Loss Structure</h3>
+                      <span className="text-[11px] text-slate-400 font-mono">
+                        No Separate Daily-Only Cap
+                      </span>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-[#06090F] border border-[#38BDF8]/30 font-mono text-[#00E5FF]">
+                    UNIFIED 10%
+                  </span>
+                </div>
+                <p className="text-xs text-slate-300 leading-relaxed mb-3">
+                  Governed strictly by a <strong className="text-white">10% Max Overall Account Loss</strong> limit. Reaching 10% total drawdown triggers an immediate <strong className="text-rose-300">HARD_BREACH</strong>.
+                </p>
+                <div className="flex items-center justify-between text-[11px] font-mono tabular-nums text-slate-400 pt-2 border-t border-white/10">
+                  <span>5% Max Single / Combined Risk:</span>
+                  <strong className="text-[#00E5FF]">{formatMoney(maxRisk5PctDollars)}</strong>
+                </div>
+              </section>
+            )}
 
             {/* Max Drawdown Limit */}
             <section
@@ -588,7 +643,7 @@ export const FundedWalletAnalyticsModal: React.FC<FundedWalletAnalyticsModalProp
                     Minimum Profitable Trading Days
                   </h3>
                   <p className="text-xs text-slate-300">
-                    A trading day counts only when net daily profit reaches at least 0.5% of initial balance.
+                    A trading day counts only when net daily profit reaches at least 1% of initial balance.
                   </p>
                 </div>
               </div>
@@ -627,7 +682,7 @@ export const FundedWalletAnalyticsModal: React.FC<FundedWalletAnalyticsModalProp
 
             <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono tabular-nums text-slate-400">
               <span>
-                Daily Qualifying Profit Threshold (0.5%):{' '}
+                Daily Qualifying Profit Threshold (1%):{' '}
                 <strong className="text-white">{formatMoney(dailyThresholdDollars)}</strong>
               </span>
               <span>
@@ -647,7 +702,7 @@ export const FundedWalletAnalyticsModal: React.FC<FundedWalletAnalyticsModalProp
             </div>
           </section>
 
-          {/* 4. Trading Rules Checklist */}
+          {/* 4. Strict Trading Rules Checklist (Immediate HARD_BREACH on Violation) */}
           <section
             data-testid="analytics-rules-checklist-card"
             className="p-5 rounded-2xl bg-[#0B111A] border border-[#38BDF8]/25"
@@ -657,28 +712,67 @@ export const FundedWalletAnalyticsModal: React.FC<FundedWalletAnalyticsModalProp
                 <ShieldCheck className="w-4 h-4 text-[#00E5FF]" />
               </div>
               <div>
-                <h3 className="text-sm font-black text-white">Trading Rules Checklist</h3>
+                <h3 className="text-sm font-black text-white">Strict Trading &amp; Risk Rules</h3>
                 <p className="text-xs text-slate-400">
-                  Mandatory prop risk parameters enforced automatically on this funded wallet
+                  Any violation immediately triggers a permanent HARD_BREACH on funded accounts
                 </p>
               </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="p-4 rounded-xl bg-[#06090F] border border-[#38BDF8]/25 flex items-center justify-between gap-3">
+              <div className="p-3.5 rounded-xl bg-[#06090F] border border-[#38BDF8]/25 flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3 min-w-0">
                   <TrendingUp className="w-4 h-4 text-[#38BDF8] shrink-0" />
                   <div>
-                    <div className="text-xs font-bold text-white">Max Risk per Trade</div>
-                    <div className="text-[11px] text-slate-400">Hard single-order investment limit</div>
+                    <div className="text-xs font-bold text-white">Max Single-Trade Risk</div>
+                    <div className="text-[11px] text-slate-400">5% of current balance (Hard Breach)</div>
                   </div>
                 </div>
-                <span className="font-mono tabular-nums text-sm font-black text-[#00E5FF] whitespace-nowrap">
-                  ${MAX_SINGLE_TRADE_INVESTMENT_USD.toLocaleString('en-US')}
+                <span className="font-mono tabular-nums text-xs font-black text-[#00E5FF] whitespace-nowrap">
+                  5% ({formatMoney(maxRisk5PctDollars)})
                 </span>
               </div>
 
-              <div className="p-4 rounded-xl bg-[#06090F] border border-[#38BDF8]/25 flex items-center justify-between gap-3">
+              <div className="p-3.5 rounded-xl bg-[#06090F] border border-[#38BDF8]/25 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <ShieldAlert className="w-4 h-4 text-[#38BDF8] shrink-0" />
+                  <div>
+                    <div className="text-xs font-bold text-white">Max Combined Open Risk</div>
+                    <div className="text-[11px] text-slate-400">5% aggregate across all open trades</div>
+                  </div>
+                </div>
+                <span className="font-mono tabular-nums text-xs font-black text-[#00E5FF] whitespace-nowrap">
+                  5% Total
+                </span>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-[#06090F] border border-[#38BDF8]/25 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <Activity className="w-4 h-4 text-[#38BDF8] shrink-0" />
+                  <div>
+                    <div className="text-xs font-bold text-white">Open Trades Per Currency Pair</div>
+                    <div className="text-[11px] text-slate-400">Multiple trades allowed only on different pairs</div>
+                  </div>
+                </div>
+                <span className="font-mono tabular-nums text-xs font-black text-[#00E5FF] whitespace-nowrap">
+                  Max 1 / Pair
+                </span>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-[#06090F] border border-rose-500/30 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <Lock className="w-4 h-4 text-rose-400 shrink-0" />
+                  <div>
+                    <div className="text-xs font-bold text-white">Martingale &amp; Hedging</div>
+                    <div className="text-[11px] text-slate-400">Strictly prohibited — immediate Hard Breach</div>
+                  </div>
+                </div>
+                <span className="font-mono text-xs font-black text-rose-300 whitespace-nowrap">
+                  PROHIBITED
+                </span>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-[#06090F] border border-[#38BDF8]/25 flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3 min-w-0">
                   <Clock className="w-4 h-4 text-[#38BDF8] shrink-0" />
                   <div>
@@ -686,8 +780,21 @@ export const FundedWalletAnalyticsModal: React.FC<FundedWalletAnalyticsModalProp
                     <div className="text-[11px] text-slate-400">Required expiry on Funded accounts</div>
                   </div>
                 </div>
-                <span className="font-mono tabular-nums text-sm font-black text-[#00E5FF] whitespace-nowrap">
-                  {MIN_TRADE_DURATION_SECONDS} seconds
+                <span className="font-mono tabular-nums text-xs font-black text-[#00E5FF] whitespace-nowrap">
+                  {MIN_TRADE_DURATION_SECONDS}s Min
+                </span>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-[#06090F] border border-[#38BDF8]/25 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <Calendar className="w-4 h-4 text-[#38BDF8] shrink-0" />
+                  <div>
+                    <div className="text-xs font-bold text-white">Withdrawal Schedule</div>
+                    <div className="text-[11px] text-slate-400">7-day 1st wait • Weekly (+15% Daily)</div>
+                  </div>
+                </div>
+                <span className="font-mono tabular-nums text-xs font-black text-emerald-300 whitespace-nowrap">
+                  ${MAX_SINGLE_TRADE_INVESTMENT_USD.toLocaleString('en-US')} Cap
                 </span>
               </div>
             </div>

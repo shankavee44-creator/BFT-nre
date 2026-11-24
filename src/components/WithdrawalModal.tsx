@@ -37,10 +37,12 @@ import {
   WITHDRAWAL_GUARANTEE_NOTICE,
   WITHDRAWAL_FEE_PERCENT,
   checkFirstWithdrawalWaitingPeriod,
-  isLiveFundedAccount,
+  isRealFundedAccount,
   isPersonalLiveAccount,
   isDemoAccount,
   getAccountStatusBadgeLabel,
+  resolveAccountBadgeMeta,
+  calculateRealFundedWithdrawalAllowance,
 } from '../utils/propRules';
 import { canUserWithdraw, KYC_WITHDRAWAL_LOCK_MESSAGE } from '../utils/kycVerification';
 import { TablePagination } from './TablePagination';
@@ -407,9 +409,8 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
     if (!account) return;
     const isPersonalAcc = isPersonalLiveAccount(account);
     const minVal = isPersonalAcc ? 10 : MIN_WITHDRAWAL_PROFIT;
-    const updatedWithdrawable = isPersonalAcc
-      ? Math.max(0, Number(account.currentBalance.toFixed(2)))
-      : Math.max(0, Number((account.currentBalance - account.initialBalance).toFixed(2)));
+    const summary = calculateQuotexAccountSummary(account);
+    const updatedWithdrawable = summary.availableForWithdrawal;
     if (updatedWithdrawable >= minVal) {
       setAmount(Math.max(minVal, Math.min(350, updatedWithdrawable)));
     } else {
@@ -441,9 +442,15 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
     setNetwork(nextNet);
   };
 
-  // Breakdown calculation (includes 10% Withdrawal Fee deduction)
+  // Breakdown calculation (includes 10% Withdrawal Fee deduction; 90% profit split for Real Funded)
   const breakdown = useMemo(
-    () => calculateWithdrawalBreakdown(Math.max(0, amount), monthsActive, isPersonalLiveAccount(account)),
+    () =>
+      calculateWithdrawalBreakdown(
+        Math.max(0, amount),
+        monthsActive,
+        isPersonalLiveAccount(account),
+        isRealFundedAccount(account)
+      ),
     [amount, monthsActive, account]
   );
 
@@ -795,12 +802,19 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
       return;
     }
 
-    // Enforce strict 80% Net Generated Profit Payout Ceiling Rule ONLY for Prop Funded accounts
+    // Enforce strict Real Funded 90% Net Generated Profit Ceiling & Principal Lock Rule
     if (!isPersonalLiveAccount(account)) {
-      const maxAllowedProfitCeiling = Math.max(0, Number((netProfit * 0.80).toFixed(2)));
-      if (amount > maxAllowedProfitCeiling) {
+      const rfAllowance = calculateRealFundedWithdrawalAllowance(accountAfterBonusInterception);
+      if (amount > rfAllowance.earnedNetProfit + 1e-6) {
         setError(
-          `Withdrawal exceeds the 80% profit payout ceiling. Maximum allowable withdrawal is $${maxAllowedProfitCeiling.toFixed(2)} (80% of $${netProfit.toFixed(2)} net generated profit).`
+          `Principal Locked: Cannot withdraw funded principal ($${rfAllowance.fundedPrincipal.toLocaleString('en-US', { minimumFractionDigits: 2 })}). Earned net profit is $${rfAllowance.earnedNetProfit.toFixed(2)}.`
+        );
+        soundEngine.playErrorAlert();
+        return;
+      }
+      if (amount > rfAllowance.maxWithdrawableProfit + 1e-6) {
+        setError(
+          `Withdrawal exceeds the Real Funded ${rfAllowance.profitSplitPercent}% profit-only limit. Maximum allowable withdrawal is $${rfAllowance.maxWithdrawableProfit.toFixed(2)} (${rfAllowance.profitSplitPercent}% of $${rfAllowance.earnedNetProfit.toFixed(2)} earned net profit; principal locked).`
         );
         soundEngine.playErrorAlert();
         return;
@@ -861,13 +875,35 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
               >
                 <span
                   className={`w-2 h-2 rounded-full shrink-0 ${
-                    account && isLiveFundedAccount(account) ? 'bg-[#00c853]' : 'bg-[#ff8800]'
+                    (() => {
+                      const b = resolveAccountBadgeMeta(account);
+                      if (b.badge_color === 'green') return 'bg-[#00c853]';
+                      if (b.badge_color === 'yellow') return 'bg-amber-400';
+                      if (b.badge_color === 'purple') return 'bg-purple-400';
+                      return b.isPassedChallenge ? 'bg-emerald-400' : 'bg-red-500';
+                    })()
                   }`}
                 />
                 <div>
-                  <div className="text-[9px] font-bold uppercase tracking-wider text-[#8c96a6] leading-none">
-                    {account ? getAccountStatusBadgeLabel(account) : 'LIVE ACCOUNT'}
-                  </div>
+                  {(() => {
+                    const b = account ? resolveAccountBadgeMeta(account) : null;
+                    const isChallengeAcc = Boolean(
+                      b && b.account_tier === 'CHALLENGE' && !b.isPassedChallenge
+                    );
+                    return (
+                      <div
+                        className={`text-[9px] font-bold ${
+                          isChallengeAcc ? '' : 'uppercase '
+                        }tracking-wider text-[#8c96a6] leading-none`}
+                      >
+                        {account
+                          ? isChallengeAcc
+                            ? 'Challenge'
+                            : getAccountStatusBadgeLabel(account)
+                          : 'LIVE ACCOUNT'}
+                      </div>
+                    );
+                  })()}
                   <div className="text-xs font-bold font-mono tabular-nums text-white leading-tight mt-0.5">
                     {accountSummary.inTheAccountFormatted}
                   </div>
@@ -879,6 +915,9 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                 <div className="absolute left-0 mt-2 w-64 rounded-xl bg-zinc-900/95 backdrop-blur-md border border-[#ff8800]/40 shadow-[0_16px_36px_rgba(0,0,0,0.85),0_0_16px_rgba(255,136,0,0.12)] p-1.5 z-50 animate-in fade-in zoom-in-95 slide-in-from-top-1 duration-150">
                   {accounts.map((acc) => {
                     const isAccActive = account?.id === acc.id;
+                    const accBadge = resolveAccountBadgeMeta(acc);
+                    const isChallengeRow =
+                      accBadge.account_tier === 'CHALLENGE' && !accBadge.isPassedChallenge;
                     return (
                       <button
                         key={acc.id}
@@ -896,14 +935,16 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                       >
                         <div>
                           <div className="font-bold text-white font-mono flex items-center gap-1.5">
-                            <span>{acc.id}</span>
+                            <span>{isChallengeRow ? 'Challenge' : acc.id}</span>
                             {isAccActive && (
                               <span className="text-[9px] px-1.5 py-0.2 rounded bg-[#ff8800]/20 text-[#ff8800] border border-[#ff8800]/40 font-black">
                                 ✓ Active
                               </span>
                             )}
                           </div>
-                          <div className="text-[10px] text-[#8c96a6]">{acc.tierName}</div>
+                          <div className="text-[10px] text-[#8c96a6]">
+                            {isChallengeRow ? 'Challenge' : acc.tierName}
+                          </div>
                         </div>
                         <span className="font-mono tabular-nums font-bold text-[#00e676]">
                           ${acc.currentBalance.toFixed(2)}
@@ -1108,16 +1149,36 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                 >
                   <span
                     className={`w-2 h-2 rounded-full ${
-                      account && isLiveFundedAccount(account) ? 'bg-[#00c853]' : 'bg-[#ff8800]'
+                      (() => {
+                        const b = resolveAccountBadgeMeta(account);
+                        if (b.badge_color === 'green') return 'bg-[#00c853]';
+                        if (b.badge_color === 'yellow') return 'bg-amber-400';
+                        if (b.badge_color === 'purple') return 'bg-purple-400';
+                        return b.isPassedChallenge ? 'bg-emerald-400' : 'bg-red-500';
+                      })()
                     }`}
                   />
                   <div className="text-left">
-                    <div
-                      data-testid={account ? 'withdrawal-account-badge' : 'withdrawal-no-account-badge'}
-                      className="text-[10px] font-bold uppercase tracking-wider text-[#8c96a6] leading-none"
-                    >
-                      {account ? `${account.id} • ${getAccountStatusBadgeLabel(account)}` : 'LIVE ACCOUNT'}
-                    </div>
+                    {(() => {
+                      const b = account ? resolveAccountBadgeMeta(account) : null;
+                      const isChallengeAcc = Boolean(
+                        b && b.account_tier === 'CHALLENGE' && !b.isPassedChallenge
+                      );
+                      return (
+                        <div
+                          data-testid={account ? 'withdrawal-account-badge' : 'withdrawal-no-account-badge'}
+                          className={`text-[10px] font-bold ${
+                            isChallengeAcc ? '' : 'uppercase '
+                          }tracking-wider text-[#8c96a6] leading-none`}
+                        >
+                          {account
+                            ? isChallengeAcc
+                              ? 'Challenge'
+                              : `${account.id} • ${getAccountStatusBadgeLabel(account)}`
+                            : 'LIVE ACCOUNT'}
+                        </div>
+                      );
+                    })()}
                     <div className="text-xs font-bold font-mono tabular-nums text-white mt-0.5">
                       {accountSummary.inTheAccountFormatted}
                     </div>
@@ -1130,27 +1191,36 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                     <div className="text-[10px] font-bold uppercase tracking-wider text-[#8c96a6] px-2 py-1">
                       Switch Account
                     </div>
-                    {accounts.map((acc) => (
-                      <button
-                        key={acc.id}
-                        type="button"
-                        onClick={() => {
-                          onSelectAccount?.(acc.id);
-                          setAccountDropdownOpen(false);
-                        }}
-                        className={`w-full flex items-center justify-between p-2 rounded text-left text-xs cursor-pointer ${
-                          account?.id === acc.id ? 'bg-[#212634] text-white' : 'text-[#94a3b8] hover:bg-[#1c202b]'
-                        }`}
-                      >
-                        <div>
-                          <div className="font-bold text-white font-mono">{acc.id}</div>
-                          <div className="text-[10px] text-[#8c96a6]">{acc.tierName}</div>
-                        </div>
-                        <span className="font-mono tabular-nums font-bold text-[#00c853]">
-                          ${acc.currentBalance.toFixed(2)}
-                        </span>
-                      </button>
-                    ))}
+                    {accounts.map((acc) => {
+                      const accBadge = resolveAccountBadgeMeta(acc);
+                      const isChallengeRow =
+                        accBadge.account_tier === 'CHALLENGE' && !accBadge.isPassedChallenge;
+                      return (
+                        <button
+                          key={acc.id}
+                          type="button"
+                          onClick={() => {
+                            onSelectAccount?.(acc.id);
+                            setAccountDropdownOpen(false);
+                          }}
+                          className={`w-full flex items-center justify-between p-2 rounded text-left text-xs cursor-pointer ${
+                            account?.id === acc.id ? 'bg-[#212634] text-white' : 'text-[#94a3b8] hover:bg-[#1c202b]'
+                          }`}
+                        >
+                          <div>
+                            <div className="font-bold text-white font-mono">
+                              {isChallengeRow ? 'Challenge' : acc.id}
+                            </div>
+                            <div className="text-[10px] text-[#8c96a6]">
+                              {isChallengeRow ? 'Challenge' : acc.tierName}
+                            </div>
+                          </div>
+                          <span className="font-mono tabular-nums font-bold text-[#00c853]">
+                            ${acc.currentBalance.toFixed(2)}
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -1242,21 +1312,21 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
         {/* =====================================================================
             CHALLENGE PHASE WITHDRAWAL LOCK BANNER (One-Step / Two-Step Challenge)
             ===================================================================== */}
-        {account && !isLiveFundedAccount(account) && (
+        {account && !isPersonalLiveAccount(account) && !isRealFundedAccount(account) && (
           <div
             data-testid="challenge-phase-withdrawal-lock-banner"
-            className="mx-3 sm:mx-6 mt-4 p-3.5 sm:p-4 rounded-xl bg-[#14100a] border border-[#ff8800] flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+            className="mx-3 sm:mx-6 mt-4 p-3.5 sm:p-4 rounded-xl bg-[#14100a] border border-red-500/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
           >
             <div className="flex items-start gap-3">
-              <div className="w-9 h-9 rounded-lg bg-[#ff8800]/15 border border-[#ff8800]/40 flex items-center justify-center shrink-0 text-[#ff8800]">
+              <div className="w-9 h-9 rounded-lg bg-red-500/15 border border-red-500/40 flex items-center justify-center shrink-0 text-red-400">
                 <Lock className="w-5 h-5" />
               </div>
               <div>
-                <div className="text-[11px] font-mono font-bold uppercase tracking-wider text-[#ff8800]">
+                <div className="text-[11px] font-mono font-bold uppercase tracking-wider text-red-400">
                   Challenge Phase Account • Withdrawals Locked
                 </div>
                 <p className="text-xs sm:text-sm font-bold text-white mt-0.5">
-                  Account <span className="font-mono text-[#ff8800]">{account.id}</span> is currently in the Evaluation Challenge phase ({account.tierName}). Withdrawals are strictly locked on Challenge accounts. Trade to hit your profit target to receive your Completion Certificate and unlock your Live Funded Account!
+                  Account <span className="font-mono text-[#ff8800]">{account.id}</span> is currently in the Funded Challenge phase ({account.tierName}). Withdrawals unlock automatically once you reach the 30% profit target across at least 5 qualifying days (≥1% profit/day) and graduate to your Real Funded Account!
                 </p>
               </div>
             </div>
@@ -1321,12 +1391,12 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                       </span>
                     </div>
                     <p className="text-[11px] text-[#94a3b8] leading-relaxed">
-                      You are withdrawing from your <strong className="text-[#ff8800]">Personal Live Balance ({account?.id})</strong>. Personal Live accounts are not bound by challenge target phases, 14-day waiting periods, or prop profit split ceilings—withdraw both your <strong className="text-white">personal trading profits and deposited capital</strong> anytime following the <strong className="text-[#00c853]">$10.00 minimum threshold</strong> and <strong className="text-white">3% withdrawal fee</strong>.
+                      You are withdrawing from your <strong className="text-[#ff8800]">Personal Live Balance ({account?.id})</strong>. Personal Live accounts are not bound by challenge target phases, 7-day waiting periods, or prop profit split ceilings—withdraw both your <strong className="text-white">personal trading profits and deposited capital</strong> anytime following the <strong className="text-[#00c853]">$10.00 minimum threshold</strong> and <strong className="text-white">3% withdrawal fee</strong>.
                     </p>
                   </div>
                 ) : (
                   <div
-                    data-testid="first-withdrawal-14day-banner"
+                    data-testid="first-withdrawal-7day-banner"
                     className={`p-3.5 sm:p-4 rounded-xl bg-[#0e1017] border ${
                       firstWithdrawalCheck.eligible ? 'border-[#1e2330]' : 'border-[#ff8800]/60'
                     } space-y-2`}
@@ -1351,14 +1421,14 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                         }`}
                       >
                         {firstWithdrawalCheck.eligible
-                          ? `14-Day Lock Satisfied (${firstWithdrawalCheck.daysElapsed}/${FIRST_WITHDRAWAL_WAITING_DAYS}d)`
+                          ? `7-Day Lock Satisfied (${firstWithdrawalCheck.daysElapsed}/${FIRST_WITHDRAWAL_WAITING_DAYS}d)`
                           : `${firstWithdrawalCheck.daysRemaining} Days Remaining (${firstWithdrawalCheck.daysElapsed}/${FIRST_WITHDRAWAL_WAITING_DAYS}d)`}
                       </span>
                     </div>
                     <p className="text-[11px] text-[#94a3b8] leading-relaxed">
-                      A mandatory <strong className="text-white">14-day waiting period</strong> applies for the very first withdrawal across all account types. After your first withdrawal is completed, users who purchased the{' '}
-                      <strong className="text-[#00c853]">Daily Withdrawal Add-On (+15%)</strong> or{' '}
-                      <strong className="text-white">Weekly Plan</strong> can proceed according to their package rules (Current Account Schedule:{' '}
+                      A mandatory <strong className="text-white">7-day waiting period</strong> applies for the very first withdrawal on funded accounts. Standard withdrawals are processed{' '}
+                      <strong className="text-white">Weekly (once per week)</strong>; opting for the{' '}
+                      <strong className="text-[#00c853]">Daily Withdrawal Add-On (+15%)</strong> unlocks daily payouts (Current Account Schedule:{' '}
                       <strong className="text-[#2b70ff] font-mono">{firstWithdrawalCheck.subsequentCycleLabel}</strong>).
                     </p>
                   </div>
@@ -1377,6 +1447,23 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                         {accountSummary.inTheAccountFormatted}
                       </span>
                     </div>
+                    {!isPersonalLiveAccount(account) && accountSummary.isRealFunded && (
+                      <div
+                        data-testid="card-principal-locked"
+                        className="flex items-center justify-between px-4 py-3 text-xs sm:text-sm bg-purple-950/25"
+                      >
+                        <span className="text-[#8c96a6] flex items-center gap-1.5">
+                          <Lock className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                          <span>Funded Principal (Locked):</span>
+                          <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 border border-purple-500/45 font-bold uppercase">
+                            REAL FUNDED · PRINCIPAL LOCKED
+                          </span>
+                        </span>
+                        <span className="font-bold font-mono tabular-nums text-purple-300">
+                          ${accountSummary.fundedPrincipal.toLocaleString('en-US', { minimumFractionDigits: 2 })} USD
+                        </span>
+                      </div>
+                    )}
                     <div
                       data-testid="card-available-balance"
                       className="flex items-center justify-between px-4 py-3 text-xs sm:text-sm"
@@ -1384,29 +1471,36 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                       <span className="text-[#8c96a6]">
                         {isPersonalLiveAccount(account)
                           ? 'Available for withdrawal (Capital + Profit):'
-                          : 'Available for withdrawal (Net Profit):'}
+                          : 'Earned Net Profit (Above Principal):'}
                       </span>
                       <span className="font-bold font-mono tabular-nums text-white">
-                        {accountSummary.availableForWithdrawalFormatted}
+                        {isPersonalLiveAccount(account)
+                          ? accountSummary.availableForWithdrawalFormatted
+                          : `${accountSummary.earnedNetProfit.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $`}
                       </span>
                     </div>
                     <div
-                      data-testid="card-profit-ceiling-80"
-                      className="flex items-center justify-between px-4 py-3 text-xs sm:text-sm bg-[#121622]/60"
+                      data-testid="card-profit-ceiling-90"
+                      className="flex items-center justify-between gap-3 px-4 py-3 text-xs sm:text-sm bg-[#121622]/60"
                     >
-                      <span className="text-[#8c96a6] flex items-center gap-1.5">
-                        <span>{isPersonalLiveAccount(account) ? 'Personal Live Retention:' : '80% Profit Ceiling:'}</span>
-                        <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-[#ff8800]/15 text-[#ff8800] border border-[#ff8800]/30 font-bold">
-                          {isPersonalLiveAccount(account) ? '100% Capital + Profit' : 'Max 80%'}
+                      <span className="text-[#8c96a6] flex flex-wrap items-center gap-1.5 min-w-0">
+                        <span>
+                          {isPersonalLiveAccount(account)
+                            ? 'Personal Live Retention:'
+                            : 'Max Withdrawable (90% Profit):'}
+                        </span>
+                        <span
+                          className={`text-[10px] font-mono px-1.5 py-0.5 rounded border font-bold whitespace-nowrap ${
+                            isPersonalLiveAccount(account)
+                              ? 'bg-[#ff8800]/15 text-[#ff8800] border-[#ff8800]/30'
+                              : 'bg-purple-500/20 text-purple-300 border-purple-500/45'
+                          }`}
+                        >
+                          {isPersonalLiveAccount(account) ? '100% Capital + Profit' : '90% Profit Only'}
                         </span>
                       </span>
-                      <span className="font-bold font-mono tabular-nums text-[#ff8800]">
-                        $
-                        {(isPersonalLiveAccount(account)
-                          ? accountSummary.availableForWithdrawal
-                          : Math.max(0, Number((netProfit * 0.8).toFixed(2)))
-                        ).toFixed(2)}{' '}
-                        USD
+                      <span className="font-bold font-mono tabular-nums text-[#00c853] whitespace-nowrap shrink-0">
+                        ${accountSummary.availableForWithdrawal.toFixed(2)} USD
                       </span>
                     </div>
                     {isPersonalLiveAccount(account) && (() => {
@@ -1902,7 +1996,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                     <div>
                       <span className="block text-[#64748b]">First Withdrawal Lock:</span>
                       <strong className="text-white font-mono">
-                        {isPersonalLiveAccount(account) ? 'None (Instant Unlocked)' : '14 Days Mandatory'}
+                        {isPersonalLiveAccount(account) ? 'None (Instant Unlocked)' : '7 Days • Weekly Cycle'}
                       </strong>
                     </div>
                     <div>

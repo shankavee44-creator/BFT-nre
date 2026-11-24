@@ -44,26 +44,26 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenAdminDashboard
 
           {/* Funding Tiers */}
           <div>
-            <h4 className="text-xs font-bold text-white uppercase tracking-wider mb-3">Evaluation Models</h4>
+            <h4 className="text-xs font-bold text-white uppercase tracking-wider mb-3">Funded Challenge</h4>
             <ul className="space-y-2 font-medium">
               <li>
                 <button onClick={() => onNavigate('home')} className="hover:text-white transition-colors">
-                  One-Step Challenge ($2.5k - $100k)
+                  Funded Challenge ($5k – $200k)
                 </button>
               </li>
               <li>
-                <button onClick={() => onNavigate('home')} className="hover:text-white transition-colors">
-                  Two-Step Challenge (Lowest Entry)
+                <button onClick={() => onNavigate('rules')} className="hover:text-white transition-colors">
+                  30% Target &amp; 10% Max Overall Loss
                 </button>
               </li>
               <li>
-                <button onClick={() => onNavigate('home')} className="hover:text-white transition-colors">
-                  Instant Funded Account (No Evaluation)
+                <button onClick={() => onNavigate('rules')} className="hover:text-white transition-colors">
+                  5% Risk Cap &amp; Auto Real Funded
                 </button>
               </li>
               <li>
                 <button onClick={() => onNavigate('withdrawals')} className="hover:text-white transition-colors">
-                  TRC-20 Instant Withdrawal Rules
+                  Weekly / +15% Daily Payouts (7d Wait)
                 </button>
               </li>
             </ul>

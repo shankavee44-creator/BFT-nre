@@ -50,7 +50,7 @@ Sitemap: https://binaryfundedtrader.com/sitemap.xml`)});const parseCookies=__nam
                 current_balance = ?,
                 initial_balance = ?
               WHERE user_id = ? AND (tier = 'demo' OR id LIKE 'BFT-DEMO%')
-            `).run(balance,balance,user.id)}}catch(dbErr){console.warn("SQLite demo balance sync notice:",dbErr)}}return res.json({ok:true,demoBalance:balance})}catch(err){return res.status(500).json({ok:false,error:err?.message||"Failed to update demo balance."})}});app.post("/api/ai-chat",async(req,res)=>{try{const{message,history}=req.body||{};if(!message||typeof message!=="string"||!message.trim()){return res.status(400).json({ok:false,error:"Message cannot be empty."})}const reply=await generateSupportChatReply({message:message.trim(),history:Array.isArray(history)?history:[]});return res.json({ok:true,reply,timestamp:new Date().toISOString()})}catch(err){console.error("AI chat endpoint error:",err);return res.json({ok:true,reply:"Our AI Risk Desk is reviewing your request. For immediate assistance with promo codes, use SPOOKY40 for 40% OFF or SPOOKY20 for 20% OFF!",timestamp:new Date().toISOString()})}});app.post("/api/kyc/submit", (req, res) => {
+            `).run(balance,balance,user.id)}}catch(dbErr){console.warn("SQLite demo balance sync notice:",dbErr)}}return res.json({ok:true,demoBalance:balance})}catch(err){return res.status(500).json({ok:false,error:err?.message||"Failed to update demo balance."})}});app.post("/api/ai-chat",async(req,res)=>{try{const{message,history}=req.body||{};if(!message||typeof message!=="string"||!message.trim()){return res.status(400).json({ok:false,error:"Message cannot be empty."})}const reply=await generateSupportChatReply({message:message.trim(),history:Array.isArray(history)?history:[]});return res.json({ok:true,reply,timestamp:new Date().toISOString()})}catch(err){console.error("AI chat endpoint error:",err);return res.json({ok:true,reply:"Our AI Risk Desk is reviewing your request. For immediate assistance with promo codes, use SPOOKY40 for 40% OFF!",timestamp:new Date().toISOString()})}});app.post("/api/kyc/submit", (req, res) => {
   try {
     const user = getAuthenticatedUser(req);
     if (!user) return res.status(401).json({ ok: false, error: "Unauthenticated" });
@@ -573,6 +573,145 @@ app.get("/api/deposit/history", (req, res) => {
     return res.json({ ok: true, deposits, cryptoDeposits: deposits, transactions });
   } catch (err: any) {
     return res.status(500).json({ ok: false, error: err?.message || "Failed to fetch deposit history.", deposits: [], transactions: [] });
+  }
+});
+
+app.post("/api/accounts/purchase-from-balance", async (req, res) => {
+  try {
+    const reqUserId = String(req.body?.userId || "").trim();
+    const reqEmail = String(req.body?.email || "").trim();
+    const reqFullName = String(req.body?.fullName || "").trim();
+    let user =
+      getAuthenticatedUser(req) ||
+      (reqUserId ? getUserById(reqUserId) : null) ||
+      (reqEmail ? getUserByEmail(reqEmail) : null);
+    if (!user && (reqUserId || reqEmail)) {
+      user = ensureUserInDb({
+        id: reqUserId || `usr_${Date.now().toString(36)}`,
+        email: reqEmail || `${reqUserId}@bft.io`,
+        fullName: reqFullName || undefined,
+      });
+    }
+    if (!user) {
+      user = getUserById("usr_bft_001");
+    }
+    if (!user) {
+      return res.status(401).json({ ok: false, error: "Unauthenticated" });
+    }
+
+    const personalAcc = ensurePersonalLiveAccountForUser(user.id);
+    const dbSelfBalance = Math.max(
+      0,
+      Number(user.self_balance ?? 0),
+      Number(personalAcc?.currentBalance ?? 0)
+    );
+    const clientSelfBalance =
+      req.body?.selfCapitalBalance !== undefined && Number.isFinite(Number(req.body.selfCapitalBalance))
+        ? Math.max(0, Number(req.body.selfCapitalBalance))
+        : null;
+    const availableBalance = Number((clientSelfBalance !== null ? clientSelfBalance : dbSelfBalance).toFixed(2));
+
+    const size = Math.max(1000, Number(req.body?.size || 5000));
+    const price = Number(Math.max(0.01, Number(req.body?.price || 49)).toFixed(2));
+    const tierName = String(req.body?.tierName || "Funded Challenge").trim();
+    const dailyWithdrawalsUnlocked = Boolean(req.body?.dailyWithdrawalsUnlocked);
+    const requestedAccountId = req.body?.accountId ? String(req.body.accountId).trim() : "";
+
+    if (availableBalance + 1e-6 < price) {
+      const shortfallAmount = Number(Math.max(0, price - availableBalance).toFixed(2));
+      return res.status(400).json({
+        ok: false,
+        code: "INSUFFICIENT_ACCOUNT_BALANCE",
+        error: "Insufficient Account Balance",
+        requiredAmount: price,
+        availableBalance,
+        shortfallAmount,
+        message: `Insufficient Account Balance: Required $${price.toFixed(2)}, available Self Capital is $${availableBalance.toFixed(2)}.`,
+      });
+    }
+
+    const remainingSelfCapital = Number(Math.max(0, availableBalance - price).toFixed(2));
+    const now = Date.now();
+
+    // Atomically deduct from Self Capital in SQLite users & Personal Live accounts
+    db.prepare("UPDATE users SET self_balance = ?, updated_at = ? WHERE id = ?").run(
+      remainingSelfCapital,
+      now,
+      user.id
+    );
+    if (personalAcc?.id) {
+      db.prepare(`
+        UPDATE accounts SET
+          current_balance = ?,
+          equity = ?,
+          starting_day_equity = ?,
+          updated_at = ?
+        WHERE id = ? AND user_id = ?
+      `).run(
+        remainingSelfCapital,
+        remainingSelfCapital,
+        remainingSelfCapital,
+        now,
+        personalAcc.id,
+        user.id
+      );
+    }
+
+    const createdAcc = createAccount({
+      userId: user.id,
+      tier: "funded-challenge",
+      tierName,
+      size,
+      dailyWithdrawalsUnlocked,
+    });
+
+    let finalAccount = createdAcc;
+    if (requestedAccountId && createdAcc && createdAcc.id !== requestedAccountId) {
+      try {
+        db.prepare("UPDATE accounts SET id = ? WHERE id = ? AND user_id = ?").run(
+          requestedAccountId,
+          createdAcc.id,
+          user.id
+        );
+        finalAccount = getAccountById(requestedAccountId) || { ...createdAcc, id: requestedAccountId, loginId: requestedAccountId };
+      } catch {
+        // Keep createdAcc if ID already exists
+      }
+    }
+
+    const packageName = `${tierName} ($${size.toLocaleString("en-US")})`;
+    const sku = buildPackageSku({
+      accountType: "challenge",
+      tier: "funded-challenge",
+      sizeOrAmount: size,
+    });
+    const purchaseRecord = createUserPurchaseRecord({
+      userId: user.id,
+      accountId: finalAccount?.id || requestedAccountId || null,
+      packageId: sku,
+      packageName,
+      packageSku: sku,
+      amount: price,
+      packageAmount: price,
+      accountType: "challenge",
+      status: "active",
+      txHash: `SELF_CAPITAL_${now}`,
+    });
+
+    return res.json({
+      ok: true,
+      code: "CHALLENGE_ACTIVATED",
+      deductedAmount: price,
+      previousSelfCapital: availableBalance,
+      remainingSelfCapital,
+      account: finalAccount,
+      purchase: mapPurchaseRecord(purchaseRecord, now),
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      ok: false,
+      error: err?.message || "Failed to activate Funded Challenge from Self Capital.",
+    });
   }
 });
 

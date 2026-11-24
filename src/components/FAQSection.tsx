@@ -24,25 +24,26 @@ const FAQ_DATA: FAQItem[] = [
   {
     id: 'faq-1',
     category: 'evaluation',
-    question: 'What is the key difference between One-Step, Two-Step, and Instant Funded accounts?',
+    question: 'What are the Funded Challenge account sizes, prices, and completion criteria?',
     answer:
-      'The One-Step Challenge requires hitting a 30% profit target (10% Daily DD, 15% Max DD, 5% Max Risk/Trade across 5 profitable days). The Two-Step Challenge features a 25% Phase 1 and 15% Phase 2 target (8% Daily DD, 20% Max DD, 5% Max Risk/Trade). Instant Funded accounts bypass evaluations—you receive live capital credentials immediately upon payment and can withdraw profits once net gains reach $250 after the mandatory 14-day first withdrawal waiting period.',
-    highlight: 'Instant Funded bypasses all evaluations.',
+      'BFT offers a single unified Funded Challenge model across six account sizes: $5,000 ($49), $10,000 ($89), $25,000 ($199), $50,000 ($329), $100,000 ($549), and $200,000 ($1,199). To pass, reach a 30% profit target while staying within the 10% maximum overall loss limit and completing at least 5 qualifying trading days (each with ≥1% net daily profit).',
+    highlight: '30% Target • 10% Max Overall Loss • 5 Days (≥1%/day).',
   },
   {
     id: 'faq-2',
     category: 'evaluation',
-    question: 'How are the Daily Drawdown and Maximum Overall Loss calculated?',
+    question: 'How is the 10% Maximum Overall Loss Limit calculated?',
     answer:
-      'Daily Drawdown is calculated based on the starting balance or equity of each trading day at 00:00 UTC. Maximum Overall Loss is calculated from the initial account balance. Additionally, risking more than 5% of your initial capital on any single trade triggers an immediate Hard Breach.',
-    highlight: 'Calculated at 00:00 UTC daily.',
+      'Your account is protected by a single 10% maximum overall account loss limit calculated from your initial balance (there is no separate daily-only cap). Reaching 10% overall drawdown immediately triggers a permanent HARD_BREACH and disables trading on that account.',
+    highlight: '10% Max Overall Loss → Immediate HARD_BREACH.',
   },
   {
     id: 'faq-3',
     category: 'evaluation',
-    question: 'What happens immediately after I pass the evaluation challenge phases?',
+    question: 'What happens automatically once I meet both challenge completion criteria?',
     answer:
-      'Our risk validation engine audits your closed positions in under 60 seconds. Once confirmed compliant with duration and consistency guidelines, your account status is automatically upgraded to "Funded", and new live capital server credentials are dispatched directly to your Trader Hub and registered email.',
+      'As soon as your Funded Challenge reaches the 30% profit target AND completes at least 5 qualifying trading days (≥1% profit per day), our engine automatically marks your challenge as PASSED and unlocks your corresponding Real Funded trading account for that exact package balance.',
+    highlight: 'Automatic graduation to your Real Funded account.',
   },
 
   // Withdrawals (3-Min SLA)
@@ -65,10 +66,10 @@ const FAQ_DATA: FAQItem[] = [
   {
     id: 'faq-6',
     category: 'withdrawals',
-    question: 'What is the minimum withdrawal threshold, fee, and 14-day first withdrawal rule?',
+    question: 'What are the minimum withdrawal threshold, 7-day waiting period, and payout frequency rules?',
     answer:
-      'The minimum withdrawal amount is strictly $250.00 in realized net trading profits, and a 10% Withdrawal Fee is deducted on all payout requests. A mandatory 14-day waiting period applies for the very first withdrawal across all account types. After your first withdrawal, traders who purchased the Daily Withdrawal Add-On (+15%) or Weekly Plan can withdraw according to their package schedule.',
-    highlight: 'Minimum $250 withdrawal • 10% Fee • 14-Day First Lock.',
+      'The minimum withdrawal amount is strictly $250.00 in realized net trading profits with a 10% Withdrawal Fee. A mandatory 7-day waiting period applies before your first funded withdrawal. Standard withdrawals are processed once per week (WEEKLY); opting for the Daily Withdrawal Add-On (+15%) unlocks daily payouts after the initial 7-day wait.',
+    highlight: '7-Day 1st Wait • Weekly Standard • +15% Daily Add-On.',
   },
   {
     id: 'faq-7',
@@ -82,33 +83,34 @@ const FAQ_DATA: FAQItem[] = [
   {
     id: 'faq-8',
     category: 'rules',
-    question: 'Why is there a 30-second minimum trade duration rule?',
+    question: 'What are the strict 5% single-trade and 5% combined open risk rules?',
     answer:
-      'Binary options contracts must have an expiration window of at least 30 seconds (our platform offers 30s, 60s, 3m, and 5m). This rule exists to prevent latency arbitrage, microsecond price-feed desyncs, and tick-scalping bots that exploit simulator feeds without providing genuine market directional analysis.',
-    highlight: 'Trades must be held for at least 30s.',
+      'On Funded Challenge and Real Funded accounts, maximum risk per single trade is 5% of your current wallet balance, and maximum combined risk across all currently open trades cannot exceed 5% in aggregate. Violating either limit immediately triggers a permanent HARD_BREACH.',
+    highlight: 'Max 5% Single & Combined Risk → Immediate HARD_BREACH.',
   },
   {
     id: 'faq-9',
     category: 'rules',
-    question: 'Can I trade during high-impact economic news releases?',
+    question: 'Can I open multiple trades at the same time on the same currency pair?',
     answer:
-      'Opening new binary positions within 2 minutes before or 2 minutes after high-impact economic announcements (red-folder events such as Non-Farm Payrolls, CPI, and FOMC rate decisions) is prohibited. Trades opened outside this 4-minute window that naturally expire through the news event remain fully compliant.',
-    highlight: '2-minute freeze before & after red news.',
+      'No. Only one open trade is allowed per currency pair at a time. You may hold multiple open trades simultaneously only across different currency pairs, provided your combined open risk stays within 5% of your current wallet balance. Opening a duplicate position on the same pair triggers an immediate HARD_BREACH.',
+    highlight: 'Max 1 Open Trade Per Currency Pair.',
   },
   {
     id: 'faq-10',
     category: 'rules',
-    question: 'What is the Position Size Spike rule, and how is it audited?',
+    question: 'Why is there a 30-second minimum trade duration rule?',
     answer:
-      'To promote consistent risk discipline, any individual trade stake that exceeds 5x your historical average position size is automatically flagged. For example, if your average stake is $20, opening a sudden $150 trade will violate the consistency rule.',
-    highlight: 'Max 5x historical average position size.',
+      'Funded binary options contracts must have an expiration window of at least 30 seconds (Self-Capital accounts are exempt and support trades from 5 seconds). This rule prevents tick-scalping latency abuse and ensures genuine directional trading.',
+    highlight: 'Funded accounts require ≥ 30s expiry.',
   },
   {
     id: 'faq-11',
     category: 'rules',
     question: 'Are Martingale and Hedging strategies allowed?',
     answer:
-      'No. Both automated exponential recovery sequences (doubling up after a loss) and simultaneous opposing directional trades on identical assets and expirations are strictly prohibited to maintain professional prop standards.',
+      'No. Both Martingale trading (stake doubling after a loss) and Hedging (simultaneous opposing CALL/PUT positions on the same currency pair) are strictly prohibited and immediately trigger a permanent HARD_BREACH.',
+    highlight: 'Martingale & Hedging → Immediate HARD_BREACH.',
   },
 
   // Technical & KYC

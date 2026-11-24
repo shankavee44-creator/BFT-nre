@@ -1,6 +1,6 @@
-export type ChallengeTier = 'two-step' | 'one-step' | 'instant' | 'demo' | 'personal' | string;
-export type AccountSize = 5000 | 10000 | 25000 | 50000 | 100000 | number;
-export type PromoCodeType = '50OFF' | 'FREE100' | string | null;
+export type ChallengeTier = 'funded-challenge' | 'two-step' | 'one-step' | 'instant' | 'demo' | 'personal' | string;
+export type AccountSize = 5000 | 10000 | 25000 | 50000 | 100000 | 200000 | number;
+export type PromoCodeType = 'NONE' | 'SPOOKY40' | 'BFT40' | string | null;
 export type BinaryOptionDirection = 'CALL' | 'PUT';
 export type KYCDocumentType = 'id_card' | 'passport' | 'driving_license' | string;
 export type WithdrawalPaymentMethod = 'crypto_trc20' | 'crypto_bep20' | 'binance_pay' | 'bank_transfer' | string;
@@ -39,8 +39,12 @@ export interface EvaluationPackage {
   unlimitedTime?: boolean;
   refundOnFirstPayout?: boolean;
   resetCourtesyDiscount?: number;
+  withdrawalFrequency?: 'WEEKLY' | 'DAILY';
   [key: string]: any;
 }
+
+export type AccountTierBadge = 'LIVE' | 'DEMO' | 'CHALLENGE' | 'REAL_FUNDED';
+export type AccountBadgeColor = 'green' | 'yellow' | 'red' | 'purple';
 
 export interface TradingAccount {
   id: string;
@@ -54,6 +58,8 @@ export interface TradingAccount {
   accountType?: string;
   accountCategory?: 'prop' | 'personal_live' | 'demo' | string;
   account_category?: string;
+  account_tier?: AccountTierBadge;
+  badge_color?: AccountBadgeColor;
   tierName: string;
   size: number;
   initialBalance: number;
@@ -73,6 +79,13 @@ export interface TradingAccount {
   tradesCount: number;
   winRate: number;
   dailyWithdrawalsUnlocked?: boolean;
+  withdrawalFrequency?: 'WEEKLY' | 'DAILY';
+  isRealFunded?: boolean;
+  is_real_funded?: boolean;
+  principal_locked?: boolean;
+  profit_split_percent?: number;
+  certificate_unlocked?: boolean;
+  passed_at?: string;
   firstWithdrawalCompleted?: boolean;
   monthsCompleted?: number;
   scalingActive?: boolean;

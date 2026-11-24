@@ -72,7 +72,7 @@ export const QUOTEX_WITHDRAWAL_FAQS: QuotexFaqItem[] = [
     id: 'q-faq-4',
     question: 'What are the withdrawal fee and first withdrawal waiting period rules?',
     answer:
-      'A 10% Withdrawal Fee is clearly displayed and deducted on all payout requests. A mandatory 14-day waiting period applies for the very first withdrawal across all account types. After your first withdrawal is completed, traders who purchased the Daily Withdrawal Add-On (+15%) or Weekly Plan can proceed according to their package schedule.',
+      'A 10% Withdrawal Fee is clearly displayed and deducted on funded payout requests. A mandatory 7-day waiting period applies for the very first withdrawal on funded accounts. Standard withdrawals are allowed once per week (WEEKLY), and traders who opt for the Daily Withdrawal Add-On (+15%) unlock daily payouts after the initial 7-day waiting period.',
   },
   {
     id: 'q-faq-5',
@@ -477,7 +477,12 @@ export function paginateTransactions(
 
 export function calculateQuotexAccountSummary(account?: TradingAccount | null): {
   inTheAccount: number;
+  fundedPrincipal: number;
+  earnedNetProfit: number;
   availableForWithdrawal: number;
+  isRealFunded: boolean;
+  principalLocked: boolean;
+  profitSplitPercent: number;
   commission: number;
   withdrawalFeePercent: number;
   minWithdrawalAmount: number;
@@ -488,7 +493,12 @@ export function calculateQuotexAccountSummary(account?: TradingAccount | null): 
   if (!account) {
     return {
       inTheAccount: 0,
+      fundedPrincipal: 0,
+      earnedNetProfit: 0,
       availableForWithdrawal: 0,
+      isRealFunded: false,
+      principalLocked: false,
+      profitSplitPercent: 90,
       commission: 10,
       withdrawalFeePercent: 10,
       minWithdrawalAmount: 250,
@@ -503,16 +513,47 @@ export function calculateQuotexAccountSummary(account?: TradingAccount | null): 
     account.accountCategory === 'personal_live' ||
     account.phase === 'personal_live';
 
+  const isDemo =
+    account.tier === 'demo' ||
+    account.accountCategory === 'demo' ||
+    account.phase === 'demo';
+
+  const isRealFunded =
+    !isPersonal &&
+    !isDemo &&
+    Boolean(
+      account.account_tier === 'REAL_FUNDED' ||
+        account.isRealFunded ||
+        account.is_real_funded ||
+        account.phase === 'funded' ||
+        account.tier === 'instant'
+    );
+
   const inTheAccount = Math.max(0, Number(account.currentBalance.toFixed(2)));
-  const netProfit = Math.max(0, Number((account.currentBalance - account.initialBalance).toFixed(2)));
-  const availableForWithdrawal = isPersonal ? inTheAccount : netProfit;
+  const fundedPrincipal = Math.max(0, Number((account.initialBalance || account.size || 0).toFixed(2)));
+  const earnedNetProfit = Math.max(0, Number((account.currentBalance - fundedPrincipal).toFixed(2)));
+  const profitSplitPercent = isPersonal
+    ? 100
+    : isRealFunded
+    ? Number(account.profit_split_percent ?? 90)
+    : 0;
+  const availableForWithdrawal = isPersonal
+    ? inTheAccount
+    : isRealFunded
+    ? Number(((earnedNetProfit * profitSplitPercent) / 100).toFixed(2))
+    : 0;
 
   return {
     inTheAccount,
+    fundedPrincipal,
+    earnedNetProfit,
     availableForWithdrawal,
-    commission: 10,
-    withdrawalFeePercent: 10,
-    minWithdrawalAmount: 250,
+    isRealFunded,
+    principalLocked: isRealFunded,
+    profitSplitPercent,
+    commission: isPersonal ? 3 : 10,
+    withdrawalFeePercent: isPersonal ? 3 : 10,
+    minWithdrawalAmount: isPersonal ? 10 : 250,
     inTheAccountFormatted: `${inTheAccount.toLocaleString('en-US', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
@@ -521,7 +562,7 @@ export function calculateQuotexAccountSummary(account?: TradingAccount | null): 
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     })} $`,
-    commissionFormatted: '10% (Withdrawal Fee)',
+    commissionFormatted: isPersonal ? '3% (Withdrawal Fee)' : '10% (Withdrawal Fee)',
   };
 }
 

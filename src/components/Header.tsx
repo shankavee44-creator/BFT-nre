@@ -25,6 +25,7 @@ import { CryptoTickerBar } from './CryptoTickerBar';
 import { soundEngine } from '../utils/soundEffects';
 import {
   getAccountStatusBadgeLabel,
+  isChallengeBadgeAccount,
   isLiveFundedAccount,
   isPersonalLiveAccount,
   isDemoAccount,
@@ -421,7 +422,13 @@ export const Header: React.FC<HeaderProps> = ({
                           maximumFractionDigits: 2,
                         })}
                       </span>{' '}
-                      ({isPersonalModeActive ? 'Live' : isDemoModeActive ? 'Demo' : activeAccount?.id})
+                      ({isPersonalModeActive
+                        ? 'Live'
+                        : isDemoModeActive
+                        ? 'Demo'
+                        : isChallengeBadgeAccount(activeAccount)
+                        ? 'Challenge'
+                        : activeAccount?.id})
                     </div>
                   </div>
                 </div>

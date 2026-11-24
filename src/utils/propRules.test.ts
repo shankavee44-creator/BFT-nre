@@ -14,12 +14,19 @@ import {
   evaluateAccountBreach,
   resetSoftBreachedAccount,
   calculateDiscountedPrice,
+  validatePromoCode,
+  PROMO_CODES,
   calculateWithdrawalBreakdown,
   checkMaxRiskPerTradeViolation,
+  evaluateFundedTradeRiskRules,
   advanceChallengeAccountPhase,
   checkFirstWithdrawalWaitingPeriod,
   createDefaultPersonalLiveAccount,
   isPersonalLiveAccount,
+  isRealFundedAccount,
+  isPassedChallengeAccount,
+  resolveAccountBadgeMeta,
+  calculateRealFundedWithdrawalAllowance,
   getAccountStatusBadgeLabel,
   getDynamicAccountLimits,
   normalizeChallengeAccountType,
@@ -31,58 +38,79 @@ import {
   evaluateRealtimeTradingEngine,
   MIN_WITHDRAWAL_PROFIT,
   FIRST_WITHDRAWAL_WAITING_DAYS,
+  STANDARD_WITHDRAWAL_FREQUENCY,
   WITHDRAWAL_GUARANTEE_NOTICE,
   PACKAGES,
 } from './propRules';
 import { TradingAccount, WithdrawalRequest, BinaryTrade } from '../types';
 
-test('packages catalog contains all 3 tiers with exact BFT trading objectives', () => {
-  const oneStep = PACKAGES.filter((p) => p.tier === 'one-step');
-  const twoStep = PACKAGES.filter((p) => p.tier === 'two-step');
-  const instant = PACKAGES.filter((p) => p.tier === 'instant');
-
-  assert.equal(oneStep.length, 6);
-  assert.equal(twoStep.length, 6);
-  assert.equal(instant.length, 6);
-
-  // One-Step: 30% Profit Target, 10% Daily DD, 15% Max DD, 5% Max Risk/Trade, 5 Profitable Days
-  const os10k = oneStep.find((p) => p.size === 10000);
-  assert.ok(os10k);
-  assert.equal(os10k.profitTarget, 30);
-  assert.equal(os10k.maxDailyDrawdown, 10);
-  assert.equal(os10k.maxOverallLoss, 15);
-  assert.equal(os10k.maxRiskPerTradePercent, 5);
-  assert.equal(os10k.profitDaysRequirement, 5);
-
-  // Two-Step: 25% Phase 1, 15% Phase 2, 8% Daily DD, 20% Max DD, 5% Max Risk/Trade, 5 Profitable Days
-  const ts10k = twoStep.find((p) => p.size === 10000);
-  assert.ok(ts10k);
-  assert.equal(ts10k.profitTarget, 25);
-  assert.equal(ts10k.step2Target, 15);
-  assert.equal(ts10k.maxDailyDrawdown, 8);
-  assert.equal(ts10k.maxOverallLoss, 20);
-  assert.equal(ts10k.maxRiskPerTradePercent, 5);
-  assert.equal(ts10k.profitDaysRequirement, 5);
-
-  // Instant Funded: 0% Target, 6% Daily DD, 12% Overall DD, 5% Max Risk/Trade
-  const inst10k = instant.find((p) => p.size === 10000);
-  assert.ok(inst10k);
-  assert.equal(inst10k.profitTarget, 0);
-  assert.equal(inst10k.maxDailyDrawdown, 6);
-  assert.equal(inst10k.maxOverallLoss, 12);
-  assert.equal(inst10k.maxRiskPerTradePercent, 5);
+test('packages catalog contains exact 6 unified Funded Challenge packages and criteria', () => {
+  assert.equal(PACKAGES.length, 6);
+  const expected: Array<[number, number]> = [
+    [5000, 49],
+    [10000, 89],
+    [25000, 199],
+    [50000, 329],
+    [100000, 549],
+    [200000, 1199],
+  ];
+  for (const [size, price] of expected) {
+    const pkg = PACKAGES.find((p) => p.size === size);
+    assert.ok(pkg, `Missing package for $${size}`);
+    assert.equal(pkg.tier, 'funded-challenge');
+    assert.equal(pkg.price, price);
+    assert.equal(pkg.profitTarget, 30);
+    assert.equal(pkg.maxDailyDrawdown, 0);
+    assert.equal(pkg.maxOverallLoss, 10);
+    assert.equal(pkg.maxRiskPerTradePercent, 5);
+    assert.equal(pkg.profitDaysRequirement, 5);
+    assert.equal(pkg.minProfitableDayPercent, 1);
+    assert.equal(pkg.withdrawalFrequency, 'WEEKLY');
+  }
 });
 
-test('promo codes SPOOKY40 (40% OFF) and SPOOKY20 (20% OFF) and +15% daily withdrawal add-on calculate accurately', () => {
+test('pricing calculator supports exact standard prices (NONE), only the 40% bonus code, rejects 20% codes, and reverts to standard pricing when cleared/invalid', () => {
+  // Verify PROMO_CODES contains ONLY 40% codes and no 20% codes
+  assert.equal(Object.values(PROMO_CODES).every((c) => c.discountPercent === 40), true);
+  assert.equal('SPOOKY20' in PROMO_CODES, false);
+  assert.equal('BFT20' in PROMO_CODES, false);
+
+  // Exact standard price with no promo
+  const std49 = calculateDiscountedPrice(49, 'NONE');
+  assert.equal(std49.discountedBasePrice, 49);
+  assert.equal(std49.finalTotal, 49);
+  assert.equal(std49.promoDiscountPercent, 0);
+  assert.equal(std49.promoCode, 'NONE');
+
+  // Standard $100 + 15% Daily Withdrawals Add-On -> $115
+  const stdDaily = calculateDiscountedPrice(100, 'NONE', true);
+  assert.equal(stdDaily.dailyAddonAmount, 15);
+  assert.equal(stdDaily.finalTotal, 115);
+
   // Base $100 with SPOOKY40 (40% OFF) -> $60
   const p40 = calculateDiscountedPrice(100, 'SPOOKY40');
   assert.equal(p40.discountedBasePrice, 60);
   assert.equal(p40.finalTotal, 60);
+  assert.equal(p40.promoDiscountPercent, 40);
+  assert.equal(p40.promoCode, 'SPOOKY40');
 
-  // Base $100 with SPOOKY20 (20% OFF) -> $80
-  const p20 = calculateDiscountedPrice(100, 'SPOOKY20');
-  assert.equal(p20.discountedBasePrice, 80);
-  assert.equal(p20.finalTotal, 80);
+  // Removed 20% codes (SPOOKY20 / BFT20) and invalid codes must be rejected and revert immediately to standard base price
+  const v20 = validatePromoCode('SPOOKY20');
+  assert.equal(v20.valid, false);
+  assert.equal(v20.code, 'NONE');
+  assert.equal(v20.discountPercent, 0);
+
+  const p20 = calculateDiscountedPrice(89, 'SPOOKY20');
+  assert.equal(p20.promoDiscountPercent, 0);
+  assert.equal(p20.discountedBasePrice, 89);
+  assert.equal(p20.finalTotal, 89);
+  assert.equal(p20.promoCode, 'NONE');
+
+  // Cleared or empty code reverts immediately to standard base price
+  const vCleared = validatePromoCode('   ');
+  assert.equal(vCleared.valid, false);
+  assert.equal(vCleared.isCleared, true);
+  assert.equal(vCleared.code, 'NONE');
 
   // Base $100 with SPOOKY40 ($60) + 15% Daily Withdrawals Add-on (+$9) = $69
   const pWithAddon = calculateDiscountedPrice(100, 'SPOOKY40', { dailyWithdrawalsAddon: true });
@@ -118,20 +146,187 @@ test('5% max risk per trade validation detects hard breach violations', () => {
   assert.equal(breachTrade.stakePercent, 6);
 });
 
-test('advanceChallengeAccountPhase locks passed phase and deploys clean Phase 2 or Real Funded account', () => {
-  const oneStepAcc: TradingAccount = {
+test('evaluateFundedTradeRiskRules triggers immediate HARD_BREACH on all 5 strict funded risk rules and exempts Self-Capital/Demo', () => {
+  const fundedChallenge: TradingAccount = {
+    id: 'BFT-FC-10K',
+    loginId: 'BFT-FC-10K',
+    passwordHash: 'pass',
+    tier: 'funded-challenge',
+    accountType: 'funded_challenge',
+    tierName: 'Funded Challenge',
+    size: 10000,
+    initialBalance: 10000,
+    currentBalance: 10000,
+    startingDayEquity: 10000,
+    equity: 10000,
+    dailyLossLimitPercent: 0,
+    maxOverallLossPercent: 10,
+    profitTargetPercent: 30,
+    maxRiskPerTradePercent: 5,
+    status: 'active',
+    createdDate: '2026-11-01',
+    lastActiveDate: '2026-11-10',
+    phase: 'phase_1',
+    tradingDaysCompleted: 2,
+    tradesCount: 4,
+    winRate: 75,
+  };
+
+  // 1. Single trade <= 5% ($500) allowed
+  const okSingle = evaluateFundedTradeRiskRules({
+    account: fundedChallenge,
+    stake: 500,
+    assetSymbol: 'EUR/USD',
+    direction: 'CALL',
+    activeTrades: [],
+    allTrades: [],
+  });
+  assert.equal(okSingle.violated, false);
+
+  // 2. Single trade > 5% of current wallet balance ($501 on $10,000) -> HARD_BREACH
+  const badSingle = evaluateFundedTradeRiskRules({
+    account: fundedChallenge,
+    stake: 501,
+    assetSymbol: 'EUR/USD',
+    direction: 'CALL',
+    activeTrades: [],
+    allTrades: [],
+  });
+  assert.equal(badSingle.violated, true);
+  assert.equal(badSingle.code, 'SINGLE_TRADE_RISK_EXCEEDED');
+  assert.equal(badSingle.triggerHardBreach, true);
+
+  // Uses current wallet balance (e.g., after drawdown to $9,200, 5% is $460 so $470 breaches)
+  const badCurrentBalance = evaluateFundedTradeRiskRules({
+    account: { ...fundedChallenge, currentBalance: 9200, equity: 9200 },
+    stake: 470,
+    assetSymbol: 'EUR/USD',
+    direction: 'CALL',
+    activeTrades: [],
+    allTrades: [],
+  });
+  assert.equal(badCurrentBalance.violated, true);
+  assert.equal(badCurrentBalance.code, 'SINGLE_TRADE_RISK_EXCEEDED');
+  assert.equal(badCurrentBalance.triggerHardBreach, true);
+
+  const openEurCall: BinaryTrade = {
+    id: 't-open-eur',
+    accountId: 'BFT-FC-10K',
+    asset: 'EUR/USD',
+    direction: 'CALL',
+    strikePrice: 1.085,
+    currentPrice: 1.086,
+    investment: 300,
+    payoutPercentage: 88,
+    potentialPayout: 264,
+    startTime: 1000,
+    durationSeconds: 60,
+    endTime: 61000,
+    status: 'active',
+  };
+
+  // 3. Second open trade on DIFFERENT pair within combined 5% ($300 + $200 = $500 = 5% of $10,000) -> ALLOWED
+  const okDiffPair = evaluateFundedTradeRiskRules({
+    account: { ...fundedChallenge, currentBalance: 9700 }, // $300 already deducted
+    stake: 200,
+    assetSymbol: 'GBP/USD',
+    direction: 'PUT',
+    activeTrades: [openEurCall],
+    allTrades: [openEurCall],
+    stakesAlreadyDeducted: true,
+  });
+  assert.equal(okDiffPair.violated, false);
+
+  // 4. Combined open risk across DIFFERENT pairs exceeding 5% ($300 + $250 = $550 = 5.5%) -> HARD_BREACH
+  const badCombined = evaluateFundedTradeRiskRules({
+    account: { ...fundedChallenge, currentBalance: 9700 },
+    stake: 250,
+    assetSymbol: 'GBP/USD',
+    direction: 'CALL',
+    activeTrades: [openEurCall],
+    allTrades: [openEurCall],
+    stakesAlreadyDeducted: true,
+  });
+  assert.equal(badCombined.violated, true);
+  assert.equal(badCombined.code, 'COMBINED_OPEN_RISK_EXCEEDED');
+  assert.equal(badCombined.triggerHardBreach, true);
+
+  // 5. Second open trade on SAME currency pair (same direction CALL) -> HARD_BREACH
+  const badSamePair = evaluateFundedTradeRiskRules({
+    account: { ...fundedChallenge, currentBalance: 9700 },
+    stake: 100,
+    assetSymbol: 'EUR/USD',
+    direction: 'CALL',
+    activeTrades: [openEurCall],
+    allTrades: [openEurCall],
+    stakesAlreadyDeducted: true,
+  });
+  assert.equal(badSamePair.violated, true);
+  assert.equal(badSamePair.code, 'DUPLICATE_PAIR_TRADE');
+  assert.equal(badSamePair.triggerHardBreach, true);
+
+  // 6. Hedging (opposing PUT on EUR/USD while CALL is open) -> HARD_BREACH
+  const badHedge = evaluateFundedTradeRiskRules({
+    account: { ...fundedChallenge, currentBalance: 9700 },
+    stake: 100,
+    assetSymbol: 'EUR/USD',
+    direction: 'PUT',
+    activeTrades: [openEurCall],
+    allTrades: [openEurCall],
+    stakesAlreadyDeducted: true,
+  });
+  assert.equal(badHedge.violated, true);
+  assert.equal(badHedge.code, 'HEDGING_PROHIBITED');
+  assert.equal(badHedge.triggerHardBreach, true);
+
+  // 7. Martingale (doubling stake after a loss: $100 loss -> $200 next trade) -> HARD_BREACH
+  const lostTrade: BinaryTrade = {
+    ...openEurCall,
+    id: 't-lost-1',
+    investment: 100,
+    status: 'lost',
+  };
+  const badMartingale = evaluateFundedTradeRiskRules({
+    account: fundedChallenge,
+    stake: 200,
+    assetSymbol: 'GBP/USD',
+    direction: 'CALL',
+    activeTrades: [],
+    allTrades: [lostTrade],
+  });
+  assert.equal(badMartingale.violated, true);
+  assert.equal(badMartingale.code, 'MARTINGALE_PROHIBITED');
+  assert.equal(badMartingale.triggerHardBreach, true);
+
+  // 8. Self-Capital account is completely exempt from funded hard-breach rules
+  const selfCapital = createDefaultPersonalLiveAccount('usr-self', 'self@bft.io', 5000);
+  const exemptSelf = evaluateFundedTradeRiskRules({
+    account: selfCapital,
+    stake: 2000, // 40% of balance
+    assetSymbol: 'EUR/USD',
+    direction: 'PUT',
+    activeTrades: [openEurCall],
+    allTrades: [lostTrade],
+  });
+  assert.equal(exemptSelf.violated, false);
+});
+
+test('advanceChallengeAccountPhase marks challenge PASSED and provisions Real Funded account with exact package balance and is_real_funded=true', () => {
+  const challengeAcc: TradingAccount = {
     id: 'BFT-11111',
     loginId: 'BFT-11111',
     passwordHash: 'pass',
-    tier: 'one-step',
-    tierName: 'One-Step Challenge',
-    size: 10000,
-    initialBalance: 10000,
-    currentBalance: 13000,
-    startingDayEquity: 12500,
-    equity: 13000,
-    dailyLossLimitPercent: 10,
-    maxOverallLossPercent: 15,
+    tier: 'funded-challenge',
+    accountType: 'funded_challenge',
+    tierName: 'Funded Challenge',
+    size: 50000,
+    initialBalance: 50000,
+    currentBalance: 65000, // +30% profit target met
+    startingDayEquity: 64000,
+    equity: 65000,
+    dailyLossLimitPercent: 0,
+    maxOverallLossPercent: 10,
+    profitTargetPercent: 30,
     status: 'active',
     createdDate: '2026-10-01',
     lastActiveDate: '2026-10-25',
@@ -141,37 +336,46 @@ test('advanceChallengeAccountPhase locks passed phase and deploys clean Phase 2 
     winRate: 75,
   };
 
-  const res = advanceChallengeAccountPhase(oneStepAcc);
+  const res = advanceChallengeAccountPhase(challengeAcc);
   assert.equal(res.lockedAccount.status, 'passed');
-  assert.ok(res.certificateId);
   assert.equal(res.isRealFundedDeployed, true);
   assert.equal(res.deployedAccount.phase, 'funded');
-  assert.equal(res.deployedAccount.currentBalance, 13000);
+  assert.equal(res.deployedAccount.isRealFunded, true);
+  assert.equal(res.deployedAccount.is_real_funded, true);
+  assert.equal(res.deployedAccount.size, 50000);
+  assert.equal(res.deployedAccount.initialBalance, 50000);
+  assert.equal(res.deployedAccount.currentBalance, 50000);
+  assert.equal(res.deployedAccount.maxOverallLossPercent, 10);
+  assert.equal(res.deployedAccount.dailyLossLimitPercent, 0);
+  assert.equal(getAccountStatusBadgeLabel(res.deployedAccount), 'REAL FUNDED');
 });
 
-test('withdrawal validation requires strict minimum $250 profit threshold and enforces 14-day first withdrawal lock', () => {
+test('withdrawal validation requires strict minimum $250 profit threshold and enforces 7-day first withdrawal lock with Weekly standard / Daily +15% cycle', () => {
   assert.equal(MIN_WITHDRAWAL_PROFIT, 250);
-  assert.equal(FIRST_WITHDRAWAL_WAITING_DAYS, 14);
+  assert.equal(FIRST_WITHDRAWAL_WAITING_DAYS, 7);
+  assert.equal(STANDARD_WITHDRAWAL_FREQUENCY, 'WEEKLY');
   assert.equal(WITHDRAWAL_GUARANTEE_NOTICE, 'We process payouts within 3 minutes; if we fail, we pay double!');
 
   const mockAccount: TradingAccount = {
     id: 'BFT-1001',
     loginId: 'BFT-1001',
     passwordHash: 'secret123',
-    tier: 'instant',
-    tierName: 'Instant Funded',
+    tier: 'funded-challenge',
+    tierName: 'Real Funded Account',
     size: 10000,
     initialBalance: 10000,
     currentBalance: 10180, // Only $180 profit (< $250 minimum)
     startingDayEquity: 10000,
     equity: 10180,
-    dailyLossLimitPercent: 6,
-    maxOverallLossPercent: 12,
+    dailyLossLimitPercent: 0,
+    maxOverallLossPercent: 10,
     status: 'active',
     createdDate: '2026-10-01',
     lastActiveDate: '2026-10-24',
     phase: 'funded',
-    tradingDaysCompleted: 14,
+    isRealFunded: true,
+    is_real_funded: true,
+    tradingDaysCompleted: 8,
     tradesCount: 12,
     winRate: 75,
     dailyWithdrawalsUnlocked: true,
@@ -203,24 +407,38 @@ test('withdrawal validation requires strict minimum $250 profit threshold and en
   assert.equal(result4.valid, false);
   assert.equal(result4.code, 'EXCEEDS_PROFIT');
 
-  // Check mandatory 14-day waiting period on first withdrawal when tradingDaysCompleted < 14
+  // Check mandatory 7-day waiting period on first withdrawal
   const newFundedAcc: TradingAccount = {
     ...mockAccount,
     createdDate: '2026-10-25',
     tradingDaysCompleted: 4,
     firstWithdrawalCompleted: false,
+    dailyWithdrawalsUnlocked: false,
   };
   const lockCheck = checkFirstWithdrawalWaitingPeriod(newFundedAcc, Date.UTC(2026, 9, 28));
   assert.equal(lockCheck.eligible, false);
-  assert.equal(lockCheck.daysRemaining, 10);
-  assert.match(lockCheck.subsequentCycleLabel, /Daily Withdrawals/);
+  assert.equal(lockCheck.daysRemaining, 3);
+  assert.match(lockCheck.subsequentCycleLabel, /Weekly/i);
+
+  const dailyAddOnCheck = checkFirstWithdrawalWaitingPeriod(
+    { ...newFundedAcc, dailyWithdrawalsUnlocked: true },
+    Date.UTC(2026, 9, 28)
+  );
+  assert.match(dailyAddOnCheck.subsequentCycleLabel, /Daily Withdrawals/i);
 
   const blockedFirst = validateWithdrawalRequest(newFundedAcc, 250, {
     enforceFirstWithdrawalLock: true,
     nowMs: Date.UTC(2026, 9, 28),
   });
   assert.equal(blockedFirst.valid, false);
-  assert.equal(blockedFirst.code, 'FIRST_WITHDRAWAL_14_DAY_LOCK');
+  assert.equal(blockedFirst.code, 'FIRST_WITHDRAWAL_7_DAY_LOCK');
+
+  // After 7 days, first withdrawal unlocks!
+  const unlockedFirst = validateWithdrawalRequest(newFundedAcc, 250, {
+    enforceFirstWithdrawalLock: true,
+    nowMs: Date.UTC(2026, 10, 2), // 8 days after Oct 25
+  });
+  assert.equal(unlockedFirst.valid, true);
 });
 
 test('trade duration rule enforces >= 30 seconds to prevent tick scalping', () => {
@@ -503,63 +721,68 @@ test('Personal Live account bypasses prop drawdown locks and allows 100% capital
   assert.equal(breakdown.netPayoutToReceive, 388);
 });
 
-test('dynamic account limits and normalization for instant, one_step, and two_step challenges', () => {
-  // Normalize string variations
+test('dynamic account limits and normalization for unified funded_challenge and legacy tiers', () => {
+  assert.equal(normalizeChallengeAccountType('funded-challenge'), 'funded_challenge');
+  assert.equal(normalizeChallengeAccountType('funded_challenge'), 'funded_challenge');
   assert.equal(normalizeChallengeAccountType('one-step'), 'one_step');
-  assert.equal(normalizeChallengeAccountType('one_step'), 'one_step');
   assert.equal(normalizeChallengeAccountType('two-step'), 'two_step');
-  assert.equal(normalizeChallengeAccountType('two_step'), 'two_step');
   assert.equal(normalizeChallengeAccountType('instant'), 'instant');
 
-  // One-Step limits (30% Profit Target, 10% Daily DD, 15% Max DD, initial phase_1)
-  const osLimits = getDynamicAccountLimits('one_step', 'phase_1');
-  assert.equal(osLimits.accountType, 'one_step');
-  assert.equal(osLimits.profitTargetPercent, 30);
-  assert.equal(osLimits.dailyLossLimitPercent, 10);
-  assert.equal(osLimits.maxOverallLossPercent, 15);
-  assert.equal(osLimits.initialPhase, 'phase_1');
-  assert.equal(getChallengeProfitTarget({ accountType: 'one_step', phase: 'phase_1', initialBalance: 10000, currentBalance: 10000 } as any).targetAmount, 3000);
+  // Unified Funded Challenge limits: 30% Profit Target, 0% Daily Cap, 10% Max Overall Loss, 5 days >=1%
+  const fcLimits = getDynamicAccountLimits('funded_challenge', 'phase_1');
+  assert.equal(fcLimits.accountType, 'funded_challenge');
+  assert.equal(fcLimits.profitTargetPercent, 30);
+  assert.equal(fcLimits.dailyLossLimitPercent, 0);
+  assert.equal(fcLimits.maxOverallLossPercent, 10);
+  assert.equal(fcLimits.maxRiskPerTradePercent, 5);
+  assert.equal(fcLimits.minProfitableDays, 5);
+  assert.equal(fcLimits.minProfitableDayPercent, 1);
+  assert.equal(fcLimits.initialPhase, 'phase_1');
 
-  // Two-Step Phase 1 limits (25% Profit Target, 8% Daily DD, 20% Max DD)
-  const tsPhase1Limits = getDynamicAccountLimits('two_step', 'phase_1');
-  assert.equal(tsPhase1Limits.accountType, 'two_step');
-  assert.equal(tsPhase1Limits.profitTargetPercent, 25);
-  assert.equal(tsPhase1Limits.dailyLossLimitPercent, 8);
-  assert.equal(tsPhase1Limits.maxOverallLossPercent, 20);
-  assert.equal(tsPhase1Limits.initialPhase, 'phase_1');
-  assert.equal(getChallengeProfitTarget({ accountType: 'two_step', phase: 'phase_1', initialBalance: 10000, currentBalance: 10000 } as any).targetAmount, 2500);
+  // Challenge target requires BOTH 30% profit AND 5 qualifying days
+  const notEnoughDays = getChallengeProfitTarget(
+    {
+      accountType: 'funded_challenge',
+      phase: 'phase_1',
+      initialBalance: 10000,
+      currentBalance: 13500, // 35% profit
+      tradingDaysCompleted: 4, // Only 4 qualifying days
+    } as any
+  );
+  assert.equal(notEnoughDays.targetAmount, 3000);
+  assert.equal(notEnoughDays.isProfitTargetMet, true);
+  assert.equal(notEnoughDays.isMinDaysMet, false);
+  assert.equal(notEnoughDays.isTargetMet, false);
 
-  // Two-Step Phase 2 limits (15% Profit Target)
-  const tsPhase2Limits = getDynamicAccountLimits('two_step', 'phase_2');
-  assert.equal(tsPhase2Limits.profitTargetPercent, 15);
-  assert.equal(getChallengeProfitTarget({ accountType: 'two_step', phase: 'phase_2', initialBalance: 10000, currentBalance: 10000 } as any).targetAmount, 1500);
-
-  // Instant Funded limits (0% Profit Target, 6% Daily DD, 12% Max DD, phase funded)
-  const instLimits = getDynamicAccountLimits('instant', 'funded');
-  assert.equal(instLimits.accountType, 'instant');
-  assert.equal(instLimits.profitTargetPercent, 0);
-  assert.equal(instLimits.dailyLossLimitPercent, 6);
-  assert.equal(instLimits.maxOverallLossPercent, 12);
-  assert.equal(instLimits.initialPhase, 'funded');
-  assert.equal(getChallengeProfitTarget({ accountType: 'instant', phase: 'funded', initialBalance: 10000, currentBalance: 10000 } as any).targetAmount, 0);
+  const bothMet = getChallengeProfitTarget(
+    {
+      accountType: 'funded_challenge',
+      phase: 'phase_1',
+      initialBalance: 10000,
+      currentBalance: 13000, // 30% profit
+      tradingDaysCompleted: 5, // 5 qualifying days
+    } as any
+  );
+  assert.equal(bothMet.isProfitTargetMet, true);
+  assert.equal(bothMet.isMinDaysMet, true);
+  assert.equal(bothMet.isTargetMet, true);
 });
 
-test('phase progression for 1-step and 2-step challenges', () => {
-  // 1-Step: phase_1 -> funded
-  const osAccount: TradingAccount = {
-    id: 'ACC-OS1',
-    loginId: 'BFT-1001',
+test('unified challenge graduation transitions directly from challenge to Real Funded account with exact package balance', () => {
+  const fcAccount: TradingAccount = {
+    id: 'ACC-FC-25K',
+    loginId: 'BFT-25001',
     passwordHash: 'pass',
-    tier: 'one-step',
-    accountType: 'one_step',
-    tierName: 'One-Step Challenge',
-    size: 10000,
-    initialBalance: 10000,
-    currentBalance: 13000,
-    startingDayEquity: 13000,
-    equity: 13000,
-    dailyLossLimitPercent: 10,
-    maxOverallLossPercent: 15,
+    tier: 'funded-challenge',
+    accountType: 'funded_challenge',
+    tierName: 'Funded Challenge',
+    size: 25000,
+    initialBalance: 25000,
+    currentBalance: 32500, // +30% profit
+    startingDayEquity: 32500,
+    equity: 32500,
+    dailyLossLimitPercent: 0,
+    maxOverallLossPercent: 10,
     profitTargetPercent: 30,
     status: 'active',
     phase: 'phase_1',
@@ -570,42 +793,14 @@ test('phase progression for 1-step and 2-step challenges', () => {
     lastActiveDate: '2026-10-24',
   };
 
-  const osProgression = advanceChallengeAccountPhase(osAccount);
-  assert.equal(osProgression.lockedAccount.status, 'passed');
-  assert.ok(osProgression.deployedAccount);
-  assert.equal(osProgression.deployedAccount.phase, 'funded');
-
-  // 2-Step Phase 1: phase_1 -> phase_2
-  const tsAccount: TradingAccount = {
-    ...osAccount,
-    id: 'ACC-TS1',
-    tier: 'two-step',
-    accountType: 'two_step',
-    currentBalance: 12500,
-    equity: 12500,
-    profitTargetPercent: 25,
-    dailyLossLimitPercent: 8,
-    maxOverallLossPercent: 20,
-    phase: 'phase_1',
-  };
-
-  const tsProgression1 = advanceChallengeAccountPhase(tsAccount);
-  assert.equal(tsProgression1.lockedAccount.status, 'passed_phase_1');
-  assert.ok(tsProgression1.deployedAccount);
-  assert.equal(tsProgression1.deployedAccount.phase, 'phase_2');
-  assert.equal(tsProgression1.deployedAccount.profitTargetPercent, 15);
-
-  // 2-Step Phase 2: phase_2 -> funded
-  const tsAccountPhase2: TradingAccount = {
-    ...tsProgression1.deployedAccount,
-    currentBalance: 11500,
-    equity: 11500,
-  };
-
-  const tsProgression2 = advanceChallengeAccountPhase(tsAccountPhase2);
-  assert.equal(tsProgression2.lockedAccount.status, 'passed');
-  assert.ok(tsProgression2.deployedAccount);
-  assert.equal(tsProgression2.deployedAccount.phase, 'funded');
+  const progression = advanceChallengeAccountPhase(fcAccount);
+  assert.equal(progression.lockedAccount.status, 'passed');
+  assert.ok(progression.deployedAccount);
+  assert.equal(progression.deployedAccount.phase, 'funded');
+  assert.equal(progression.deployedAccount.isRealFunded, true);
+  assert.equal(progression.deployedAccount.is_real_funded, true);
+  assert.equal(progression.deployedAccount.size, 25000);
+  assert.equal(progression.deployedAccount.currentBalance, 25000);
 });
 
 test('anti-breach sanitization prevents false auto-breaches on zero or uninitialized balance rows', () => {
@@ -672,8 +867,8 @@ test('anti-breach sanitization prevents false auto-breaches on zero or uninitial
   assert.equal(sanitizedInstant.equity, 50000);
   assert.equal(sanitizedInstant.startingDayEquity, 50000);
   assert.equal(sanitizedInstant.status, 'active');
-  assert.equal(sanitizedInstant.dailyLossLimitPercent, 6);
-  assert.equal(sanitizedInstant.maxOverallLossPercent, 12);
+  assert.equal(sanitizedInstant.dailyLossLimitPercent, 0);
+  assert.equal(sanitizedInstant.maxOverallLossPercent, 10);
   assert.equal(sanitizedInstant.profitTargetPercent, 0);
 });
 
@@ -883,36 +1078,41 @@ test('evaluateRealtimeTradingEngine triggers instant soft_breached, hard_breache
     status: 'active',
   };
 
-  // 1. Live equity = $4,400 + $0 (OTM) = $4,400 -> $600 daily loss >= $500 (10%) -> instant soft_breached
-  const softEval = evaluateRealtimeTradingEngine({
-    account: base5k,
+  // 1. Unified 10% max overall loss ($500 on $5,000): live equity = $4,400 ($600 loss = 12% >= 10%) -> immediate hard_breached
+  const hardFromUnified = evaluateRealtimeTradingEngine({
+    account: { ...base5k, tier: 'funded-challenge', accountType: 'funded_challenge', dailyLossLimitPercent: 0, maxOverallLossPercent: 10 },
     activeTrades: [losingTrade],
     getLivePrice: () => 94800,
     nowMs: 50000,
   });
-  assert.equal(softEval.action, 'soft_breach');
-  assert.equal(softEval.databaseStatus, 'soft_breached');
-  assert.equal(softEval.updatedAccount.status, 'soft_breached');
-  assert.equal(softEval.liquidatedTrades.length, 1);
-  assert.equal(softEval.liquidatedTrades[0].status, 'lost');
-  assert.equal(softEval.updatedAccount.currentBalance, 4400);
-  assert.equal(softEval.updatedAccount.startingDayEquity, 4400);
+  assert.equal(hardFromUnified.action, 'hard_breach');
+  assert.equal(hardFromUnified.databaseStatus, 'hard_breached');
+  assert.equal(hardFromUnified.updatedAccount.status, 'hard_breached');
+  assert.equal(hardFromUnified.liquidatedTrades.length, 1);
+  assert.equal(hardFromUnified.liquidatedTrades[0].status, 'lost');
 
-  // 2. Hard breach when live equity drops to $4,250 ($750 overall loss = 15% of $5,000)
-  const hardEval = evaluateRealtimeTradingEngine({
-    account: { ...base5k, startingDayEquity: 4500, currentBalance: 4200, equity: 4200 },
+  // 2. Single-day 8% loss ($400 on $5,000) stays ACTIVE because there is no separate daily-only cap (only 10% max overall loss)
+  const underTenEval = evaluateRealtimeTradingEngine({
+    account: { ...base5k, tier: 'funded-challenge', accountType: 'funded_challenge', dailyLossLimitPercent: 0, maxOverallLossPercent: 10, currentBalance: 4600, equity: 4600 },
     activeTrades: [losingTrade],
     getLivePrice: () => 94800,
     nowMs: 50000,
   });
-  assert.equal(hardEval.action, 'hard_breach');
-  assert.equal(hardEval.databaseStatus, 'hard_breached');
-  assert.equal(hardEval.updatedAccount.status, 'hard_breached');
-  assert.equal(hardEval.liquidatedTrades.length, 1);
+  assert.equal(underTenEval.action, 'none');
+  assert.equal(underTenEval.updatedAccount.status, 'active');
 
-  // 3. Target reached: $5,000 + 30% ($1,500) = $6,500 balance -> instant passed
+  // 3a. 30% profit with only 4 qualifying days does NOT pass yet
+  const fourDaysEval = evaluateRealtimeTradingEngine({
+    account: { ...base5k, currentBalance: 6550, equity: 6550, tradingDaysCompleted: 4 },
+    activeTrades: [],
+    getLivePrice: () => 95000,
+    nowMs: 50000,
+  });
+  assert.equal(fourDaysEval.action, 'none');
+
+  // 3b. Target reached: $5,000 + 30% ($1,500) = $6,500 balance AND 5 qualifying days -> instant passed
   const passedEval = evaluateRealtimeTradingEngine({
-    account: { ...base5k, currentBalance: 6550, equity: 6550 },
+    account: { ...base5k, currentBalance: 6550, equity: 6550, tradingDaysCompleted: 5 },
     activeTrades: [],
     getLivePrice: () => 95000,
     nowMs: 50000,
@@ -1045,6 +1245,274 @@ test('custom duration helpers (5s to 4h), Funded <30s restriction vs Self-Capita
   assert.equal(funded6000.code, 'MAX_SINGLE_TRADE_LIMIT_EXCEEDED');
 });
 
+test('account badge colors resolve Green LIVE, Yellow DEMO, Red CHALLENGE, Emerald PASSED, and Purple REAL FUNDED', () => {
+  const personalLive = createDefaultPersonalLiveAccount('usr-1', 'trader@bft.io', 500);
+  const demoAcc: TradingAccount = {
+    ...personalLive,
+    id: 'BFT-DEMO-01',
+    tier: 'demo',
+    accountCategory: 'demo',
+    phase: 'demo',
+    tierName: 'Demo Account',
+  };
+  const activeChallenge: TradingAccount = {
+    id: 'BFT-CH-10K',
+    loginId: 'BFT-CH-10K',
+    passwordHash: 'pass',
+    tier: 'funded-challenge',
+    accountType: 'funded_challenge',
+    tierName: 'Funded Challenge',
+    size: 10000,
+    initialBalance: 10000,
+    currentBalance: 10400,
+    startingDayEquity: 10000,
+    equity: 10400,
+    dailyLossLimitPercent: 0,
+    maxOverallLossPercent: 10,
+    profitTargetPercent: 30,
+    status: 'active',
+    phase: 'phase_1',
+    tradingDaysCompleted: 2,
+    tradesCount: 4,
+    winRate: 75,
+    createdDate: '2026-10-01',
+    lastActiveDate: '2026-10-10',
+  };
 
+  assert.deepEqual(resolveAccountBadgeMeta(personalLive), {
+    account_tier: 'LIVE',
+    badge_color: 'green',
+    label: 'LIVE',
+    isPassedChallenge: false,
+  });
 
+  assert.deepEqual(resolveAccountBadgeMeta(demoAcc), {
+    account_tier: 'DEMO',
+    badge_color: 'yellow',
+    label: 'DEMO',
+    isPassedChallenge: false,
+  });
+
+  assert.deepEqual(resolveAccountBadgeMeta(activeChallenge), {
+    account_tier: 'CHALLENGE',
+    badge_color: 'red',
+    label: 'CHALLENGE',
+    isPassedChallenge: false,
+  });
+
+  // Auto-graduation transitions Challenge -> PASSED (certificate unlocked) & creates Purple REAL FUNDED
+  const graduated = advanceChallengeAccountPhase(activeChallenge);
+  assert.equal(graduated.lockedAccount.status, 'passed');
+  assert.equal(graduated.lockedAccount.certificate_unlocked, true);
+  assert.ok(graduated.lockedAccount.certificateId);
+  assert.equal(isPassedChallengeAccount(graduated.lockedAccount), true);
+  assert.equal(resolveAccountBadgeMeta(graduated.lockedAccount).label, 'PASSED');
+  assert.equal(resolveAccountBadgeMeta(graduated.lockedAccount).isPassedChallenge, true);
+
+  const rf = graduated.deployedAccount;
+  assert.equal(isRealFundedAccount(rf), true);
+  assert.equal(rf.account_tier, 'REAL_FUNDED');
+  assert.equal(rf.badge_color, 'purple');
+  assert.equal(rf.is_real_funded, true);
+  assert.equal(rf.principal_locked, true);
+  assert.equal(rf.profit_split_percent, 90);
+  assert.equal(rf.certificate_unlocked, true);
+  assert.equal(rf.size, 10000);
+  assert.equal(rf.initialBalance, 10000);
+  assert.equal(rf.currentBalance, 10000);
+  assert.deepEqual(resolveAccountBadgeMeta(rf), {
+    account_tier: 'REAL_FUNDED',
+    badge_color: 'purple',
+    label: 'REAL FUNDED',
+    isPassedChallenge: false,
+  });
+});
+
+test('Real Funded withdrawals enforce principal lock and 90% earned net profit ceiling', () => {
+  const realFunded10k: TradingAccount = {
+    id: 'BFT-RF-10K',
+    loginId: 'BFT-RF-10K',
+    passwordHash: 'pass',
+    tier: 'funded-challenge',
+    accountType: 'funded_challenge',
+    account_tier: 'REAL_FUNDED',
+    badge_color: 'purple',
+    tierName: 'Real Funded ($10,000)',
+    size: 10000,
+    initialBalance: 10000,
+    currentBalance: 10000,
+    startingDayEquity: 10000,
+    equity: 10000,
+    dailyLossLimitPercent: 0,
+    maxOverallLossPercent: 10,
+    profitTargetPercent: 0,
+    isRealFunded: true,
+    is_real_funded: true,
+    principal_locked: true,
+    profit_split_percent: 90,
+    status: 'active',
+    phase: 'funded',
+    tradingDaysCompleted: 8,
+    tradesCount: 12,
+    winRate: 65,
+    createdDate: '2026-10-01',
+    lastActiveDate: '2026-10-15',
+  };
+
+  // At $10,000 balance ($0 profit), principal is locked and withdrawal is blocked
+  const zeroProfitAllowance = calculateRealFundedWithdrawalAllowance(realFunded10k);
+  assert.equal(zeroProfitAllowance.principalLocked, true);
+  assert.equal(zeroProfitAllowance.earnedNetProfit, 0);
+  assert.equal(zeroProfitAllowance.maxWithdrawableProfit, 0);
+  const blockedNoProfit = validateWithdrawalRequest(realFunded10k, 300);
+  assert.equal(blockedNoProfit.valid, false);
+  assert.equal(blockedNoProfit.code, 'NO_PROFIT');
+
+  // After earning $1,000 net profit ($11,000 balance): max withdrawable = $900 (90%)
+  const profitableRf: TradingAccount = {
+    ...realFunded10k,
+    currentBalance: 11000,
+    equity: 11000,
+  };
+  const allowance = calculateRealFundedWithdrawalAllowance(profitableRf);
+  assert.equal(allowance.fundedPrincipal, 10000);
+  assert.equal(allowance.earnedNetProfit, 1000);
+  assert.equal(allowance.profitSplitPercent, 90);
+  assert.equal(allowance.maxWithdrawableProfit, 900);
+
+  // $900 (exact 90% of earned net profit) -> ALLOWED
+  assert.equal(validateWithdrawalRequest(profitableRf, 900).valid, true);
+
+  // $901 (exceeds 90% profit limit) -> BLOCKED with EXCEEDS_90_PERCENT_PROFIT
+  const blocked901 = validateWithdrawalRequest(profitableRf, 901);
+  assert.equal(blocked901.valid, false);
+  assert.equal(blocked901.code, 'EXCEEDS_90_PERCENT_PROFIT');
+
+  // $1,050 (attempts to withdraw into funded principal) -> BLOCKED with EXCEEDS_PROFIT
+  const blockedPrincipal = validateWithdrawalRequest(profitableRf, 1050);
+  assert.equal(blockedPrincipal.valid, false);
+  assert.equal(blockedPrincipal.code, 'EXCEEDS_PROFIT');
+});
+
+test('getAccountBadgeDisplayText shows strictly Challenge without numbers or codes while keeping other badges intact', async () => {
+  const {
+    isChallengeBadgeAccount,
+    getAccountBadgeDisplayText,
+  } = await import('./propRules');
+
+  const personalLive = createDefaultPersonalLiveAccount('usr-1', 'trader@bft.io', 500);
+  const demoAcc: TradingAccount = {
+    ...personalLive,
+    id: 'BFT-DEMO-01',
+    tier: 'demo',
+    accountCategory: 'demo',
+    phase: 'demo',
+    tierName: 'Demo Account',
+  };
+  const activeChallenge: TradingAccount = {
+    id: 'BFT-CH-10K-999',
+    loginId: 'BFT-CH-10K-999',
+    passwordHash: 'pass',
+    tier: 'funded-challenge',
+    accountType: 'funded_challenge',
+    tierName: 'Funded Challenge ($10,000)',
+    size: 10000,
+    initialBalance: 10000,
+    currentBalance: 10400,
+    startingDayEquity: 10000,
+    equity: 10400,
+    dailyLossLimitPercent: 0,
+    maxOverallLossPercent: 10,
+    profitTargetPercent: 30,
+    status: 'active',
+    phase: 'phase_1',
+    tradingDaysCompleted: 2,
+    tradesCount: 4,
+    winRate: 75,
+    createdDate: '2026-10-01',
+    lastActiveDate: '2026-10-10',
+  };
+  const graduated = advanceChallengeAccountPhase(activeChallenge);
+
+  assert.equal(isChallengeBadgeAccount(activeChallenge), true);
+  assert.equal(getAccountBadgeDisplayText(activeChallenge), 'Challenge');
+  assert.equal(/\d/.test(getAccountBadgeDisplayText(activeChallenge)), false);
+
+  assert.equal(isChallengeBadgeAccount(personalLive), false);
+  assert.equal(getAccountBadgeDisplayText(personalLive), 'LIVE');
+
+  assert.equal(isChallengeBadgeAccount(demoAcc), false);
+  assert.equal(getAccountBadgeDisplayText(demoAcc), 'DEMO');
+
+  assert.equal(isChallengeBadgeAccount(graduated.lockedAccount), false);
+  assert.equal(getAccountBadgeDisplayText(graduated.lockedAccount), 'PASSED');
+
+  assert.equal(isChallengeBadgeAccount(graduated.deployedAccount), false);
+  assert.equal(getAccountBadgeDisplayText(graduated.deployedAccount), 'REAL FUNDED');
+});
+
+test('executeSelfCapitalChallengePurchase blocks purchase with Insufficient Account Balance when Self Capital < package price', async () => {
+  const {
+    executeSelfCapitalChallengePurchase,
+    resolveAvailableSelfCapitalBalance,
+  } = await import('./propRules');
+
+  const pkg10k = PACKAGES.find((p) => p.size === 10000)!; // $89
+  assert.equal(pkg10k.price, 89);
+
+  // Resolve available balance when profile has $30
+  const available = resolveAvailableSelfCapitalBalance({ selfBalance: 30, isLoggedIn: true }, []);
+  assert.equal(available, 30);
+
+  const res = executeSelfCapitalChallengePurchase({
+    pkg: pkg10k,
+    selfCapitalBalance: available,
+    ownerId: 'usr-1',
+    ownerEmail: 'trader@bft.io',
+  });
+
+  assert.equal(res.ok, false);
+  if (!res.ok) {
+    assert.equal(res.code, 'INSUFFICIENT_ACCOUNT_BALANCE');
+    assert.equal(res.error, 'Insufficient Account Balance');
+    assert.equal(res.requiredAmount, 89);
+    assert.equal(res.availableBalance, 30);
+    assert.equal(res.shortfallAmount, 59);
+    assert.match(res.message, /Insufficient Account Balance/);
+  }
+});
+
+test('executeSelfCapitalChallengePurchase deducts exact package price from Self Capital and activates Challenge account immediately when balance >= price', async () => {
+  const {
+    executeSelfCapitalChallengePurchase,
+    getAccountBadgeDisplayText,
+    isChallengeBadgeAccount,
+  } = await import('./propRules');
+
+  const pkg10k = PACKAGES.find((p) => p.size === 10000)!; // $89
+  const res = executeSelfCapitalChallengePurchase({
+    pkg: pkg10k,
+    selfCapitalBalance: 250,
+    ownerId: 'usr-1',
+    ownerEmail: 'trader@bft.io',
+  });
+
+  assert.equal(res.ok, true);
+  if (res.ok) {
+    assert.equal(res.code, 'CHALLENGE_ACTIVATED');
+    assert.equal(res.deductedAmount, 89);
+    assert.equal(res.previousSelfCapital, 250);
+    assert.equal(res.remainingSelfCapital, 161);
+    assert.equal(res.account.size, 10000);
+    assert.equal(res.account.currentBalance, 10000);
+    assert.equal(res.account.status, 'active');
+    assert.equal(res.account.account_tier, 'CHALLENGE');
+    assert.equal(res.account.badge_color, 'red');
+    assert.equal(res.account.profitTargetPercent, 30);
+    assert.equal(res.account.maxOverallLossPercent, 10);
+    assert.equal(res.account.minTradingDaysRequired, 5);
+    assert.equal(isChallengeBadgeAccount(res.account), true);
+    assert.equal(getAccountBadgeDisplayText(res.account), 'Challenge');
+  }
+});
 

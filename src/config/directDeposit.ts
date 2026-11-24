@@ -448,13 +448,17 @@ export function buildPackageSku(params: {
   if (params.accountType === 'self_funded') {
     return `BFT-SELF-${cleanAmount}`;
   }
-  const tierNorm = String(params.tier || 'two-step').toLowerCase();
+  const tierNorm = String(params.tier || 'funded-challenge').toLowerCase();
   const tierCode =
-    tierNorm === 'one-step'
+    tierNorm === 'funded-challenge' || tierNorm === 'funded_challenge'
+      ? 'FC'
+      : tierNorm === 'one-step' || tierNorm === 'one_step'
       ? '1S'
+      : tierNorm === 'two-step' || tierNorm === 'two_step'
+      ? '2S'
       : tierNorm === 'instant'
       ? 'INF'
-      : '2S';
+      : 'FC';
   const sizeLabel = cleanAmount >= 1000 ? `${cleanAmount / 1000}K` : String(cleanAmount);
   return `BFT-${tierCode}-${sizeLabel}`;
 }

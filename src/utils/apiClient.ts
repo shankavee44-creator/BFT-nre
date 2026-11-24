@@ -814,6 +814,121 @@ export async function apiPurchaseAccount(params: {
   }
 }
 
+export async function apiPurchaseChallengeFromSelfCapital(params: {
+  userId?: string;
+  email?: string;
+  fullName?: string;
+  accountId: string;
+  tierName: string;
+  size: number;
+  price: number;
+  selfCapitalBalance: number;
+  remainingSelfCapital: number;
+  dailyWithdrawalsUnlocked?: boolean;
+  referralCode?: string | null;
+}): Promise<Record<string, any>> {
+  let backendRes: Record<string, any> | null = null;
+  if (!IS_SUPABASE_EDGE_BASE) {
+    try {
+      const res = await fetch(`${API_BASE}/api/accounts/purchase-from-balance`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(params),
+      });
+      backendRes = await safeJsonResponse(res);
+    } catch {
+      backendRes = null;
+    }
+  }
+
+  try {
+    const effectiveUserId = params.userId || 'usr_bft_001';
+    let targetUuid = UUID_REGEX.test(effectiveUserId) ? effectiveUserId : null;
+    if (!targetUuid && params.email) {
+      const { data: p } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('email', params.email)
+        .maybeSingle();
+      if (p?.id) targetUuid = p.id;
+    }
+    if (!targetUuid) {
+      targetUuid = toValidUuid(effectiveUserId);
+    }
+
+    const packageName = `${params.tierName || 'Funded Challenge'} ($${Number(params.size || 5000).toLocaleString('en-US')})`;
+    const packageSku = `challenge_funded_challenge_${Number(params.size || 5000)}`;
+
+    // 1. Update Supabase profile self_balance & self_capital_balance
+    if (targetUuid) {
+      await supabase
+        .from('profiles')
+        .update({
+          self_balance: params.remainingSelfCapital,
+          self_capital_balance: params.remainingSelfCapital,
+        })
+        .eq('id', targetUuid)
+        .then(undefined, () => {});
+    }
+
+    // 2. Insert completed purchase record in user_purchases
+    const nowIso = new Date().toISOString();
+    const txRef = `SELF_CAPITAL_${Date.now()}`;
+    const { fullPayload, corePayload } = buildSupabaseUserPurchasePayload({
+      userId: targetUuid,
+      packageId: packageSku,
+      packageName,
+      packageSku,
+      amount: params.price,
+      packageAmount: params.price,
+      accountType: 'challenge',
+      txHash: txRef,
+      status: 'active',
+    });
+
+    await supabase
+      .from('user_purchases')
+      .insert(corePayload)
+      .then(undefined, () => {});
+
+    // 3. Record affiliate purchase & 3-tier commissions
+    recordAffiliateUserPurchase({
+      userId: effectiveUserId,
+      userEmail: params.email,
+      packageName,
+      packageSku,
+      amount: params.price,
+    });
+    if (targetUuid && targetUuid !== effectiveUserId) {
+      recordAffiliateUserPurchase({
+        userId: targetUuid,
+        userEmail: params.email,
+        packageName,
+        packageSku,
+        amount: params.price,
+      });
+    }
+
+    return {
+      ok: true,
+      backend: backendRes,
+      purchase: {
+        ...fullPayload,
+        id: backendRes?.purchase?.id || `PUR-${Date.now().toString(36).toUpperCase()}`,
+        account_id: params.accountId,
+        status: 'active',
+        created_at: nowIso,
+      },
+    };
+  } catch (err: any) {
+    return {
+      ok: Boolean(backendRes?.ok),
+      backend: backendRes,
+      error: err?.message,
+    };
+  }
+}
+
 export async function apiGetUserPurchases(params?: { userId?: string; email?: string }): Promise<Record<string, any>> {
   try {
     let targetUuid = params?.userId && UUID_REGEX.test(params.userId) ? params.userId : null;

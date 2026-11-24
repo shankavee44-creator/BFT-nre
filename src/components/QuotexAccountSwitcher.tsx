@@ -27,7 +27,11 @@ import {
   persistCustomDemoBalance,
   DEMO_BALANCE_LIMITS,
 } from '../utils/demoBalanceManager';
-import { isPersonalLiveAccount, isDemoAccount } from '../utils/propRules';
+import {
+  isPersonalLiveAccount,
+  isDemoAccount,
+  resolveAccountBadgeMeta,
+} from '../utils/propRules';
 import { resolveUserNumericId } from '../utils/p2pTransfer';
 
 interface QuotexAccountSwitcherProps {
@@ -119,12 +123,21 @@ export const QuotexAccountSwitcher: React.FC<QuotexAccountSwitcherProps> = ({
     ? Number(activeAccount.currentBalance ?? activeAccount.equity ?? activeAccount.initialBalance ?? 0)
     : liveBalance;
 
+  const activeBadge = resolveAccountBadgeMeta(activeAccount);
+  const isChallengeActive =
+    isPropActive &&
+    Boolean(activeAccount) &&
+    activeBadge.account_tier === 'CHALLENGE' &&
+    !activeBadge.isPassedChallenge;
+
   const activePillLabel = isDemoActive
     ? 'DEMO ACCOUNT'
     : isPropActive && activeAccount
-    ? activeAccount.phase === 'funded' || activeAccount.tier === 'instant'
-      ? `LIVE FUNDED · ${activeAccount.id}`
-      : `CHALLENGE · ${activeAccount.id}`
+    ? activeBadge.account_tier === 'REAL_FUNDED'
+      ? `REAL FUNDED · ${activeAccount.id}`
+      : activeBadge.isPassedChallenge
+      ? `PASSED · ${activeAccount.id}`
+      : 'Challenge'
     : 'LIVE ACCOUNT';
 
   const traderId = resolveUserNumericId(userProfile);
@@ -250,15 +263,38 @@ export const QuotexAccountSwitcher: React.FC<QuotexAccountSwitcherProps> = ({
         }`}
       >
         {/* Paper Plane Icon */}
-        <div className="w-6 h-6 rounded-lg bg-[#00e676]/15 flex items-center justify-center text-[#00e676] shrink-0">
+        <div
+          className={`w-6 h-6 rounded-lg flex items-center justify-center shrink-0 ${
+            isDemoActive
+              ? 'bg-amber-400/15 text-amber-400'
+              : activeBadge.account_tier === 'REAL_FUNDED'
+              ? 'bg-purple-500/20 text-purple-300'
+              : activeBadge.account_tier === 'CHALLENGE'
+              ? activeBadge.isPassedChallenge
+                ? 'bg-emerald-500/15 text-emerald-300'
+                : 'bg-red-500/15 text-red-400'
+              : 'bg-[#00e676]/15 text-[#00e676]'
+          }`}
+        >
           <Send className="w-3.5 h-3.5 rotate-[-25deg]" />
         </div>
 
         {/* Account Type and Balance */}
         <div className="text-left font-mono">
           <div
-            className={`text-[9px] font-black uppercase tracking-wider ${
-              isDemoActive ? 'text-amber-400' : isPropActive ? 'text-[#ff8800]' : 'text-[#00e676]'
+            data-testid="account-switcher-tier-label"
+            className={`text-[9px] font-black tracking-wider ${
+              isChallengeActive ? '' : 'uppercase '
+            }${
+              isDemoActive
+                ? 'text-amber-400'
+                : activeBadge.account_tier === 'REAL_FUNDED'
+                ? 'text-purple-400'
+                : activeBadge.account_tier === 'CHALLENGE'
+                ? activeBadge.isPassedChallenge
+                  ? 'text-emerald-400'
+                  : 'text-red-400'
+                : 'text-[#00e676]'
             }`}
           >
             {activePillLabel}
@@ -424,9 +460,14 @@ export const QuotexAccountSwitcher: React.FC<QuotexAccountSwitcherProps> = ({
                 </div>
                 {propAccounts.map((acc) => {
                   const isSelected = activeAccount?.id === acc.id;
+                  const badge = resolveAccountBadgeMeta(acc);
+                  const isRealFunded = badge.account_tier === 'REAL_FUNDED';
+                  const isPassed = badge.isPassedChallenge;
+                  const isChallengeRow = badge.account_tier === 'CHALLENGE' && !isPassed;
                   return (
                     <div
                       key={acc.id}
+                      data-testid={`switcher-account-row-${acc.id}`}
                       onClick={() => {
                         soundEngine.playUiClick();
                         onSelectAccount(acc.id);
@@ -434,7 +475,11 @@ export const QuotexAccountSwitcher: React.FC<QuotexAccountSwitcherProps> = ({
                       }}
                       className={`p-2.5 rounded-xl border transition-all cursor-pointer select-none flex items-center gap-2.5 ${
                         isSelected
-                          ? 'bg-[#151722] border-[#ff8800]/60 shadow-md shadow-[#ff8800]/10'
+                          ? isRealFunded
+                            ? 'bg-[#151722] border-purple-500/70 shadow-md shadow-purple-500/15'
+                            : isPassed
+                            ? 'bg-[#151722] border-emerald-500/60 shadow-md shadow-emerald-500/10'
+                            : 'bg-[#151722] border-red-500/60 shadow-md shadow-red-500/10'
                           : 'bg-white/5 hover:bg-white/10 border-white/10'
                       }`}
                     >
@@ -446,10 +491,24 @@ export const QuotexAccountSwitcher: React.FC<QuotexAccountSwitcherProps> = ({
                         {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
                       </div>
                       <div className="flex-1 min-w-0 font-mono">
-                        <div className="flex items-center justify-between gap-1">
-                          <span className="text-[11px] font-bold text-white truncate">{acc.id}</span>
-                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#ff8800]/15 text-[#ff8800] font-black uppercase">
-                            {acc.phase === 'funded' || acc.tier === 'instant' ? 'FUNDED' : acc.tierName}
+                        <div className="flex items-center justify-between gap-1.5">
+                          <span className="text-[11px] font-bold text-white truncate">
+                            {isChallengeRow ? 'Challenge' : acc.id}
+                          </span>
+                          <span
+                            data-testid={`switcher-account-badge-${acc.id}`}
+                            data-badge-color={isPassed ? 'emerald' : badge.badge_color}
+                            className={`text-[9px] px-1.5 py-0.5 rounded font-black ${
+                              isChallengeRow ? '' : 'uppercase '
+                            }border whitespace-nowrap ${
+                              isRealFunded
+                                ? 'bg-purple-500/20 text-purple-300 border-purple-500/50'
+                                : isPassed
+                                ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/45'
+                                : 'bg-red-500/20 text-red-400 border-red-500/45'
+                            }`}
+                          >
+                            {isChallengeRow ? 'Challenge' : badge.label}
                           </span>
                         </div>
                         <div className="text-sm font-black text-white mt-0.5">

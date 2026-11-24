@@ -31,6 +31,8 @@ interface QuotexMobileNavProps {
   isSoundMuted: boolean;
   onToggleSound: () => void;
   onOpenCopyTrading: () => void;
+  onOpenLiveChat?: () => void;
+  unreadChatCount?: number;
   signalsCount?: number;
 }
 
@@ -45,6 +47,8 @@ export const QuotexMobileNav: React.FC<QuotexMobileNavProps> = React.memo(({
   isSoundMuted,
   onToggleSound,
   onOpenCopyTrading,
+  onOpenLiveChat,
+  unreadChatCount = 0,
   signalsCount = 3,
 }) => {
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
@@ -75,29 +79,56 @@ export const QuotexMobileNav: React.FC<QuotexMobileNavProps> = React.memo(({
           <span className="text-[10px] font-medium tracking-tight">Chart</span>
         </button>
 
-        {/* Support / Live Chat Button */}
-        <a
-          href="https://t.me/bft_admin"
-          target="_blank"
-          rel="noopener noreferrer"
-          data-testid="mobile-nav-chat"
-          onClick={() => {
-            soundEngine.playUiClick();
-          }}
-          className={`flex flex-col items-center justify-center flex-1 min-h-[44px] py-1 relative transition-colors cursor-pointer ${
-            activeTab === 'chat'
-              ? 'text-[#ff8800]'
-              : 'text-[#848e9c] hover:text-[#d1d4dc]'
-          }`}
-        >
-          <div className="relative">
-            <MessageSquare className="w-5 h-5 mb-0.5" />
-            <span className="absolute -top-1 -right-2 bg-[#00e676] text-black text-[8px] font-black px-1 rounded-full min-w-[13px] text-center leading-3">
-              1
-            </span>
-          </div>
-          <span className="text-[10px] font-medium tracking-tight">Support Desk</span>
-        </a>
+        {/* Live Chat Button */}
+        {onOpenLiveChat ? (
+          <button
+            type="button"
+            data-testid="mobile-nav-chat"
+            onClick={() => {
+              onChangeTab('chat');
+              onOpenLiveChat();
+              soundEngine.playUiClick();
+            }}
+            className={`flex flex-col items-center justify-center flex-1 min-h-[44px] py-1 relative transition-colors cursor-pointer ${
+              activeTab === 'chat'
+                ? 'text-cyan-400'
+                : 'text-[#848e9c] hover:text-[#d1d4dc]'
+            }`}
+          >
+            <div className="relative">
+              <MessageSquare className="w-5 h-5 mb-0.5" />
+              {unreadChatCount > 0 && (
+                <span className="absolute -top-1 -right-2 bg-cyan-400 text-black text-[8px] font-black px-1 rounded-full min-w-[13px] text-center leading-3">
+                  {unreadChatCount > 9 ? '9+' : unreadChatCount}
+                </span>
+              )}
+            </div>
+            <span className="text-[10px] font-medium tracking-tight">Live Chat</span>
+          </button>
+        ) : (
+          <a
+            href="https://t.me/bft_admin"
+            target="_blank"
+            rel="noopener noreferrer"
+            data-testid="mobile-nav-chat"
+            onClick={() => {
+              soundEngine.playUiClick();
+            }}
+            className={`flex flex-col items-center justify-center flex-1 min-h-[44px] py-1 relative transition-colors cursor-pointer ${
+              activeTab === 'chat'
+                ? 'text-[#ff8800]'
+                : 'text-[#848e9c] hover:text-[#d1d4dc]'
+            }`}
+          >
+            <div className="relative">
+              <MessageSquare className="w-5 h-5 mb-0.5" />
+              <span className="absolute -top-1 -right-2 bg-[#00e676] text-black text-[8px] font-black px-1 rounded-full min-w-[13px] text-center leading-3">
+                1
+              </span>
+            </div>
+            <span className="text-[10px] font-medium tracking-tight">Support Desk</span>
+          </a>
+        )}
 
         {/* Profile / KYC Button */}
         <button

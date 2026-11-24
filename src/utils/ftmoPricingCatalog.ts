@@ -90,8 +90,11 @@ export interface BftPricingCardSpec {
   maxDailyLossPercent: number;
   maxLossPercent: number;
   maxRiskPerTradePercent: number;
+  maxCombinedRiskPercent: number;
+  maxOpenTradesPerPair: number;
   minTradingDaysLabel: string;
   tradingPeriodLabel: string;
+  withdrawalCycleLabel: string;
   refundLabel: string;
   refundBadge: string | null;
   rewardsLabel: string;
@@ -103,50 +106,48 @@ export interface BftPricingCardSpec {
 }
 
 /**
- * Our platform's exact original 6 account sizes from PACKAGES (ordered largest to smallest to match the FTMO grid).
+ * Unified BFT Funded Challenge account sizes ($200,000 down to $5,000).
  */
-export const BFT_ORIGINAL_ACCOUNT_SIZES = [100000, 50000, 25000, 10000, 5000, 2500] as const;
+export const BFT_ORIGINAL_ACCOUNT_SIZES = [200000, 100000, 50000, 25000, 10000, 5000] as const;
 
 export function getCurrencyConfig(code: PricingCurrencyCode): CurrencyConfig {
   return PRICING_CURRENCIES.find((c) => c.code === code) || PRICING_CURRENCIES[0];
 }
 
 /**
- * Builds the FTMO-styled card specifications directly from our original PACKAGES & calculateDiscountedPrice in propRules.ts.
+ * Builds the unified Funded Challenge card specifications directly from PACKAGES & calculateDiscountedPrice.
  */
-export function getBftCardsForTier(
-  tier: ChallengeTier,
-  activePromoCode: PromoCodeType = 'SPOOKY40',
+export function getUnifiedChallengeCards(
+  activePromoCode: PromoCodeType = 'NONE',
   dailyWithdrawalsAddOn: boolean = false
 ): BftPricingCardSpec[] {
-  const tierPackages = PACKAGES.filter((p) => p.tier === tier);
-
-  // Order descending ($100,000 -> $50,000 -> $25,000 -> $10,000 -> $5,000 -> $2,500)
-  const orderedPackages = [...tierPackages].sort((a, b) => b.size - a.size);
+  // Order descending ($200,000 -> $100,000 -> $50,000 -> $25,000 -> $10,000 -> $5,000)
+  const orderedPackages = [...PACKAGES].sort((a, b) => b.size - a.size);
 
   return orderedPackages.map((pkg) => {
     const pricing = calculateDiscountedPrice(pkg.price, activePromoCode, dailyWithdrawalsAddOn);
 
-    const phase1TargetPercent = pkg.profitTarget ?? (pkg.tier === 'instant' ? 0 : pkg.tier === 'one-step' ? 30 : 25);
-    const phase2TargetPercent =
-      pkg.tier === 'two-step' ? (pkg.step2Target ?? 15) : null;
-    const maxDailyLossPercent = pkg.maxDailyDrawdown ?? (pkg.tier === 'instant' ? 6 : pkg.tier === 'one-step' ? 10 : 8);
-    const maxLossPercent = pkg.maxOverallLoss ?? (pkg.tier === 'instant' ? 12 : pkg.tier === 'one-step' ? 15 : 20);
+    const phase1TargetPercent = pkg.profitTarget ?? 30;
+    const phase2TargetPercent = null;
+    const maxDailyLossPercent = pkg.maxDailyDrawdown ?? 0;
+    const maxLossPercent = pkg.maxOverallLoss ?? 10;
     const maxRiskPerTradePercent = pkg.maxRiskPerTradePercent ?? 5;
+    const maxCombinedRiskPercent = 5;
+    const maxOpenTradesPerPair = 1;
 
-    const minTradingDaysLabel =
-      pkg.tier === 'instant' ? 'None (Direct Live)' : '5 days (≥0.5%/day)';
-
+    const minTradingDaysLabel = pkg.minTradingDaysText || '5 days (≥1%/day)';
     const tradingPeriodLabel = pkg.unlimitedTime !== false ? 'Unlimited' : '30 Days';
+    const withdrawalCycleLabel = dailyWithdrawalsAddOn
+      ? 'Daily (+15% Active)'
+      : 'Weekly (7-Day 1st Wait)';
 
-    const refundLabel = pkg.refundOnFirstPayout ? 'Yes' : 'Direct Live';
+    const refundLabel = pkg.refundOnFirstPayout ? 'Yes' : 'No';
     const refundBadge = pkg.refundOnFirstPayout ? '100%' : null;
 
     const splitStart = pkg.payoutSplit ?? 80;
     const splitUpgraded = pkg.upgradedPayoutSplit ?? 90;
     const rewardsLabel = `${splitStart}% → ${splitUpgraded}%`;
 
-    // Realistic average monthly trader reward for each BFT account size (~18% of account size at 80-90% split)
     const avgRewardUsd = Math.round(pkg.size * 0.145);
 
     return {
@@ -154,14 +155,17 @@ export function getBftCardsForTier(
       size: pkg.size,
       tier: pkg.tier,
       tierName: pkg.tierName,
-      isBestValue: Boolean(pkg.popular), // $10,000 is marked popular: true in original PACKAGES
+      isBestValue: Boolean(pkg.popular),
       phase1TargetPercent,
       phase2TargetPercent,
       maxDailyLossPercent,
       maxLossPercent,
       maxRiskPerTradePercent,
+      maxCombinedRiskPercent,
+      maxOpenTradesPerPair,
       minTradingDaysLabel,
       tradingPeriodLabel,
+      withdrawalCycleLabel,
       refundLabel,
       refundBadge,
       rewardsLabel,
@@ -172,6 +176,14 @@ export function getBftCardsForTier(
       avgRewardUsd,
     };
   });
+}
+
+export function getBftCardsForTier(
+  _tier?: ChallengeTier,
+  activePromoCode: PromoCodeType = 'NONE',
+  dailyWithdrawalsAddOn: boolean = false
+): BftPricingCardSpec[] {
+  return getUnifiedChallengeCards(activePromoCode, dailyWithdrawalsAddOn);
 }
 
 export function formatFtmoCurrencyAmount(amount: number, symbol: string): string {

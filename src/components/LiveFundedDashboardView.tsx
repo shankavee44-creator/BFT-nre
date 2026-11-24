@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   Activity,
   ArrowRight,
+  Award,
   BarChart3,
   Clock,
   Lock,
@@ -21,7 +22,9 @@ import {
 import {
   isDemoAccount,
   isLiveFundedAccount,
+  isPassedChallengeAccount,
   isPersonalLiveAccount,
+  isRealFundedAccount,
 } from '../utils/propRules';
 import { soundEngine } from '../utils/soundEffects';
 
@@ -36,6 +39,7 @@ interface LiveFundedDashboardViewProps {
   onOpenAnalytics: (account: TradingAccount) => void;
   onRequestPayout: (accountId: string) => void;
   onOpenChallengeModal: () => void;
+  onOpenPassedCertificate?: (account: TradingAccount) => void;
 }
 
 export const LiveFundedDashboardView: React.FC<LiveFundedDashboardViewProps> = ({
@@ -48,6 +52,7 @@ export const LiveFundedDashboardView: React.FC<LiveFundedDashboardViewProps> = (
   onOpenAnalytics,
   onRequestPayout,
   onOpenChallengeModal,
+  onOpenPassedCertificate,
 }) => {
   const fundedOrChallengeAccounts = useMemo(() => {
     const propAccounts = accounts.filter(
@@ -117,8 +122,9 @@ export const LiveFundedDashboardView: React.FC<LiveFundedDashboardViewProps> = (
             No Funded Account Provisioned Yet
           </h3>
           <p className="text-xs sm:text-sm text-slate-400 leading-relaxed">
-            Activate an Instant Funded account or pass a 1-Step / 2-Step Evaluation to unlock your live
-            funded trading terminal, 80%–90% profit split payouts, and real-time drawdown telemetry.
+            Pass a Unified Funded Challenge (30% profit target &amp; 5 qualifying ≥1% trading days, 10%
+            max overall loss) to auto-unlock your Purple Real Funded trading account, Passed
+            Certificate, and 90% net profit withdrawals (funded principal locked, 7-day first wait).
           </p>
         </div>
         <div className="flex flex-wrap items-center justify-center gap-3 pt-1">
@@ -141,8 +147,17 @@ export const LiveFundedDashboardView: React.FC<LiveFundedDashboardViewProps> = (
 
   const isHardBreach = Boolean(breachState?.isHardBreach);
   const isSoftBreach = Boolean(breachState?.isSoftBreach);
-  const isPassedOrFunded =
-    isLiveFundedAccount(selectedAccount) || matchedWallet?.account_status === 'PASSED';
+  const isRealFunded = Boolean(isRealFundedAccount(selectedAccount) || matchedWallet?.is_real_funded);
+  const isPassedChallenge = Boolean(
+    isPassedChallengeAccount(selectedAccount) ||
+      (!isRealFunded && matchedWallet?.account_status === 'PASSED')
+  );
+  const hasUnlockedCertificate = Boolean(
+    selectedAccount.certificate_unlocked ||
+      matchedWallet?.certificate_unlocked ||
+      isPassedChallenge ||
+      (isRealFunded && Boolean(selectedAccount.certificateId || matchedWallet?.certificate_id))
+  );
 
   const dailyMeterTone =
     metrics.dailyDrawdownRatio >= 80
@@ -176,28 +191,53 @@ export const LiveFundedDashboardView: React.FC<LiveFundedDashboardViewProps> = (
             </h2>
             <span
               data-testid="live-funded-status-badge"
-              className={`px-3 py-1 rounded-lg text-[11px] font-mono font-black uppercase border whitespace-nowrap ${
+              data-badge-color={
+                isHardBreach
+                  ? 'red'
+                  : isSoftBreach
+                  ? 'amber'
+                  : isRealFunded
+                  ? 'purple'
+                  : isPassedChallenge
+                  ? 'emerald'
+                  : 'red'
+              }
+              className={`px-3 py-1 rounded-lg text-[11px] font-mono font-black ${
+                !isHardBreach && !isSoftBreach && !isRealFunded && !isPassedChallenge
+                  ? ''
+                  : 'uppercase '
+              }border whitespace-nowrap ${
                 isHardBreach
                   ? 'bg-rose-950/90 text-rose-300 border-rose-500/60'
                   : isSoftBreach
                   ? 'bg-amber-950/90 text-amber-300 border-amber-500/60'
-                  : isPassedOrFunded
-                  ? 'bg-[#38BDF8]/15 text-[#00E5FF] border-[#38BDF8]/50'
-                  : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
+                  : isRealFunded
+                  ? 'bg-purple-500/20 text-purple-300 border-purple-500/60 shadow-[0_0_16px_rgba(168,85,247,0.22)]'
+                  : isPassedChallenge
+                  ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/50'
+                  : 'bg-red-500/20 text-red-400 border-red-500/50'
               }`}
             >
               {isHardBreach
                 ? 'HARD BREACH'
                 : isSoftBreach
                 ? `SOFT BREACH • ${breachState?.countdownFormatted || '00:00:00'}`
-                : isPassedOrFunded
-                ? 'LIVE FUNDED'
-                : 'EVALUATION ACTIVE'}
+                : isRealFunded
+                ? 'REAL FUNDED'
+                : isPassedChallenge
+                ? 'PASSED'
+                : 'Challenge'}
             </span>
           </div>
           <p className="text-xs text-slate-400 font-mono mt-1">
-            {formatChallengeTierLabel(selectedAccount)} • Account ID:{' '}
-            <span className="text-[#38BDF8] font-bold">{metrics.accountId}</span>
+            {!isRealFunded && !isPassedChallenge ? (
+              <span className="text-red-400 font-bold">Challenge</span>
+            ) : (
+              <>
+                {formatChallengeTierLabel(selectedAccount)} • Account ID:{' '}
+                <span className="text-[#38BDF8] font-bold">{metrics.accountId}</span>
+              </>
+            )}
           </p>
         </div>
 
@@ -213,11 +253,17 @@ export const LiveFundedDashboardView: React.FC<LiveFundedDashboardViewProps> = (
               }}
               className="px-3.5 py-2.5 min-h-[42px] rounded-xl bg-[#0B111A] border border-[#38BDF8]/35 text-xs font-mono font-bold text-white focus:outline-none focus:border-[#00E5FF]"
             >
-              {fundedOrChallengeAccounts.map((acc) => (
-                <option key={acc.id} value={acc.id} className="bg-[#06090F] text-white">
-                  {acc.id} — ${Number(acc.size || acc.initialBalance).toLocaleString()} ({acc.phase})
-                </option>
-              ))}
+              {fundedOrChallengeAccounts.map((acc) => {
+                const isChallengeOption =
+                  !isRealFundedAccount(acc) && !isPassedChallengeAccount(acc);
+                return (
+                  <option key={acc.id} value={acc.id} className="bg-[#06090F] text-white">
+                    {isChallengeOption
+                      ? 'Challenge'
+                      : `${acc.id} — $${Number(acc.size || acc.initialBalance).toLocaleString()} (${acc.phase})`}
+                  </option>
+                );
+              })}
             </select>
           </div>
         )}
@@ -299,25 +345,30 @@ export const LiveFundedDashboardView: React.FC<LiveFundedDashboardViewProps> = (
 
         <div className="p-4 sm:p-5 rounded-2xl bg-[#0B111A] border border-[#38BDF8]/30">
           <div className="text-[10.5px] uppercase tracking-wider text-slate-400">
-            Profit Split
+            {metrics.isRealFunded ? 'Real Funded Payout Rule' : 'Profit Split'}
           </div>
           <div
             data-testid="live-funded-profit-split"
             className="text-xl sm:text-2xl font-black text-white mt-1.5 tabular-nums"
           >
-            {metrics.profitSplitPercent}% to Trader
+            {metrics.profitSplitPercent}% Profit Only
           </div>
-          <div className="text-[11px] text-[#38BDF8] mt-2 flex items-center gap-1">
-            <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+          <div
+            data-testid="live-funded-principal-lock-note"
+            className="text-[11px] text-purple-300 mt-2 flex items-center gap-1"
+          >
+            <Lock className="w-3.5 h-3.5 shrink-0 text-purple-400" />
             <span>
-              {metrics.scalingActive ? '90% Scaling Plan Unlocked' : 'Scales to 90% after 3 months'}
+              {metrics.isRealFunded
+                ? `Principal Locked ($${metrics.initialBalance.toLocaleString('en-US')}) · Max Withdrawable: $${metrics.maxWithdrawableProfit.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                : 'Unlocks 90% profit-only payouts on Real Funded'}
             </span>
           </div>
         </div>
 
         <div className="p-4 sm:p-5 rounded-2xl bg-[#0B111A] border border-[#38BDF8]/30">
           <div className="text-[10.5px] uppercase tracking-wider text-slate-400">
-            0.5% Qualifying Days
+            1% Qualifying Days
           </div>
           <div
             data-testid="live-funded-profitable-days"
@@ -326,52 +377,75 @@ export const LiveFundedDashboardView: React.FC<LiveFundedDashboardViewProps> = (
             {metrics.completedProfitableDays} / {metrics.minProfitableDays} Days
           </div>
           <div className="text-[11px] text-slate-400 mt-2 tabular-nums">
-            ≥ ${metrics.qualifyingDayThresholdUsd.toFixed(0)} daily net profit (0.5%)
+            ≥ ${metrics.qualifyingDayThresholdUsd.toFixed(0)} daily net profit (1%)
           </div>
         </div>
       </div>
 
       {/* Drawdown Limit Meters */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 font-mono">
-        {/* Daily Drawdown Limit Tracker */}
-        <div
-          data-testid="live-funded-daily-dd-card"
-          className="p-5 rounded-2xl bg-[#0B111A] border border-[#38BDF8]/30 space-y-3"
-        >
-          <div className="flex items-center justify-between gap-2">
-            <div>
-              <div className="text-[11px] uppercase tracking-wider text-slate-400">
-                Daily Drawdown Limit ({metrics.dailyDrawdownLimitPercent}%)
+        {/* Single & Combined Open Risk / Daily Cap Card */}
+        {metrics.dailyDrawdownLimitPercent > 0 ? (
+          <div
+            data-testid="live-funded-daily-dd-card"
+            className="p-5 rounded-2xl bg-[#0B111A] border border-[#38BDF8]/30 space-y-3"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <div className="text-[11px] uppercase tracking-wider text-slate-400">
+                  Daily Drawdown Limit ({metrics.dailyDrawdownLimitPercent}%)
+                </div>
+                <div className="text-sm font-black text-white mt-0.5 tabular-nums">
+                  ${metrics.dailyDrawdownUsed.toFixed(2)} / ${metrics.dailyDrawdownLimit.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                </div>
               </div>
-              <div className="text-sm font-black text-white mt-0.5 tabular-nums">
-                ${metrics.dailyDrawdownUsed.toFixed(2)} / ${metrics.dailyDrawdownLimit.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-              </div>
+              <span
+                className={`px-2.5 py-1 rounded-lg text-xs font-black tabular-nums border ${
+                  metrics.dailyDrawdownRatio >= 80
+                    ? 'bg-rose-500/15 text-rose-300 border-rose-500/40'
+                    : metrics.dailyDrawdownRatio >= 55
+                    ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+                    : 'bg-[#38BDF8]/15 text-[#38BDF8] border-[#38BDF8]/40'
+                }`}
+              >
+                {metrics.dailyDrawdownRatio.toFixed(1)}% Used
+              </span>
             </div>
-            <span
-              className={`px-2.5 py-1 rounded-lg text-xs font-black tabular-nums border ${
-                metrics.dailyDrawdownRatio >= 80
-                  ? 'bg-rose-500/15 text-rose-300 border-rose-500/40'
-                  : metrics.dailyDrawdownRatio >= 55
-                  ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
-                  : 'bg-[#38BDF8]/15 text-[#38BDF8] border-[#38BDF8]/40'
-              }`}
-            >
-              {metrics.dailyDrawdownRatio.toFixed(1)}% Used
-            </span>
+            <div className="w-full h-2.5 rounded-full bg-[#06090F] border border-white/10 overflow-hidden">
+              <div
+                className={`h-full transition-all duration-300 ${dailyMeterTone}`}
+                style={{ width: `${Math.min(100, metrics.dailyDrawdownRatio)}%` }}
+              />
+            </div>
+            <div className="flex items-center justify-between text-[11px] text-slate-400 tabular-nums">
+              <span>Remaining Buffer</span>
+              <span className="text-slate-200 font-bold">
+                ${Math.max(0, metrics.dailyDrawdownLimit - metrics.dailyDrawdownUsed).toFixed(2)}
+              </span>
+            </div>
           </div>
-          <div className="w-full h-2.5 rounded-full bg-[#06090F] border border-white/10 overflow-hidden">
-            <div
-              className={`h-full transition-all duration-300 ${dailyMeterTone}`}
-              style={{ width: `${Math.min(100, metrics.dailyDrawdownRatio)}%` }}
-            />
+        ) : (
+          <div
+            data-testid="live-funded-daily-dd-card"
+            className="p-5 rounded-2xl bg-[#0B111A] border border-[#38BDF8]/30 space-y-2.5"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-[11px] uppercase tracking-wider text-slate-400">
+                Strict Risk &amp; Exposure Guard (Hard Breach)
+              </div>
+              <span className="px-2.5 py-1 rounded-lg text-[10px] font-black border bg-rose-500/15 text-rose-300 border-rose-500/40">
+                ZERO TOLERANCE
+              </span>
+            </div>
+            <div className="text-sm font-black text-white tabular-nums">
+              Max 5% Single / Combined Open Risk (≤ ${(metrics.currentBalance * 0.05).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+            </div>
+            <div className="text-[11px] text-slate-400 leading-relaxed">
+              No separate daily-only cap (governed by 10% Max Overall Loss). Max 1 open trade per
+              currency pair · No Martingale · No Hedging. Weekly payouts (7-day first wait).
+            </div>
           </div>
-          <div className="flex items-center justify-between text-[11px] text-slate-400 tabular-nums">
-            <span>Remaining Buffer</span>
-            <span className="text-slate-200 font-bold">
-              ${Math.max(0, metrics.dailyDrawdownLimit - metrics.dailyDrawdownUsed).toFixed(2)}
-            </span>
-          </div>
-        </div>
+        )}
 
         {/* Max Drawdown Limit Meter */}
         <div
@@ -477,6 +551,21 @@ export const LiveFundedDashboardView: React.FC<LiveFundedDashboardViewProps> = (
           <Zap className="w-4 h-4 text-emerald-400 shrink-0" />
           <span>Request Payout</span>
         </button>
+
+        {hasUnlockedCertificate && onOpenPassedCertificate && (
+          <button
+            type="button"
+            data-testid="live-funded-view-certificate-btn"
+            onClick={() => {
+              soundEngine.playUiClick();
+              onOpenPassedCertificate(selectedAccount);
+            }}
+            className="px-5 py-3 min-h-[46px] rounded-xl bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/50 text-purple-200 font-mono text-xs font-black flex items-center justify-center gap-2 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+          >
+            <Award className="w-4 h-4 text-purple-300 shrink-0" />
+            <span>Passed Certificate</span>
+          </button>
+        )}
       </div>
     </div>
   );
