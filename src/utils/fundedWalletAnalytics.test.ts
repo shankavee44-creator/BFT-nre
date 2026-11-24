@@ -5,8 +5,10 @@ import {
   applyClosedTradeToFundedWallet,
   buildInitialFundedWalletFromAccount,
   formatBreachCountdown,
+  formatChallengeTierLabel,
   normalizeSupabaseFundedWalletRow,
   resolveFundedWalletBreachState,
+  resolveLiveFundedAccountMetrics,
 } from './fundedWalletAnalytics.ts';
 
 function makeChallengeAccount(overrides: Partial<TradingAccount> = {}): TradingAccount {
@@ -194,3 +196,49 @@ test('resolveFundedWalletBreachState enforces permanent HARD_BREACH and formatBr
   assert.equal(breach.shouldAutoUnlock, false);
   assert.match(breach.breachReason || '', /Max Drawdown Limit Exceeded/i);
 });
+
+test('resolveLiveFundedAccountMetrics derives live balance, equity, profit split, and drawdown ratios strictly from account and wallet state', () => {
+  const acc = makeChallengeAccount({
+    id: 'BFT-50K-LIVE',
+    size: 50000,
+    initialBalance: 50000,
+    currentBalance: 54200,
+    equity: 54200,
+    phase: 'live',
+    monthsCompleted: 1,
+    scalingActive: false,
+  });
+  const wallet = normalizeSupabaseFundedWalletRow({
+    id: 'w-live-1',
+    account_id: 'BFT-50K-LIVE',
+    user_id: 'u-1',
+    challenge_type: 'Two-Step Challenge',
+    account_status: 'ACTIVE',
+    initial_balance: 50000,
+    current_balance: 54200,
+    current_equity: 54500,
+    daily_drawdown_limit_percent: 8,
+    daily_drawdown_limit_amount: 4000,
+    current_daily_drawdown: 400,
+    max_drawdown_limit_percent: 20,
+    max_drawdown_limit_amount: 10000,
+    current_max_drawdown: 500,
+    completed_profitable_days: 3,
+    min_profitable_days: 5,
+  });
+
+  const metrics = resolveLiveFundedAccountMetrics(acc, wallet);
+  assert.equal(formatChallengeTierLabel(acc), '$50,000 2-Step Funded');
+  assert.equal(metrics.accountId, 'BFT-50K-LIVE');
+  assert.equal(metrics.initialBalance, 50000);
+  assert.equal(metrics.currentBalance, 54200);
+  assert.equal(metrics.liveEquity, 54500);
+  assert.equal(metrics.netProfit, 4200);
+  assert.equal(metrics.netProfitPercent, 8.4);
+  assert.equal(metrics.profitSplitPercent, 80);
+  assert.equal(metrics.dailyDrawdownRatio, 10);
+  assert.equal(metrics.maxDrawdownRatio, 5);
+  assert.equal(metrics.completedProfitableDays, 3);
+  assert.equal(metrics.qualifyingDayThresholdUsd, 250);
+});
+

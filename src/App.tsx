@@ -11,7 +11,6 @@ import { DirectDepositModal } from './components/DirectDepositModal';
 import { WithdrawalModal } from './components/WithdrawalModal';
 import { UserDashboard } from './components/UserDashboard';
 import { AuthModal } from './components/AuthModal';
-import { CertificateModal } from './components/CertificateModal';
 import { AdminDashboard } from './components/AdminDashboard';
 import { GitHubSyncModal } from './components/GitHubSyncModal';
 import { LiveChatWidget } from './components/LiveChatWidget';
@@ -284,19 +283,6 @@ export default function App() {
       window.removeEventListener('bft-open-copy-trading-modal', handleOpenCopy);
     };
   }, []);
-
-  // Certificate Modal state when passing Step 1 / Phase 2
-  const [certificateModalState, setCertificateModalState] = useState<{
-    isOpen: boolean;
-    certificateId: string;
-    passedAccount: TradingAccount | null;
-    deployedAccount: TradingAccount | null;
-  }>({
-    isOpen: false,
-    certificateId: '',
-    passedAccount: null,
-    deployedAccount: null,
-  });
 
   // Initial load & Direct Referral URL Detection -> Auto-Open Registration Modal
   useEffect(() => {
@@ -1524,12 +1510,12 @@ export default function App() {
         }).catch(() => {});
         insertPurchasedFundedWallet(deployed, userProfile.id).catch(() => {});
 
-        setCertificateModalState({
-          isOpen: true,
-          certificateId: apiRes.certificateId || deployed.certificateId || `CERT-${accountToPass.id}`,
-          passedAccount: locked,
-          deployedAccount: deployed,
-        });
+        if (deployed.phase === 'phase_2') {
+          setCurrentTab('terminal');
+        } else {
+          setDashboardSubTab('live_funded');
+          handleNavigateTab('dashboard', { accountId: deployed.id });
+        }
         return;
       }
     } catch {
@@ -1585,12 +1571,12 @@ export default function App() {
     }).catch(() => {});
     insertPurchasedFundedWallet(deployedNext, userProfile.id).catch(() => {});
 
-    setCertificateModalState({
-      isOpen: true,
-      certificateId: result.certificateId,
-      passedAccount: lockedPrev,
-      deployedAccount: deployedNext,
-    });
+    if (deployedNext.phase === 'phase_2') {
+      setCurrentTab('terminal');
+    } else {
+      setDashboardSubTab('live_funded');
+      handleNavigateTab('dashboard', { accountId: deployedNext.id });
+    }
   };
 
   const handlePurchaseRecorded = React.useCallback((purchase: NormalizedPurchaseRecord) => {
@@ -1686,7 +1672,7 @@ export default function App() {
     const path =
       urlParams.get('tab') ||
       (urlParams.get('autostart') === '1' ? 'terminal' : rawPath || 'home');
-    const validTabs = ['home', 'terminal', 'rules', 'affiliate', 'withdrawals', 'dashboard', 'certificates', 'faq'];
+    const validTabs = ['home', 'terminal', 'rules', 'affiliate', 'withdrawals', 'dashboard', 'faq'];
     if (validTabs.includes(path) && (path !== currentTab || Boolean(urlAccId))) {
       handleNavigateTab(path, urlAccId ? { accountId: urlAccId } : undefined);
     }
@@ -2066,7 +2052,7 @@ export default function App() {
           </div>
         )}
 
-        {(currentTab === 'dashboard' || currentTab === 'affiliate' || currentTab === 'certificates') && (
+        {(currentTab === 'dashboard' || currentTab === 'affiliate') && (
           <UserDashboard
             userProfile={userProfile}
             onUpdateProfile={handleUpdateProfile}
@@ -2091,13 +2077,7 @@ export default function App() {
               }, 100);
             }}
             onPassChallengePhase={handlePassChallengePhase}
-            initialTab={
-              currentTab === 'affiliate'
-                ? 'affiliate'
-                : currentTab === 'certificates'
-                ? 'certificates'
-                : dashboardSubTab
-            }
+            initialTab={currentTab === 'affiliate' ? 'affiliate' : dashboardSubTab}
             onLogout={handleLogout}
             onOpenAdminDashboard={() => setIsAdminDashboardOpen(true)}
           />
@@ -2329,37 +2309,6 @@ export default function App() {
           }}
         />
       )}
-
-      <CertificateModal
-        isOpen={certificateModalState.isOpen}
-        onClose={() => setCertificateModalState((prev) => ({ ...prev, isOpen: false }))}
-        traderName={userProfile.fullName}
-        certificateId={certificateModalState.certificateId}
-        passedAccount={certificateModalState.passedAccount}
-        deployedAccount={certificateModalState.deployedAccount}
-        onLaunchRealAccount={() => {
-          if (certificateModalState.deployedAccount) {
-            handleSelectAccount(certificateModalState.deployedAccount.id);
-            const isPhase2 = certificateModalState.deployedAccount.phase === 'phase_2';
-            if (isPhase2) {
-              setCurrentTab('terminal');
-            } else {
-              setDashboardSubTab('live_funded');
-              handleNavigateTab('dashboard', { accountId: certificateModalState.deployedAccount.id });
-              setTimeout(() => {
-                window.dispatchEvent(
-                  new CustomEvent('bft-select-dashboard-subtab', {
-                    detail: { subTab: 'live_funded' },
-                  })
-                );
-              }, 30);
-            }
-          } else {
-            setDashboardSubTab('live_funded');
-            handleNavigateTab('dashboard');
-          }
-        }}
-      />
 
       {/* Institutional Admin Dashboard (Protected by RBAC & Key Challenge) */}
       {isAdminDashboardOpen && (

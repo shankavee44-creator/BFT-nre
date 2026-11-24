@@ -1,6 +1,7 @@
 import { supabase } from './supabase.ts';
 import type { TradingAccount } from '../types/index.ts';
 import {
+  calculateWithdrawalBreakdown,
   getDynamicAccountLimits,
   isDemoAccount,
   isPersonalLiveAccount,
@@ -1193,3 +1194,167 @@ export function subscribePurchasedFundedWalletsRealtime(params: {
     supabase.removeChannel(channel).catch(() => {});
   };
 }
+
+export interface LiveFundedAccountMetrics {
+  accountId: string;
+  tierLabel: string;
+  initialBalance: number;
+  currentBalance: number;
+  liveEquity: number;
+  netProfit: number;
+  netProfitPercent: number;
+  profitSplitPercent: number;
+  scalingActive: boolean;
+  dailyDrawdownUsed: number;
+  dailyDrawdownLimit: number;
+  dailyDrawdownLimitPercent: number;
+  dailyDrawdownRatio: number;
+  maxDrawdownUsed: number;
+  maxDrawdownLimit: number;
+  maxDrawdownLimitPercent: number;
+  maxDrawdownRatio: number;
+  completedProfitableDays: number;
+  minProfitableDays: number;
+  qualifyingDayThresholdUsd: number;
+}
+
+export function formatChallengeTierLabel(account?: Partial<TradingAccount> | null): string {
+  const size = Math.max(0, Number(account?.size || account?.initialBalance || 0));
+  const formattedSize = size > 0 ? `$${size.toLocaleString('en-US')}` : 'Funded';
+  const rawTier = String(account?.accountType || account?.tier || account?.tierName || '').toLowerCase();
+
+  if (rawTier.includes('two') || rawTier.includes('2')) {
+    return `${formattedSize} 2-Step Funded`;
+  }
+  if (rawTier.includes('one') || rawTier.includes('1')) {
+    return `${formattedSize} 1-Step Funded`;
+  }
+  if (rawTier.includes('instant')) {
+    return `${formattedSize} Instant Funded`;
+  }
+  return `${formattedSize} Funded Account`;
+}
+
+export function resolveLiveFundedAccountMetrics(
+  account?: TradingAccount | null,
+  wallet?: PurchasedFundedWallet | null
+): LiveFundedAccountMetrics {
+  const r2 = (n: number): number => (Number.isFinite(n) ? Number(n.toFixed(2)) : 0);
+
+  const initialBalance = r2(
+    Math.max(
+      0,
+      Number(
+        wallet?.initial_balance ??
+          account?.initialBalance ??
+          account?.size ??
+          account?.currentBalance ??
+          0
+      )
+    )
+  );
+  const currentBalance = r2(
+    Math.max(0, Number(wallet?.current_balance ?? account?.currentBalance ?? initialBalance))
+  );
+  const liveEquity = r2(
+    Math.max(0, Number(wallet?.current_equity ?? account?.equity ?? currentBalance))
+  );
+  const netProfit = r2(currentBalance - initialBalance);
+  const netProfitPercent =
+    initialBalance > 0 ? r2((netProfit / initialBalance) * 100) : 0;
+
+  const isPersonal = isPersonalLiveAccount(account);
+  const breakdown = calculateWithdrawalBreakdown(
+    1000,
+    Number(account?.monthsCompleted ?? 1),
+    isPersonal
+  );
+  const profitSplitPercent = isPersonal ? 100 : account?.scalingActive ? 90 : breakdown.profitSplitPercent;
+
+  const dailyDrawdownLimitPercent = r2(
+    Number(wallet?.daily_drawdown_limit_percent ?? account?.dailyLossLimitPercent ?? 8)
+  );
+  const dailyDrawdownLimit = r2(
+    Number(
+      wallet?.daily_drawdown_limit_amount ??
+        (dailyDrawdownLimitPercent > 0 ? (initialBalance * dailyDrawdownLimitPercent) / 100 : 0)
+    )
+  );
+  const dailyDrawdownUsed = r2(
+    Math.max(
+      0,
+      Number(
+        wallet?.current_daily_drawdown ??
+          Math.max(
+            0,
+            (account?.startingDayEquity || initialBalance) - Math.min(currentBalance, liveEquity)
+          )
+      )
+    )
+  );
+  const dailyDrawdownRatio =
+    dailyDrawdownLimit > 0
+      ? Math.min(100, Math.max(0, r2((dailyDrawdownUsed / dailyDrawdownLimit) * 100)))
+      : 0;
+
+  const maxDrawdownLimitPercent = r2(
+    Number(wallet?.max_drawdown_limit_percent ?? account?.maxOverallLossPercent ?? 20)
+  );
+  const maxDrawdownLimit = r2(
+    Number(
+      wallet?.max_drawdown_limit_amount ??
+        (maxDrawdownLimitPercent > 0 ? (initialBalance * maxDrawdownLimitPercent) / 100 : 0)
+    )
+  );
+  const maxDrawdownUsed = r2(
+    Math.max(
+      0,
+      Number(
+        wallet?.current_max_drawdown ??
+          Math.max(0, initialBalance - Math.min(currentBalance, liveEquity))
+      )
+    )
+  );
+  const maxDrawdownRatio =
+    maxDrawdownLimit > 0
+      ? Math.min(100, Math.max(0, r2((maxDrawdownUsed / maxDrawdownLimit) * 100)))
+      : 0;
+
+  const completedProfitableDays = Math.max(
+    0,
+    Math.round(Number(wallet?.completed_profitable_days ?? account?.tradingDaysCompleted ?? 0))
+  );
+  const minProfitableDays = Math.max(1, Math.round(Number(wallet?.min_profitable_days ?? 5)));
+  const qualifyingDayThresholdUsd = r2(
+    (initialBalance * PROFITABLE_DAY_THRESHOLD_PERCENT) / 100
+  );
+
+  const tierLabel =
+    wallet?.challenge_type ||
+    account?.tierName ||
+    formatChallengeTierLabel(account);
+
+  return {
+    accountId: String(wallet?.account_id || account?.id || ''),
+    tierLabel,
+    initialBalance,
+    currentBalance,
+    liveEquity,
+    netProfit,
+    netProfitPercent,
+    profitSplitPercent,
+    scalingActive: profitSplitPercent >= 90,
+    dailyDrawdownUsed,
+    dailyDrawdownLimit,
+    dailyDrawdownLimitPercent,
+    dailyDrawdownRatio,
+    maxDrawdownUsed,
+    maxDrawdownLimit,
+    maxDrawdownLimitPercent,
+    maxDrawdownRatio,
+    completedProfitableDays,
+    minProfitableDays,
+    qualifyingDayThresholdUsd,
+  };
+}
+

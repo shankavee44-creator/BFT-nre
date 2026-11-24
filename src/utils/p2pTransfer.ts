@@ -629,30 +629,6 @@ export async function lookupRecipientByNumericId(params: {
     }
   }
 
-  // 3. Fallback for built-in testing/demo accounts
-  if (['100201', '100202', '54517106', '88412095', '10001', '10002', '10006'].includes(digitsOnly)) {
-    const mockNames: Record<string, string> = {
-      '100201': 'Alex Morgan (Pro Trader)',
-      '100202': 'Elena Rostova',
-      '54517106': 'BFT Trader',
-      '88412095': 'Marcus Sterling',
-      '10001': 'Marcus Sterling',
-      '10002': 'Ishan',
-      '10006': 'Loading',
-    };
-    return {
-      found: true,
-      profile: {
-        id: `usr_${digitsOnly}`,
-        email: `trader-${digitsOnly}@bft.io`,
-        fullName: mockNames[digitsOnly] || `Trader #${digitsOnly}`,
-        numericId: digitsOnly,
-        selfBalance: 500,
-        selfCapitalBalance: 500,
-      },
-    };
-  }
-
   return {
     found: false,
     error: `Recipient with Trader ID #${digitsOnly} not found. Please verify the ID shown in the recipient's dashboard.`,

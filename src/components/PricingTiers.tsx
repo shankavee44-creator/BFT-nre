@@ -30,7 +30,6 @@ import {
   formatMetricValue,
   BftPricingCardSpec,
 } from '../utils/ftmoPricingCatalog';
-import { ProfitCalculator } from './ProfitCalculator';
 
 interface PricingTiersProps {
   activePromoCode: PromoCodeType;
@@ -113,7 +112,6 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
   const [showPhases, setShowPhases] = useState<boolean>(true);
   const [isMoreCurrenciesOpen, setIsMoreCurrenciesOpen] = useState<boolean>(false);
   const [dailyWithdrawalsAddOn, setDailyWithdrawalsAddOn] = useState<boolean>(false);
-  const [showSimulatorDrawer, setShowSimulatorDrawer] = useState<boolean>(false);
 
   const currencyCfg = getCurrencyConfig(selectedCurrency);
   const cards = getBftCardsForTier(selectedTier, activePromoCode, dailyWithdrawalsAddOn);
@@ -403,19 +401,6 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
                 <EyeOff className="w-4 h-4 text-[#9ca3af]" />
               )}
               <span>Show Phases</span>
-            </button>
-
-            <span aria-hidden="true" className="hidden sm:inline-block h-4 w-px bg-white/15" />
-
-            {/* Profit Simulator / Rules Link */}
-            <button
-              type="button"
-              data-testid="futures-pricing-link"
-              onClick={() => setShowSimulatorDrawer((prev) => !prev)}
-              className="flex items-center gap-1.5 text-xs sm:text-[13px] font-bold text-[#0066ff] hover:text-[#1a75ff] transition-colors cursor-pointer whitespace-nowrap shrink-0"
-            >
-              <span>{showSimulatorDrawer ? 'Hide Simulator' : 'Profit Simulator'}</span>
-              <ArrowRight className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
@@ -812,15 +797,6 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
           })}
         </div>
 
-        {/* Optional Collapsible Profit Calculator */}
-        {showSimulatorDrawer && (
-          <div className="mt-10 animate-fade-in">
-            <ProfitCalculator
-              onSelectPackage={(pkg) => onSelectPackage(pkg, dailyWithdrawalsAddOn)}
-            />
-          </div>
-        )}
-
         {/* Original BFT Progression & Rulebook Summary Bar */}
         <div className="mt-10 p-4 sm:p-5 rounded-2xl bg-[#111827] border border-white/[0.08] flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -829,7 +805,7 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
             </div>
             <div>
               <div className="text-xs sm:text-sm font-bold text-white">
-                BFT Prop Firm Rulebook & Compliance Simulator
+                BFT Prop Firm Rulebook &amp; Risk Parameters
               </div>
               <div className="text-[11px] sm:text-xs text-[#9ca3af]">
                 Inspect 5% Max Risk Per Trade, 5 Minimum Profitable Days (≥0.5%/day), 80% → 90% Scaling Split, and Soft vs Hard Breach rules.
@@ -838,13 +814,6 @@ export const PricingTiers: React.FC<PricingTiersProps> = ({
           </div>
 
           <div className="flex items-center gap-2.5 shrink-0">
-            <button
-              type="button"
-              onClick={() => setShowSimulatorDrawer((prev) => !prev)}
-              className="px-3.5 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-white text-xs font-bold border border-white/[0.08] transition-colors cursor-pointer whitespace-nowrap"
-            >
-              {showSimulatorDrawer ? 'Hide Profit Simulator' : 'Open Profit Simulator'}
-            </button>
             <button
               type="button"
               onClick={onOpenRules}

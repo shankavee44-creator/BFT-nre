@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   Activity,
   ArrowRight,
-  Award,
   BarChart3,
   Clock,
   Lock,
@@ -14,13 +13,11 @@ import {
 import type { TradingAccount, UserProfile } from '../types';
 import {
   findWalletForAccount,
+  formatChallengeTierLabel,
   resolveFundedWalletBreachState,
+  resolveLiveFundedAccountMetrics,
   type PurchasedFundedWallet,
 } from '../utils/fundedWalletAnalytics';
-import {
-  formatChallengeTierLabel,
-  resolveLiveFundedAccountMetrics,
-} from '../utils/fundedSimulation';
 import {
   isDemoAccount,
   isLiveFundedAccount,
@@ -38,7 +35,6 @@ interface LiveFundedDashboardViewProps {
   onOpenTerminal: (accountId?: string) => void;
   onOpenAnalytics: (account: TradingAccount) => void;
   onRequestPayout: (accountId: string) => void;
-  onOpenCertificatePreview: (account: TradingAccount) => void;
   onOpenChallengeModal: () => void;
 }
 
@@ -51,7 +47,6 @@ export const LiveFundedDashboardView: React.FC<LiveFundedDashboardViewProps> = (
   onOpenTerminal,
   onOpenAnalytics,
   onRequestPayout,
-  onOpenCertificatePreview,
   onOpenChallengeModal,
 }) => {
   const fundedOrChallengeAccounts = useMemo(() => {
@@ -206,8 +201,8 @@ export const LiveFundedDashboardView: React.FC<LiveFundedDashboardViewProps> = (
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5">
-          {fundedOrChallengeAccounts.length > 1 && (
+        {fundedOrChallengeAccounts.length > 1 && (
+          <div className="flex flex-wrap items-center gap-2.5">
             <select
               aria-label="Select funded account"
               data-testid="live-funded-account-selector"
@@ -224,21 +219,8 @@ export const LiveFundedDashboardView: React.FC<LiveFundedDashboardViewProps> = (
                 </option>
               ))}
             </select>
-          )}
-
-          <button
-            type="button"
-            data-testid="live-funded-preview-certificate-btn"
-            onClick={() => {
-              soundEngine.playUiClick();
-              onOpenCertificatePreview(selectedAccount);
-            }}
-            className="px-3.5 py-2.5 min-h-[42px] rounded-xl bg-[#0B111A] hover:bg-[#082F49]/80 border border-[#38BDF8]/40 text-[#38BDF8] hover:text-white text-xs font-mono font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer transition-colors"
-          >
-            <Award className="w-4 h-4 text-[#00E5FF] shrink-0" />
-            <span>Preview Certificate</span>
-          </button>
-        </div>
+          </div>
+        )}
       </div>
 
       {/* Breach Alert Banner (if Soft or Hard Breached) */}

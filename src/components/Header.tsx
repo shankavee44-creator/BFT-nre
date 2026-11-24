@@ -479,23 +479,6 @@ export const Header: React.FC<HeaderProps> = ({
 
                   <button
                     type="button"
-                    data-testid="mobile-certificates-link"
-                    onClick={() => {
-                      setMobileMenuOpen(false);
-                      setMobileProfileOpen(false);
-                      handleNavClick('dashboard');
-                    }}
-                    className="w-full min-h-[44px] px-3 py-2.5 rounded-xl hover:bg-white/10 text-slate-200 hover:text-white flex items-center justify-between font-bold cursor-pointer touch-manipulation"
-                  >
-                    <div className="flex items-center gap-2.5">
-                      <Award className="w-4 h-4 text-amber-400 shrink-0" />
-                      <span>Certificates & Badges</span>
-                    </div>
-                    <ChevronRight className="w-3.5 h-3.5 text-[#9ca3af] shrink-0" />
-                  </button>
-
-                  <button
-                    type="button"
                     data-testid="mobile-security-link"
                     onClick={() => {
                       setMobileMenuOpen(false);

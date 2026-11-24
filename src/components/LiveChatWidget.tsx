@@ -224,7 +224,6 @@ export const LiveChatWidget: React.FC = () => {
               'Sub-3-Min Payouts',
               'Drawdown Rules',
               'Custom Demo Balance',
-              'Certificates',
             ].map((q) => (
               <button
                 key={q}

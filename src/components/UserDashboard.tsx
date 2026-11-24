@@ -15,7 +15,6 @@ import {
   PieChart as PieIcon,
   Clock,
   ShoppingBag,
-  Award,
   Camera,
   FileCheck,
   CreditCard,
@@ -63,7 +62,6 @@ import { soundEngine } from '../utils/soundEffects';
 import { CountryFlagIcon } from './CountryFlagIcon';
 import { AffiliateDashboard } from './AffiliateDashboard';
 import { BftLogo } from './BftLogo';
-import { FundedCertificate } from './FundedCertificate';
 import { validateDemoBalance, persistCustomDemoBalance } from '../utils/demoBalanceManager';
 import {
   canUserWithdraw,
@@ -137,7 +135,6 @@ import {
 import { mapPurchaseOrdersToAccounts } from '../utils/accountLoader';
 import { FundedWalletAnalyticsModal } from './FundedWalletAnalyticsModal';
 import { LiveFundedDashboardView } from './LiveFundedDashboardView';
-import { CertificateModal } from './CertificateModal';
 import {
   clearExpiredSoftBreachInFundedWallet,
   ensureFundedWalletsForAccounts,
@@ -172,8 +169,7 @@ interface UserDashboardProps {
     | 'kyc'
     | 'profile'
     | 'security'
-    | 'admin_users'
-    | 'certificates';
+    | 'admin_users';
   onLogout?: () => void;
   onOpenAdminDashboard?: () => void;
 }
@@ -215,7 +211,6 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     | 'profile'
     | 'security'
     | 'admin_users'
-    | 'certificates'
   >(initialTab === 'admin_users' && !isUserAdmin ? 'accounts' : initialTab);
   const [isMobileTabDropdownOpen, setIsMobileTabDropdownOpen] = useState(false);
 
@@ -322,13 +317,11 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         [
           'accounts',
           'live_funded',
-          'simulation',
           'kyc',
           'security',
           'profile',
           'analytics',
           'affiliate',
-          'certificates',
         ].includes(nextSub)
       ) {
         setActiveTab(nextSub);
@@ -351,8 +344,6 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   const [copiedNumericId, setCopiedNumericId] = useState(false);
   const [fundedWallets, setFundedWallets] = useState<PurchasedFundedWallet[]>([]);
   const [analyticsModalAccount, setAnalyticsModalAccount] = useState<TradingAccount | null>(null);
-  const [certificatePreviewAccount, setCertificatePreviewAccount] = useState<TradingAccount | null>(null);
-  const [isCertificatePreviewOpen, setIsCertificatePreviewOpen] = useState(false);
   const [p2pDashboardToast, setP2pDashboardToast] = useState<{
     type: 'success' | 'error';
     title: string;
@@ -2032,7 +2023,6 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         {[
           { id: 'accounts', label: `My Trading Accounts (${accounts.length})` },
           { id: 'live_funded', label: 'Live Funded Account' },
-          { id: 'certificates', label: 'Certificates' },
           { id: 'kyc', label: `KYC Verification (${formatKycStatusBadgeText(userProfile.kycStatus)})` },
           { id: 'profile', label: 'Profile & Personal Details' },
           { id: 'analytics', label: 'Performance Analytics' },
@@ -2089,7 +2079,6 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               <span className="w-7 h-7 rounded-lg bg-[#ff8800]/15 border border-[#ff8800]/40 flex items-center justify-center shrink-0">
                 {activeTab === 'accounts' && <CreditCard className="w-4 h-4 text-[#ff8800]" />}
                 {activeTab === 'live_funded' && <Zap className="w-4 h-4 text-[#00E5FF]" />}
-                {activeTab === 'certificates' && <Award className="w-4 h-4 text-[#ff8800]" />}
                 {activeTab === 'kyc' && <ShieldCheck className="w-4 h-4 text-[#ff8800]" />}
                 {activeTab === 'profile' && <User className="w-4 h-4 text-[#ff8800]" />}
                 {activeTab === 'analytics' && <TrendingUp className="w-4 h-4 text-[#ff8800]" />}
@@ -2101,7 +2090,6 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               <span className="truncate">
                 {activeTab === 'accounts' && `My Trading Accounts (${accounts.length})`}
                 {activeTab === 'live_funded' && 'Live Funded Account'}
-                {activeTab === 'certificates' && 'Certificates & Badges'}
                 {activeTab === 'kyc' && `KYC Verification (${formatKycStatusBadgeText(userProfile.kycStatus)})`}
                 {activeTab === 'profile' && 'Profile & Personal Details'}
                 {activeTab === 'analytics' && 'Performance Analytics'}
@@ -2127,7 +2115,6 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               {[
                 { id: 'accounts', label: `My Trading Accounts (${accounts.length})`, icon: <CreditCard className="w-4 h-4 shrink-0" /> },
                 { id: 'live_funded', label: 'Live Funded Account', icon: <Zap className="w-4 h-4 text-[#00E5FF] shrink-0" /> },
-                { id: 'certificates', label: 'Certificates & Badges', icon: <Award className="w-4 h-4 shrink-0" /> },
                 { id: 'kyc', label: 'KYC Verification', icon: <ShieldCheck className="w-4 h-4 shrink-0" />, badge: formatKycStatusBadgeText(userProfile.kycStatus) },
                 { id: 'profile', label: 'Profile & Personal Details', icon: <User className="w-4 h-4 shrink-0" /> },
                 { id: 'analytics', label: 'Performance Analytics', icon: <TrendingUp className="w-4 h-4 shrink-0" /> },
@@ -2658,15 +2645,6 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                       </div>
                     )}
 
-                    {acc.certificateId && (
-                      <div className="mb-3 p-2.5 rounded-xl bg-emerald-950/40 border border-emerald-500/30 flex items-center justify-between text-xs font-mono">
-                        <span className="text-emerald-300 flex items-center gap-1.5 font-bold">
-                          <Award className="w-4 h-4 text-[#ff8800]" /> Certificate: {acc.certificateId}
-                        </span>
-                        <span className="text-[10px] text-slate-300">Live Account Provisioned</span>
-                      </div>
-                    )}
-
                     {/* Challenge Profit Target Progress Bar for One-Step & Two-Step Challenge Accounts */}
                     {!isLive && !isPersonal && !isDemo && acc.status === 'active' && !isHardBreached && !isSoftBreached && (
                       <div className="mb-3 p-3 rounded-xl bg-[#111115] border border-[#ff8800]/30 font-mono text-xs">
@@ -2693,7 +2671,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                               onClick={() => onPassChallengePhase(acc)}
                               className="px-2 py-0.5 rounded bg-emerald-500 text-slate-950 font-black uppercase cursor-pointer"
                             >
-                              Claim Certificate & Live Account →
+                              Claim Live Funded Account →
                             </button>
                           )}
                         </div>
@@ -3331,29 +3309,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           onOpenTerminal={onOpenTerminal}
           onOpenAnalytics={(acc) => setAnalyticsModalAccount(acc)}
           onRequestPayout={(accId) => handleAttemptWithdrawal(accId)}
-          onOpenCertificatePreview={(acc) => {
-            setCertificatePreviewAccount(acc);
-            setIsCertificatePreviewOpen(true);
-          }}
           onOpenChallengeModal={onOpenChallengeModal}
-        />
-      )}
-
-      {/* Tab: Official Funded Trader Certificates */}
-      {activeTab === 'certificates' && (
-        <FundedCertificate
-          userProfile={userProfile}
-          accounts={accounts}
-          onOpenTerminal={onOpenTerminal}
-          onOpenChallengeModal={onOpenChallengeModal}
-          onOpenChallengePassedModal={(acc) => {
-            const matchedAcc =
-              accounts.find((a) => acc && a.id === acc.id) ||
-              accounts.find((a) => !isPersonalLiveAccount(a) && !isDemoAccount(a)) ||
-              null;
-            setCertificatePreviewAccount(matchedAcc);
-            setIsCertificatePreviewOpen(true);
-          }}
         />
       )}
 
@@ -4166,7 +4122,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               <div>
                 <h3 className="text-sm font-bold text-white flex items-center gap-2">
                   <Sparkles className="w-4 h-4 text-amber-400" />
-                  Customizable Simulator Capital (Demo Account)
+                  Customizable Practice Capital (Demo Account)
                 </h3>
                 <p className="text-xs text-slate-400 mt-1 font-sans">
                   Set any custom demo balance between <strong className="text-white">$1.00</strong> and <strong className="text-white">$10,000.00</strong>. Automatically synchronizes with your top Account Switcher and OTC Trading Terminal.
@@ -4896,22 +4852,6 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                 )
               : [updatedWallet, ...prev];
           });
-        }}
-      />
-
-      {/* Challenge Passed & Certificate Preview Modal */}
-      <CertificateModal
-        isOpen={isCertificatePreviewOpen}
-        onClose={() => setIsCertificatePreviewOpen(false)}
-        traderName={userProfile.fullName || userProfile.email || 'Official BFT Trader'}
-        certificateId={certificatePreviewAccount?.certificateId}
-        passedAccount={certificatePreviewAccount}
-        deployedAccount={certificatePreviewAccount}
-        onLaunchRealAccount={() => {
-          if (certificatePreviewAccount?.id) {
-            onSelectAccount(certificatePreviewAccount.id);
-          }
-          setActiveTab('live_funded');
         }}
       />
     </div>

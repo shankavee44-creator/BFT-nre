@@ -35,7 +35,7 @@ export const TradingRules: React.FC = () => {
             Strict Prop Firm Rules &amp; Challenge Tiers
           </h2>
           <p className="text-[#9ca3af] text-base sm:text-[17px] font-normal sm:font-medium leading-relaxed">
-            Every Binary Funded Trader account is governed by automated real-time risk guardrails, Dual-Breach protection, and verifiable certificate progression.
+            Every Binary Funded Trader account is governed by automated real-time risk guardrails, Dual-Breach protection, and transparent funded progression.
           </p>
         </div>
 
@@ -69,7 +69,7 @@ export const TradingRules: React.FC = () => {
                 <strong className="text-emerald-400 font-bold tabular-nums">5 Days (≥0.5%/day)</strong>
               </li>
               <li className="pt-2 text-xs font-normal text-[#9ca3af] leading-relaxed">
-                Passing Step 1 issues a custom <strong className="text-white font-semibold">Achievement Certificate</strong>, locks the challenge account, and deploys a clean <strong className="text-white font-semibold">Real Account</strong> with accumulated balance.
+                Passing Step 1 locks the challenge account and automatically deploys a clean <strong className="text-white font-semibold">Live Funded Account</strong> with your funded balance.
               </li>
             </ul>
           </div>
@@ -102,7 +102,7 @@ export const TradingRules: React.FC = () => {
                 <strong className="text-emerald-400 font-bold tabular-nums">5 Days (≥0.5%/day)</strong>
               </li>
               <li className="pt-2 text-xs font-normal text-[#9ca3af] leading-relaxed">
-                Passing Phase 1 locks it and deploys Phase 2. Passing Phase 2 generates an <strong className="text-white font-semibold">Achievement Certificate</strong> and deploys a <strong className="text-white font-semibold">Real Account</strong>.
+                Passing Phase 1 locks it and deploys Phase 2. Passing Phase 2 unlocks and automatically deploys a <strong className="text-white font-semibold">Live Funded Account</strong>.
               </li>
             </ul>
           </div>
