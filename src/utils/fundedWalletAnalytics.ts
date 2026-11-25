@@ -790,7 +790,15 @@ export function mergeFundedWalletLists(
 // SUPABASE `purchased_funded_wallets` CRUD + REALTIME SUBSCRIPTION
 // =========================================================================
 
-function extractMissingWalletColumnFromError(error: any): string | null {
+export interface PersistFundedWalletResult {
+  ok: boolean;
+  wallet: PurchasedFundedWallet;
+  syncedToSupabase: boolean;
+  error?: string;
+  errorCode?: string;
+}
+
+export function extractMissingWalletColumnFromError(error: any): string | null {
   const msg = String(error?.message || error?.details || '');
   const m1 = msg.match(/Could not find the '([^']+)' column/i);
   if (m1?.[1]) return m1[1];
@@ -808,7 +816,10 @@ function extractMissingWalletColumnFromError(error: any): string | null {
   return null;
 }
 
-export function buildSupabaseWalletPayload(wallet: PurchasedFundedWallet): Record<string, any> {
+export function buildSupabaseWalletPayload(
+  wallet: PurchasedFundedWallet,
+  extraUnsupportedColumns?: Iterable<string>
+): Record<string, any> {
   const full: Record<string, any> = {
     account_id: wallet.account_id,
     user_id: wallet.user_id,
@@ -821,7 +832,6 @@ export function buildSupabaseWalletPayload(wallet: PurchasedFundedWallet): Recor
       wallet.profit_split_percent ?? (wallet.is_real_funded ? REAL_FUNDED_PROFIT_SPLIT_PERCENT : 80)
     ),
     certificate_unlocked: Boolean(wallet.certificate_unlocked || wallet.account_status === 'PASSED'),
-    certificate_id: wallet.certificate_id ?? null,
     passed_at: wallet.passed_at ?? null,
     account_status: wallet.account_status,
     soft_breach_until: wallet.soft_breach_until,
@@ -839,72 +849,251 @@ export function buildSupabaseWalletPayload(wallet: PurchasedFundedWallet): Recor
     max_drawdown_limit_amount: wallet.max_drawdown_limit_amount,
     max_drawdown_limit_percent: wallet.max_drawdown_limit_percent,
     completed_profitable_days: wallet.completed_profitable_days,
-    updated_at: wallet.updated_at,
+    updated_at: wallet.updated_at || new Date().toISOString(),
+    created_at: wallet.created_at || new Date().toISOString(),
   };
+
+  // Only include optional certificate_id when explicitly set (avoids 400 on schemas without certificate_id)
+  if (wallet.certificate_id) {
+    full.certificate_id = wallet.certificate_id;
+  }
 
   for (const col of Array.from(unsupportedWalletColumns)) {
     delete full[col];
   }
+  if (extraUnsupportedColumns) {
+    for (const col of extraUnsupportedColumns) {
+      delete full[col];
+    }
+  }
   return full;
 }
 
+/**
+ * Pure mapper: converts a `purchased_funded_wallets` database record into a full `TradingAccount`
+ * so purchased challenge & real funded accounts always hydrate cleanly into the Dashboard and
+ * Account Switcher on login/refresh even if `trading_accounts` has no matching row.
+ */
+export function mapPurchasedFundedWalletToTradingAccount(
+  wallet: PurchasedFundedWallet,
+  ownerEmail?: string
+): TradingAccount {
+  const isRealFunded = Boolean(
+    wallet.is_real_funded || wallet.account_tier === 'REAL_FUNDED'
+  );
+  const initialBalance = round2(Math.max(0, Number(wallet.initial_balance || 0))) || 5000;
+  const currentBalance = round2(
+    Number.isFinite(Number(wallet.current_balance)) ? Number(wallet.current_balance) : initialBalance
+  );
+  const equity = round2(
+    Number.isFinite(Number(wallet.current_equity)) ? Number(wallet.current_equity) : currentBalance
+  );
+  const limits = getDynamicAccountLimits(
+    'funded_challenge',
+    isRealFunded ? 'funded' : 'phase_1'
+  );
+
+  const rawStatus = normalizeFundedWalletStatus(wallet.account_status);
+  const mappedStatus: TradingAccount['status'] =
+    rawStatus === 'HARD_BREACH'
+      ? 'hard_breached'
+      : rawStatus === 'SOFT_BREACH'
+      ? 'soft_breached'
+      : rawStatus === 'PASSED'
+      ? 'passed'
+      : 'active';
+
+  const breachType: TradingAccount['breachType'] =
+    rawStatus === 'HARD_BREACH'
+      ? 'hard'
+      : rawStatus === 'SOFT_BREACH'
+      ? 'soft'
+      : 'none';
+
+  const accountId = String(wallet.account_id || wallet.id || `BFT-CH-${Date.now()}`);
+  const createdDate = wallet.created_at
+    ? String(wallet.created_at).split('T')[0]
+    : new Date().toISOString().split('T')[0];
+  const lastActiveDate = wallet.updated_at
+    ? String(wallet.updated_at).split('T')[0]
+    : createdDate;
+
+  return {
+    id: accountId,
+    supabaseAccountId: UUID_REGEX.test(String(wallet.id || '')) ? String(wallet.id) : undefined,
+    ownerId: wallet.user_id || undefined,
+    ownerEmail: ownerEmail || undefined,
+    loginId: accountId,
+    passwordHash: 'bft_funded_' + accountId.slice(0, 8),
+    tier: 'funded-challenge',
+    accountType: 'funded_challenge',
+    tierName:
+      wallet.challenge_type && wallet.challenge_type.trim()
+        ? wallet.challenge_type.trim()
+        : isRealFunded
+        ? 'Real Funded Account'
+        : 'Funded Challenge',
+    account_tier: isRealFunded ? 'REAL_FUNDED' : 'CHALLENGE',
+    badge_color: isRealFunded ? 'purple' : 'red',
+    isRealFunded,
+    is_real_funded: isRealFunded,
+    principalLocked: isRealFunded ? true : Boolean(wallet.principal_locked),
+    principal_locked: isRealFunded ? true : Boolean(wallet.principal_locked),
+    profit_split_percent: Number(
+      wallet.profit_split_percent ?? (isRealFunded ? REAL_FUNDED_PROFIT_SPLIT_PERCENT : 80)
+    ),
+    certificate_unlocked: Boolean(wallet.certificate_unlocked || rawStatus === 'PASSED'),
+    certificateId: wallet.certificate_id || undefined,
+    passed_at: wallet.passed_at || undefined,
+    passedAt: wallet.passed_at || undefined,
+    size: initialBalance,
+    initialBalance,
+    currentBalance,
+    startingDayEquity:
+      Number(wallet.starting_day_balance) > 0 ? Number(wallet.starting_day_balance) : currentBalance,
+    equity,
+    dailyLossLimitPercent:
+      Number(wallet.daily_drawdown_limit_percent ?? limits.dailyLossLimitPercent) || 0,
+    maxOverallLossPercent:
+      Number(wallet.max_drawdown_limit_percent || limits.maxOverallLossPercent) || 10,
+    profitTargetPercent:
+      Number(wallet.profit_target_percent ?? (isRealFunded ? 0 : limits.profitTargetPercent)),
+    maxRiskPerTradePercent: limits.maxRiskPerTradePercent || 5,
+    status: mappedStatus,
+    breachType,
+    breachReason: wallet.breach_reason || undefined,
+    softBreachResetTime: wallet.soft_breach_until
+      ? Date.parse(wallet.soft_breach_until) || undefined
+      : undefined,
+    phase: isRealFunded ? 'funded' : 'phase_1',
+    challengePhase: isRealFunded ? 'funded' : 'phase_1',
+    tradingDaysCompleted: Math.max(0, Math.round(Number(wallet.completed_profitable_days || 0))),
+    tradesCount: 0,
+    winRate: 0,
+    createdDate,
+    lastActiveDate,
+  };
+}
+
 async function resolveTargetUserId(explicitUserId?: string): Promise<string> {
-  if (explicitUserId && UUID_REGEX.test(explicitUserId)) return explicitUserId;
+  // Always prefer the active Supabase Auth session UUID first so RLS `auth.uid() = user_id` matches.
   try {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
+    if (session?.user?.id && UUID_REGEX.test(session.user.id)) {
+      return session.user.id;
+    }
     const {
       data: { user },
     } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
-    if (user?.id) return user.id;
+    if (user?.id && UUID_REGEX.test(user.id)) {
+      return user.id;
+    }
   } catch {
     // ignore
   }
+  if (explicitUserId && UUID_REGEX.test(explicitUserId)) return explicitUserId;
   return explicitUserId || 'usr_bft_001';
 }
 
-async function persistWalletToSupabase(wallet: PurchasedFundedWallet): Promise<PurchasedFundedWallet> {
-  saveLocalFundedWallet(wallet);
+export interface WalletSupabasePersistenceAdapter {
+  selectExisting: (accountId: string) => Promise<{ data: any[] | null; error: any }>;
+  updateRow: (accountId: string, payload: Record<string, any>) => Promise<{ data: any; error: any }>;
+  insertRow: (payload: Record<string, any>) => Promise<{ data: any; error: any }>;
+  insertRowPlain: (payload: Record<string, any>) => Promise<{ error: any }>;
+}
 
-  if (!remoteFundedWalletsTableAvailable || !UUID_REGEX.test(wallet.user_id || '')) {
-    return wallet;
+export async function persistWalletWithAdapter(
+  wallet: PurchasedFundedWallet,
+  adapter: WalletSupabasePersistenceAdapter,
+  options?: {
+    unsupportedColumnsSet?: Set<string>;
+    maxAttempts?: number;
+    skipLocalSave?: boolean;
+  }
+): Promise<PersistFundedWalletResult> {
+  if (!options?.skipLocalSave) {
+    saveLocalFundedWallet(wallet);
   }
 
-  for (let attempt = 0; attempt < 6; attempt++) {
-    const payload = buildSupabaseWalletPayload(wallet);
-    try {
-      const { data: existingRows, error: selErr } = await supabase
-        .from('purchased_funded_wallets')
-        .select('id, account_id')
-        .eq('account_id', wallet.account_id)
-        .limit(1);
+  if (!remoteFundedWalletsTableAvailable) {
+    return {
+      ok: false,
+      wallet,
+      syncedToSupabase: false,
+      error: 'Supabase table purchased_funded_wallets is not available.',
+      errorCode: 'TABLE_UNAVAILABLE',
+    };
+  }
 
-      if (selErr) {
-        const missing = extractMissingWalletColumnFromError(selErr);
-        if (missing) {
-          unsupportedWalletColumns.add(missing);
-          continue;
+  if (!UUID_REGEX.test(wallet.user_id || '')) {
+    const msg =
+      'No authenticated Supabase user UUID available to persist purchased funded account.';
+    return {
+      ok: false,
+      wallet,
+      syncedToSupabase: false,
+      error: msg,
+      errorCode: 'UNAUTHENTICATED_USER_ID',
+    };
+  }
+
+  const localUnsupported = options?.unsupportedColumnsSet || unsupportedWalletColumns;
+  const maxAttempts = options?.maxAttempts ?? 20;
+  let lastErrorMsg = '';
+  let lastErrorCode = '';
+  let forceUpdateMode = false;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const payload = buildSupabaseWalletPayload(wallet, localUnsupported);
+    try {
+      let rowExists = forceUpdateMode;
+
+      if (!forceUpdateMode) {
+        const { data: existingRows, error: selErr } = await adapter.selectExisting(
+          wallet.account_id
+        );
+
+        if (selErr) {
+          const missing = extractMissingWalletColumnFromError(selErr);
+          if (missing) {
+            localUnsupported.add(missing);
+            continue;
+          }
+          // If SELECT is blocked or fails, do not silently abort — attempt INSERT directly.
+          rowExists = false;
+        } else {
+          rowExists = Array.isArray(existingRows) && existingRows.length > 0;
         }
-        return wallet;
       }
 
-      if (Array.isArray(existingRows) && existingRows.length > 0) {
+      if (rowExists) {
         const updatePayload = { ...payload };
         delete updatePayload.account_id;
         delete updatePayload.user_id;
+        delete updatePayload.created_at;
 
-        const { data: updData, error: updErr } = await supabase
-          .from('purchased_funded_wallets')
-          .update(updatePayload)
-          .eq('account_id', wallet.account_id)
-          .select('*')
-          .maybeSingle();
+        const { data: updData, error: updErr } = await adapter.updateRow(
+          wallet.account_id,
+          updatePayload
+        );
 
         if (updErr) {
           const missing = extractMissingWalletColumnFromError(updErr);
           if (missing) {
-            unsupportedWalletColumns.add(missing);
+            localUnsupported.add(missing);
             continue;
           }
-          return wallet;
+          lastErrorMsg = String(updErr?.message || 'Failed to update purchased_funded_wallets');
+          lastErrorCode = String(updErr?.code || 'UPDATE_ERROR');
+          return {
+            ok: false,
+            wallet,
+            syncedToSupabase: false,
+            error: lastErrorMsg,
+            errorCode: lastErrorCode,
+          };
         }
 
         if (updData) {
@@ -916,26 +1105,58 @@ async function persistWalletToSupabase(wallet: PurchasedFundedWallet): Promise<P
             last_profitable_day_date: wallet.last_profitable_day_date,
             starting_day_balance: wallet.starting_day_balance,
           };
-          saveLocalFundedWallet(normalized);
-          return normalized;
+          if (!options?.skipLocalSave) {
+            saveLocalFundedWallet(normalized);
+          }
+          return { ok: true, wallet: normalized, syncedToSupabase: true };
         }
-        return wallet;
+        return { ok: true, wallet, syncedToSupabase: true };
       } else {
-        const { data: insData, error: insErr } = await supabase
-          .from('purchased_funded_wallets')
-          .insert([payload])
-          .select('*')
-          .maybeSingle();
+        const { data: insData, error: insErr } = await adapter.insertRow(payload);
 
         if (insErr) {
           const missing = extractMissingWalletColumnFromError(insErr);
           if (missing) {
-            unsupportedWalletColumns.add(missing);
+            localUnsupported.add(missing);
             continue;
           }
-          // Try plain insert if RLS blocks SELECT after INSERT
-          await supabase.from('purchased_funded_wallets').insert([payload]).then(undefined, () => {});
-          return wallet;
+
+          const code = String(insErr?.code || '');
+          const msgLower = String(insErr?.message || '').toLowerCase();
+          if (code === '23505' || msgLower.includes('duplicate key')) {
+            forceUpdateMode = true;
+            continue;
+          }
+
+          // Fallback: if RLS permits INSERT but blocks RETURNING SELECT, try plain insert
+          const { error: plainErr } = await adapter.insertRowPlain(payload);
+          if (!plainErr) {
+            return { ok: true, wallet, syncedToSupabase: true };
+          }
+          const plainMissing = extractMissingWalletColumnFromError(plainErr);
+          if (plainMissing) {
+            localUnsupported.add(plainMissing);
+            continue;
+          }
+          if (
+            String(plainErr?.code || '') === '23505' ||
+            String(plainErr?.message || '').toLowerCase().includes('duplicate key')
+          ) {
+            forceUpdateMode = true;
+            continue;
+          }
+
+          lastErrorMsg = String(
+            plainErr?.message || insErr?.message || 'Failed to insert purchased_funded_wallets'
+          );
+          lastErrorCode = String(plainErr?.code || insErr?.code || 'INSERT_ERROR');
+          return {
+            ok: false,
+            wallet,
+            syncedToSupabase: false,
+            error: lastErrorMsg,
+            errorCode: lastErrorCode,
+          };
         }
 
         if (insData) {
@@ -947,17 +1168,107 @@ async function persistWalletToSupabase(wallet: PurchasedFundedWallet): Promise<P
             last_profitable_day_date: wallet.last_profitable_day_date,
             starting_day_balance: wallet.starting_day_balance,
           };
-          saveLocalFundedWallet(normalized);
-          return normalized;
+          if (!options?.skipLocalSave) {
+            saveLocalFundedWallet(normalized);
+          }
+          return { ok: true, wallet: normalized, syncedToSupabase: true };
         }
-        return wallet;
+        return { ok: true, wallet, syncedToSupabase: true };
       }
-    } catch {
-      return wallet;
+    } catch (err: any) {
+      lastErrorMsg = String(err?.message || 'Unexpected Supabase error persisting funded wallet');
+      lastErrorCode = String(err?.code || 'EXCEPTION');
+      return {
+        ok: false,
+        wallet,
+        syncedToSupabase: false,
+        error: lastErrorMsg,
+        errorCode: lastErrorCode,
+      };
     }
   }
 
-  return wallet;
+  return {
+    ok: false,
+    wallet,
+    syncedToSupabase: false,
+    error:
+      lastErrorMsg ||
+      'Exceeded maximum schema adaptation attempts while saving to purchased_funded_wallets.',
+    errorCode: lastErrorCode || 'MAX_ATTEMPTS_EXCEEDED',
+  };
+}
+
+export async function persistWalletToSupabaseWithResult(
+  wallet: PurchasedFundedWallet
+): Promise<PersistFundedWalletResult> {
+  const result = await persistWalletWithAdapter(wallet, {
+    selectExisting: async (accountId) => {
+      const { data, error } = await supabase
+        .from('purchased_funded_wallets')
+        .select('id, account_id')
+        .eq('account_id', accountId)
+        .limit(1);
+      return { data, error };
+    },
+    updateRow: async (accountId, updatePayload) => {
+      const { data, error } = await supabase
+        .from('purchased_funded_wallets')
+        .update(updatePayload)
+        .eq('account_id', accountId)
+        .select('*')
+        .maybeSingle();
+      return { data, error };
+    },
+    insertRow: async (payload) => {
+      const { data, error } = await supabase
+        .from('purchased_funded_wallets')
+        .insert([payload])
+        .select('*')
+        .maybeSingle();
+      return { data, error };
+    },
+    insertRowPlain: async (payload) => {
+      const { error } = await supabase.from('purchased_funded_wallets').insert([payload]);
+      return { error };
+    },
+  });
+
+  if (!result.ok) {
+    console.error('[Supabase purchased_funded_wallets] Persist failed:', {
+      accountId: wallet.account_id,
+      userId: wallet.user_id,
+      code: result.errorCode,
+      error: result.error,
+    });
+  }
+  return result;
+}
+
+async function persistWalletToSupabase(wallet: PurchasedFundedWallet): Promise<PurchasedFundedWallet> {
+  const res = await persistWalletToSupabaseWithResult(wallet);
+  return res.wallet;
+}
+
+/**
+ * Inserts (or ensures) initial rule parameters into `purchased_funded_wallets` whenever
+ * a funded or challenge evaluation account is purchased or provisioned, returning full
+ * Supabase sync status and error diagnostics.
+ */
+export async function insertPurchasedFundedWalletWithResult(
+  account: TradingAccount,
+  userId?: string
+): Promise<PersistFundedWalletResult | null> {
+  if (!account || isPersonalLiveAccount(account) || isDemoAccount(account)) {
+    return null;
+  }
+
+  const resolvedUid = await resolveTargetUserId(userId || account.ownerId);
+  const existingLocal = findWalletForAccount(readLocalFundedWallets(), account);
+  const initialWallet = buildInitialFundedWalletFromAccount(account, resolvedUid, existingLocal);
+  initialWallet.user_id = resolvedUid;
+
+  return persistWalletToSupabaseWithResult(initialWallet);
 }
 
 /**
@@ -968,15 +1279,8 @@ export async function insertPurchasedFundedWallet(
   account: TradingAccount,
   userId?: string
 ): Promise<PurchasedFundedWallet | null> {
-  if (!account || isPersonalLiveAccount(account) || isDemoAccount(account)) {
-    return null;
-  }
-
-  const resolvedUid = await resolveTargetUserId(userId || account.ownerId);
-  const existingLocal = findWalletForAccount(readLocalFundedWallets(), account);
-  const initialWallet = buildInitialFundedWalletFromAccount(account, resolvedUid, existingLocal);
-
-  return persistWalletToSupabase(initialWallet);
+  const res = await insertPurchasedFundedWalletWithResult(account, userId);
+  return res ? res.wallet : null;
 }
 
 /**
@@ -1153,6 +1457,10 @@ export async function fetchFundedWalletsForUser(
     const candidateUserIds = new Set<string>();
     if (userId) candidateUserIds.add(userId);
     const {
+      data: { session },
+    } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
+    if (session?.user?.id) candidateUserIds.add(session.user.id);
+    const {
       data: { user },
     } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
     if (user?.id) candidateUserIds.add(user.id);
@@ -1162,16 +1470,28 @@ export async function fetchFundedWalletsForUser(
       return localWallets;
     }
 
-    const query = supabase
+    let { data, error } = await supabase
       .from('purchased_funded_wallets')
       .select('*')
       .in('user_id', uuids)
-      .order('updated_at', { ascending: false });
+      .order('created_at', { ascending: false });
 
-    const { data, error } = await query;
     if (error) {
       extractMissingWalletColumnFromError(error);
-      return localWallets;
+      // Fallback query without order in case schema lacks created_at
+      const fallbackRes = await supabase
+        .from('purchased_funded_wallets')
+        .select('*')
+        .in('user_id', uuids);
+      if (fallbackRes.error) {
+        console.error('[Supabase purchased_funded_wallets] Fetch failed:', {
+          uuids,
+          code: fallbackRes.error.code,
+          error: fallbackRes.error.message,
+        });
+        return localWallets;
+      }
+      data = fallbackRes.data;
     }
 
     const remoteWallets = Array.isArray(data)
@@ -1183,7 +1503,8 @@ export async function fetchFundedWalletsForUser(
       writeLocalFundedWallets(merged);
     }
     return merged;
-  } catch {
+  } catch (err: any) {
+    console.error('[Supabase purchased_funded_wallets] Fetch exception:', err?.message || err);
     return localWallets;
   }
 }

@@ -698,6 +698,68 @@ app.post("/api/accounts/purchase-from-balance", async (req, res) => {
       txHash: `SELF_CAPITAL_${now}`,
     });
 
+    // Best-effort backend Supabase persistence when authenticated with a valid UUID
+    let supabaseSynced = false;
+    let supabaseSyncError: string | undefined;
+    if (finalAccount && supabaseUrl && supabaseAnonKey && isValidUuid(user.id)) {
+      try {
+        const incomingAuth = req.headers.authorization;
+        const incomingJwt =
+          incomingAuth && incomingAuth.startsWith("Bearer ") && incomingAuth.slice(7).split(".").length === 3
+            ? incomingAuth.slice(7).trim()
+            : null;
+        const supabaseWriteBearer =
+          process.env.SUPABASE_SERVICE_ROLE_KEY || incomingJwt || supabaseAnonKey;
+        const supaHeaders = {
+          apikey: supabaseAnonKey,
+          Authorization: `Bearer ${supabaseWriteBearer}`,
+          "Content-Type": "application/json",
+          Prefer: "resolution=merge-duplicates,return=minimal",
+        };
+        const walletPayload = buildSupabaseWalletPayload(
+          buildInitialFundedWalletFromAccount(finalAccount, user.id)
+        );
+        const walletRes = await fetch(
+          `${supabaseUrl}/rest/v1/purchased_funded_wallets?on_conflict=account_id`,
+          {
+            method: "POST",
+            headers: supaHeaders,
+            body: JSON.stringify(walletPayload),
+          }
+        );
+        if (walletRes.ok) {
+          supabaseSynced = true;
+        } else {
+          const errText = await walletRes.text().catch(() => "");
+          supabaseSyncError = `purchased_funded_wallets HTTP ${walletRes.status}: ${errText}`;
+          console.warn("[Server purchase-from-balance] Supabase wallet sync notice:", supabaseSyncError);
+        }
+
+        const profileRes = await fetch(
+          `${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(user.id)}`,
+          {
+            method: "PATCH",
+            headers: {
+              apikey: supabaseAnonKey,
+              Authorization: `Bearer ${supabaseWriteBearer}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              self_balance: remainingSelfCapital,
+              self_capital_balance: remainingSelfCapital,
+            }),
+          }
+        );
+        if (!profileRes.ok) {
+          const pErr = await profileRes.text().catch(() => "");
+          console.warn("[Server purchase-from-balance] Supabase profile balance notice:", pErr);
+        }
+      } catch (supaErr: any) {
+        supabaseSyncError = supaErr?.message || "Supabase sync exception";
+        console.warn("[Server purchase-from-balance] Supabase sync exception:", supabaseSyncError);
+      }
+    }
+
     return res.json({
       ok: true,
       code: "CHALLENGE_ACTIVATED",
@@ -706,6 +768,8 @@ app.post("/api/accounts/purchase-from-balance", async (req, res) => {
       remainingSelfCapital,
       account: finalAccount,
       purchase: mapPurchaseRecord(purchaseRecord, now),
+      supabaseSynced,
+      ...(supabaseSyncError ? { supabaseSyncError } : {}),
     });
   } catch (err: any) {
     return res.status(500).json({

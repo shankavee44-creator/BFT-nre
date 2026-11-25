@@ -29,6 +29,7 @@ import {
   getSynchronizedNowMs,
 } from '../utils/priceFeedEngine';
 import { getDevicePerformanceProfile } from '../utils/devicePerformance';
+import { computeTradeBadgePosition } from '../utils/tradeChartOverlay';
 import { TradeBadge } from './TradeBadge';
 
 export interface LightweightTradingChartProps {
@@ -168,7 +169,13 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
   const onLoadMoreHistoryRef = useRef(onLoadMoreHistory);
   onLoadMoreHistoryRef.current = onLoadMoreHistory;
 
-  const [badgeCoords, setBadgeCoords] = useState<Record<string, { y: number; x: number }>>({});
+  const [badgeCoords, setBadgeCoords] = useState<
+    Record<string, { y: number; x: number; entryX: number }>
+  >({});
+  const [containerSize, setContainerSize] = useState<{ width: number; height: number }>({
+    width: 800,
+    height: 500,
+  });
   const [resultBadgeCoords, setResultBadgeCoords] = useState<{ y: number; x: number } | null>(null);
   const [currentPriceY, setCurrentPriceY] = useState<number>(0);
   const [candleCountdown, setCandleCountdown] = useState<string>('00:30');
@@ -209,18 +216,29 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
     setCandleCountdown((prev) => (prev === formatted ? prev : formatted));
   }, [candles, timeframe, now]);
 
-  // Coordinate sync for floating PnL badge pills & live moving price tag
-  const updateCoordinates = useCallback(() => {
+  // Coordinate sync for floating PnL badge pills, entry markers & live moving price tag
+  const updateCoordinates = useCallback((force: boolean = false) => {
     if (!seriesRef.current || !chartRef.current) return;
     if (lastLoadedSymbolRef.current !== asset.symbol) return;
 
     const perf = getDevicePerformanceProfile();
-    if (perf.isLowEnd && perf.chartUpdateThrottleMs > 0) {
+    if (!force && perf.isLowEnd && perf.chartUpdateThrottleMs > 0) {
       const nowMs = performance.now();
       if (nowMs - lastCoordUpdateMsRef.current < perf.chartUpdateThrottleMs) {
         return;
       }
       lastCoordUpdateMsRef.current = nowMs;
+    } else {
+      lastCoordUpdateMsRef.current = performance.now();
+    }
+
+    const container = containerRef.current;
+    if (container && container.clientWidth > 0 && container.clientHeight > 0) {
+      const nextW = Math.round(container.clientWidth);
+      const nextH = Math.round(container.clientHeight);
+      setContainerSize((prev) =>
+        prev.width === nextW && prev.height === nextH ? prev : { width: nextW, height: nextH }
+      );
     }
 
     const series = seriesRef.current;
@@ -246,9 +264,7 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
         const py = series.priceToCoordinate(priceToUse);
         if (typeof py === 'number' && !Number.isNaN(py)) {
           const roundedY = Math.round(py);
-          const minPixelDelta =
-            typeof window !== 'undefined' && window.innerWidth < 768 ? 2 : 1;
-          if (Math.abs(roundedY - lastPriceYRef.current) >= minPixelDelta) {
+          if (force || Math.abs(roundedY - lastPriceYRef.current) >= 1) {
             lastPriceYRef.current = roundedY;
             setCurrentPriceY(roundedY);
           }
@@ -259,13 +275,22 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
     }
 
     if (assetActiveTrades.length > 0) {
-      const nextCoords: Record<string, { y: number; x: number }> = {};
+      const nextCoords: Record<string, { y: number; x: number; entryX: number }> = {};
+      const tfSec = parseTimeframeSeconds(timeframe);
       for (const t of assetActiveTrades) {
         try {
           const strikePriceNum = Number(t.strikePrice) || 0;
           const y = series.priceToCoordinate(strikePriceNum);
           if (typeof y === 'number' && !Number.isNaN(y)) {
-            nextCoords[t.id] = { y: Math.round(y), x: defaultX };
+            let entryX = defaultX;
+            if (typeof t.startTime === 'number' && t.startTime > 0 && tfSec > 0) {
+              const bucketSec = (Math.floor(t.startTime / 1000 / tfSec) * tfSec) as UTCTimestamp;
+              const tx = timeScale.timeToCoordinate(bucketSec);
+              if (typeof tx === 'number' && !Number.isNaN(tx)) {
+                entryX = Math.round(tx);
+              }
+            }
+            nextCoords[t.id] = { y: Math.round(y), x: defaultX, entryX };
           }
         } catch {
           // ignore
@@ -276,7 +301,12 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
         const nextKeys = Object.keys(nextCoords);
         if (prevKeys.length !== nextKeys.length) return nextCoords;
         for (const k of nextKeys) {
-          if (!prev[k] || prev[k].x !== nextCoords[k].x || prev[k].y !== nextCoords[k].y) {
+          if (
+            !prev[k] ||
+            prev[k].x !== nextCoords[k].x ||
+            prev[k].y !== nextCoords[k].y ||
+            prev[k].entryX !== nextCoords[k].entryX
+          ) {
             return nextCoords;
           }
         }
@@ -311,7 +341,7 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
     } else {
       setResultBadgeCoords((prev) => (prev === null ? prev : null));
     }
-  }, [asset, assetActiveTrades, currentPrice, tradeResultOverlay]);
+  }, [asset, assetActiveTrades, currentPrice, timeframe, tradeResultOverlay]);
 
   const updateCoordinatesRef = useRef(updateCoordinates);
   updateCoordinatesRef.current = updateCoordinates;
@@ -459,10 +489,15 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
       resizeRaf = requestAnimationFrame(() => {
         for (const entry of entries) {
           const { width, height } = entry.contentRect;
-          if (width > 0 && height > 0 && chartRef.current) {
+          const w = Math.floor(width);
+          const h = Math.floor(height);
+          if (w > 0 && h > 0 && chartRef.current) {
             try {
-              chartRef.current.applyOptions({ width, height });
-              updateCoordinatesRef.current();
+              chartRef.current.resize(w, h, true);
+              setContainerSize((prev) =>
+                prev.width === w && prev.height === h ? prev : { width: w, height: h }
+              );
+              updateCoordinatesRef.current(true);
             } catch {
               // ignore
             }
@@ -761,7 +796,11 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
         });
       }
     }
-    updateCoordinates();
+    updateCoordinates(true);
+    const rafId = requestAnimationFrame(() => {
+      updateCoordinatesRef.current(true);
+    });
+    return () => cancelAnimationFrame(rafId);
   }, [asset, assetActiveTrades, updateCoordinates]);
 
   const handleGoToLive = useCallback(() => {
@@ -806,11 +845,17 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
         </div>
       )}
 
-      {/* Live Moving Price Tag & Candle Countdown Timer pinned right below it on the price axis */}
+      {/* Live Moving Price Tag & Candle Countdown Timer pinned symmetrically on the live price axis */}
       {isDataValidAndReady && currentPriceY > 0 && (
         <div
+          data-testid="chart-live-price-tag"
+          data-price-y={currentPriceY}
           className="absolute right-[60px] z-35 px-2 py-1 rounded bg-[#0b0e14] border border-cyan-500/70 shadow-2xl flex flex-col items-end font-mono text-[10px] select-none transition-all duration-75 pointer-events-none gpu-accelerated"
-          style={{ top: `${Math.max(6, currentPriceY - 14)}px`, willChange: 'transform' }}
+          style={{
+            top: `${Math.max(20, Math.min(Math.max(20, containerSize.height - 20), currentPriceY))}px`,
+            transform: 'translateY(-50%) translateZ(0)',
+            willChange: 'transform',
+          }}
         >
           <span className="font-bold text-cyan-300 tabular-nums">
             {Number(
@@ -826,7 +871,7 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
         </div>
       )}
 
-      {/* Active Trades PnL Pill Badges */}
+      {/* Active Trades Entry Anchor Markers & PnL Pill Badges */}
       {assetActiveTrades.map((trade) => {
         const coords = badgeCoords[trade.id];
         if (!coords) return null;
@@ -851,19 +896,46 @@ export const LightweightTradingChart: React.FC<LightweightTradingChartProps> = R
         const formattedTimer = `${mm}:${ss}`;
         const formattedPnl = livePnl >= 0 ? `+$${livePnl.toFixed(2)}` : `-$${Math.abs(livePnl).toFixed(2)}`;
 
+        const isMobileChart =
+          containerSize.width < 768 || (typeof window !== 'undefined' && window.innerWidth < 768);
+        const pos = computeTradeBadgePosition({
+          entryX: coords.entryX,
+          entryY: coords.y,
+          containerWidth: containerSize.width,
+          containerHeight: containerSize.height,
+          isMobile: isMobileChart,
+        });
+
         return (
-          <TradeBadge
-            key={trade.id}
-            direction={trade.direction}
-            investment={investmentNum}
-            formattedTimer={formattedTimer}
-            remainingSeconds={remainingSeconds}
-            totalDuration={durationSec}
-            formattedPnl={formattedPnl}
-            isInTheMoney={isInTheMoney}
-            top={coords.y}
-            left={coords.x}
-          />
+          <React.Fragment key={trade.id}>
+            <div
+              data-testid="trade-entry-marker"
+              data-trade-direction={trade.direction}
+              data-strike-price={strikePriceNum.toFixed(asset.pipDecimals)}
+              data-entry-y={coords.y}
+              className={`absolute z-30 w-2.5 h-2.5 rounded-full border-2 border-[#0b0e14] pointer-events-none ${
+                isCall
+                  ? 'bg-[#00E676] shadow-[0_0_10px_rgba(0,230,118,0.85)]'
+                  : 'bg-[#FF1744] shadow-[0_0_10px_rgba(255,23,68,0.85)]'
+              }`}
+              style={{
+                top: `${pos.entryDotY}px`,
+                left: `${pos.entryDotX}px`,
+                transform: 'translate(-50%, -50%) translateZ(0)',
+              }}
+            />
+            <TradeBadge
+              direction={trade.direction}
+              investment={investmentNum}
+              formattedTimer={formattedTimer}
+              remainingSeconds={remainingSeconds}
+              totalDuration={durationSec}
+              formattedPnl={formattedPnl}
+              isInTheMoney={isInTheMoney}
+              top={pos.top}
+              left={pos.left}
+            />
+          </React.Fragment>
         );
       })}
 

@@ -1,5 +1,6 @@
 import { supabase } from './supabase.ts';
-import type { UserProfile } from '../types/index.ts';
+import type { TradingAccount, UserProfile } from '../types/index.ts';
+import { resolveAvailableSelfCapitalBalance } from './propRules.ts';
 
 export interface TraderLiveChatMessage {
   id: string;
@@ -15,7 +16,14 @@ export type ChatModerationBlockCode =
   | 'LINK_BLOCKED'
   | 'NUMBER_BLOCKED'
   | 'PROFANITY_BLOCKED'
-  | 'SPAM_BLOCKED';
+  | 'SPAM_BLOCKED'
+  | 'SELF_CAPITAL_REQUIRED';
+
+export interface PublicChatAccessState {
+  unlocked: boolean;
+  selfCapitalBalance: number;
+  lockReason: string | null;
+}
 
 export interface ChatModerationResult {
   allowed: boolean;
@@ -35,6 +43,179 @@ export const DEFAULT_CHAT_AVATAR_URL = `data:image/svg+xml;utf8,${encodeURICompo
 
 export const BLOCKED_CHAT_NOTICE =
   'Links, numbers, and inappropriate messages are automatically blocked.';
+
+export const CHAT_SELF_CAPITAL_REQUIRED_NOTICE =
+  'Deposit into your Self Capital balance to unlock public community chat.';
+
+export const AMBIENT_CHAT_MIN_DELAY_MS = 25_000;
+export const AMBIENT_CHAT_MAX_DELAY_MS = 75_000;
+
+/**
+ * Evaluates whether the user has a positive Self Capital balance (self_capital > 0)
+ * required to unlock and post in the public trader community chat.
+ */
+export function resolvePublicChatAccess(params: {
+  userProfile?: Partial<UserProfile> | null;
+  accounts?: TradingAccount[] | null;
+  selfCapitalBalance?: number | null;
+}): PublicChatAccessState {
+  let resolvedBalance: number;
+  if (
+    typeof params.selfCapitalBalance === 'number' &&
+    Number.isFinite(params.selfCapitalBalance)
+  ) {
+    resolvedBalance = Math.max(0, Number(params.selfCapitalBalance.toFixed(2)));
+  } else {
+    resolvedBalance = Math.max(
+      0,
+      resolveAvailableSelfCapitalBalance(params.userProfile, params.accounts)
+    );
+  }
+
+  const unlocked = resolvedBalance > 0;
+  return {
+    unlocked,
+    selfCapitalBalance: resolvedBalance,
+    lockReason: unlocked ? null : CHAT_SELF_CAPITAL_REQUIRED_NOTICE,
+  };
+}
+
+function buildInitialsAvatarDataUrl(initials: string, startColor: string, endColor: string): string {
+  const safeInitials = initials.slice(0, 2).toUpperCase();
+  return `data:image/svg+xml;utf8,${encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120"><defs><linearGradient id="av" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="${startColor}"/><stop offset="100%" stop-color="${endColor}"/></linearGradient></defs><rect width="120" height="120" rx="28" fill="url(#av)"/><text x="60" y="72" text-anchor="middle" font-family="system-ui,-apple-system,sans-serif" font-size="44" font-weight="800" fill="#ffffff">${safeInitials}</text></svg>`
+  )}`;
+}
+
+export interface AmbientTraderProfile {
+  name: string;
+  avatarUrl: string;
+}
+
+export const AMBIENT_COMMUNITY_TRADERS: ReadonlyArray<AmbientTraderProfile> = [
+  { name: 'Kasun Perera', avatarUrl: buildInitialsAvatarDataUrl('KP', '#0ea5e9', '#0369a1') },
+  { name: 'Daniel Brooks', avatarUrl: buildInitialsAvatarDataUrl('DB', '#10b981', '#047857') },
+  { name: 'Roshan Silva', avatarUrl: buildInitialsAvatarDataUrl('RS', '#f59e0b', '#b45309') },
+  { name: 'Amara Jayasinghe', avatarUrl: buildInitialsAvatarDataUrl('AJ', '#8b5cf6', '#6d28d9') },
+  { name: 'Mateo Alvarez', avatarUrl: buildInitialsAvatarDataUrl('MA', '#06b6d4', '#0e7490') },
+  { name: 'Liam Carter', avatarUrl: buildInitialsAvatarDataUrl('LC', '#3b82f6', '#1d4ed8') },
+  { name: 'Tharindu Fernando', avatarUrl: buildInitialsAvatarDataUrl('TF', '#14b8a6', '#0f766e') },
+  { name: 'Elena Novak', avatarUrl: buildInitialsAvatarDataUrl('EN', '#ec4899', '#be185d') },
+  { name: 'Arjun Nair', avatarUrl: buildInitialsAvatarDataUrl('AN', '#6366f1', '#4338ca') },
+  { name: 'Noah Bennett', avatarUrl: buildInitialsAvatarDataUrl('NB', '#22c55e', '#15803d') },
+  { name: 'Dilshan Bandara', avatarUrl: buildInitialsAvatarDataUrl('DB', '#f97316', '#c2410c') },
+  { name: 'Sofia Mendes', avatarUrl: buildInitialsAvatarDataUrl('SM', '#a855f7', '#7e22ce') },
+];
+
+export const AMBIENT_COMMUNITY_MESSAGES: ReadonlyArray<string> = [
+  'EUR/USD showing clean rejection near resistance on the 1m chart.',
+  'Waiting for the current candle close before taking a 60s entry on GBP/USD.',
+  'London session volatility is picking up nicely on GBP/JPY today.',
+  'Keeping risk strictly under 5% per trade on my challenge account.',
+  'XAU/USD pullback held support well, solid 1m CALL setup.',
+  'Day 3 of 5 on the Challenge account done, staying patient and sticking to the plan.',
+  'Anyone watching USD/JPY around this consolidation zone?',
+  'NY open momentum is smooth today, no need to force entries.',
+  'Hit my daily profit goal early so stepping back to protect the drawdown.',
+  'AUD/USD moving cleanly between levels on the 30s and 1m timeframes.',
+  'Discipline beats high volume every time on funded evaluations.',
+  'Nice bearish engulfing on EUR/GBP right at the session high.',
+  'Gold is respecting the trendline cleanly this hour.',
+  'Taking 2m expiries during choppy candles has helped my win rate a lot.',
+  'BTC/USD liquidity looks active right now, watching for a clean retest.',
+  'Remember to check the 5m trend before entering short binary expiries.',
+  'Two clean wins on EUR/USD, calling it a wrap for this session.',
+  'Keeping position size steady so daily drawdown stays well under control.',
+  'GBP/USD bouncing off that support level nicely on the 1m.',
+  'Slow and steady on the Challenge phase, 4 trading days completed now.',
+  'Waiting for a wick rejection on XAU/USD before clicking PUT.',
+  'Good execution speed during the London-NY overlap today.',
+  'Sticking to my two favorite pairs instead of chasing every chart.',
+  'EUR/JPY just broke out of that tight range with strong follow-through.',
+  'Patience pays off, skipped two messy setups and caught a clean 1m win.',
+  'Managing risk first makes passing the Challenge way less stressful.',
+];
+
+/**
+ * Returns a randomized ambient delay between 25 and 75 seconds.
+ */
+export function getNextAmbientChatDelayMs(rng: () => number = Math.random): number {
+  const clampedRng = Math.max(0, Math.min(0.999999, rng()));
+  return Math.round(
+    AMBIENT_CHAT_MIN_DELAY_MS +
+      clampedRng * (AMBIENT_CHAT_MAX_DELAY_MS - AMBIENT_CHAT_MIN_DELAY_MS)
+  );
+}
+
+/**
+ * Picks a natural, non-repeating simulated community trader message without repeating
+ * recent messages or senders back-to-back.
+ */
+export function pickNextAmbientChatMessage(params?: {
+  recentMessages?: Array<{ sender_name: string; message: string }>;
+  nowMs?: number;
+  rng?: () => number;
+}): TraderLiveChatMessage {
+  const recent = params?.recentMessages || [];
+  const nowMs = params?.nowMs ?? Date.now();
+  const rng = params?.rng ?? Math.random;
+
+  const recentTexts = new Set(recent.slice(-10).map((m) => m.message.trim().toLowerCase()));
+  const recentSenders = new Set(recent.slice(-4).map((m) => m.sender_name.trim().toLowerCase()));
+
+  const candidateMessages = AMBIENT_COMMUNITY_MESSAGES.filter(
+    (msg) => !recentTexts.has(msg.trim().toLowerCase())
+  );
+  const messagePool =
+    candidateMessages.length > 0 ? candidateMessages : AMBIENT_COMMUNITY_MESSAGES;
+
+  const candidateTraders = AMBIENT_COMMUNITY_TRADERS.filter(
+    (trader) => !recentSenders.has(trader.name.trim().toLowerCase())
+  );
+  const traderPool =
+    candidateTraders.length > 0 ? candidateTraders : AMBIENT_COMMUNITY_TRADERS;
+
+  const msgIdx = Math.floor(Math.max(0, Math.min(0.999999, rng())) * messagePool.length);
+  const traderIdx = Math.floor(Math.max(0, Math.min(0.999999, rng())) * traderPool.length);
+
+  const selectedMessage = messagePool[msgIdx];
+  const selectedTrader = traderPool[traderIdx];
+  const suffix = Math.floor(Math.max(0, Math.min(0.999999, rng())) * 1_000_000)
+    .toString(36)
+    .padStart(4, '0');
+
+  return {
+    id: `ambient_${nowMs}_${suffix}`,
+    sender_name: selectedTrader.name,
+    sender_avatar_url: selectedTrader.avatarUrl,
+    message: selectedMessage,
+    created_at: new Date(nowMs).toISOString(),
+  };
+}
+
+/**
+ * Generates a small batch of recent realistic messages when the room opens empty
+ * so the public community chat feels active without spamming.
+ */
+export function createInitialAmbientSeedMessages(
+  count: number = 3,
+  nowMs: number = Date.now(),
+  rng: () => number = Math.random
+): TraderLiveChatMessage[] {
+  const safeCount = Math.max(0, Math.min(4, count));
+  const seeded: TraderLiveChatMessage[] = [];
+  for (let i = 0; i < safeCount; i++) {
+    const minutesAgo = (safeCount - i) * 2 + 1;
+    const timestamp = nowMs - minutesAgo * 60_000 - Math.round(rng() * 35_000);
+    const msg = pickNextAmbientChatMessage({
+      recentMessages: seeded,
+      nowMs: timestamp,
+      rng,
+    });
+    seeded.push(msg);
+  }
+  return seeded;
+}
 
 const LOCAL_CHAT_MIRROR_KEY = 'bft_trader_live_chat_v1';
 const CHAT_BROADCAST_CHANNEL = 'bft_trader_live_chat_sync_v1';
@@ -506,6 +687,8 @@ export async function fetchTraderLiveChatMessages(
 export async function postTraderLiveChatMessage(params: {
   rawMessage: string;
   userProfile?: Partial<UserProfile> | null;
+  accounts?: TradingAccount[] | null;
+  selfCapitalBalance?: number | null;
   recentOwnMessages?: Array<{ message: string; timestampMs: number }>;
 }): Promise<{
   ok: boolean;
@@ -513,6 +696,26 @@ export async function postTraderLiveChatMessage(params: {
   error?: string;
   code?: ChatModerationBlockCode | 'DB_ERROR';
 }> {
+  const hasBalanceContext =
+    params.selfCapitalBalance !== undefined ||
+    params.accounts !== undefined ||
+    params.userProfile !== undefined;
+
+  if (hasBalanceContext) {
+    const chatAccess = resolvePublicChatAccess({
+      userProfile: params.userProfile,
+      accounts: params.accounts,
+      selfCapitalBalance: params.selfCapitalBalance,
+    });
+    if (!chatAccess.unlocked) {
+      return {
+        ok: false,
+        error: chatAccess.lockReason || CHAT_SELF_CAPITAL_REQUIRED_NOTICE,
+        code: 'SELF_CAPITAL_REQUIRED',
+      };
+    }
+  }
+
   const moderation = moderateChatMessage(params.rawMessage, params.recentOwnMessages || []);
   if (!moderation.allowed) {
     return {

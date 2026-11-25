@@ -22,6 +22,7 @@ import {
 export interface PaymentModalProps {
   packageToBuy?: EvaluationPackage | null;
   purchaseResult?: SelfCapitalChallengePurchaseResult | null;
+  persistenceError?: string | null;
   userProfile: UserProfile;
   activePromoCode: PromoCodeType;
   initialDailyWithdrawals?: boolean;
@@ -46,6 +47,7 @@ export interface PaymentModalProps {
 export const PaymentModal: React.FC<PaymentModalProps> = ({
   packageToBuy,
   purchaseResult,
+  persistenceError,
   userProfile,
   activePromoCode,
   initialDailyWithdrawals = false,
@@ -273,6 +275,22 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
           >
             {effectiveResult.message}
           </p>
+
+          {persistenceError && (
+            <div
+              role="alert"
+              data-testid="supabase-sync-error-banner"
+              className="rounded-xl bg-amber-500/10 border border-amber-400/35 p-3.5 flex items-start gap-2.5 text-xs text-amber-200"
+            >
+              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <div className="min-w-0 space-y-0.5">
+                <div className="font-bold text-amber-300">Cloud Sync Warning</div>
+                <div className="text-amber-200/90 break-words leading-relaxed">
+                  {persistenceError}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Self Capital Deduction & New Challenge Summary */}
           <div className="rounded-xl bg-[#111827] border border-white/[0.08] p-4 space-y-3">

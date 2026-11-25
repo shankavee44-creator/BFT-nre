@@ -150,3 +150,79 @@ test('normalizeChatMessageRow exposes only public chat fields without emails or 
   ]);
   assert.equal(row.sender_name, 'Nimal');
 });
+
+test('resolvePublicChatAccess locks public chat when Self Capital balance is $0 and unlocks when > 0', async () => {
+  const {
+    CHAT_SELF_CAPITAL_REQUIRED_NOTICE,
+    resolvePublicChatAccess,
+    postTraderLiveChatMessage,
+  } = await import('./traderLiveChat.ts');
+
+  const lockedZero = resolvePublicChatAccess({
+    userProfile: { id: 'u1', selfBalance: 0 },
+    accounts: [{ id: 'acc-1', tier: 'personal', accountCategory: 'personal_live', currentBalance: 0 } as any],
+  });
+  assert.equal(lockedZero.unlocked, false);
+  assert.equal(lockedZero.selfCapitalBalance, 0);
+  assert.equal(lockedZero.lockReason, CHAT_SELF_CAPITAL_REQUIRED_NOTICE);
+
+  const unlockedFromProfile = resolvePublicChatAccess({
+    userProfile: { id: 'u1', selfBalance: 50 },
+    accounts: [],
+  });
+  assert.equal(unlockedFromProfile.unlocked, true);
+  assert.equal(unlockedFromProfile.selfCapitalBalance, 50);
+  assert.equal(unlockedFromProfile.lockReason, null);
+
+  const unlockedFromPersonalAcc = resolvePublicChatAccess({
+    userProfile: { id: 'u1', selfBalance: 0 },
+    accounts: [{ id: 'acc-1', tier: 'personal', accountCategory: 'personal_live', currentBalance: 25 } as any],
+  });
+  assert.equal(unlockedFromPersonalAcc.unlocked, true);
+  assert.equal(unlockedFromPersonalAcc.selfCapitalBalance, 25);
+
+  const blockedPost = await postTraderLiveChatMessage({
+    rawMessage: 'EUR/USD looking bullish on the 1m chart',
+    userProfile: { id: 'u1', fullName: 'Nimal', selfBalance: 0 },
+    accounts: [],
+  });
+  assert.equal(blockedPost.ok, false);
+  assert.equal(blockedPost.code, 'SELF_CAPITAL_REQUIRED');
+  assert.equal(blockedPost.error, CHAT_SELF_CAPITAL_REQUIRED_NOTICE);
+});
+
+test('ambient community chat messages pass moderation, stay within 25-75s interval, and avoid back-to-back repeats', async () => {
+  const {
+    AMBIENT_CHAT_MAX_DELAY_MS,
+    AMBIENT_CHAT_MIN_DELAY_MS,
+    AMBIENT_COMMUNITY_MESSAGES,
+    createInitialAmbientSeedMessages,
+    getNextAmbientChatDelayMs,
+    pickNextAmbientChatMessage,
+  } = await import('./traderLiveChat.ts');
+
+  for (const msg of AMBIENT_COMMUNITY_MESSAGES) {
+    const check = moderateChatMessage(msg);
+    assert.equal(check.allowed, true, `Ambient message must pass moderation: "${msg}"`);
+  }
+
+  assert.equal(getNextAmbientChatDelayMs(() => 0), AMBIENT_CHAT_MIN_DELAY_MS);
+  assert.ok(
+    getNextAmbientChatDelayMs(() => 0.999) <= AMBIENT_CHAT_MAX_DELAY_MS &&
+      getNextAmbientChatDelayMs(() => 0.999) >= AMBIENT_CHAT_MIN_DELAY_MS
+  );
+
+  const seeded = createInitialAmbientSeedMessages(3, 1_700_000_000_000, () => 0.25);
+  assert.equal(seeded.length, 3);
+  assert.equal(new Set(seeded.map((m) => m.message)).size, 3);
+  assert.equal(new Set(seeded.map((m) => m.sender_name)).size, 3);
+
+  const nextMsg = pickNextAmbientChatMessage({
+    recentMessages: seeded,
+    nowMs: 1_700_000_060_000,
+    rng: () => 0.25,
+  });
+  assert.ok(!seeded.some((m) => m.message === nextMsg.message));
+  assert.ok(!seeded.some((m) => m.sender_name === nextMsg.sender_name));
+});
+

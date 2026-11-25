@@ -1,19 +1,26 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   AlertTriangle,
+  Lock,
   MessageCircle,
   Send,
   ShieldCheck,
+  Wallet,
   X,
 } from 'lucide-react';
-import type { UserProfile } from '../types';
+import type { TradingAccount, UserProfile } from '../types';
 import { soundEngine } from '../utils/soundEffects';
 import {
+  CHAT_SELF_CAPITAL_REQUIRED_NOTICE,
   DEFAULT_CHAT_AVATAR_URL,
   TraderLiveChatMessage,
+  createInitialAmbientSeedMessages,
   fetchTraderLiveChatMessages,
+  getNextAmbientChatDelayMs,
+  pickNextAmbientChatMessage,
   postTraderLiveChatMessage,
+  resolvePublicChatAccess,
   subscribeToTraderLiveChatRealtime,
 } from '../utils/traderLiveChat';
 
@@ -21,6 +28,8 @@ interface TerminalLiveChatDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   userProfile?: UserProfile;
+  accounts?: TradingAccount[];
+  onOpenDepositModal?: () => void;
   onUnreadIncrement?: () => void;
 }
 
@@ -38,6 +47,8 @@ export const TerminalLiveChatDrawer: React.FC<TerminalLiveChatDrawerProps> = ({
   isOpen,
   onClose,
   userProfile,
+  accounts,
+  onOpenDepositModal,
   onUnreadIncrement,
 }) => {
   const [messages, setMessages] = useState<TraderLiveChatMessage[]>([]);
@@ -46,12 +57,26 @@ export const TerminalLiveChatDrawer: React.FC<TerminalLiveChatDrawerProps> = ({
   const [sending, setSending] = useState<boolean>(false);
   const [moderationNotice, setModerationNotice] = useState<string | null>(null);
 
+  const chatAccess = useMemo(
+    () => resolvePublicChatAccess({ userProfile, accounts }),
+    [userProfile, accounts]
+  );
+
   const recentOwnMessagesRef = useRef<Array<{ message: string; timestampMs: number }>>([]);
+  const messagesRef = useRef<TraderLiveChatMessage[]>([]);
+  messagesRef.current = messages;
   const feedEndRef = useRef<HTMLDivElement | null>(null);
   const isOpenRef = useRef<boolean>(isOpen);
   isOpenRef.current = isOpen;
   const onUnreadIncrementRef = useRef(onUnreadIncrement);
   onUnreadIncrementRef.current = onUnreadIncrement;
+
+  // Clear stale lock notice automatically the moment Self Capital is funded (> 0)
+  useEffect(() => {
+    if (chatAccess.unlocked && moderationNotice === CHAT_SELF_CAPITAL_REQUIRED_NOTICE) {
+      setModerationNotice(null);
+    }
+  }, [chatAccess.unlocked, moderationNotice]);
 
   useEffect(() => {
     let active = true;
@@ -59,7 +84,11 @@ export const TerminalLiveChatDrawer: React.FC<TerminalLiveChatDrawerProps> = ({
     fetchTraderLiveChatMessages(80)
       .then((res) => {
         if (!active) return;
-        setMessages(res.messages);
+        if (res.messages.length === 0) {
+          setMessages(createInitialAmbientSeedMessages(3));
+        } else {
+          setMessages(res.messages);
+        }
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -82,6 +111,35 @@ export const TerminalLiveChatDrawer: React.FC<TerminalLiveChatDrawerProps> = ({
     };
   }, []);
 
+  // Natural ambient community trader messages at randomized 25-75s intervals (local feed only)
+  useEffect(() => {
+    let active = true;
+    let timerId: ReturnType<typeof setTimeout> | null = null;
+
+    const scheduleNext = () => {
+      const delayMs = getNextAmbientChatDelayMs();
+      timerId = setTimeout(() => {
+        if (!active) return;
+        const ambientMsg = pickNextAmbientChatMessage({
+          recentMessages: messagesRef.current,
+          nowMs: Date.now(),
+        });
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === ambientMsg.id)) return prev;
+          return [...prev, ambientMsg].slice(-100);
+        });
+        scheduleNext();
+      }, delayMs);
+    };
+
+    scheduleNext();
+
+    return () => {
+      active = false;
+      if (timerId !== null) clearTimeout(timerId);
+    };
+  }, []);
+
   useEffect(() => {
     if (!isOpen) return;
     const timer = setTimeout(() => {
@@ -93,6 +151,12 @@ export const TerminalLiveChatDrawer: React.FC<TerminalLiveChatDrawerProps> = ({
   const handleSend = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (sending) return;
+
+    if (!chatAccess.unlocked) {
+      setModerationNotice(CHAT_SELF_CAPITAL_REQUIRED_NOTICE);
+      soundEngine.playErrorAlert();
+      return;
+    }
 
     const trimmed = inputValue.trim();
     if (!trimmed) {
@@ -107,6 +171,8 @@ export const TerminalLiveChatDrawer: React.FC<TerminalLiveChatDrawerProps> = ({
       const result = await postTraderLiveChatMessage({
         rawMessage: trimmed,
         userProfile,
+        accounts,
+        selfCapitalBalance: chatAccess.selfCapitalBalance,
         recentOwnMessages: recentOwnMessagesRef.current,
       });
 
@@ -264,9 +330,44 @@ export const TerminalLiveChatDrawer: React.FC<TerminalLiveChatDrawerProps> = ({
               <div ref={feedEndRef} />
             </div>
 
-            {/* Composer & Auto-Moderation Notice */}
+            {/* Composer & Self Capital Access Gate / Auto-Moderation Notice */}
             <div className="p-3 bg-[#0e121b] border-t border-[#2a2e39] space-y-2 shrink-0">
-              {moderationNotice && (
+              {!chatAccess.unlocked && (
+                <div
+                  data-testid="live-chat-locked-banner"
+                  className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/35 space-y-2"
+                >
+                  <div className="flex items-start gap-2">
+                    <div className="w-6 h-6 rounded-lg bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-amber-300 shrink-0 mt-0.5">
+                      <Lock className="w-3.5 h-3.5" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-amber-200 leading-tight">
+                        Public Chat Locked
+                      </p>
+                      <p className="text-[11px] text-slate-300 leading-snug mt-0.5">
+                        Deposit into your Self Capital balance to unlock public chat access. Chat unlocks automatically once funded.
+                      </p>
+                    </div>
+                  </div>
+                  {onOpenDepositModal && (
+                    <button
+                      type="button"
+                      data-testid="live-chat-deposit-btn"
+                      onClick={() => {
+                        soundEngine.playUiClick();
+                        onOpenDepositModal();
+                      }}
+                      className="w-full py-1.5 px-3 rounded-lg bg-[#00e676] hover:bg-[#00d66c] text-slate-950 font-black text-[11px] flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <Wallet className="w-3.5 h-3.5" />
+                      Deposit Self Capital to Unlock
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {moderationNotice && chatAccess.unlocked && (
                 <div
                   data-testid="live-chat-moderation-notice"
                   role="alert"
@@ -282,22 +383,31 @@ export const TerminalLiveChatDrawer: React.FC<TerminalLiveChatDrawerProps> = ({
                   type="text"
                   data-testid="live-chat-input"
                   value={inputValue}
+                  disabled={!chatAccess.unlocked || sending}
                   onChange={(e) => {
                     setInputValue(e.target.value);
                     if (moderationNotice) setModerationNotice(null);
                   }}
                   maxLength={500}
-                  placeholder="Message traders..."
-                  className="flex-1 min-w-0 px-3 py-2 rounded-xl bg-[#181c27] border border-[#2a2e39] focus:border-cyan-400/70 focus:outline-none text-xs font-sans tracking-normal text-white placeholder-slate-500"
+                  placeholder={
+                    chatAccess.unlocked
+                      ? 'Message traders...'
+                      : 'Deposit Self Capital to unlock chat...'
+                  }
+                  className="flex-1 min-w-0 px-3 py-2 rounded-xl bg-[#181c27] border border-[#2a2e39] focus:border-cyan-400/70 focus:outline-none text-xs font-sans tracking-normal text-white placeholder-slate-500 disabled:opacity-50 disabled:cursor-not-allowed"
                 />
                 <button
                   type="submit"
                   data-testid="live-chat-send-btn"
-                  disabled={sending}
+                  disabled={!chatAccess.unlocked || sending}
                   aria-label="Send Message"
-                  className="px-3 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-slate-950 font-black text-xs flex items-center justify-center gap-1 cursor-pointer transition-colors shrink-0"
+                  className="px-3 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 disabled:opacity-40 disabled:cursor-not-allowed text-slate-950 font-black text-xs flex items-center justify-center gap-1 cursor-pointer transition-colors shrink-0"
                 >
-                  <Send className="w-3.5 h-3.5" />
+                  {chatAccess.unlocked ? (
+                    <Send className="w-3.5 h-3.5" />
+                  ) : (
+                    <Lock className="w-3.5 h-3.5" />
+                  )}
                 </button>
               </form>
 
@@ -315,3 +425,4 @@ export const TerminalLiveChatDrawer: React.FC<TerminalLiveChatDrawerProps> = ({
     </AnimatePresence>
   );
 };
+

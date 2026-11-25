@@ -827,13 +827,38 @@ export async function apiPurchaseChallengeFromSelfCapital(params: {
   dailyWithdrawalsUnlocked?: boolean;
   referralCode?: string | null;
 }): Promise<Record<string, any>> {
+  let activeSessionUserId: string | null = null;
+  let activeSessionToken: string | null = null;
+  try {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
+    if (session?.user?.id && UUID_REGEX.test(session.user.id)) {
+      activeSessionUserId = session.user.id;
+    }
+    if (session?.access_token) {
+      activeSessionToken = session.access_token;
+    }
+  } catch {
+    // ignore
+  }
+
   let backendRes: Record<string, any> | null = null;
   if (!IS_SUPABASE_EDGE_BASE) {
     try {
+      const headers: Record<string, string> = {
+        ...(getAuthHeaders() as Record<string, string>),
+      };
+      if (activeSessionToken) {
+        headers['Authorization'] = `Bearer ${activeSessionToken}`;
+      }
       const res = await fetch(`${API_BASE}/api/accounts/purchase-from-balance`, {
         method: 'POST',
-        headers: getAuthHeaders(),
-        body: JSON.stringify(params),
+        headers,
+        body: JSON.stringify({
+          ...params,
+          userId: activeSessionUserId || params.userId,
+        }),
       });
       backendRes = await safeJsonResponse(res);
     } catch {
@@ -842,8 +867,8 @@ export async function apiPurchaseChallengeFromSelfCapital(params: {
   }
 
   try {
-    const effectiveUserId = params.userId || 'usr_bft_001';
-    let targetUuid = UUID_REGEX.test(effectiveUserId) ? effectiveUserId : null;
+    const effectiveUserId = activeSessionUserId || params.userId || 'usr_bft_001';
+    let targetUuid = activeSessionUserId || (UUID_REGEX.test(effectiveUserId) ? effectiveUserId : null);
     if (!targetUuid && params.email) {
       const { data: p } = await supabase
         .from('profiles')

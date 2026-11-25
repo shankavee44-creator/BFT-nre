@@ -29,13 +29,16 @@ export const TradeBadge: React.FC<TradeBadgeProps> = React.memo(({
 
   return (
     <div
-      className={`absolute z-30 px-3 py-2 rounded-xl flex flex-col gap-1.5 font-mono text-[11px] font-bold select-none shadow-2xl transition-colors duration-75 trade-badge hw-accelerate bg-zinc-900/95 border ${
+      data-testid="trade-badge"
+      data-entry-y={top}
+      className={`absolute z-30 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl flex flex-col gap-1.5 font-mono text-[11px] font-bold select-none shadow-2xl transition-colors duration-75 trade-badge hw-accelerate bg-zinc-900/95 border pointer-events-none ${
         isInTheMoney ? 'border-emerald-500/50' : 'border-rose-500/50'
       }`}
       style={{
-        top: `${top - 18}px`,
-        left: `${left + 15}px`,
-        minWidth: '120px',
+        top: `${top}px`,
+        left: `${left}px`,
+        transform: 'translateY(-50%) translateZ(0)',
+        minWidth: '118px',
         boxShadow: '0 8px 24px rgba(0,0,0,0.7)',
       }}
     >

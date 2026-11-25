@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   TrendingUp,
@@ -75,6 +75,7 @@ import {
   getTopVolatileAssets,
 } from '../utils/storage';
 import { broadcastSyncEvent, subscribeToSyncEvents } from '../utils/crossTabSync';
+import { resolveTradeExecutionPrice } from '../utils/tradeChartOverlay';
 import {
   isValidTradeDuration,
   isPositionSizeSpike,
@@ -686,6 +687,8 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
   const [smoothPrice, setSmoothPrice] = useState<number>(1.08425);
   const targetPriceRef = useRef<number>(1.08425);
   const smoothPriceRef = useRef<number>(1.08425);
+  const candlesRef = useRef<Candle[]>([]);
+  candlesRef.current = candles;
   const lastSmoothStateUpdateRef = useRef<number>(0);
   const bgTickCounterRef = useRef<number>(0);
   const candleSyncCounterRef = useRef<number>(0);
@@ -1409,16 +1412,18 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       if (normalizeAssetSymbol(selectedAssetRef.current.symbol) !== activeSymNormalized) return;
       if (!isValidPriceForAsset(selectedAssetRef.current, price)) return;
 
+      const decimals = selectedAssetRef.current.pipDecimals ?? 5;
+      const roundedPrice = Number(price.toFixed(decimals));
+      // Always keep authoritative ref synced on every tick (even during mobile UI throttling)
+      targetPriceRef.current = roundedPrice;
+
       const nowMs = getSynchronizedNowMs();
       const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
       const minThrottleMs = isMobile ? 550 : 220;
       if (nowMs - lastUiTickUpdateMsRef.current < minThrottleMs) return;
       lastUiTickUpdateMsRef.current = nowMs;
 
-      const decimals = selectedAssetRef.current.pipDecimals ?? 5;
-      const roundedPrice = Number(price.toFixed(decimals));
       setCurrentPrice((prev) => (prev === roundedPrice ? prev : roundedPrice));
-      targetPriceRef.current = roundedPrice;
 
       const sec = TIMEFRAME_SECONDS[timeframe];
       const bucketMs = sec * 1000;
@@ -2372,13 +2377,45 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       }
     }
 
-    // Accurately determine trade strike price from synchronized live feed or isolated market state
+    // Accurately determine trade strike price from synchronized live feed / refs (never stale mobile closures)
     const tradeMarket = getAssetMarketState(assetToTrade.symbol);
     const liveFeedPrice = liveMarketFeed.getLatestPrice(assetToTrade.symbol);
-    const assetLivePrice =
-      assetToTrade.symbol === selectedAsset.symbol
-        ? currentPrice
-        : (liveFeedPrice ?? tradeMarket?.lastPrice ?? assetToTrade.basePrice);
+    const isSelectedSym =
+      normalizeAssetSymbol(assetToTrade.symbol) ===
+      normalizeAssetSymbol(selectedAssetRef.current.symbol);
+    const latestDisplayedClose =
+      isSelectedSym && candlesRef.current.length > 0
+        ? candlesRef.current[candlesRef.current.length - 1]?.close
+        : null;
+    const assetLivePrice = resolveTradeExecutionPrice({
+      asset: assetToTrade,
+      isSelectedAsset: isSelectedSym,
+      liveFeedPrice,
+      targetRefPrice: targetPriceRef.current,
+      marketStatePrice: tradeMarket?.lastPrice ?? null,
+      latestCandleClose: latestDisplayedClose,
+      reactCurrentPrice: currentPrice,
+    });
+
+    // Immediately sync the live chart price & active candle close to the exact execution price
+    // so mobile and desktop render the entry price line & marker dead-on the current live price
+    if (isSelectedSym) {
+      targetPriceRef.current = assetLivePrice;
+      setCurrentPrice((prev) => (prev === assetLivePrice ? prev : assetLivePrice));
+      setCandles((prevCandles) => {
+        if (prevCandles.length === 0) return prevCandles;
+        const last = prevCandles[prevCandles.length - 1];
+        if (!last || last.close === assetLivePrice) return prevCandles;
+        const next = prevCandles.slice();
+        next[next.length - 1] = {
+          ...last,
+          close: assetLivePrice,
+          high: Math.max(last.high, assetLivePrice),
+          low: Math.min(last.low, assetLivePrice),
+        };
+        return next;
+      });
+    }
 
     const newTrade: BinaryTrade & { supabaseAccountId?: string } = {
       id: tradeId,
@@ -2475,6 +2512,13 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
       setPendingTradeDirection(direction);
     }
   };
+
+  // Stable ref-backed handler so memoized QuotexMobileDock always invokes the latest trade execution closure
+  const handleTriggerTradeRef = useRef(handleTriggerTrade);
+  handleTriggerTradeRef.current = handleTriggerTrade;
+  const handleMobileTriggerTrade = useCallback((direction: BinaryOptionDirection) => {
+    handleTriggerTradeRef.current(direction);
+  }, []);
 
   // Step duration up or down through presets (5s to 4h) while respecting Funded <30s rule
   const handleStepDuration = (dir: 'up' | 'down') => {
@@ -6076,7 +6120,7 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
           onOpenTimeSelector={() => setIsTimeSelectorOpen((prev) => !prev)}
           onChangeInvestment={(inv) => handleChangeInvestmentAmount(inv)}
           onToggleInvestmentMode={() => setInvestmentMode(investmentMode === 'usd' ? 'percent' : 'usd')}
-          onTriggerTrade={(dir) => handleTriggerTrade(dir)}
+          onTriggerTrade={handleMobileTriggerTrade}
           onDismissNotice={() => {
             setTradeError(null);
             setTradeSuccess(null);
@@ -6557,6 +6601,8 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
           isOpen={isLiveChatDrawerOpen}
           onClose={() => setIsLiveChatDrawerOpen(false)}
           userProfile={userProfile}
+          accounts={accounts}
+          onOpenDepositModal={onOpenDepositModal}
           onUnreadIncrement={() => setUnreadLiveChatCount((c) => c + 1)}
         />
 

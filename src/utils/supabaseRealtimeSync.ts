@@ -37,6 +37,11 @@ import {
 import { isTwoFactorEnabledOnProfile } from './authOtpLogic.ts';
 import { ensureTradeUuid } from './supabaseTradeSync.ts';
 import { resolveStableKycStatus, markKycVerifiedLock } from './kycVerification.ts';
+import {
+  mapPurchasedFundedWalletToTradingAccount,
+  normalizeSupabaseFundedWalletRow,
+  type PurchasedFundedWallet,
+} from './fundedWalletAnalytics.ts';
 
 
 export {
@@ -797,6 +802,12 @@ export async function commitProfileBalanceToSupabase(params: {
   const candidateUuids = new Set<string>();
   try {
     const {
+      data: { session },
+    } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
+    if (session?.user?.id && UUID_REGEX.test(session.user.id)) {
+      candidateUuids.add(session.user.id);
+    }
+    const {
       data: { user },
     } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
     if (user?.id && UUID_REGEX.test(user.id)) {
@@ -813,8 +824,10 @@ export async function commitProfileBalanceToSupabase(params: {
     candidateUuids.add(params.userId);
   }
 
+  let lastUpdateError: string | null = null;
+
   for (const uid of Array.from(candidateUuids)) {
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < 4; attempt++) {
       const safePayload = buildSafeProfileBalancePayload(params.column, rounded);
       if (!safePayload) {
         confirmLocalCommit();
@@ -833,6 +846,7 @@ export async function commitProfileBalanceToSupabase(params: {
             markUnsupportedProfileColumn(missingCol);
             continue;
           }
+          lastUpdateError = error.message;
           break;
         }
 
@@ -845,7 +859,8 @@ export async function commitProfileBalanceToSupabase(params: {
           return true;
         }
         break;
-      } catch {
+      } catch (err: any) {
+        lastUpdateError = err?.message || 'Exception updating profiles balance';
         break;
       }
     }
@@ -853,7 +868,7 @@ export async function commitProfileBalanceToSupabase(params: {
 
   const normalizedEmail = params.userEmail ? params.userEmail.trim().toLowerCase() : '';
   if (normalizedEmail) {
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < 4; attempt++) {
       const safePayload = buildSafeProfileBalancePayload(params.column, rounded);
       if (!safePayload) {
         confirmLocalCommit();
@@ -872,6 +887,7 @@ export async function commitProfileBalanceToSupabase(params: {
             markUnsupportedProfileColumn(missingCol);
             continue;
           }
+          lastUpdateError = error.message;
           break;
         }
 
@@ -884,12 +900,20 @@ export async function commitProfileBalanceToSupabase(params: {
           return true;
         }
         break;
-      } catch {
+      } catch (err: any) {
+        lastUpdateError = err?.message || 'Exception updating profiles balance by email';
         break;
       }
     }
   }
 
+  console.error('[Supabase profiles] Balance commit failed:', {
+    column: params.column,
+    newBalance: rounded,
+    userId: params.userId,
+    userEmail: normalizedEmail,
+    error: lastUpdateError || 'No matching profile row updated (check RLS or auth session)',
+  });
   return false;
 }
 
@@ -2286,6 +2310,34 @@ export function mapSupabaseTradingAccountRow(row: Record<string, any>): TradingA
       ? 'hard'
       : 'none';
 
+  const isRealFunded = Boolean(
+    row.is_real_funded ||
+      row.account_tier === 'REAL_FUNDED' ||
+      phase === 'funded' ||
+      limits.accountType === 'instant'
+  );
+  const isPropFunded =
+    limits.accountType !== 'personal' && limits.accountType !== 'demo';
+
+  const resolvedTierName =
+    row.tier_name && String(row.tier_name).trim()
+      ? String(row.tier_name).trim()
+      : limits.accountType === 'funded_challenge'
+      ? isRealFunded
+        ? 'Real Funded Account'
+        : 'Funded Challenge'
+      : limits.accountType === 'one_step'
+      ? isRealFunded
+        ? 'Real Funded Account'
+        : 'Funded Challenge'
+      : limits.accountType === 'two_step'
+      ? `Two-Step Challenge${phase === 'phase_2' ? ' (Phase 2)' : ''}`
+      : limits.accountType === 'instant'
+      ? 'Instant Funded'
+      : limits.accountType === 'personal'
+      ? 'Personal Live Balance (Self-Funded)'
+      : 'Demo Practice';
+
   const rawAcc: TradingAccount = {
     id: String(row.id || `ACC-${Date.now()}`),
     supabaseAccountId: String(row.id || ''),
@@ -2294,24 +2346,34 @@ export function mapSupabaseTradingAccountRow(row: Record<string, any>): TradingA
     passwordHash: 'bft_live_' + String(row.id || 'acc').slice(0, 8),
     tier: limits.tier,
     accountType: limits.accountType,
-    tierName:
-      limits.accountType === 'one_step'
-        ? 'One-Step Challenge'
-        : limits.accountType === 'two_step'
-        ? `Two-Step Challenge${phase === 'phase_2' ? ' (Phase 2)' : ''}`
-        : limits.accountType === 'instant'
-        ? 'Instant Funded'
-        : limits.accountType === 'personal'
-        ? 'Personal Live Balance (Self-Funded)'
-        : 'Demo Practice',
+    tierName: resolvedTierName,
+    ...(isPropFunded
+      ? {
+          account_tier: isRealFunded ? ('REAL_FUNDED' as const) : ('CHALLENGE' as const),
+          badge_color: isRealFunded ? ('purple' as const) : ('red' as const),
+          isRealFunded,
+          is_real_funded: isRealFunded,
+          principalLocked: isRealFunded,
+          principal_locked: isRealFunded,
+        }
+      : {}),
     size: startBal,
     initialBalance: startBal,
     currentBalance: curBal,
     startingDayEquity: Number(row.starting_day_equity || curBal || startBal),
     equity: eq,
-    dailyLossLimitPercent: limits.dailyLossLimitPercent,
-    maxOverallLossPercent: limits.maxOverallLossPercent,
-    profitTargetPercent: limits.profitTargetPercent,
+    dailyLossLimitPercent:
+      row.daily_drawdown !== undefined && row.daily_drawdown !== null
+        ? Number(row.daily_drawdown)
+        : limits.dailyLossLimitPercent,
+    maxOverallLossPercent:
+      row.max_drawdown !== undefined && row.max_drawdown !== null && Number(row.max_drawdown) > 0
+        ? Number(row.max_drawdown)
+        : limits.maxOverallLossPercent,
+    profitTargetPercent:
+      row.profit_target !== undefined && row.profit_target !== null
+        ? Number(row.profit_target)
+        : limits.profitTargetPercent,
     maxRiskPerTradePercent: limits.maxRiskPerTradePercent || 5,
     status: normalizedStatus,
     breachType,
@@ -2609,39 +2671,200 @@ export async function verifyAndCreditCryptoDepositInSupabase(params: {
   };
 }
 
+const unsupportedTradingAccountColumns = new Set<string>();
+
+function extractMissingTradingAccountColumnFromError(error: any): string | null {
+  const msg = String(error?.message || error?.details || '');
+  const m1 = msg.match(/Could not find the '([^']+)' column/i);
+  if (m1?.[1]) return m1[1];
+  const m2 = msg.match(/column "?([a-zA-Z0-9_]+)"? of relation "?trading_accounts"? does not exist/i);
+  if (m2?.[1]) return m2[1];
+  const m3 = msg.match(/column trading_accounts\.([a-zA-Z0-9_]+) does not exist/i);
+  if (m3?.[1]) return m3[1];
+  return null;
+}
+
+function isAccountTypeCheckViolation(error: any): boolean {
+  const code = String(error?.code || '');
+  const msg = String(error?.message || error?.details || '').toLowerCase();
+  return (
+    code === '23514' ||
+    (msg.includes('check constraint') && msg.includes('account_type')) ||
+    msg.includes('trading_accounts_account_type_check')
+  );
+}
+
+export interface TradingAccountInsertAdapter {
+  insertSelect: (payload: Record<string, any>) => Promise<{ data: any; error: any }>;
+  insertPlain: (payload: Record<string, any>) => Promise<{ error: any }>;
+}
+
+export async function insertTradingAccountWithAdapter(params: {
+  account: TradingAccount;
+  userId: string;
+  adapter: TradingAccountInsertAdapter;
+  unsupportedColumnsSet?: Set<string>;
+}): Promise<{ ok: boolean; account?: TradingAccount; error?: string; errorCode?: string }> {
+  const { account, userId, adapter } = params;
+  if (!userId || !UUID_REGEX.test(userId)) {
+    return {
+      ok: false,
+      error: 'No authenticated Supabase user UUID available to insert trading account.',
+      errorCode: 'UNAUTHENTICATED_USER_ID',
+    };
+  }
+
+  const localUnsupported = params.unsupportedColumnsSet || unsupportedTradingAccountColumns;
+  let useLegacyAccountTypeFallback = false;
+  let lastErrorMsg = '';
+  let lastErrorCode = '';
+
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const payload: Record<string, any> = buildSupabaseTradingAccountPayload(account, userId);
+    if (useLegacyAccountTypeFallback && payload.account_type === 'funded_challenge') {
+      payload.account_type = 'one_step';
+    }
+    for (const col of Array.from(localUnsupported)) {
+      delete payload[col];
+    }
+
+    try {
+      const { data, error } = await adapter.insertSelect(payload);
+      if (!error && data) {
+        const mapped = mapSupabaseTradingAccountRow(data);
+        return {
+          ok: true,
+          account: {
+            ...account,
+            ...mapped,
+            id: account.id || mapped.id,
+            supabaseAccountId: String(data.id || mapped.supabaseAccountId || ''),
+            loginId: account.loginId || mapped.loginId,
+            tier: account.tier || mapped.tier,
+            accountType: account.accountType || mapped.accountType,
+            tierName: account.tierName || mapped.tierName,
+            account_tier: account.account_tier || mapped.account_tier,
+            badge_color: account.badge_color || mapped.badge_color,
+          },
+        };
+      }
+
+      if (error) {
+        const missingCol = extractMissingTradingAccountColumnFromError(error);
+        if (missingCol) {
+          localUnsupported.add(missingCol);
+          continue;
+        }
+        if (
+          !useLegacyAccountTypeFallback &&
+          payload.account_type === 'funded_challenge' &&
+          isAccountTypeCheckViolation(error)
+        ) {
+          useLegacyAccountTypeFallback = true;
+          continue;
+        }
+
+        // Fallback if SELECT after INSERT is restricted by RLS
+        const { error: plainErr } = await adapter.insertPlain(payload);
+        if (!plainErr) {
+          return { ok: true, account };
+        }
+        const plainMissing = extractMissingTradingAccountColumnFromError(plainErr);
+        if (plainMissing) {
+          localUnsupported.add(plainMissing);
+          continue;
+        }
+        if (
+          !useLegacyAccountTypeFallback &&
+          payload.account_type === 'funded_challenge' &&
+          isAccountTypeCheckViolation(plainErr)
+        ) {
+          useLegacyAccountTypeFallback = true;
+          continue;
+        }
+
+        lastErrorMsg = String(
+          plainErr?.message || error?.message || 'Failed to insert into trading_accounts.'
+        );
+        lastErrorCode = String(plainErr?.code || error?.code || 'INSERT_ERROR');
+        return { ok: false, error: lastErrorMsg, errorCode: lastErrorCode };
+      }
+
+      return { ok: true, account };
+    } catch (err: any) {
+      lastErrorMsg = String(err?.message || 'Error inserting trading account.');
+      lastErrorCode = String(err?.code || 'EXCEPTION');
+      return { ok: false, error: lastErrorMsg, errorCode: lastErrorCode };
+    }
+  }
+
+  return {
+    ok: false,
+    error: lastErrorMsg || 'Exceeded retry attempts inserting into trading_accounts.',
+    errorCode: lastErrorCode || 'MAX_ATTEMPTS_EXCEEDED',
+  };
+}
+
 export async function insertSupabaseTradingAccount(params: {
   account: TradingAccount;
   userId?: string;
   userEmail?: string;
-}): Promise<{ ok: boolean; account?: TradingAccount; error?: string }> {
-  const effectiveUserId = await resolveSupabaseWithdrawalUserUuid({
-    userId: params.userId,
-    userEmail: params.userEmail,
+}): Promise<{ ok: boolean; account?: TradingAccount; error?: string; errorCode?: string }> {
+  // Always prefer the active Supabase Auth session UUID first so RLS `auth.uid() = user_id` succeeds.
+  let effectiveUserId = '';
+  try {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
+    if (session?.user?.id && UUID_REGEX.test(session.user.id)) {
+      effectiveUserId = session.user.id;
+    } else {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
+      if (user?.id && UUID_REGEX.test(user.id)) {
+        effectiveUserId = user.id;
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  if (!effectiveUserId) {
+    effectiveUserId = await resolveSupabaseWithdrawalUserUuid({
+      userId: params.userId,
+      userEmail: params.userEmail,
+    });
+  }
+
+  const result = await insertTradingAccountWithAdapter({
+    account: params.account,
+    userId: effectiveUserId,
+    adapter: {
+      insertSelect: async (payload) => {
+        const { data, error } = await supabase
+          .from('trading_accounts')
+          .insert([payload])
+          .select('*')
+          .maybeSingle();
+        return { data, error };
+      },
+      insertPlain: async (payload) => {
+        const { error } = await supabase.from('trading_accounts').insert([payload]);
+        return { error };
+      },
+    },
   });
 
-  const payload = buildSupabaseTradingAccountPayload(params.account, effectiveUserId);
-
-  try {
-    const { data, error } = await supabase
-      .from('trading_accounts')
-      .insert([payload])
-      .select('*')
-      .maybeSingle();
-
-    if (!error && data) {
-      return { ok: true, account: mapSupabaseTradingAccountRow(data) };
-    }
-
-    // Fallback if SELECT after INSERT is restricted by RLS
-    const { error: plainErr } = await supabase.from('trading_accounts').insert([payload]);
-    if (!plainErr) {
-      return { ok: true, account: params.account };
-    }
-
-    return { ok: false, error: plainErr.message || error?.message };
-  } catch (err: any) {
-    return { ok: false, error: err?.message || 'Error inserting trading account.' };
+  if (!result.ok) {
+    console.error('[Supabase trading_accounts] Insert failed:', {
+      accountId: params.account?.id,
+      userId: effectiveUserId,
+      code: result.errorCode,
+      error: result.error,
+    });
   }
+  return result;
 }
 
 /**
@@ -2753,23 +2976,154 @@ export async function updateSupabaseTradingAccountState(params: {
   }
 }
 
+/**
+ * Pure helper: merges rows fetched from `trading_accounts` and `purchased_funded_wallets`
+ * into a single deduplicated `TradingAccount[]` list so funded challenge accounts saved in
+ * either or both Supabase tables always appear cleanly in Dashboard & Account Switcher.
+ */
+export function mergeSupabaseFundedAccounts(params: {
+  tradingAccountRows?: Record<string, any>[];
+  fundedWalletRows?: Record<string, any>[];
+  ownerEmail?: string;
+}): TradingAccount[] {
+  const rawAccRows = Array.isArray(params.tradingAccountRows) ? params.tradingAccountRows : [];
+  const rawWalletRows = Array.isArray(params.fundedWalletRows) ? params.fundedWalletRows : [];
+
+  const wallets = rawWalletRows.map((row) => normalizeSupabaseFundedWalletRow(row));
+  const walletAccounts = wallets.map((w) => ({
+    wallet: w,
+    account: sanitizeAccountForAntiBreach(
+      mapPurchasedFundedWalletToTradingAccount(w, params.ownerEmail)
+    ),
+    createdMs: Date.parse(w.created_at || '') || 0,
+  }));
+
+  const merged: TradingAccount[] = walletAccounts.map((entry) => entry.account);
+  const matchedWalletIndices = new Set<number>();
+
+  for (const row of rawAccRows) {
+    const mapped = mapSupabaseTradingAccountRow(row);
+    const rowCreatedMs = Date.parse(String(row.created_at || '')) || 0;
+    const rowId = String(row.id || '');
+
+    // 1. Exact ID / supabaseAccountId / loginId match against wallet accounts
+    let matchIdx = walletAccounts.findIndex(
+      (w, idx) =>
+        !matchedWalletIndices.has(idx) &&
+        (w.account.id === mapped.id ||
+          w.account.loginId === mapped.loginId ||
+          (w.account.supabaseAccountId && w.account.supabaseAccountId === rowId) ||
+          w.wallet.account_id === rowId)
+    );
+
+    // 2. Fuzzy pair match for dual-inserted accounts where trading_accounts uses a generated UUID
+    //    and purchased_funded_wallets uses account_id = 'BFT-CH-...' created in the same purchase.
+    if (matchIdx < 0 && !isPersonalLiveAccount(mapped) && !isDemoAccount(mapped)) {
+      matchIdx = walletAccounts.findIndex((w, idx) => {
+        if (matchedWalletIndices.has(idx)) return false;
+        const sameSize = Math.abs(w.account.initialBalance - mapped.initialBalance) < 0.01;
+        const closeInTime =
+          rowCreatedMs > 0 && w.createdMs > 0
+            ? Math.abs(rowCreatedMs - w.createdMs) <= 120_000
+            : w.account.createdDate === mapped.createdDate;
+        return sameSize && closeInTime;
+      });
+    }
+
+    if (matchIdx >= 0) {
+      matchedWalletIndices.add(matchIdx);
+      const existing = merged[matchIdx];
+      merged[matchIdx] = sanitizeAccountForAntiBreach({
+        ...mapped,
+        ...existing,
+        id: existing.id,
+        loginId: existing.loginId,
+        supabaseAccountId: rowId || existing.supabaseAccountId,
+        currentBalance:
+          existing.currentBalance !== existing.initialBalance
+            ? existing.currentBalance
+            : mapped.currentBalance,
+        equity:
+          existing.equity !== existing.initialBalance ? existing.equity : mapped.equity,
+        tradesCount: Math.max(existing.tradesCount || 0, mapped.tradesCount || 0),
+        winRate: existing.winRate || mapped.winRate,
+      });
+    } else {
+      merged.push(
+        sanitizeAccountForAntiBreach({
+          ...mapped,
+          ownerEmail: mapped.ownerEmail || params.ownerEmail,
+        })
+      );
+    }
+  }
+
+  return merged;
+}
+
 export async function fetchSupabaseTradingAccountsForUser(params: {
   userId?: string;
   userEmail?: string;
 }): Promise<TradingAccount[]> {
-  const resolvedUuid = await resolveSupabaseWithdrawalUserUuid(params);
-  if (!resolvedUuid) return [];
+  const candidateUuids = new Set<string>();
+  try {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
+    if (session?.user?.id && UUID_REGEX.test(session.user.id)) {
+      candidateUuids.add(session.user.id);
+    }
+    const {
+      data: { user },
+    } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
+    if (user?.id && UUID_REGEX.test(user.id)) {
+      candidateUuids.add(user.id);
+    }
+  } catch {
+    // ignore
+  }
+
+  if (params.userId && UUID_REGEX.test(params.userId.trim())) {
+    candidateUuids.add(params.userId.trim());
+  }
+  if (candidateUuids.size === 0) {
+    const resolvedUuid = await resolveSupabaseWithdrawalUserUuid(params);
+    if (resolvedUuid && UUID_REGEX.test(resolvedUuid)) {
+      candidateUuids.add(resolvedUuid);
+    }
+  }
+
+  const uuids = Array.from(candidateUuids);
+  if (uuids.length === 0) return [];
 
   try {
-    const { data, error } = await supabase
-      .from('trading_accounts')
-      .select('*')
-      .eq('user_id', resolvedUuid)
-      .order('created_at', { ascending: false });
+    const [accRes, walletRes] = await Promise.all([
+      supabase
+        .from('trading_accounts')
+        .select('*')
+        .in('user_id', uuids)
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('purchased_funded_wallets')
+        .select('*')
+        .in('user_id', uuids)
+        .order('created_at', { ascending: false }),
+    ]);
 
-    if (error || !Array.isArray(data)) return [];
-    return data.map(mapSupabaseTradingAccountRow);
-  } catch {
+    if (accRes.error) {
+      console.error('[Supabase trading_accounts] Fetch failed:', accRes.error.message);
+    }
+    if (walletRes.error) {
+      console.error('[Supabase purchased_funded_wallets] Fetch failed:', walletRes.error.message);
+    }
+
+    return mergeSupabaseFundedAccounts({
+      tradingAccountRows: Array.isArray(accRes.data) ? accRes.data : [],
+      fundedWalletRows: Array.isArray(walletRes.data) ? walletRes.data : [],
+      ownerEmail: params.userEmail,
+    });
+  } catch (err: any) {
+    console.error('[Supabase accounts] Combined fetch exception:', err?.message || err);
     return [];
   }
 }
@@ -3168,20 +3522,47 @@ export function subscribeUserRealtimeChannels(callbacks: UserRealtimeSubscriptio
         }
       }
 
-      // 5. Fetch initial trading_accounts from Supabase (only query with valid UUIDs)
-      if (callbacks.onAccountsInitial) {
+      // 5. Fetch initial trading_accounts AND purchased_funded_wallets from Supabase (only query with valid UUIDs)
+      const syncInitialFundedAccountsNow = async () => {
+        if (!callbacks.onAccountsInitial || isDisposed) return;
         const uuidIds = Array.from(candidateIds).filter((id) => UUID_REGEX.test(id));
-        if (uuidIds.length > 0) {
-          const { data: accRows } = await supabase
+        if (uuidIds.length === 0) return;
+
+        const [accRes, walletRes] = await Promise.all([
+          supabase
             .from('trading_accounts')
             .select('*')
             .in('user_id', uuidIds)
-            .order('created_at', { ascending: false });
-          if (!isDisposed && Array.isArray(accRows) && accRows.length > 0) {
-            callbacks.onAccountsInitial(accRows.map(mapSupabaseTradingAccountRow));
-          }
+            .order('created_at', { ascending: false }),
+          supabase
+            .from('purchased_funded_wallets')
+            .select('*')
+            .in('user_id', uuidIds)
+            .order('created_at', { ascending: false }),
+        ]);
+
+        if (accRes.error) {
+          console.error('[Supabase Realtime] Initial trading_accounts fetch failed:', accRes.error.message);
         }
-      }
+        if (walletRes.error) {
+          console.error(
+            '[Supabase Realtime] Initial purchased_funded_wallets fetch failed:',
+            walletRes.error.message
+          );
+        }
+
+        const combinedAccounts = mergeSupabaseFundedAccounts({
+          tradingAccountRows: Array.isArray(accRes.data) ? accRes.data : [],
+          fundedWalletRows: Array.isArray(walletRes.data) ? walletRes.data : [],
+          ownerEmail: normalizedEmail || undefined,
+        });
+
+        if (!isDisposed && combinedAccounts.length > 0) {
+          callbacks.onAccountsInitial(combinedAccounts);
+        }
+      };
+
+      await syncInitialFundedAccountsNow();
     } catch {
       // Ignore network/offline errors on initial sync
     }
@@ -3208,6 +3589,18 @@ export function subscribeUserRealtimeChannels(callbacks: UserRealtimeSubscriptio
     }
     if (session?.user) {
       syncLatestProfileNow();
+      if (callbacks.onAccountsInitial) {
+        fetchSupabaseTradingAccountsForUser({
+          userId: session.user.id,
+          userEmail: session.user.email || normalizedEmail,
+        })
+          .then((accs) => {
+            if (!isDisposed && accs.length > 0) {
+              callbacks.onAccountsInitial?.(accs);
+            }
+          })
+          .catch(() => {});
+      }
     }
   });
 
@@ -3316,6 +3709,33 @@ export function subscribeUserRealtimeChannels(callbacks: UserRealtimeSubscriptio
           callbacks.onAccountEvent(
             payload.eventType,
             newRow ? mapSupabaseTradingAccountRow(newRow) : oldRow ? mapSupabaseTradingAccountRow(oldRow) : null
+          );
+        }
+      }
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'purchased_funded_wallets',
+      },
+      (payload) => {
+        if (isDisposed || !callbacks.onAccountEvent) return;
+        const newRow = (payload.new as Record<string, any>) || null;
+        const oldRow = (payload.old as Record<string, any>) || null;
+        if (matchesUserPurchase(newRow) || matchesUserPurchase(oldRow)) {
+          const targetRow = newRow || oldRow;
+          callbacks.onAccountEvent(
+            payload.eventType,
+            targetRow
+              ? sanitizeAccountForAntiBreach(
+                  mapPurchasedFundedWalletToTradingAccount(
+                    normalizeSupabaseFundedWalletRow(targetRow),
+                    normalizedEmail || undefined
+                  )
+                )
+              : null
           );
         }
       }
