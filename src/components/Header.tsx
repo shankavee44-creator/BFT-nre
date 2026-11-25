@@ -756,7 +756,8 @@ export const Header: React.FC<HeaderProps> = ({
             ? Number((activeAccount.currentBalance - activeAccount.initialBalance).toFixed(2))
             : 0
         }
-        userName={userProfile.fullName || userProfile.email || 'Trader'}
+        userName={userProfile.fullName || userProfile.full_name || userProfile.display_name || userProfile.username || userProfile.email || 'Trader'}
+        userProfile={userProfile}
         userCountry={userProfile.country || 'Sri Lanka'}
         userAccountId={activeAccount?.id || 'ACTIVE'}
         activeAccount={activeAccount}

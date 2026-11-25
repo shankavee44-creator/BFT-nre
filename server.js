@@ -53990,8 +53990,7 @@ INSTITUTIONAL RULES & KNOWLEDGE BASE:
    - Profit Splits: Standard 80% split (Months 1-3), upgrading to 90% plus capital scaling upon consistent performance.
 
 4. Promo Codes:
-   - "SPOOKY40": Flat 40% OFF for new trader challenges.
-   - "SPOOKY20": Flat 20% OFF for existing funded traders.
+   - "SPOOKY40": Flat 40% OFF for trader challenges.
 
 5. Tone & Personality:
    - Professional, concise, authoritative yet welcoming.
@@ -54042,15 +54041,14 @@ function generateLocalFallbackReply(userMessage) {
   }
   if (lower.includes("promo") || lower.includes("code") || lower.includes("discount") || lower.includes("spooky")) {
     return `**Active Official Promos:**
-\u2022 **SPOOKY40**: Flat 40% OFF all challenge packages for new traders.
-\u2022 **SPOOKY20**: Flat 20% OFF for existing accounts.
-Enter these promo codes at checkout for instant price discounts.`;
+\u2022 **SPOOKY40**: Flat 40% OFF all challenge packages.
+Enter this bonus code to apply the 40% discount.`;
   }
   if (lower.includes("demo") || lower.includes("balance") || lower.includes("reset")) {
     return `**Custom Demo Balance:**
 You can customize your Demo Account simulator balance to any amount between **$1.00** and **$10,000.00** using the Account Switcher dropdown pencil icon or inside your Trader Hub Profile tab!`;
   }
-  return `Welcome to BFT Prime Prop Capital support! I can help you with prop trading rules (1-Step, 2-Step, Instant Funded), drawdown limits, our 3-minute TRC-20 payout SLA, active discount codes (SPOOKY40 / SPOOKY20), and account setup. How can I assist your trading today?`;
+  return `Welcome to BFT Prime Prop Capital support! I can help you with prop trading rules, drawdown limits, our 3-minute TRC-20 payout SLA, active discount code (SPOOKY40), and account setup. How can I assist your trading today?`;
 }
 __name3(generateLocalFallbackReply, "generateLocalFallbackReply");
 async function generateSupportChatReply(input, optionalHistory = []) {
@@ -56629,7 +56627,7 @@ Sitemap: https://binaryfundedtrader.com/sitemap.xml`);
       return res.json({ ok: true, reply, timestamp: (/* @__PURE__ */ new Date()).toISOString() });
     } catch (err) {
       console.error("AI chat endpoint error:", err);
-      return res.json({ ok: true, reply: "Our AI Risk Desk is reviewing your request. For immediate assistance with promo codes, use SPOOKY40 for 40% OFF or SPOOKY20 for 20% OFF!", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
+      return res.json({ ok: true, reply: "Our AI Risk Desk is reviewing your request. For immediate assistance with promo codes, use SPOOKY40 for 40% OFF!", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
     }
   });
   app.post("/api/kyc/submit", (req, res) => {
@@ -58358,6 +58356,127 @@ data: ${JSON.stringify({ serverTime: Date.now(), symbol: snap.symbol, price: sna
       return res.json({ ok: true, deposits, cryptoDeposits: deposits, transactions });
     } catch (err) {
       return res.status(500).json({ ok: false, error: err?.message || "Failed to fetch deposit history.", deposits: [], transactions: [] });
+    }
+  });
+  app.post("/api/accounts/purchase-from-balance", async (req, res) => {
+    try {
+      const reqUserId = String(req.body?.userId || "").trim();
+      const reqEmail = String(req.body?.email || "").trim();
+      const reqFullName = String(req.body?.fullName || "").trim();
+      let user = getAuthenticatedUser(req) || (reqUserId ? getUserById(reqUserId) : null) || (reqEmail ? getUserByEmail(reqEmail) : null);
+      if (!user && (reqUserId || reqEmail)) {
+        user = ensureUserInDb({
+          id: reqUserId || `usr_${Date.now().toString(36)}`,
+          email: reqEmail || `${reqUserId}@bft.io`,
+          fullName: reqFullName || void 0
+        });
+      }
+      if (!user) {
+        user = getUserById("usr_bft_001");
+      }
+      if (!user) {
+        return res.status(401).json({ ok: false, error: "Unauthenticated" });
+      }
+      const personalAcc = ensurePersonalLiveAccountForUser(user.id);
+      const dbSelfBalance = Math.max(
+        0,
+        Number(user.self_balance ?? 0),
+        Number(personalAcc?.currentBalance ?? 0)
+      );
+      const clientSelfBalance = req.body?.selfCapitalBalance !== void 0 && Number.isFinite(Number(req.body.selfCapitalBalance)) ? Math.max(0, Number(req.body.selfCapitalBalance)) : null;
+      const availableBalance = Number((clientSelfBalance !== null ? clientSelfBalance : dbSelfBalance).toFixed(2));
+      const size = Math.max(1e3, Number(req.body?.size || 5e3));
+      const price = Number(Math.max(0.01, Number(req.body?.price || 49)).toFixed(2));
+      const tierName = String(req.body?.tierName || "Funded Challenge").trim();
+      const dailyWithdrawalsUnlocked = Boolean(req.body?.dailyWithdrawalsUnlocked);
+      const requestedAccountId = req.body?.accountId ? String(req.body.accountId).trim() : "";
+      if (availableBalance + 1e-6 < price) {
+        const shortfallAmount = Number(Math.max(0, price - availableBalance).toFixed(2));
+        return res.status(400).json({
+          ok: false,
+          code: "INSUFFICIENT_ACCOUNT_BALANCE",
+          error: "Insufficient Account Balance",
+          requiredAmount: price,
+          availableBalance,
+          shortfallAmount,
+          message: `Insufficient Account Balance: Required $${price.toFixed(2)}, available Self Capital is $${availableBalance.toFixed(2)}.`
+        });
+      }
+      const remainingSelfCapital = Number(Math.max(0, availableBalance - price).toFixed(2));
+      const now = Date.now();
+      db.prepare("UPDATE users SET self_balance = ?, updated_at = ? WHERE id = ?").run(
+        remainingSelfCapital,
+        now,
+        user.id
+      );
+      if (personalAcc?.id) {
+        db.prepare(`
+        UPDATE accounts SET
+          current_balance = ?,
+          equity = ?,
+          starting_day_equity = ?,
+          updated_at = ?
+        WHERE id = ? AND user_id = ?
+      `).run(
+          remainingSelfCapital,
+          remainingSelfCapital,
+          remainingSelfCapital,
+          now,
+          personalAcc.id,
+          user.id
+        );
+      }
+      const createdAcc = createAccount({
+        userId: user.id,
+        tier: "funded-challenge",
+        tierName,
+        size,
+        dailyWithdrawalsUnlocked
+      });
+      let finalAccount = createdAcc;
+      if (requestedAccountId && createdAcc && createdAcc.id !== requestedAccountId) {
+        try {
+          db.prepare("UPDATE accounts SET id = ? WHERE id = ? AND user_id = ?").run(
+            requestedAccountId,
+            createdAcc.id,
+            user.id
+          );
+          finalAccount = getAccountById(requestedAccountId) || { ...createdAcc, id: requestedAccountId, loginId: requestedAccountId };
+        } catch {
+        }
+      }
+      const packageName = `${tierName} ($${size.toLocaleString("en-US")})`;
+      const sku = buildPackageSku({
+        accountType: "challenge",
+        tier: "funded-challenge",
+        sizeOrAmount: size
+      });
+      const purchaseRecord = createUserPurchaseRecord({
+        userId: user.id,
+        accountId: finalAccount?.id || requestedAccountId || null,
+        packageId: sku,
+        packageName,
+        packageSku: sku,
+        amount: price,
+        packageAmount: price,
+        accountType: "challenge",
+        status: "active",
+        txHash: `SELF_CAPITAL_${now}`
+      });
+      return res.json({
+        ok: true,
+        code: "CHALLENGE_ACTIVATED",
+        deductedAmount: price,
+        previousSelfCapital: availableBalance,
+        remainingSelfCapital,
+        account: finalAccount,
+        purchase: mapPurchaseRecord(purchaseRecord, now)
+      });
+    } catch (err) {
+      return res.status(500).json({
+        ok: false,
+        error: err?.message || "Failed to activate Funded Challenge from Self Capital."
+      });
     }
   });
   app.get("/api/affiliate/social-profile", (req, res) => {

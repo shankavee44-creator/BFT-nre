@@ -18,6 +18,8 @@ import {
   invokeUpsertUserLeaderboard,
   filterCrossTableDuplicates,
   fetchCurrentUserLeaderboardEntry,
+  isRawUuidLike,
+  resolveLeaderboardDisplayName,
   FUNDED_TRADER_POOL,
   SELF_FUNDED_TRADER_POOL,
 } from './leaderboardEngine';
@@ -471,6 +473,54 @@ test('Rule 10: Current logged-in user (Yohan Siriwardana) lookup handles missing
   assert.equal(livePos.mergedTraders[1].name, 'Yohan Siriwardana');
   assert.equal(livePos.mergedTraders[1].isCurrentUser, true);
 });
+
+test('Rule 11: Leaderboard user display name resolves profile name (full_name/username/display_name) and never exposes raw UUID strings', () => {
+  const sampleUuid = '5e0fb76f-3c4a-4b1a-9a0e-123456789abc';
+  assert.equal(isRawUuidLike(sampleUuid), true);
+  assert.equal(isRawUuidLike('Yohan Siriwardhana'), false);
+
+  // Prefers profile full_name / fullName over raw UUID userName
+  assert.equal(
+    resolveLeaderboardDisplayName({
+      userName: sampleUuid,
+      userProfile: { full_name: 'Shankavee Perera', email: 'shankavee44@gmail.com' },
+    }),
+    'Shankavee Perera'
+  );
+
+  // Supports display_name and username when full_name is missing
+  assert.equal(
+    resolveLeaderboardDisplayName({
+      userName: sampleUuid,
+      userProfile: { display_name: 'Kasun Trader' },
+    }),
+    'Kasun Trader'
+  );
+  assert.equal(
+    resolveLeaderboardDisplayName({
+      userName: sampleUuid,
+      userProfile: { username: 'bft_pro_lk' },
+    }),
+    'bft_pro_lk'
+  );
+
+  // Rejects raw UUIDs and placeholder values, falling back cleanly to email prefix or 'Trader'
+  assert.equal(
+    resolveLeaderboardDisplayName({
+      userName: sampleUuid,
+      userProfile: { full_name: sampleUuid, email: 'shankavee44@gmail.com' },
+    }),
+    'shankavee44'
+  );
+  assert.equal(
+    resolveLeaderboardDisplayName({
+      userName: sampleUuid,
+      userProfile: { full_name: 'loading' },
+    }),
+    'Trader'
+  );
+});
+
 
 
 

@@ -1731,4 +1731,76 @@ export function subscribeToLeaderboardsRealtime(
   };
 }
 
+const RAW_UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isRawUuidLike(value?: string | null): boolean {
+  if (!value) return false;
+  return RAW_UUID_REGEX.test(String(value).trim());
+}
+
+export interface LeaderboardDisplayNameProfile {
+  full_name?: string | null;
+  fullName?: string | null;
+  display_name?: string | null;
+  displayName?: string | null;
+  username?: string | null;
+  name?: string | null;
+  email?: string | null;
+}
+
+/**
+ * Resolves the logged-in trader's clean profile name for the leaderboard header.
+ * Prefers full_name / fullName / display_name / displayName / username / name,
+ * rejects placeholder values ('loading', 'null', 'undefined') and raw UUIDs,
+ * and falls back cleanly to email prefix or 'Trader'.
+ */
+export function resolveLeaderboardDisplayName(params: {
+  userName?: string | null;
+  userProfile?: LeaderboardDisplayNameProfile | null;
+}): string {
+  const candidates = [
+    params.userProfile?.full_name,
+    params.userProfile?.fullName,
+    params.userProfile?.display_name,
+    params.userProfile?.displayName,
+    params.userProfile?.username,
+    params.userProfile?.name,
+    params.userName,
+  ];
+
+  for (const raw of candidates) {
+    if (typeof raw !== 'string') continue;
+    const trimmed = raw.trim();
+    const lower = trimmed.toLowerCase();
+    if (
+      !trimmed ||
+      lower === 'loading' ||
+      lower === 'null' ||
+      lower === 'undefined' ||
+      isRawUuidLike(trimmed)
+    ) {
+      continue;
+    }
+    if (trimmed.includes('@')) continue;
+    return trimmed;
+  }
+
+  const emailCandidate =
+    typeof params.userProfile?.email === 'string' && params.userProfile.email.includes('@')
+      ? params.userProfile.email
+      : typeof params.userName === 'string' && params.userName.includes('@')
+      ? params.userName
+      : null;
+
+  if (emailCandidate) {
+    const localPart = emailCandidate.split('@')[0]?.trim();
+    if (localPart && !isRawUuidLike(localPart)) {
+      return localPart;
+    }
+  }
+
+  return 'Trader';
+}
+
+
 

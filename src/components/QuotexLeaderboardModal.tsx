@@ -36,6 +36,8 @@ import {
   invokeUpsertUserLeaderboard,
   filterCrossTableDuplicates,
   fetchCurrentUserLeaderboardEntry,
+  resolveLeaderboardDisplayName,
+  LeaderboardDisplayNameProfile,
 } from '../utils/leaderboardEngine';
 
 export type { LeaderboardTrader, LeaderboardTabCategory };
@@ -46,6 +48,7 @@ interface QuotexLeaderboardModalProps {
   userProfit?: number;
   weeklyTradesCount?: number;
   userName?: string;
+  userProfile?: LeaderboardDisplayNameProfile | null;
   userCountry?: string;
   userCountryIso?: string;
   userAccountId?: string;
@@ -61,6 +64,7 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
   userProfit,
   weeklyTradesCount = 0,
   userName = 'Trader',
+  userProfile,
   userCountry = 'Sri Lanka',
   userCountryIso = 'LK',
   userAccountId = 'ACTIVE',
@@ -199,12 +203,10 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
     rank: number | null;
   } | null>(null);
 
-  const displayUserName =
-    !userName ||
-    userName.trim().toLowerCase() === 'loading' ||
-    userName.trim().toLowerCase() === 'null'
-      ? 'Trader'
-      : userName.trim();
+  const displayUserName = resolveLeaderboardDisplayName({
+    userName,
+    userProfile,
+  });
 
   // Safely check if the current logged-in user (e.g. Yohan Siriwardana) exists in `global_leaderboards`
   // using `.limit(1)` so missing records return `null` cleanly instead of 404/406 errors.
@@ -431,8 +433,8 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
           data-testid="leaderboard-user-position-card"
           className="px-3.5 py-2.5 sm:px-5 sm:py-3 bg-[#0e111a] border-b border-white/10 shrink-0 space-y-2"
         >
-          <div className="flex items-center justify-between text-[11px] sm:text-xs">
-            <div className="flex items-center gap-2 min-w-0">
+          <div className="flex items-center justify-between gap-2 sm:gap-3 text-[11px] sm:text-xs">
+            <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 flex-1 overflow-hidden">
               <CountryFlagIcon
                 country={userCountry === 'United States' ? 'Sri Lanka' : userCountry}
                 countryCode={userCountryIso}
@@ -441,11 +443,23 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
                 showIsoBadge={true}
                 className="w-5 h-3.5 rounded-[2px] shadow-sm border border-white/15 shrink-0 inline-block align-middle object-cover"
               />
-              <span className="font-bold text-white truncate">{displayUserName}</span>
-              <span className="px-1.5 py-0.5 rounded bg-[#ff8800]/15 border border-[#ff8800]/30 text-[#ff8800] font-mono text-[9px] font-bold shrink-0">
+              <span
+                data-testid="leaderboard-user-display-name"
+                className="font-bold text-white truncate min-w-0"
+                title={displayUserName}
+              >
+                {displayUserName}
+              </span>
+              <span
+                data-testid="leaderboard-user-you-badge"
+                className="px-1.5 py-0.5 rounded bg-[#ff8800]/15 border border-[#ff8800]/30 text-[#ff8800] font-mono text-[9px] font-bold shrink-0"
+              >
                 YOU
               </span>
-              <span className="text-[10px] font-mono text-slate-400 shrink-0">
+              <span
+                data-testid="leaderboard-user-account-id"
+                className="hidden sm:inline text-[10px] font-mono text-slate-400 truncate max-w-[160px]"
+              >
                 · {userAccountId}
               </span>
             </div>
@@ -457,14 +471,14 @@ export const QuotexLeaderboardModal: React.FC<QuotexLeaderboardModalProps> = ({
                 soundEngine.playUiClick();
                 setShowHowItWorks(!showHowItWorks);
               }}
-              className="text-[10px] sm:text-[11px] font-medium text-[#ff8800] hover:text-amber-300 flex items-center gap-1 cursor-pointer shrink-0"
+              className="text-[10px] sm:text-[11px] font-medium text-[#ff8800] hover:text-amber-300 flex items-center gap-1 cursor-pointer shrink-0 whitespace-nowrap"
             >
-              <HelpCircle className="w-3.5 h-3.5" />
+              <HelpCircle className="w-3.5 h-3.5 shrink-0" />
               <span>How does it work?</span>
               {showHowItWorks ? (
-                <ChevronUp className="w-3.5 h-3.5" />
+                <ChevronUp className="w-3.5 h-3.5 shrink-0" />
               ) : (
-                <ChevronDown className="w-3.5 h-3.5" />
+                <ChevronDown className="w-3.5 h-3.5 shrink-0" />
               )}
             </button>
           </div>

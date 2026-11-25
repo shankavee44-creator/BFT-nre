@@ -6786,7 +6786,8 @@ export const TradingTerminal: React.FC<TradingTerminalProps> = ({
           (effectiveAccount.currentBalance - effectiveAccount.initialBalance).toFixed(2)
         )}
         weeklyTradesCount={trades.filter((t) => t.status === 'won' || t.status === 'lost').length}
-        userName={userProfile?.fullName || userProfile?.email || 'Trader'}
+        userName={userProfile?.fullName || userProfile?.full_name || userProfile?.display_name || userProfile?.username || userProfile?.email || 'Trader'}
+        userProfile={userProfile}
         userCountry={userProfile?.country || 'Sri Lanka'}
         userAccountId={effectiveAccount.id || 'ACTIVE'}
         activeAccount={effectiveAccount}
