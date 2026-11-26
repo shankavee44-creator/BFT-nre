@@ -42,6 +42,7 @@ import {
   normalizeSupabaseFundedWalletRow,
   type PurchasedFundedWallet,
 } from './fundedWalletAnalytics.ts';
+import { mapFundedAccountRowToTradingAccount } from './fundedAccountsSync.ts';
 
 
 export {
@@ -782,14 +783,14 @@ function buildSafeProfileBalancePayload(
 
 /**
  * Atomically commits an updated account balance (`self_balance`, `demo_balance`, or `funded_balance`)
- * directly to the authenticated user's row in the Supabase `profiles` table.
+ * directly to the authenticated user's row in the Supabase `profiles` table and returns structured error info.
  */
-export async function commitProfileBalanceToSupabase(params: {
+export async function commitProfileBalanceToSupabaseWithResult(params: {
   userId?: string;
   userEmail?: string;
   column: ProfileBalanceColumn;
   newBalance: number;
-}): Promise<boolean> {
+}): Promise<{ ok: boolean; error?: string }> {
   const rounded = Number(params.newBalance.toFixed(2));
 
   const confirmLocalCommit = () => {
@@ -831,7 +832,7 @@ export async function commitProfileBalanceToSupabase(params: {
       const safePayload = buildSafeProfileBalancePayload(params.column, rounded);
       if (!safePayload) {
         confirmLocalCommit();
-        return true;
+        return { ok: true };
       }
       try {
         const { data, error } = await supabase
@@ -856,7 +857,7 @@ export async function commitProfileBalanceToSupabase(params: {
             cachedSupabaseProfileUuid = String(data[0].id);
           }
           confirmLocalCommit();
-          return true;
+          return { ok: true };
         }
         break;
       } catch (err: any) {
@@ -872,7 +873,7 @@ export async function commitProfileBalanceToSupabase(params: {
       const safePayload = buildSafeProfileBalancePayload(params.column, rounded);
       if (!safePayload) {
         confirmLocalCommit();
-        return true;
+        return { ok: true };
       }
       try {
         const { data, error } = await supabase
@@ -897,7 +898,7 @@ export async function commitProfileBalanceToSupabase(params: {
             cachedSupabaseProfileUuid = String(data[0].id);
           }
           confirmLocalCommit();
-          return true;
+          return { ok: true };
         }
         break;
       } catch (err: any) {
@@ -907,14 +908,30 @@ export async function commitProfileBalanceToSupabase(params: {
     }
   }
 
+  const errorMessage =
+    lastUpdateError || 'No matching profile row updated (check RLS or auth session)';
   console.error('[Supabase profiles] Balance commit failed:', {
     column: params.column,
     newBalance: rounded,
     userId: params.userId,
     userEmail: normalizedEmail,
-    error: lastUpdateError || 'No matching profile row updated (check RLS or auth session)',
+    error: errorMessage,
   });
-  return false;
+  return { ok: false, error: errorMessage };
+}
+
+/**
+ * Atomically commits an updated account balance (`self_balance`, `demo_balance`, or `funded_balance`)
+ * directly to the authenticated user's row in the Supabase `profiles` table.
+ */
+export async function commitProfileBalanceToSupabase(params: {
+  userId?: string;
+  userEmail?: string;
+  column: ProfileBalanceColumn;
+  newBalance: number;
+}): Promise<boolean> {
+  const res = await commitProfileBalanceToSupabaseWithResult(params);
+  return res.ok;
 }
 
 /**
@@ -2977,20 +2994,34 @@ export async function updateSupabaseTradingAccountState(params: {
 }
 
 /**
- * Pure helper: merges rows fetched from `trading_accounts` and `purchased_funded_wallets`
- * into a single deduplicated `TradingAccount[]` list so funded challenge accounts saved in
- * either or both Supabase tables always appear cleanly in Dashboard & Account Switcher.
+ * Pure helper: merges rows fetched from `public.funded_accounts` (primary),
+ * `purchased_funded_wallets`, and `trading_accounts` into a single deduplicated
+ * `TradingAccount[]` list so funded challenge accounts always appear cleanly
+ * in Dashboard & Account Switcher without duplicates.
  */
 export function mergeSupabaseFundedAccounts(params: {
+  fundedAccountRows?: Record<string, any>[];
   tradingAccountRows?: Record<string, any>[];
   fundedWalletRows?: Record<string, any>[];
   ownerEmail?: string;
 }): TradingAccount[] {
+  const rawFundedRows = Array.isArray(params.fundedAccountRows) ? params.fundedAccountRows : [];
   const rawAccRows = Array.isArray(params.tradingAccountRows) ? params.tradingAccountRows : [];
   const rawWalletRows = Array.isArray(params.fundedWalletRows) ? params.fundedWalletRows : [];
 
+  const fundedEntries = rawFundedRows.map((row) => ({
+    row,
+    account: mapFundedAccountRowToTradingAccount(row, params.ownerEmail),
+    createdMs: Date.parse(String(row.created_at || '')) || 0,
+  }));
+
+  const merged: TradingAccount[] = fundedEntries.map((e) => e.account);
+  const mergedCreatedMs: number[] = fundedEntries.map((e) => e.createdMs);
+  const matchedFundedIndices = new Set<number>();
+
+  // 1. Merge purchased_funded_wallets (deduplicating against funded_accounts)
   const wallets = rawWalletRows.map((row) => normalizeSupabaseFundedWalletRow(row));
-  const walletAccounts = wallets.map((w) => ({
+  const walletEntries = wallets.map((w) => ({
     wallet: w,
     account: sanitizeAccountForAntiBreach(
       mapPurchasedFundedWalletToTradingAccount(w, params.ownerEmail)
@@ -2998,56 +3029,109 @@ export function mergeSupabaseFundedAccounts(params: {
     createdMs: Date.parse(w.created_at || '') || 0,
   }));
 
-  const merged: TradingAccount[] = walletAccounts.map((entry) => entry.account);
-  const matchedWalletIndices = new Set<number>();
+  for (const w of walletEntries) {
+    const exactOrCloseIdx = merged.findIndex((existing, idx) => {
+      if (
+        existing.id === w.account.id ||
+        existing.id === w.wallet.id ||
+        existing.fundedAccountId === w.wallet.id ||
+        existing.loginId === w.account.loginId ||
+        existing.supabaseAccountId === w.wallet.id ||
+        w.wallet.account_id === existing.id
+      ) {
+        return true;
+      }
+      if (
+        existing.sourceTable === 'funded_accounts' &&
+        !matchedFundedIndices.has(idx) &&
+        Math.abs(existing.initialBalance - w.account.initialBalance) < 0.01
+      ) {
+        const fMs = mergedCreatedMs[idx] || 0;
+        if (fMs > 0 && w.createdMs > 0 && Math.abs(fMs - w.createdMs) <= 120_000) {
+          return true;
+        }
+      }
+      return false;
+    });
 
+    if (exactOrCloseIdx >= 0) {
+      matchedFundedIndices.add(exactOrCloseIdx);
+      const existing = merged[exactOrCloseIdx];
+      merged[exactOrCloseIdx] = {
+        ...w.account,
+        ...existing,
+        id: existing.id,
+        supabaseAccountId: existing.supabaseAccountId || existing.id,
+        fundedAccountId: existing.fundedAccountId || existing.id,
+        currentBalance: existing.currentBalance,
+        equity: existing.equity,
+        status: existing.status,
+        phase: existing.phase,
+        account_tier: existing.account_tier,
+        badge_color: existing.badge_color,
+      };
+    } else {
+      merged.push(w.account);
+      mergedCreatedMs.push(w.createdMs);
+    }
+  }
+
+  // 2. Merge trading_accounts (deduplicating against funded_accounts & purchased_funded_wallets)
+  const matchedExistingForTradingAcc = new Set<number>();
   for (const row of rawAccRows) {
     const mapped = mapSupabaseTradingAccountRow(row);
     const rowCreatedMs = Date.parse(String(row.created_at || '')) || 0;
     const rowId = String(row.id || '');
 
-    // 1. Exact ID / supabaseAccountId / loginId match against wallet accounts
-    let matchIdx = walletAccounts.findIndex(
-      (w, idx) =>
-        !matchedWalletIndices.has(idx) &&
-        (w.account.id === mapped.id ||
-          w.account.loginId === mapped.loginId ||
-          (w.account.supabaseAccountId && w.account.supabaseAccountId === rowId) ||
-          w.wallet.account_id === rowId)
+    let matchIdx = merged.findIndex(
+      (existing, idx) =>
+        !matchedExistingForTradingAcc.has(idx) &&
+        (existing.id === mapped.id ||
+          existing.loginId === mapped.loginId ||
+          (existing.supabaseAccountId && existing.supabaseAccountId === rowId) ||
+          (existing.fundedAccountId && existing.fundedAccountId === rowId))
     );
 
-    // 2. Fuzzy pair match for dual-inserted accounts where trading_accounts uses a generated UUID
-    //    and purchased_funded_wallets uses account_id = 'BFT-CH-...' created in the same purchase.
     if (matchIdx < 0 && !isPersonalLiveAccount(mapped) && !isDemoAccount(mapped)) {
-      matchIdx = walletAccounts.findIndex((w, idx) => {
-        if (matchedWalletIndices.has(idx)) return false;
-        const sameSize = Math.abs(w.account.initialBalance - mapped.initialBalance) < 0.01;
+      matchIdx = merged.findIndex((existing, idx) => {
+        if (matchedExistingForTradingAcc.has(idx)) return false;
+        if (isPersonalLiveAccount(existing) || isDemoAccount(existing)) return false;
+        const sameSize = Math.abs(existing.initialBalance - mapped.initialBalance) < 0.01;
+        const exMs = mergedCreatedMs[idx] || 0;
         const closeInTime =
-          rowCreatedMs > 0 && w.createdMs > 0
-            ? Math.abs(rowCreatedMs - w.createdMs) <= 120_000
-            : w.account.createdDate === mapped.createdDate;
+          rowCreatedMs > 0 && exMs > 0
+            ? Math.abs(rowCreatedMs - exMs) <= 120_000
+            : existing.createdDate === mapped.createdDate;
         return sameSize && closeInTime;
       });
     }
 
     if (matchIdx >= 0) {
-      matchedWalletIndices.add(matchIdx);
+      matchedExistingForTradingAcc.add(matchIdx);
       const existing = merged[matchIdx];
-      merged[matchIdx] = sanitizeAccountForAntiBreach({
-        ...mapped,
-        ...existing,
-        id: existing.id,
-        loginId: existing.loginId,
-        supabaseAccountId: rowId || existing.supabaseAccountId,
-        currentBalance:
-          existing.currentBalance !== existing.initialBalance
-            ? existing.currentBalance
-            : mapped.currentBalance,
-        equity:
-          existing.equity !== existing.initialBalance ? existing.equity : mapped.equity,
-        tradesCount: Math.max(existing.tradesCount || 0, mapped.tradesCount || 0),
-        winRate: existing.winRate || mapped.winRate,
-      });
+      if (existing.sourceTable === 'funded_accounts') {
+        merged[matchIdx] = {
+          ...existing,
+          tradesCount: Math.max(existing.tradesCount || 0, mapped.tradesCount || 0),
+          winRate: existing.winRate || mapped.winRate,
+        };
+      } else {
+        merged[matchIdx] = sanitizeAccountForAntiBreach({
+          ...mapped,
+          ...existing,
+          id: existing.id,
+          loginId: existing.loginId,
+          supabaseAccountId: rowId || existing.supabaseAccountId,
+          currentBalance:
+            existing.currentBalance !== existing.initialBalance
+              ? existing.currentBalance
+              : mapped.currentBalance,
+          equity:
+            existing.equity !== existing.initialBalance ? existing.equity : mapped.equity,
+          tradesCount: Math.max(existing.tradesCount || 0, mapped.tradesCount || 0),
+          winRate: existing.winRate || mapped.winRate,
+        });
+      }
     } else {
       merged.push(
         sanitizeAccountForAntiBreach({
@@ -3055,6 +3139,7 @@ export function mergeSupabaseFundedAccounts(params: {
           ownerEmail: mapped.ownerEmail || params.ownerEmail,
         })
       );
+      mergedCreatedMs.push(rowCreatedMs);
     }
   }
 
@@ -3097,7 +3182,12 @@ export async function fetchSupabaseTradingAccountsForUser(params: {
   if (uuids.length === 0) return [];
 
   try {
-    const [accRes, walletRes] = await Promise.all([
+    const [fundedRes, accRes, walletRes] = await Promise.all([
+      supabase
+        .from('funded_accounts')
+        .select('*')
+        .in('user_id', uuids)
+        .order('created_at', { ascending: false }),
       supabase
         .from('trading_accounts')
         .select('*')
@@ -3110,6 +3200,9 @@ export async function fetchSupabaseTradingAccountsForUser(params: {
         .order('created_at', { ascending: false }),
     ]);
 
+    if (fundedRes.error) {
+      console.error('[Supabase funded_accounts] Fetch failed:', fundedRes.error.message);
+    }
     if (accRes.error) {
       console.error('[Supabase trading_accounts] Fetch failed:', accRes.error.message);
     }
@@ -3118,6 +3211,7 @@ export async function fetchSupabaseTradingAccountsForUser(params: {
     }
 
     return mergeSupabaseFundedAccounts({
+      fundedAccountRows: Array.isArray(fundedRes.data) ? fundedRes.data : [],
       tradingAccountRows: Array.isArray(accRes.data) ? accRes.data : [],
       fundedWalletRows: Array.isArray(walletRes.data) ? walletRes.data : [],
       ownerEmail: params.userEmail,
@@ -3332,6 +3426,8 @@ export function subscribeUserRealtimeChannels(callbacks: UserRealtimeSubscriptio
   const accountIdSet = new Set<string>(accountIds.filter(Boolean));
   let resolvedAuthUid: string | undefined;
   let authUidChannel: ReturnType<typeof supabase.channel> | null = null;
+  let fundedAccountsChannel: ReturnType<typeof supabase.channel> | null = null;
+  let attachedFundedAccountsUid: string | null = null;
 
   const matchesUserProfile = (row: Record<string, any> | null | undefined): boolean => {
     if (!row || typeof row !== 'object') return false;
@@ -3373,8 +3469,43 @@ export function subscribeUserRealtimeChannels(callbacks: UserRealtimeSubscriptio
     return Boolean(uid && candidateIds.has(uid));
   };
 
+  const attachFilteredFundedAccountsChannel = (uid: string) => {
+    if (isDisposed || !UUID_REGEX.test(uid)) return;
+    if (attachedFundedAccountsUid === uid && fundedAccountsChannel) return;
+    if (fundedAccountsChannel) {
+      supabase.removeChannel(fundedAccountsChannel);
+      fundedAccountsChannel = null;
+    }
+    attachedFundedAccountsUid = uid;
+    fundedAccountsChannel = supabase
+      .channel(`realtime:funded_accounts_uid:${uid}:${Date.now()}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'funded_accounts',
+          filter: `user_id=eq.${uid}`,
+        },
+        (payload) => {
+          if (isDisposed || !callbacks.onAccountEvent) return;
+          const newRow = (payload.new as Record<string, any>) || null;
+          const oldRow = (payload.old as Record<string, any>) || null;
+          const targetRow =
+            payload.eventType === 'DELETE' ? oldRow || newRow : newRow || oldRow;
+          if (!targetRow) return;
+          callbacks.onAccountEvent(
+            payload.eventType,
+            mapFundedAccountRowToTradingAccount(targetRow, normalizedEmail || undefined)
+          );
+        }
+      )
+      .subscribe();
+  };
+
   const attachFilteredProfileChannel = (uid: string) => {
     if (isDisposed || !UUID_REGEX.test(uid)) return;
+    attachFilteredFundedAccountsChannel(uid);
     if (authUidChannel) {
       supabase.removeChannel(authUidChannel);
       authUidChannel = null;
@@ -3401,6 +3532,69 @@ export function subscribeUserRealtimeChannels(callbacks: UserRealtimeSubscriptio
       .subscribe();
   };
 
+  let lastSyncedFundedAccountsKey = '';
+  const syncInitialFundedAccountsNow = async (force: boolean = false) => {
+    if (!callbacks.onAccountsInitial || isDisposed) return;
+    const uuidIds = Array.from(candidateIds).filter((id) => UUID_REGEX.test(id));
+    if (uuidIds.length === 0) return;
+
+    const fetchKey = uuidIds.slice().sort().join(',');
+    if (!force && fetchKey === lastSyncedFundedAccountsKey) return;
+    lastSyncedFundedAccountsKey = fetchKey;
+
+    try {
+      const [fundedRes, accRes, walletRes] = await Promise.all([
+        supabase
+          .from('funded_accounts')
+          .select('*')
+          .in('user_id', uuidIds)
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('trading_accounts')
+          .select('*')
+          .in('user_id', uuidIds)
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('purchased_funded_wallets')
+          .select('*')
+          .in('user_id', uuidIds)
+          .order('created_at', { ascending: false }),
+      ]);
+
+      if (fundedRes.error) {
+        console.error('[Supabase Realtime] Initial funded_accounts fetch failed:', fundedRes.error.message);
+      }
+      if (accRes.error) {
+        console.error('[Supabase Realtime] Initial trading_accounts fetch failed:', accRes.error.message);
+      }
+      if (walletRes.error) {
+        console.error(
+          '[Supabase Realtime] Initial purchased_funded_wallets fetch failed:',
+          walletRes.error.message
+        );
+      }
+
+      const combinedAccounts = mergeSupabaseFundedAccounts({
+        fundedAccountRows: Array.isArray(fundedRes.data) ? fundedRes.data : [],
+        tradingAccountRows: Array.isArray(accRes.data) ? accRes.data : [],
+        fundedWalletRows: Array.isArray(walletRes.data) ? walletRes.data : [],
+        ownerEmail: normalizedEmail || undefined,
+      });
+
+      if (!isDisposed && combinedAccounts.length > 0) {
+        callbacks.onAccountsInitial(combinedAccounts);
+      }
+    } catch (err) {
+      console.error('[Supabase Realtime] Initial funded_accounts hydration exception:', err);
+    }
+  };
+
+  // Immediately subscribe to filtered funded_accounts channel & hydrate rows if we already have a valid UUID
+  if (userId && UUID_REGEX.test(userId)) {
+    attachFilteredFundedAccountsChannel(userId);
+    void syncInitialFundedAccountsNow();
+  }
+
   const syncLatestProfileNow = async () => {
     if (isDisposed) return;
     try {
@@ -3415,6 +3609,9 @@ export function subscribeUserRealtimeChannels(callbacks: UserRealtimeSubscriptio
           const pid = String(profileRow.id);
           const wasKnown = candidateIds.has(pid);
           candidateIds.add(pid);
+          if (UUID_REGEX.test(pid)) {
+            attachFilteredFundedAccountsChannel(pid);
+          }
           if (!wasKnown && UUID_REGEX.test(pid) && !authUidChannel) {
             attachFilteredProfileChannel(pid);
           }
@@ -3448,6 +3645,7 @@ export function subscribeUserRealtimeChannels(callbacks: UserRealtimeSubscriptio
         resolvedAuthUid = user.id;
         candidateIds.add(user.id);
         attachFilteredProfileChannel(user.id);
+        attachFilteredFundedAccountsChannel(user.id);
       }
       if (user?.email && !normalizedEmail) {
         normalizedEmail = user.email.trim().toLowerCase();
@@ -3457,10 +3655,11 @@ export function subscribeUserRealtimeChannels(callbacks: UserRealtimeSubscriptio
       await syncLatestProfileNow();
       if (isDisposed) return;
 
-      // 2. Fetch initial withdrawals from Supabase (only query with valid UUIDs)
-      if (onWithdrawalsInitial) {
-        const uuidIds = Array.from(candidateIds).filter((id) => UUID_REGEX.test(id));
-        if (uuidIds.length > 0) {
+      const uuidIds = Array.from(candidateIds).filter((id) => UUID_REGEX.test(id));
+      await Promise.allSettled([
+        // 2. Fetch initial withdrawals from Supabase (only query with valid UUIDs)
+        (async () => {
+          if (!onWithdrawalsInitial || uuidIds.length === 0) return;
           const { data: wRows } = await supabase
             .from('withdrawals')
             .select('*')
@@ -3469,13 +3668,11 @@ export function subscribeUserRealtimeChannels(callbacks: UserRealtimeSubscriptio
           if (!isDisposed && Array.isArray(wRows) && wRows.length > 0) {
             onWithdrawalsInitial(wRows);
           }
-        }
-      }
+        })(),
 
-      // 3. Fetch initial referral commissions from Supabase using exact referrer_id column
-      if (onCommissionsInitial) {
-        const uuidIds = Array.from(candidateIds).filter((id) => UUID_REGEX.test(id));
-        if (uuidIds.length > 0) {
+        // 3. Fetch initial referral commissions from Supabase using exact referrer_id column
+        (async () => {
+          if (!onCommissionsInitial || uuidIds.length === 0) return;
           const { data: cRows, error: cErr } = await supabase
             .from('referral_commissions')
             .select('*')
@@ -3485,13 +3682,11 @@ export function subscribeUserRealtimeChannels(callbacks: UserRealtimeSubscriptio
           if (!isDisposed && !cErr && Array.isArray(cRows) && cRows.length > 0) {
             onCommissionsInitial(cRows);
           }
-        }
-      }
+        })(),
 
-      // 4. Fetch initial purchases & crypto_deposits from Supabase (only query with valid UUIDs)
-      if (onPurchasesInitial) {
-        const uuidIds = Array.from(candidateIds).filter((id) => UUID_REGEX.test(id));
-        if (uuidIds.length > 0) {
+        // 4. Fetch initial purchases & crypto_deposits from Supabase (only query with valid UUIDs)
+        (async () => {
+          if (!onPurchasesInitial || uuidIds.length === 0) return;
           const [pRes, cdRes] = await Promise.all([
             supabase
               .from('user_purchases')
@@ -3519,50 +3714,11 @@ export function subscribeUserRealtimeChannels(callbacks: UserRealtimeSubscriptio
           if (!isDisposed && combined.length > 0) {
             onPurchasesInitial(combined);
           }
-        }
-      }
+        })(),
 
-      // 5. Fetch initial trading_accounts AND purchased_funded_wallets from Supabase (only query with valid UUIDs)
-      const syncInitialFundedAccountsNow = async () => {
-        if (!callbacks.onAccountsInitial || isDisposed) return;
-        const uuidIds = Array.from(candidateIds).filter((id) => UUID_REGEX.test(id));
-        if (uuidIds.length === 0) return;
-
-        const [accRes, walletRes] = await Promise.all([
-          supabase
-            .from('trading_accounts')
-            .select('*')
-            .in('user_id', uuidIds)
-            .order('created_at', { ascending: false }),
-          supabase
-            .from('purchased_funded_wallets')
-            .select('*')
-            .in('user_id', uuidIds)
-            .order('created_at', { ascending: false }),
-        ]);
-
-        if (accRes.error) {
-          console.error('[Supabase Realtime] Initial trading_accounts fetch failed:', accRes.error.message);
-        }
-        if (walletRes.error) {
-          console.error(
-            '[Supabase Realtime] Initial purchased_funded_wallets fetch failed:',
-            walletRes.error.message
-          );
-        }
-
-        const combinedAccounts = mergeSupabaseFundedAccounts({
-          tradingAccountRows: Array.isArray(accRes.data) ? accRes.data : [],
-          fundedWalletRows: Array.isArray(walletRes.data) ? walletRes.data : [],
-          ownerEmail: normalizedEmail || undefined,
-        });
-
-        if (!isDisposed && combinedAccounts.length > 0) {
-          callbacks.onAccountsInitial(combinedAccounts);
-        }
-      };
-
-      await syncInitialFundedAccountsNow();
+        // 5. Re-sync funded_accounts if auth/profile resolved additional UUIDs
+        syncInitialFundedAccountsNow(),
+      ]);
     } catch {
       // Ignore network/offline errors on initial sync
     }
@@ -3769,6 +3925,9 @@ export function subscribeUserRealtimeChannels(callbacks: UserRealtimeSubscriptio
     authListener?.subscription?.unsubscribe();
     if (authUidChannel) {
       supabase.removeChannel(authUidChannel);
+    }
+    if (fundedAccountsChannel) {
+      supabase.removeChannel(fundedAccountsChannel);
     }
     supabase.removeChannel(channel);
   };

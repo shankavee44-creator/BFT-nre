@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase, ensureSupabaseProfileAndDemoAccount } from './utils/supabase';
 import { Header } from './components/Header';
 import { HeroBanner } from './components/HeroBanner';
@@ -99,6 +99,7 @@ import {
   resolveAccountBalanceColumn,
   recordDirectBalanceCommit,
   commitProfileBalanceToSupabase,
+  commitProfileBalanceToSupabaseWithResult,
   hasActiveTradesForColumn,
   rehydrateActiveTradesInLedger,
   ProfileSyncSource,
@@ -117,6 +118,10 @@ import {
   insertPurchasedFundedWalletWithResult,
   syncFundedWalletBreachState,
 } from './utils/fundedWalletAnalytics';
+import {
+  purchaseFundedAccountInSupabase,
+  applyFundedAccountRealtimeEvent,
+} from './utils/fundedAccountsSync';
 import {
   PACKAGES,
   advanceChallengeAccountPhase,
@@ -273,6 +278,7 @@ export default function App() {
     useState<SelfCapitalChallengePurchaseResult | null>(null);
   const [purchasePersistenceError, setPurchasePersistenceError] = useState<string | null>(null);
   const [purchaseErrorToast, setPurchaseErrorToast] = useState<string | null>(null);
+  const purchaseInFlightRef = useRef<boolean>(false);
   const [isDepositModalOpen, setIsDepositModalOpen] = useState(false);
   const [isWithdrawalModalOpen, setIsWithdrawalModalOpen] = useState(false);
   const [passedCertificateRecord, setPassedCertificateRecord] =
@@ -707,6 +713,8 @@ export default function App() {
             const idx = updated.findIndex(
               (a) =>
                 a.id === sa.id ||
+                (a.fundedAccountId && a.fundedAccountId === sa.id) ||
+                (sa.fundedAccountId && a.id === sa.fundedAccountId) ||
                 (a.supabaseAccountId && a.supabaseAccountId === sa.id) ||
                 (sa.supabaseAccountId && a.id === sa.supabaseAccountId) ||
                 (sa.supabaseAccountId &&
@@ -716,7 +724,9 @@ export default function App() {
             );
             if (idx >= 0) {
               const localAcc = updated[idx];
+              const isFromFundedAccounts = sa.sourceTable === 'funded_accounts';
               const localHasPostTradeMutation =
+                !isFromFundedAccounts &&
                 (localAcc.tradesCount || 0) > (sa.tradesCount || 0) &&
                 Math.abs(localAcc.currentBalance - localAcc.initialBalance) > 0.01 &&
                 Math.abs(sa.currentBalance - sa.initialBalance) < 0.01;
@@ -728,11 +738,12 @@ export default function App() {
                 ? localAcc.equity
                 : sa.equity;
 
-              updated[idx] = sanitizeAccountForAntiBreach({
+              const mergedEntry: TradingAccount = {
                 ...localAcc,
                 ...sa,
-                id: localAcc.id || sa.id,
+                id: isFromFundedAccounts ? sa.id : localAcc.id || sa.id,
                 supabaseAccountId: sa.supabaseAccountId || sa.id || localAcc.supabaseAccountId,
+                fundedAccountId: sa.fundedAccountId || localAcc.fundedAccountId,
                 loginId: localAcc.loginId || sa.loginId,
                 currentBalance: mergedBalance,
                 equity: mergedEquity,
@@ -740,20 +751,28 @@ export default function App() {
                   isAccountSoftBreached(localAcc) || localHasPostTradeMutation
                     ? localAcc.startingDayEquity
                     : sa.startingDayEquity,
-                status:
-                  isAccountSoftBreached(localAcc) ||
-                  isAccountHardBreached(localAcc) ||
-                  localAcc.status === 'passed' ||
-                  localAcc.status === 'passed_phase_1'
-                    ? localAcc.status
-                    : sa.status,
-                breachType: localAcc.breachType || sa.breachType,
+                status: isFromFundedAccounts
+                  ? sa.status
+                  : isAccountSoftBreached(localAcc) ||
+                    isAccountHardBreached(localAcc) ||
+                    localAcc.status === 'passed' ||
+                    localAcc.status === 'passed_phase_1'
+                  ? localAcc.status
+                  : sa.status,
+                breachType: isFromFundedAccounts
+                  ? sa.breachType
+                  : localAcc.breachType || sa.breachType,
                 softBreachResetTime: localAcc.softBreachResetTime,
                 tradesCount: Math.max(localAcc.tradesCount || 0, sa.tradesCount || 0),
                 winRate: localAcc.winRate || sa.winRate,
-              });
+              };
+              updated[idx] = isFromFundedAccounts
+                ? mergedEntry
+                : sanitizeAccountForAntiBreach(mergedEntry);
             } else {
-              updated.push(sanitizeAccountForAntiBreach(sa));
+              updated.push(
+                sa.sourceTable === 'funded_accounts' ? sa : sanitizeAccountForAntiBreach(sa)
+              );
             }
           }
           saveAccounts(updated);
@@ -763,35 +782,9 @@ export default function App() {
       onAccountEvent: (eventType, account) => {
         if (!account) return;
         setAccounts((prev) => {
-          let updated = [...prev];
-          const idx = updated.findIndex(
-            (a) =>
-              a.id === account.id ||
-              (a.supabaseAccountId && a.supabaseAccountId === account.id) ||
-              (account.supabaseAccountId && a.id === account.supabaseAccountId) ||
-              (account.supabaseAccountId &&
-                a.supabaseAccountId &&
-                a.supabaseAccountId === account.supabaseAccountId) ||
-              (account.loginId && a.loginId && a.loginId === account.loginId)
-          );
-          if (eventType === 'DELETE') {
-            if (idx >= 0) updated.splice(idx, 1);
-          } else if (idx >= 0) {
-            const localAcc = updated[idx];
-            updated[idx] = sanitizeAccountForAntiBreach({
-              ...localAcc,
-              ...account,
-              id: localAcc.id || account.id,
-              supabaseAccountId: account.supabaseAccountId || account.id || localAcc.supabaseAccountId,
-              loginId: localAcc.loginId || account.loginId,
-              tradesCount: Math.max(localAcc.tradesCount || 0, account.tradesCount || 0),
-              winRate: localAcc.winRate || account.winRate,
-            });
-          } else {
-            updated.push(sanitizeAccountForAntiBreach(account));
-          }
-          saveAccounts(updated);
-          return updated;
+          const next = applyFundedAccountRealtimeEvent(prev, eventType, account);
+          saveAccounts(next);
+          return next;
         });
       },
     });
@@ -1711,7 +1704,8 @@ export default function App() {
     }, 80);
   };
 
-  const handleStartNowPackage = (pkg: EvaluationPackage, unlockDaily?: boolean) => {
+  const handleStartNowPackage = async (pkg: EvaluationPackage, unlockDaily?: boolean) => {
+    if (purchaseInFlightRef.current) return;
     const unlockDailyFlag = Boolean(unlockDaily);
     setDailyWithdrawalsAddOn(unlockDailyFlag);
 
@@ -1755,272 +1749,192 @@ export default function App() {
     }
 
     const {
-      account: newChallengeAccount,
+      account: templateChallengeAccount,
       remainingSelfCapital,
       deductedAmount,
       packageName,
     } = purchaseOutcome;
 
-    recordDirectBalanceCommit('self_balance', remainingSelfCapital);
-
-    const nextProfile: UserProfile = {
-      ...currentProf,
-      id: ownerId,
-      email: ownerEmail,
-      selfBalance: remainingSelfCapital,
-      activeAccountId: newChallengeAccount.id,
-      isLoggedIn: true,
-    };
-    userProfileRef.current = nextProfile;
-    setUserProfile(nextProfile);
-    saveProfile(nextProfile);
-    broadcastSyncEvent('PROFILE_UPDATED', nextProfile);
-
-    setAccounts((prev) => {
-      let hasPersonal = false;
-      const updatedExisting = prev.map((acc) => {
-        if (isPersonalLiveAccount(acc)) {
-          hasPersonal = true;
-          return {
-            ...acc,
-            currentBalance: remainingSelfCapital,
-            equity: remainingSelfCapital,
-            startingDayEquity: remainingSelfCapital,
-          };
-        }
-        return acc;
-      });
-      if (!hasPersonal) {
-        const defaultPersonal = createDefaultPersonalLiveAccount(
-          ownerId,
-          ownerEmail,
-          remainingSelfCapital
-        );
-        updatedExisting.push(defaultPersonal);
-      }
-      const nextList = [newChallengeAccount, ...updatedExisting];
-      saveAccounts(nextList);
-      return nextList;
-    });
-
-    setActiveAccountId(newChallengeAccount.id);
-    saveActiveAccountId(newChallengeAccount.id);
-    setProtectedRouteNotice(null);
-
-    const nowIso = new Date().toISOString();
-    const purchaseRecord: NormalizedPurchaseRecord = {
-      id: `PUR-${Date.now().toString(36).toUpperCase()}`,
-      user_id: ownerId,
-      account_id: newChallengeAccount.id,
-      package_id: `challenge_funded_challenge_${pkg.size}`,
-      package_name: packageName,
-      package_sku: `challenge_funded_challenge_${pkg.size}`,
-      amount: deductedAmount,
-      package_amount: deductedAmount,
-      account_type: 'challenge',
-      status: 'active',
-      tx_hash: `SELF_CAPITAL_${Date.now()}`,
-      created_at: nowIso,
-    };
-    handlePurchaseRecorded(purchaseRecord);
-
-    handleProcessCommissions({
-      buyerUserId: ownerId,
-      buyerName: nextProfile.fullName || 'Funded Trader',
-      buyerEmail: ownerEmail,
-      packageTier: pkg.tier,
-      packageName,
-      packagePrice: deductedAmount,
-      referralCodeUsed: nextProfile.referredBy || getStoredReferralCode(),
-    });
-
+    purchaseInFlightRef.current = true;
     setPurchasePersistenceError(null);
     setPurchaseErrorToast(null);
-    setSelectedPackageToBuy(pkg);
-    setSelfCapitalPurchaseResult(purchaseOutcome);
 
-    // Coordinate Supabase persistence (purchased_funded_wallets + trading_accounts + profiles.self_balance)
-    // with explicit error logging & user-visible feedback if any database write fails.
-    (async () => {
+    try {
+      let effectiveOwnerId = ownerId;
+      let effectiveOwnerEmail = ownerEmail;
       try {
-        let effectiveOwnerId = ownerId;
-        let effectiveOwnerEmail = ownerEmail;
-        try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
+        if (session?.user?.id) {
+          effectiveOwnerId = session.user.id;
+          if (session.user.email) effectiveOwnerEmail = session.user.email;
+        } else {
           const {
-            data: { session },
-          } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
-          if (session?.user?.id) {
-            effectiveOwnerId = session.user.id;
-            if (session.user.email) effectiveOwnerEmail = session.user.email;
-          } else {
-            const {
-              data: { user },
-            } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
-            if (user?.id) {
-              effectiveOwnerId = user.id;
-              if (user.email) effectiveOwnerEmail = user.email;
-            }
+            data: { user },
+          } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
+          if (user?.id) {
+            effectiveOwnerId = user.id;
+            if (user.email) effectiveOwnerEmail = user.email;
           }
-        } catch {
-          // Keep fallback ownerId/ownerEmail
         }
-
-        const accountForDb: TradingAccount = {
-          ...newChallengeAccount,
-          ownerId: effectiveOwnerId,
-          ownerEmail: effectiveOwnerEmail,
-        };
-
-        const [walletSettled, tradingAccSettled, balanceSettled] = await Promise.allSettled([
-          insertPurchasedFundedWalletWithResult(accountForDb, effectiveOwnerId),
-          insertSupabaseTradingAccount({
-            account: accountForDb,
-            userId: effectiveOwnerId,
-            userEmail: effectiveOwnerEmail,
-          }),
-          commitProfileBalanceToSupabase({
-            userId: effectiveOwnerId,
-            userEmail: effectiveOwnerEmail,
-            column: 'self_balance',
-            newBalance: remainingSelfCapital,
-          }),
-          apiPurchaseChallengeFromSelfCapital({
-            userId: effectiveOwnerId,
-            email: effectiveOwnerEmail,
-            fullName: nextProfile.fullName,
-            accountId: newChallengeAccount.id,
-            tierName: pkg.name,
-            size: pkg.size,
-            price: deductedAmount,
-            selfCapitalBalance: availableSelfCapital,
-            remainingSelfCapital,
-            dailyWithdrawalsUnlocked: unlockDailyFlag,
-            referralCode: nextProfile.referredBy || getStoredReferralCode(),
-          }),
-        ]);
-
-        const walletRes =
-          walletSettled.status === 'fulfilled' ? walletSettled.value : null;
-        const tradingAccRes =
-          tradingAccSettled.status === 'fulfilled' ? tradingAccSettled.value : null;
-        const balanceSynced =
-          balanceSettled.status === 'fulfilled' ? Boolean(balanceSettled.value) : false;
-
-        const walletSynced = Boolean(walletRes?.ok && walletRes?.syncedToSupabase);
-        const tradingAccSynced = Boolean(tradingAccRes?.ok);
-
-        const linkedSupabaseId =
-          tradingAccRes?.account?.supabaseAccountId ||
-          (walletRes?.wallet?.id && walletRes.wallet.id !== newChallengeAccount.id
-            ? walletRes.wallet.id
-            : undefined);
-
-        if (linkedSupabaseId) {
-          setAccounts((prev) => {
-            const nextList = prev.map((acc) =>
-              acc.id === newChallengeAccount.id
-                ? { ...acc, supabaseAccountId: linkedSupabaseId, ownerId: effectiveOwnerId }
-                : acc
-            );
-            saveAccounts(nextList);
-            return nextList;
-          });
-        }
-
-        const syncErrors: string[] = [];
-        if (!walletSynced) {
-          syncErrors.push(
-            `purchased_funded_wallets: ${
-              walletRes?.error ||
-              (walletSettled.status === 'rejected'
-                ? String(walletSettled.reason?.message || walletSettled.reason)
-                : 'Insert failed')
-            }`
-          );
-        }
-        if (!tradingAccSynced) {
-          syncErrors.push(
-            `trading_accounts: ${
-              tradingAccRes?.error ||
-              (tradingAccSettled.status === 'rejected'
-                ? String(tradingAccSettled.reason?.message || tradingAccSettled.reason)
-                : 'Insert failed')
-            }`
-          );
-        }
-
-        if (!walletSynced && !tradingAccSynced) {
-          const errMessage = `Funded challenge activated locally, but saving to Supabase failed (${syncErrors.join(
-            ' | '
-          )}). Please ensure you are signed in and Supabase RLS policies allow inserts.`;
-          console.error('[BFT Start Now] Supabase persistence failed:', {
-            accountId: newChallengeAccount.id,
-            ownerId: effectiveOwnerId,
-            walletRes,
-            tradingAccRes,
-            balanceSynced,
-          });
-          setPurchasePersistenceError(errMessage);
-          setPurchaseErrorToast(errMessage);
-          return;
-        }
-
-        if (!balanceSynced) {
-          const balErrMsg =
-            'Funded challenge was saved to Supabase, but syncing the deducted Self Capital balance to your Supabase profile failed. Please refresh to verify your balance.';
-          console.error('[BFT Start Now] Supabase Self Capital deduction sync failed:', {
-            accountId: newChallengeAccount.id,
-            ownerId: effectiveOwnerId,
-            remainingSelfCapital,
-          });
-          setPurchasePersistenceError(balErrMsg);
-          setPurchaseErrorToast(balErrMsg);
-        }
-
-        // Refresh user's funded accounts from Supabase so Dashboard & Account Switcher reflect persisted rows
-        const refreshedAccounts = await fetchSupabaseTradingAccountsForUser({
-          userId: effectiveOwnerId,
-          userEmail: effectiveOwnerEmail,
-        });
-        if (refreshedAccounts.length > 0) {
-          setAccounts((prev) => {
-            const updated = [...prev];
-            for (const sa of refreshedAccounts) {
-              const idx = updated.findIndex(
-                (a) =>
-                  a.id === sa.id ||
-                  (a.supabaseAccountId && a.supabaseAccountId === sa.id) ||
-                  (sa.supabaseAccountId && a.id === sa.supabaseAccountId) ||
-                  (sa.supabaseAccountId &&
-                    a.supabaseAccountId &&
-                    a.supabaseAccountId === sa.supabaseAccountId) ||
-                  (sa.loginId && a.loginId && a.loginId === sa.loginId)
-              );
-              if (idx >= 0) {
-                updated[idx] = sanitizeAccountForAntiBreach({
-                  ...updated[idx],
-                  ...sa,
-                  id: updated[idx].id || sa.id,
-                  supabaseAccountId: sa.supabaseAccountId || updated[idx].supabaseAccountId,
-                  loginId: updated[idx].loginId || sa.loginId,
-                });
-              } else {
-                updated.push(sanitizeAccountForAntiBreach(sa));
-              }
-            }
-            saveAccounts(updated);
-            return updated;
-          });
-        }
-      } catch (err: any) {
-        const msg = `Unexpected error syncing funded challenge to Supabase: ${
-          err?.message || 'Unknown error'
-        }`;
-        console.error('[BFT Start Now] Supabase sync exception:', err);
-        setPurchasePersistenceError(msg);
-        setPurchaseErrorToast(msg);
+      } catch {
+        // Keep fallback ownerId/ownerEmail
       }
-    })();
+
+      // Atomic Supabase transaction sequence:
+      // 1. Deduct final package price (after any applied 40% promo code) from Self Capital in `profiles`.
+      // 2. Insert new Challenge account into `public.funded_accounts`.
+      // 3. Roll back Self Capital balance if insert fails so balances never go out of sync.
+      const dbPurchase = await purchaseFundedAccountInSupabase({
+        userId: effectiveOwnerId,
+        userEmail: effectiveOwnerEmail,
+        accountSize: pkg.size,
+        paidAmount: deductedAmount,
+        previousSelfCapital: availableSelfCapital,
+        remainingSelfCapital,
+        updateProfileBalance: (uid, email, newBal) =>
+          commitProfileBalanceToSupabaseWithResult({
+            userId: uid,
+            userEmail: email,
+            column: 'self_balance',
+            newBalance: newBal,
+          }),
+      });
+
+      if (!dbPurchase.ok) {
+        console.error('[BFT Start Now] Supabase purchase failed:', {
+          stage: dbPurchase.stage,
+          error: dbPurchase.error,
+          rolledBack: dbPurchase.rolledBack,
+          userId: effectiveOwnerId,
+          accountSize: pkg.size,
+          paidAmount: deductedAmount,
+        });
+        setPurchaseErrorToast(dbPurchase.error);
+        return;
+      }
+
+      const activatedAccount: TradingAccount = {
+        ...templateChallengeAccount,
+        ...dbPurchase.account,
+        id: dbPurchase.row.id,
+        supabaseAccountId: dbPurchase.row.id,
+        fundedAccountId: dbPurchase.row.id,
+        ownerId: dbPurchase.row.user_id || effectiveOwnerId,
+        ownerEmail: effectiveOwnerEmail,
+        dailyWithdrawalsUnlocked: unlockDailyFlag,
+        withdrawalFrequency: unlockDailyFlag ? 'DAILY' : 'WEEKLY',
+        sourceTable: 'funded_accounts',
+      };
+
+      recordDirectBalanceCommit('self_balance', remainingSelfCapital);
+
+      const nextProfile: UserProfile = {
+        ...currentProf,
+        id: dbPurchase.row.user_id || effectiveOwnerId,
+        email: effectiveOwnerEmail,
+        selfBalance: remainingSelfCapital,
+        self_capital_balance: remainingSelfCapital,
+        activeAccountId: activatedAccount.id,
+        isLoggedIn: true,
+      };
+      userProfileRef.current = nextProfile;
+      setUserProfile(nextProfile);
+      saveProfile(nextProfile);
+      broadcastSyncEvent('PROFILE_UPDATED', nextProfile);
+
+      setAccounts((prev) => {
+        let hasPersonal = false;
+        const updatedExisting = prev.map((acc) => {
+          if (isPersonalLiveAccount(acc)) {
+            hasPersonal = true;
+            return {
+              ...acc,
+              currentBalance: remainingSelfCapital,
+              equity: remainingSelfCapital,
+              startingDayEquity: remainingSelfCapital,
+            };
+          }
+          return acc;
+        });
+        if (!hasPersonal) {
+          const defaultPersonal = createDefaultPersonalLiveAccount(
+            nextProfile.id,
+            effectiveOwnerEmail,
+            remainingSelfCapital
+          );
+          updatedExisting.push(defaultPersonal);
+        }
+        const nextList = applyFundedAccountRealtimeEvent(
+          updatedExisting,
+          'INSERT',
+          activatedAccount
+        );
+        saveAccounts(nextList);
+        return nextList;
+      });
+
+      setActiveAccountId(activatedAccount.id);
+      saveActiveAccountId(activatedAccount.id);
+      setProtectedRouteNotice(null);
+
+      const nowIso = new Date().toISOString();
+      const purchaseRecord: NormalizedPurchaseRecord = {
+        id: `PUR-${Date.now().toString(36).toUpperCase()}`,
+        user_id: nextProfile.id,
+        account_id: activatedAccount.id,
+        package_id: `challenge_funded_challenge_${pkg.size}`,
+        package_name: packageName,
+        package_sku: `challenge_funded_challenge_${pkg.size}`,
+        amount: deductedAmount,
+        package_amount: deductedAmount,
+        account_type: 'challenge',
+        status: 'active',
+        tx_hash: `SELF_CAPITAL_${Date.now()}`,
+        created_at: nowIso,
+      };
+      handlePurchaseRecorded(purchaseRecord);
+
+      handleProcessCommissions({
+        buyerUserId: nextProfile.id,
+        buyerName: nextProfile.fullName || 'Funded Trader',
+        buyerEmail: effectiveOwnerEmail,
+        packageTier: pkg.tier,
+        packageName,
+        packagePrice: deductedAmount,
+        referralCodeUsed: nextProfile.referredBy || getStoredReferralCode(),
+      });
+
+      setSelectedPackageToBuy(pkg);
+      setSelfCapitalPurchaseResult({
+        ...purchaseOutcome,
+        account: activatedAccount,
+      });
+
+      // Best-effort secondary backend & analytics mirror (non-blocking)
+      apiPurchaseChallengeFromSelfCapital({
+        userId: nextProfile.id,
+        email: effectiveOwnerEmail,
+        fullName: nextProfile.fullName,
+        accountId: activatedAccount.id,
+        tierName: pkg.name,
+        size: pkg.size,
+        price: deductedAmount,
+        selfCapitalBalance: availableSelfCapital,
+        remainingSelfCapital,
+        dailyWithdrawalsUnlocked: unlockDailyFlag,
+        referralCode: nextProfile.referredBy || getStoredReferralCode(),
+      }).catch(() => {});
+    } catch (err: any) {
+      const msg = `Failed to complete funded challenge purchase: ${
+        err?.message || 'Unexpected error'
+      }. Your Self Capital balance was not changed.`;
+      console.error('[BFT Start Now] Unexpected purchase exception:', err);
+      setPurchaseErrorToast(msg);
+    } finally {
+      purchaseInFlightRef.current = false;
+    }
   };
 
   const handleOpenAuthModal = (mode: 'login' | 'register') => {
@@ -2148,7 +2062,7 @@ export default function App() {
           equity: userProfile.demoBalance,
         };
       }
-      return sanitizeAccountForAntiBreach(acc);
+      return acc.sourceTable === 'funded_accounts' ? acc : sanitizeAccountForAntiBreach(acc);
     });
 
     // Ensure every authenticated user has a Personal Live (Self-Funded) account alongside Prop accounts
@@ -2551,20 +2465,20 @@ export default function App() {
       {purchaseErrorToast && !selfCapitalPurchaseResult && (
         <div
           role="alert"
-          data-testid="supabase-sync-error-toast"
-          className="fixed bottom-4 right-4 z-[60] max-w-md rounded-xl bg-[#111827] border border-amber-500/45 shadow-[0_14px_40px_rgba(0,0,0,0.7)] p-3.5 flex items-start gap-2.5 text-xs text-amber-200"
+          data-testid="funded-purchase-error-toast"
+          className="fixed bottom-4 right-4 z-[70] max-w-md rounded-xl bg-[#111827] border border-red-500/45 shadow-[0_14px_40px_rgba(0,0,0,0.75)] p-3.5 flex items-start gap-2.5 text-xs text-red-100"
         >
-          <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+          <ShieldAlert className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
           <div className="min-w-0 flex-1 space-y-0.5">
-            <div className="font-bold text-amber-300">Cloud Sync Warning</div>
-            <div className="text-amber-100/90 break-words leading-relaxed">
+            <div className="font-bold text-red-300">Purchase Failed — Balance Protected</div>
+            <div className="text-red-100/90 break-words leading-relaxed">
               {purchaseErrorToast}
             </div>
           </div>
           <button
             type="button"
             onClick={() => setPurchaseErrorToast(null)}
-            aria-label="Dismiss cloud sync warning"
+            aria-label="Dismiss purchase error toast"
             className="p-1 rounded-md text-slate-400 hover:text-white hover:bg-white/10 transition cursor-pointer shrink-0"
           >
             <X className="w-4 h-4" />

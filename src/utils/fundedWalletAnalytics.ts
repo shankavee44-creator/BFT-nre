@@ -10,6 +10,10 @@ import {
   normalizeChallengeAccountType,
   REAL_FUNDED_PROFIT_SPLIT_PERCENT,
 } from './propRules.ts';
+import {
+  updateFundedAccountInSupabase,
+  mapTradingAccountToFundedStatus,
+} from './fundedAccountsSync.ts';
 
 export type FundedWalletStatus = 'ACTIVE' | 'PASSED' | 'SOFT_BREACH' | 'HARD_BREACH';
 
@@ -1356,6 +1360,24 @@ export async function syncFundedWalletOnTradeClose(params: {
   });
 
   const saved = await persistWalletToSupabase(applied.updatedWallet);
+
+  // Also keep public.funded_accounts current_balance & status in sync
+  const nextDbStatus =
+    applied.triggeredBreach === 'HARD_BREACH'
+      ? 'Breached'
+      : applied.triggeredBreach === 'SOFT_BREACH'
+      ? 'Soft Breached'
+      : applied.becamePassed
+      ? 'Passed'
+      : mapTradingAccountToFundedStatus(account);
+  updateFundedAccountInSupabase({
+    accountId: account.id,
+    supabaseAccountId: account.supabaseAccountId,
+    fundedAccountId: account.fundedAccountId,
+    currentBalance: applied.updatedWallet.current_balance,
+    status: nextDbStatus,
+  }).catch(() => {});
+
   return {
     wallet: saved,
     incrementedProfitableDay: applied.incrementedProfitableDay,
@@ -1419,6 +1441,25 @@ export async function syncFundedWalletBreachState(params: {
     ),
     updated_at: nowIso,
   };
+
+  const fundedStatus =
+    params.status === 'HARD_BREACH'
+      ? 'Breached'
+      : params.status === 'SOFT_BREACH'
+      ? 'Soft Breached'
+      : params.status === 'PASSED'
+      ? 'Passed'
+      : account.isRealFunded || account.is_real_funded
+      ? 'Real Funded'
+      : 'Challenge';
+
+  updateFundedAccountInSupabase({
+    accountId: account.id,
+    supabaseAccountId: account.supabaseAccountId,
+    fundedAccountId: account.fundedAccountId,
+    currentBalance: nextWallet.current_balance,
+    status: fundedStatus,
+  }).catch(() => {});
 
   return persistWalletToSupabase(nextWallet);
 }

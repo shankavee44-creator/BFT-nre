@@ -13,6 +13,7 @@ import {
   mapPurchaseRecord,
   NormalizedPurchaseRecord,
 } from '../config/directDeposit';
+import { mapFundedAccountRowToTradingAccount } from './fundedAccountsSync';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -280,7 +281,12 @@ export function buildTradingAccountFromDbRow(
     });
   }
 
-  // Standard trading_accounts / funded_accounts / SQLite accounts row
+  // Direct public.funded_accounts row (account_size, paid_amount, current_balance, status)
+  if (row.account_size !== undefined && row.account_size !== null) {
+    return mapFundedAccountRowToTradingAccount(row, fallbackUser?.email);
+  }
+
+  // Standard trading_accounts / SQLite accounts row
   const phase = (row.challenge_phase || row.phase || undefined) as any;
   const limits = getDynamicAccountLimits(row.account_type || row.tier || 'two_step', phase);
   const startBal = Number(row.starting_balance ?? row.initial_balance ?? row.size ?? 10000) || 10000;
